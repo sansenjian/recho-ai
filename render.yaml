@@ -1,0 +1,26 @@
+services:
+  # ── 后端 API 网关 ──
+  - type: web
+    name: recho-gateway
+    env: node
+    rootDir: backend/gateway
+    buildCommand: npm install
+    startCommand: node index.js
+    plan: free
+    envVars:
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: CORS_ORIGIN
+        value: https://recho-ai.onrender.com
+
+  # ── 前端静态站点 ──
+  - type: static
+    name: recho-ai
+    rootDir: .
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://recho-gateway.onrender.com

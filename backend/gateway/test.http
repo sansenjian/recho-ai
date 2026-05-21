@@ -1,0 +1,9 @@
+POST http://localhost:3000/api/chat
+Content-Type: application/json
+
+{
+  "model": "meta/llama-3.1-8b-instruct",
+  "messages": [
+    { "role": "user", "content": "你好" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "recho-ai-gateway",
+  "version": "1.0.0",
+  "description": "API gateway for AI chat aggregation",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^4.85.4"
+  }
+}
