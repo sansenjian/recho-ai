@@ -17,9 +17,9 @@ import {
   renameGroup,
   recolorGroup,
   assignToGroup,
-} from '../stores/chat'
-import { GROUP_COLORS } from '../types'
-import type { Message } from '../types'
+} from '../src/stores/chat'
+import { GROUP_COLORS } from '../src/types'
+import type { Message } from '../src/types'
 
 function makeMsg(role: 'user' | 'assistant', content: string): Message {
   return { id: Date.now(), role, content, timestamp: 'now' }
@@ -69,11 +69,9 @@ describe('chat store', () => {
       const empty = createConversation()
       expect(conversations.value.length).toBe(2)
 
-      // empty has no messages and no systemPrompt
       expect(empty.messages.length).toBe(0)
       expect(empty.systemPrompt).toBe('')
 
-      // Delete the empty — original (id=1) becomes active
       deleteConversation(empty.id)
       expect(activeConversationId.value).toBe(1)
       expect(conversations.value.length).toBe(1)
@@ -106,12 +104,9 @@ describe('chat store', () => {
     })
 
     it('save: empty conversations are not persisted to localStorage', async () => {
-      // Original (id=1) has messages, so it stays saved
-      // New empty conv should NOT appear in saved data
-      createConversation() // empty conv created
+      createConversation()
       await nextTick()
       const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
-      // Only the original (id=1) with messages should be saved
       expect(saved.length).toBe(1)
       expect(saved.every((c: any) => c.messages.length > 0 || c.systemPrompt)).toBe(true)
     })
@@ -290,7 +285,6 @@ describe('chat store', () => {
     })
 
     it('old conversations without groupId default to null', async () => {
-      // Simulate loading old data without groupId
       const oldData = [
         {
           id: 999,
@@ -302,7 +296,6 @@ describe('chat store', () => {
         },
       ]
       localStorage.setItem('recho-conversations', JSON.stringify(oldData))
-      // Reload by resetting
       conversations.value = oldData.map((c: any) => ({
         ...c,
         systemPrompt: c.systemPrompt ?? '',
@@ -310,6 +303,55 @@ describe('chat store', () => {
       }))
       const loaded = conversations.value.find(c => c.id === 999)
       expect(loaded?.groupId).toBeNull()
+    })
+  })
+
+  describe('structured assistant blocks', () => {
+    it('persists conversations with schema version 2 when assistant blocks exist', async () => {
+      conversations.value[0].messages.push({
+        id: 2,
+        role: 'assistant',
+        content: '最终回答',
+        timestamp: 'now',
+        blocks: [
+          { id: 'think-1', type: 'thinking', content: '思考摘要', status: 'done' },
+          { id: 'text-1', type: 'assistant_text', content: '最终回答', status: 'complete' },
+        ],
+      })
+
+      await nextTick()
+
+      const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
+      expect(saved[0].schemaVersion).toBe(2)
+      expect(saved[0].messages[1].blocks).toEqual([
+        { id: 'think-1', type: 'thinking', content: '思考摘要', status: 'done' },
+        { id: 'text-1', type: 'assistant_text', content: '最终回答', status: 'complete' },
+      ])
+    })
+
+    it('keeps legacy assistant messages without blocks renderable', () => {
+      const legacy: Message = {
+        id: 3,
+        role: 'assistant',
+        content: '旧回答',
+        thinking: '旧思考',
+        toolCalls: [
+          {
+            id: 'tool-legacy',
+            name: 'search',
+            arguments: { q: 'legacy' },
+            result: 'ok',
+            status: 'done',
+          },
+        ],
+        timestamp: 'now',
+      }
+
+      conversations.value[0].messages.push(legacy)
+
+      expect(conversations.value[0].messages[1].blocks).toBeUndefined()
+      expect(conversations.value[0].messages[1].thinking).toBe('旧思考')
+      expect(conversations.value[0].messages[1].toolCalls?.[0].status).toBe('done')
     })
   })
 })

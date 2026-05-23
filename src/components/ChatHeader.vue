@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import type { AgentModeOption, Message } from '../types'
+import ContextMeter from './ContextMeter.vue'
+
 defineProps<{
   showSidebar: boolean
+  showAgentPanel: boolean
+  agentMode: AgentModeOption
+  messages: Message[]
 }>()
 
 defineEmits<{
   toggleSidebar: []
+  toggleAgentPanel: []
   newChat: []
   toggleSettings: []
 }>()
@@ -31,9 +38,18 @@ defineEmits<{
         </svg>
         <span class="project-name">New Chat</span>
       </button>
+      <div class="agent-status">
+        <span class="status-pill">{{ agentMode.label }}</span>
+        <ContextMeter :messages="messages" />
+      </div>
     </div>
     <div class="header-right">
-      <button class="icon-btn" title="Panel layout">
+      <button
+        class="icon-btn"
+        :class="{ active: showAgentPanel }"
+        title="Agent Panel"
+        @click="$emit('toggleAgentPanel')"
+      >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <line x1="9" y1="3" x2="9" y2="21" />
@@ -107,6 +123,25 @@ defineEmits<{
   font-weight: 600;
 }
 
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -129,5 +164,10 @@ defineEmits<{
 
 .icon-btn:hover {
   background: var(--hover-bg);
+}
+
+.icon-btn.active {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--accent);
 }
 </style>

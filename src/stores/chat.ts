@@ -33,7 +33,12 @@ function loadConversations(): Conversation[] {
 
 function saveConversations(convs: Conversation[]) {
   // 只保留有实际内容的会话（有消息或系统提示词）
-  const meaningful = convs.filter(c => c.messages.length > 0 || c.systemPrompt)
+  const meaningful = convs
+    .filter(c => c.messages.length > 0 || c.systemPrompt)
+    .map(c => {
+      const hasBlocks = c.messages.some(message => message.blocks?.length)
+      return hasBlocks ? { ...c, schemaVersion: 2 as const } : c
+    })
   localStorage.setItem(STORAGE_KEY, JSON.stringify(meaningful))
 }
 

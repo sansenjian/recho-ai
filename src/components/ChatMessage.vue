@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import type { Message } from '../types'
+import { computed } from 'vue'
+import type { Message, MessageBlock } from '../types'
+import { getRenderedText, stripThinking } from '../utils/markdown'
+import ToolActivity from './ToolActivity.vue'
+import ThinkingActivity from './ThinkingActivity.vue'
 
-defineProps<{
+const props = defineProps<{
   msg: Message
   rendered?: string
   copyFeedback?: boolean
@@ -11,14 +15,59 @@ defineEmits<{
   copy: []
   retry: []
 }>()
+
+const blocks = computed(() => props.msg.blocks ?? [])
+const hasBlocks = computed(() => props.msg.role === 'assistant' && blocks.value.length > 0)
+
+function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
+  return getRenderedText(block.content)
+}
+
+function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
+  return {
+    id: block.toolUseId,
+    name: block.name,
+    arguments: block.input,
+    result: block.result,
+    isError: block.isError,
+    status: block.status,
+    startedAt: block.startedAt,
+    completedAt: block.completedAt,
+  }
+}
 </script>
 
 <template>
   <div v-if="msg.role === 'assistant'" class="msg-row assistant">
     <div class="assistant-avatar">AI</div>
     <div class="msg-body">
-      <div v-if="rendered" class="msg-text md" v-html="rendered" />
-      <div v-else class="msg-text">{{ msg.content.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '') }}</div>
+      <template v-if="hasBlocks">
+        <template v-for="block in blocks" :key="block.id">
+          <ThinkingActivity
+            v-if="block.type === 'thinking'"
+            embedded
+            :content="block.content"
+            :status="block.status"
+            :active="block.status === 'running'"
+          />
+          <ToolActivity
+            v-else-if="block.type === 'tool_use'"
+            embedded
+            :active-tool-calls="block.status === 'running' ? [toolBlockToCall(block)] : []"
+            :completed-tool-calls="block.status !== 'running' ? [toolBlockToCall(block)] : []"
+          />
+          <div
+            v-else-if="block.type === 'assistant_text' && block.content"
+            class="msg-text md block-text"
+            :class="{ incomplete: block.status === 'incomplete' }"
+            v-html="textRendered(block)"
+          />
+        </template>
+      </template>
+      <template v-else>
+        <div v-if="rendered" class="msg-text md" v-html="rendered" />
+        <div v-else class="msg-text">{{ stripThinking(msg.content) }}</div>
+      </template>
       <div class="msg-time-row">
         <span class="msg-time" :title="msg.timestamp">{{ msg.timestamp }}</span>
       </div>
@@ -27,6 +76,9 @@ defineEmits<{
 
   <div v-else class="msg-row user">
     <div class="user-wrapper">
+      <div v-if="msg.images?.length" class="msg-images">
+        <img v-for="(img, i) in msg.images" :key="i" :src="img" class="msg-image" />
+      </div>
       <div class="msg-text">{{ msg.content }}</div>
       <div class="msg-actions">
         <button class="action-btn" :class="{ done: copyFeedback }" title="复制" @click="$emit('copy')">
@@ -136,10 +188,39 @@ defineEmits<{
 
 .assistant .msg-text { font-weight: 600; }
 
+.assistant .block-text {
+  margin-top: 6px;
+}
+
+.assistant .block-text.incomplete {
+  color: #92400e;
+}
+
 .user .msg-text {
   color: #5a5a6e;
   background: var(--bubble-bg);
   padding: 8px 12px;
   border-radius: 12px;
+}
+
+.msg-images {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.msg-image {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.msg-image:hover {
+  opacity: 0.85;
 }
 </style>

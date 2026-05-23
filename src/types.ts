@@ -1,7 +1,33 @@
+import type { ToolCall } from './types/tools'
+import type { ToolStatus } from './types/tools'
+
+export type AssistantTextStatus = 'streaming' | 'complete' | 'incomplete'
+export type ThinkingStatus = 'running' | 'done' | 'cancelled'
+
+export type MessageBlock =
+  | { id: string; type: 'assistant_text'; content: string; status: AssistantTextStatus }
+  | { id: string; type: 'thinking'; content: string; status: ThinkingStatus }
+  | {
+      id: string
+      type: 'tool_use'
+      toolUseId: string
+      name: string
+      input: Record<string, unknown>
+      result?: string
+      isError?: boolean
+      status: ToolStatus
+      startedAt: number
+      completedAt?: number
+    }
+
 export interface Message {
   id: number
   role: 'user' | 'assistant'
   content: string
+  blocks?: MessageBlock[]
+  images?: string[]
+  thinking?: string
+  toolCalls?: ToolCall[]
   timestamp: string
 }
 
@@ -23,6 +49,7 @@ export const GROUP_COLORS = [
 ]
 
 export interface Conversation {
+  schemaVersion?: 2
   id: number
   title: string
   messages: Message[]
@@ -39,13 +66,81 @@ export interface ModelOption {
   provider: string
   label: string
   level: string
+  hint?: string
+  status?: 'recommended' | 'available' | 'slow'
 }
 
-export const DEFAULT_SYSTEM_PROMPT = '请直接、简洁地回答用户的问题。不要使用"首先/让我来/好的，我来"等开场白，不要重复或总结用户的问题，直接从答案开始。'
+export type AgentModeId = 'chat' | 'code' | 'plan'
+
+export interface AgentModeOption {
+  id: AgentModeId
+  label: string
+  hint: string
+  systemHint: string
+}
+
+export const DEFAULT_SYSTEM_PROMPT = '你有工具可以搜索网络获取最新信息。当用户的问题需要实时数据、最新新闻或事实核查时，请主动使用工具搜索，然后基于搜索结果给出准确回答。直接、简洁地回复，不要使用"首先/让我来/好的，我来"等开场白。'
 
 export const AVAILABLE_MODELS: ModelOption[] = [
-  { id: 'moonshotai/kimi-k2.6', provider: 'Kimi', label: 'Kimi-K2.6', level: '高' },
-  { id: 'moonshotai/kimi-k2.5', provider: 'Kimi', label: 'Kimi-K2.5', level: '中' },
-  { id: 'gpt-4o', provider: 'OpenAI', label: 'GPT-4o', level: '高' },
-  { id: 'gpt-4o-mini', provider: 'OpenAI', label: 'GPT-4o-mini', level: '低' },
+  {
+    id: 'deepseek-ai/deepseek-v4-flash',
+    provider: 'NVIDIA',
+    label: 'DeepSeek V4 Flash',
+    level: '快',
+    hint: '响应最快，适合日常问答',
+    status: 'recommended',
+  },
+  {
+    id: 'deepseek-ai/deepseek-v4-pro',
+    provider: 'NVIDIA',
+    label: 'DeepSeek V4 Pro',
+    level: '稳',
+    hint: '质量更稳，适合复杂问题',
+    status: 'available',
+  },
+  {
+    id: 'moonshotai/kimi-k2.6',
+    provider: 'NVIDIA',
+    label: 'Kimi-K2.6',
+    level: '慢',
+    hint: '当前首包较慢，可作为备用',
+    status: 'slow',
+  },
+  {
+    id: 'gpt-4o-mini',
+    provider: 'OpenAI',
+    label: 'GPT-4o-mini',
+    level: '轻',
+    hint: '需要 OpenAI 配置可用',
+    status: 'available',
+  },
+  {
+    id: 'gpt-4o',
+    provider: 'OpenAI',
+    label: 'GPT-4o',
+    level: '高',
+    hint: '需要 OpenAI 配置可用',
+    status: 'available',
+  },
+]
+
+export const AGENT_MODES: AgentModeOption[] = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    hint: '问答与资料整理',
+    systemHint: '当前处于 Chat 模式。优先给出清晰答案；需要最新信息时使用搜索工具；除非用户要求，不要主动提出代码改动步骤。',
+  },
+  {
+    id: 'code',
+    label: 'Code',
+    hint: '实现、调试、审查',
+    systemHint: '当前处于 Code 模式。像在线编程 Agent 一样工作：先理解目标，再给出可执行步骤、文件级改动建议、命令和验证方式；涉及风险操作时明确说明。',
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    hint: '拆解任务与方案',
+    systemHint: '当前处于 Plan 模式。不要急于给最终实现；先拆解目标、列出假设、风险、里程碑和下一步执行清单。',
+  },
 ]

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "web-search",
+    "description": "网络搜索：搜索实时信息、新闻和资料",
+    "icon": "search",
+    "system_prompt": "你可以使用网络搜索工具查找最新信息。在回答用户问题前，先搜索获取相关的最新资料，然后基于搜索结果给出准确、有据可查的回答。",
+    "tools": ["tavily_search", "tavily_extract"]
+  },
+  {
+    "name": "translator",
+    "description": "翻译助手：将文本翻译成目标语言",
+    "icon": "languages",
+    "system_prompt": "你是一个专业翻译。用户会指定目标语言，请直接给出准确、自然的翻译结果，不要添加额外解释。",
+    "tools": []
+  },
+  {
+    "name": "code-review",
+    "description": "代码审查：检查代码质量、安全性和最佳实践",
+    "icon": "code",
+    "system_prompt": "你是一个资深代码审查员。请检查代码中的：1) 潜在 bug  2) 安全问题  3) 性能问题  4) 可读性。给出具体建议，引用有问题的行。",
+    "tools": []
+  },
+  {
+    "name": "summarize",
+    "description": "摘要生成：将长文本浓缩为简洁摘要",
+    "icon": "file-text",
+    "system_prompt": "你是一个专业摘要生成器。请将用户提供的内容提炼为简洁的摘要，保留关键信息，控制长度。",
+    "tools": []
+  }
+]

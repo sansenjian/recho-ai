@@ -37,8 +37,8 @@ services:
     name: recho-gateway
     env: node
     rootDir: backend/gateway
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     plan: free
     envVars:
       - key: NVIDIA_API_KEY
@@ -82,8 +82,8 @@ services:
 |---|---|
 | **Type** | Web Service |
 | **Root Directory** | `backend/gateway` |
-| **Build Command** | `npm install` |
-| **Start Command** | `node index.js` |
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `npm start` |
 | **Plan** | Free |
 
 环境变量：

@@ -4,9 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"cd backend/gateway && node index.js\" \"vite\"",
+    "dev": "concurrently -k -n gateway,vite -c cyan,magenta \"npm run dev:backend\" \"npm run dev:frontend:wait\"",
     "dev:frontend": "vite",
-    "dev:backend": "cd backend/gateway && node index.js",
+    "dev:frontend:wait": "node scripts/wait-for-url.mjs http://127.0.0.1:3000/health 30000 && vite",
+    "dev:backend": "cd backend/gateway && npx tsx src/index.ts",
     "build": "vue-tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",

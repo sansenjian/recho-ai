@@ -4,8 +4,8 @@ services:
     name: recho-gateway
     env: node
     rootDir: backend/gateway
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     plan: free
     envVars:
       - key: NVIDIA_API_KEY
