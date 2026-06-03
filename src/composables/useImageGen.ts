@@ -1,5 +1,5 @@
-import { ref } from 'vue'
-import type { GeneratedImage, ImageGenRequest, ImageGenResponse } from '../types/image'
+import { ref, toRaw } from 'vue'
+import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse } from '../types/image'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const STORAGE_KEY = 'recho-image-history'
@@ -11,9 +11,47 @@ const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 
+function plainReference(reference: ImageGenReference): ImageGenReference | null {
+  const raw = toRaw(reference) as ImageGenReference
+  if (!raw?.dataUrl) return null
+
+  return {
+    id: String(raw.id || ''),
+    title: String(raw.title || '参考图'),
+    dataUrl: String(raw.dataUrl),
+    ...(raw.content ? { content: String(raw.content) } : {}),
+    ...(raw.fileName ? { fileName: String(raw.fileName) } : {}),
+  }
+}
+
+function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
+  const raw = toRaw(image) as GeneratedImage
+  if (!raw?.id || !raw?.dataUrl) return null
+
+  const references = Array.isArray(raw.references)
+    ? raw.references
+      .map(reference => plainReference(reference))
+      .filter((reference): reference is ImageGenReference => Boolean(reference))
+    : []
+
+  return {
+    id: String(raw.id),
+    dataUrl: String(raw.dataUrl),
+    prompt: String(raw.prompt || ''),
+    references,
+    ...(raw.revisedPrompt ? { revisedPrompt: String(raw.revisedPrompt) } : {}),
+    size: String(raw.size || 'auto'),
+    aspectRatio: raw.aspectRatio,
+    resolution: raw.resolution,
+    quality: raw.quality,
+    timestamp: String(raw.timestamp || new Date().toISOString()),
+  }
+}
+
 function sortHistory(images: GeneratedImage[]) {
   return images
-    .filter(item => item?.id && item?.dataUrl)
+    .map(image => plainHistoryImage(image))
+    .filter((item): item is GeneratedImage => Boolean(item))
     .sort((a, b) => Date.parse(b.timestamp || '') - Date.parse(a.timestamp || ''))
 }
 
@@ -95,9 +133,19 @@ function writeAllToDb(db: IDBDatabase, images: GeneratedImage[]): Promise<boolea
   return new Promise((resolve) => {
     const transaction = db.transaction(DB_STORE, 'readwrite')
     const store = transaction.objectStore(DB_STORE)
-    store.clear()
-    for (const image of uniqueHistory(images)) {
-      store.put(image)
+
+    try {
+      store.clear()
+      for (const image of uniqueHistory(images)) {
+        store.put(image)
+      }
+    } catch (err) {
+      console.warn('[image-history] IndexedDB clone failed', err)
+      try {
+        transaction.abort()
+      } catch { /* already closed */ }
+      resolve(false)
+      return
     }
 
     transaction.oncomplete = () => resolve(true)
