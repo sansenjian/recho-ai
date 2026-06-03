@@ -12,6 +12,30 @@ services:
         sync: false
       - key: NVIDIA_BASE_URL
         value: https://integrate.api.nvidia.com/v1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: KIMI_API_KEY
+        sync: false
+      - key: KIMI_BASE_URL
+        value: https://api.moonshot.cn/v1
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: IMAGE_GEN_API_KEY
+        sync: false
+      - key: IMAGE_GEN_BASE_URL
+        value: https://lucen.plus/v1
+      - key: IMAGE_RESPONSES_MODEL
+        value: gpt-image-2
+      - key: IMAGE_RESPONSES_IMAGE_MODEL
+        value: gpt-image-2
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: CORS_ORIGIN
         value: https://recho-ai.onrender.com
 
