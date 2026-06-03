@@ -1,5 +1,5 @@
 import dotenv from 'dotenv'
-dotenv.config()
+dotenv.config({ override: true })
 
 export const PORT = parseInt(process.env.PORT || '3000', 10)
 export const CORS_ORIGIN = (process.env.CORS_ORIGIN || 'http://localhost:5173')
@@ -22,3 +22,16 @@ export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL
 
 export const KIMI_API_KEY = process.env.KIMI_API_KEY
 export const KIMI_BASE_URL = process.env.KIMI_BASE_URL
+
+export const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
+export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  ''
+export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+
+export const IMAGE_GEN_API_KEY = process.env.IMAGE_GEN_API_KEY || ''
+export const IMAGE_GEN_BASE_URL = process.env.IMAGE_GEN_BASE_URL || 'https://lucen.plus/v1'
+export const IMAGE_RESPONSES_MODEL = process.env.IMAGE_RESPONSES_MODEL || 'gpt-image-2'
+export const IMAGE_RESPONSES_IMAGE_MODEL = process.env.IMAGE_RESPONSES_IMAGE_MODEL || 'gpt-image-1'

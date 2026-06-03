@@ -61,6 +61,7 @@ const detail = computed(() => {
   border-radius: 999px;
   background: #fff;
   color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
 .context-ring {
@@ -77,7 +78,7 @@ const detail = computed(() => {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface);
 }
 
 .context-percent {

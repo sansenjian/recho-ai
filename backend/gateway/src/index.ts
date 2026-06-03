@@ -8,6 +8,8 @@ import chatRouter from './routes/chat.js'
 import skillsRouter from './routes/skills.js'
 import toolsRouter from './routes/tools.js'
 import healthRouter from './routes/health.js'
+import imageRouter from './routes/image.js'
+import configRouter from './routes/config.js'
 
 const app = express()
 
@@ -23,6 +25,8 @@ initClients()
 app.use('/api', chatRouter)
 app.use('/api', skillsRouter)
 app.use('/api', toolsRouter)
+app.use('/api', imageRouter)
+app.use('/api', configRouter)
 app.use('/', healthRouter)
 
 app.get('/', (_req, res) => {

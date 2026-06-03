@@ -17,6 +17,7 @@ import ChatMessage from './components/ChatMessage.vue'
 import ChatInput from './components/ChatInput.vue'
 import ChatSidebar from './components/ChatSidebar.vue'
 import AgentWorkspace from './components/AgentWorkspace.vue'
+import ImageCanvas from './components/ImageCanvas.vue'
 import ToolActivity from './components/ToolActivity.vue'
 import StreamingStatus from './components/StreamingStatus.vue'
 import ThinkingActivity from './components/ThinkingActivity.vue'
@@ -78,9 +79,17 @@ function thinkingForMessage(msg: Message) {
 // --- Sidebar ---
 const showSidebar = ref(false)
 const showAgentPanel = ref(true)
+const showImagePanel = ref(false)
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
-function toggleAgentPanel() { showAgentPanel.value = !showAgentPanel.value }
+function toggleAgentPanel() {
+  showAgentPanel.value = !showAgentPanel.value
+  if (showAgentPanel.value) showImagePanel.value = false
+}
+function toggleImagePanel() {
+  showImagePanel.value = !showImagePanel.value
+  if (showImagePanel.value) showAgentPanel.value = false
+}
 
 // --- System prompt editor ---
 const showSystemEditor = ref(false)
@@ -262,6 +271,10 @@ onUnmounted(() => {
 
 function handleChangeModel(m: typeof AVAILABLE_MODELS[number]) { currentModel.value = m }
 function handleNewChat() { createConversation(); showSidebar.value = false }
+function handleImageToChat(dataUrl: string) {
+  pendingImages.value = [...pendingImages.value, dataUrl]
+  showImagePanel.value = false
+}
 </script>
 
 <template>
@@ -289,10 +302,12 @@ function handleNewChat() { createConversation(); showSidebar.value = false }
       <ChatHeader
         :show-sidebar="showSidebar"
         :show-agent-panel="showAgentPanel"
+        :show-image-panel="showImagePanel"
         :agent-mode="currentAgentMode"
         :messages="messages"
         @toggle-sidebar="toggleSidebar"
         @toggle-agent-panel="toggleAgentPanel"
+        @toggle-image-panel="toggleImagePanel"
         @new-chat="handleNewChat"
         @toggle-settings="toggleSystemEditor"
       />
@@ -319,7 +334,13 @@ function handleNewChat() { createConversation(); showSidebar.value = false }
         </div>
       </div>
 
-      <main ref="chatAreaRef" class="chat-area">
+      <template v-if="showImagePanel">
+        <ImageCanvas
+          @send-to-chat="handleImageToChat"
+        />
+      </template>
+      <template v-else>
+        <main ref="chatAreaRef" class="chat-area">
         <div class="messages-container">
           <div v-for="msg in messages" :key="msg.id" class="message-wrapper">
             <ThinkingActivity
@@ -369,10 +390,11 @@ function handleNewChat() { createConversation(); showSidebar.value = false }
         @upload="triggerFileInput"
         @select-skill="selectSkill"
       />
+      </template>
     </div>
 
     <AgentWorkspace
-      v-if="showAgentPanel"
+      v-if="showAgentPanel && !showImagePanel"
       :modes="AGENT_MODES"
       :active-mode="currentAgentMode"
       :skills="skills"
@@ -386,23 +408,179 @@ function handleNewChat() { createConversation(); showSidebar.value = false }
 </template>
 
 <style scoped>
-.app-shell { display: flex; height: 100vh; background: #fff; position: relative; }
+.app-shell {
+  display: flex;
+  height: 100vh;
+  background: var(--bg);
+  position: relative;
+  color: var(--text-primary);
+}
+
 .sidebar-backdrop { display: none; }
-.chat-layout { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.system-editor-panel { max-width: 720px; margin: 0 auto; width: 100%; padding: 12px 24px; background: #f9f9fb; border-bottom: 1px solid var(--border); }
-.system-editor-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.system-editor-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.system-editor-close { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: var(--text-secondary); cursor: pointer; }
-.system-editor-close:hover { background: var(--hover-bg); color: var(--text-primary); }
-.system-editor-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 13px; font-family: var(--font-sans); line-height: 1.5; color: var(--text-primary); resize: vertical; outline: none; min-height: 80px; }
-.system-editor-textarea:focus { border-color: var(--accent); }
-.system-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.system-editor-btn { padding: 4px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-size: 12px; cursor: pointer; }
-.system-editor-btn.save { background: var(--accent); color: #fff; border-color: var(--accent); }
-.chat-area { flex: 1; overflow-y: auto; padding: 0; }
-.messages-container { max-width: 720px; margin: 0 auto; padding: 24px 24px 32px; }
-.message-wrapper { margin-bottom: 24px; }
-.drag-overlay { position: fixed; inset: 0; background: rgba(99, 102, 241, 0.08); backdrop-filter: blur(4px); z-index: 200; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--accent); border-radius: 16px; margin: 24px; pointer-events: none; }
-.drag-hint { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--accent); font-size: 16px; font-weight: 600; background: #fff; padding: 32px 48px; border-radius: 16px; box-shadow: 0 8px 32px rgba(99, 102, 241, 0.15); }
-@media (max-width: 768px) { .sidebar-backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 50; } .messages-container { padding: 16px 12px 24px; } }
+
+.chat-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.system-editor-panel {
+  width: min(920px, calc(100% - 48px));
+  margin: 12px auto 0;
+  padding: 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.system-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.system-editor-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.system-editor-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.system-editor-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.system-editor-textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  line-height: 1.55;
+  color: var(--text-primary);
+  resize: vertical;
+  outline: none;
+  min-height: 96px;
+}
+
+.system-editor-textarea:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.system-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.system-editor-btn {
+  min-height: 30px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.system-editor-btn.save {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.86), rgba(255, 255, 255, 0) 180px),
+    var(--surface);
+}
+
+.messages-container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 28px 28px 36px;
+}
+
+.message-wrapper {
+  margin-bottom: 22px;
+}
+
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(5px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  margin: 24px;
+  pointer-events: none;
+}
+
+.drag-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--accent-strong);
+  font-size: 16px;
+  font-weight: 700;
+  background: #fff;
+  padding: 32px 48px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.38);
+    z-index: 50;
+  }
+
+  .messages-container {
+    padding: 18px 14px 28px;
+  }
+
+  .system-editor-panel {
+    width: calc(100% - 24px);
+  }
+}
 </style>

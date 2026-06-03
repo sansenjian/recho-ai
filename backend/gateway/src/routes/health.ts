@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { clients } from '../clients/factory.js'
+import { hasSupabaseConfig } from '../clients/supabase.js'
 import { mcpManager } from '../mcp/manager.js'
 import { skillLoader } from '../skills/loader.js'
 
@@ -12,6 +13,7 @@ router.get('/health', (_req: Request, res: Response) => {
   }
   if (clients.openai) providers.push('openai')
   if (clients.kimi) providers.push('kimi')
+  if (hasSupabaseConfig()) providers.push('supabase')
   const mcpStatus = Array.from(mcpManager.connections.entries()).map(([n, c]) => `${n}: ${c.status}`)
   res.json({ status: 'ok', providers, skills: skillLoader.getAll().length, mcp: mcpStatus })
 })

@@ -1,42 +1,66 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 const props = defineProps<{
   content?: string
   active?: boolean
   status?: 'running' | 'done' | 'cancelled'
   embedded?: boolean
+  placeholder?: boolean
 }>()
 
-const expanded = ref(false)
-
 const normalized = computed(() => (props.content || '').trim())
+const isWaitingForThinking = computed(() => props.status === 'running' && !normalized.value)
+const hasPlaceholder = computed(() => props.placeholder && !normalized.value)
+const shouldAutoExpand = computed(() => props.active || props.status === 'running')
+const expanded = ref(shouldAutoExpand.value)
+const contentEl = ref<HTMLElement | null>(null)
 const lines = computed(() => normalized.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
 const preview = computed(() => {
   const first = lines.value[0] || ''
   return first.length > 96 ? `${first.slice(0, 96)}...` : first
 })
 
-watch(() => props.active, (active) => {
-  if (active && normalized.value) expanded.value = true
+function scrollThinkingToBottom() {
+  const el = contentEl.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], async ([autoExpand]) => {
+  if (autoExpand && (normalized.value || hasPlaceholder.value || isWaitingForThinking.value)) {
+    expanded.value = true
+    await nextTick()
+    scrollThinkingToBottom()
+  }
 })
 </script>
 
 <template>
-  <section v-if="normalized" class="thinking-activity" :class="{ embedded }">
+  <section v-if="normalized || hasPlaceholder || isWaitingForThinking" class="thinking-activity" :class="{ embedded, placeholder: hasPlaceholder || isWaitingForThinking }">
     <button class="thinking-header" type="button" @click="expanded = !expanded">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+      <span class="thinking-rail">
+        <span class="thinking-dot" :class="{ active, cancelled: status === 'cancelled' }" />
+      </span>
+      <span class="thinking-copy">
+        <span class="thinking-row">
+          <span class="thinking-title">{{ status === 'running' ? '思考中' : '思考已完成' }}</span>
+          <span v-if="status === 'cancelled'" class="thinking-status">已停止</span>
+        </span>
+        <span v-if="!expanded" class="thinking-preview">{{ hasPlaceholder ? '模型未返回可展示的思考文本' : isWaitingForThinking ? '正在等待模型返回可展示思考内容' : preview }}</span>
+      </span>
+      <svg class="thinking-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
         <polyline v-if="expanded" points="6 9 12 15 18 9" />
         <polyline v-else points="9 6 15 12 9 18" />
       </svg>
-      <span class="thinking-dot" :class="{ active, cancelled: status === 'cancelled' }" />
-      <span class="thinking-title">思考过程</span>
-      <span v-if="status === 'cancelled'" class="thinking-status">已停止</span>
-      <span v-if="!expanded" class="thinking-preview">{{ preview }}</span>
     </button>
 
     <div v-if="expanded" class="thinking-body">
-      <div class="thinking-content">{{ normalized }}</div>
+      <div class="thinking-timeline">
+        <div v-if="isWaitingForThinking" class="thinking-placeholder">正在等待模型返回可展示思考内容。</div>
+        <div v-else-if="hasPlaceholder" class="thinking-placeholder">模型本轮执行了思考流程，但没有返回可展示的思考文本。</div>
+        <div v-else ref="contentEl" class="thinking-content">{{ normalized }}</div>
+      </div>
     </div>
   </section>
 </template>
@@ -46,8 +70,9 @@ watch(() => props.active, (active) => {
   margin: 0 0 8px 40px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fbfbfd;
+  background: var(--surface-raised);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .thinking-activity.embedded {
@@ -56,11 +81,11 @@ watch(() => props.active, (active) => {
 
 .thinking-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 0;
   width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
+  min-height: 40px;
+  padding: 9px 12px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -73,12 +98,21 @@ watch(() => props.active, (active) => {
   background: var(--hover-bg);
 }
 
+.thinking-rail {
+  position: relative;
+  width: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  justify-content: center;
+}
+
 .thinking-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #94a3b8;
+  background: var(--text-secondary);
   flex-shrink: 0;
+  margin-top: 6px;
 }
 
 .thinking-dot.active {
@@ -89,6 +123,20 @@ watch(() => props.active, (active) => {
 .thinking-dot.cancelled {
   background: #f59e0b;
   animation: none;
+}
+
+.thinking-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .thinking-title {
@@ -114,27 +162,54 @@ watch(() => props.active, (active) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
+}
+
+.thinking-chevron {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--text-muted);
 }
 
 .thinking-body {
   border-top: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 0 12px 12px;
+  background: #fbfdff;
+}
+
+.thinking-placeholder {
+  padding-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.thinking-timeline {
+  position: relative;
+  margin-left: 10px;
+  padding-left: 18px;
+}
+
+.thinking-timeline::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--border-strong);
 }
 
 .thinking-content {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--text-secondary);
-}
-
-.thinking-content {
   font-family: var(--font-mono);
   max-height: 260px;
   overflow-y: auto;
+  padding-top: 10px;
 }
 
 @keyframes pulse {

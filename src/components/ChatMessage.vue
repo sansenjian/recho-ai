@@ -18,6 +18,13 @@ defineEmits<{
 
 const blocks = computed(() => props.msg.blocks ?? [])
 const hasBlocks = computed(() => props.msg.role === 'assistant' && blocks.value.length > 0)
+const hasThinkingBlock = computed(() => blocks.value.some(block => block.type === 'thinking'))
+const hasToolBlock = computed(() => blocks.value.some(block => block.type === 'tool_use'))
+const shouldShowThinkingPlaceholder = computed(() =>
+  props.msg.role === 'assistant' &&
+  hasToolBlock.value &&
+  !hasThinkingBlock.value,
+)
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
   return getRenderedText(block.content)
@@ -41,6 +48,12 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
   <div v-if="msg.role === 'assistant'" class="msg-row assistant">
     <div class="assistant-avatar">AI</div>
     <div class="msg-body">
+      <ThinkingActivity
+        v-if="shouldShowThinkingPlaceholder"
+        embedded
+        placeholder
+        status="done"
+      />
       <template v-if="hasBlocks">
         <template v-for="block in blocks" :key="block.id">
           <ThinkingActivity
@@ -114,22 +127,30 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 
 .assistant-avatar {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #eaf2ff;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #0f172a;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  font-weight: 600;
-  color: #2a7fff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #bbf7d0;
   margin-top: 2px;
+  box-shadow: var(--shadow-sm);
 }
 
 .msg-body {
   flex: 1;
   min-width: 0;
+  max-width: 780px;
+}
+
+.assistant :deep(.thinking-activity),
+.assistant :deep(.tool-activity) {
+  margin-top: 8px;
 }
 
 .user-wrapper {
@@ -158,7 +179,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #b0b0be;
+  color: var(--text-muted);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
@@ -169,38 +190,49 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 }
 
 .action-btn.done {
-  color: #22c55e;
+  color: var(--accent);
 }
 
 .msg-time {
   font-size: 11px;
-  color: #b0b0be;
+  color: var(--text-muted);
   margin-left: 4px;
   white-space: nowrap;
 }
 
 .msg-text {
   font-size: 15px;
-  line-height: 1.65;
-  color: #1a1a2e;
+  line-height: 1.68;
+  color: var(--text-primary);
   word-break: break-word;
 }
 
-.assistant .msg-text { font-weight: 600; }
+.assistant .msg-text {
+  font-weight: 500;
+}
 
 .assistant .block-text {
-  margin-top: 6px;
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .assistant .block-text.incomplete {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: #fffbeb;
   color: #92400e;
 }
 
 .user .msg-text {
-  color: #5a5a6e;
+  color: var(--text-primary);
   background: var(--bubble-bg);
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: 9px 13px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
 }
 
 .msg-images {
@@ -213,7 +245,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 .msg-image {
   max-width: 240px;
   max-height: 240px;
-  border-radius: 10px;
+  border-radius: 8px;
   object-fit: cover;
   border: 1px solid var(--border);
   cursor: pointer;

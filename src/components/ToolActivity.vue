@@ -16,6 +16,7 @@ const tools = computed(() => [
 ])
 
 const hasRunningTools = computed(() => props.activeToolCalls.some(tool => tool.status === 'running'))
+const runningCount = computed(() => props.activeToolCalls.filter(tool => tool.status === 'running').length)
 
 const title = computed(() => {
   const counts = new Map<string, number>()
@@ -56,6 +57,15 @@ function previewResult(result?: string) {
   return text.length > 180 ? `${text.slice(0, 180)}...` : text
 }
 
+function toolLabel(name: string) {
+  if (name.includes('search')) return '搜索网页'
+  if (name.includes('extract')) return '提取网页'
+  if (name.includes('crawl')) return '抓取站点'
+  if (name.includes('map')) return '扫描站点'
+  if (name.includes('research')) return '深度研究'
+  return name
+}
+
 function statusLabel(status = 'running') {
   if (status === 'done') return '完成'
   if (status === 'error') return '失败'
@@ -72,13 +82,22 @@ function isTerminalError(status?: string) {
 <template>
   <section v-if="tools.length > 0" class="tool-activity" :class="{ embedded }">
     <button class="tool-activity-header" type="button" @click="expanded = !expanded">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+      <span class="tool-activity-rail">
+        <span class="tool-activity-pulse" :class="{ idle: !hasRunningTools }" />
+      </span>
+      <span class="tool-activity-copy">
+        <span class="tool-activity-row">
+          <span class="tool-activity-title">{{ hasRunningTools ? '工具调用中' : '工具调用完成' }}</span>
+          <span class="tool-activity-count">{{ tools.length }}</span>
+        </span>
+        <span class="tool-activity-subtitle">
+          {{ hasRunningTools ? `运行中 ${runningCount} 个` : title }}
+        </span>
+      </span>
+      <svg class="tool-activity-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
         <polyline v-if="expanded" points="6 9 12 15 18 9" />
         <polyline v-else points="9 6 15 12 9 18" />
       </svg>
-      <span class="tool-activity-title">{{ title }}</span>
-      <span v-if="hasRunningTools" class="tool-activity-pulse" />
-      <span class="tool-activity-count">{{ tools.length }}</span>
     </button>
 
     <div v-if="expanded" class="tool-activity-body">
@@ -99,7 +118,7 @@ function isTerminalError(status?: string) {
           </span>
           <div class="tool-card-copy">
             <div class="tool-card-topline">
-              <span class="tool-name">{{ tool.name }}</span>
+              <span class="tool-name">{{ toolLabel(tool.name) }}</span>
               <span class="tool-status" :class="{ failed: isTerminalError(tool.status) }">{{ statusLabel(tool.status) }}</span>
               <span class="tool-duration">{{ formatDuration(tool) }}</span>
             </div>
@@ -121,8 +140,9 @@ function isTerminalError(status?: string) {
   margin: 4px 0 16px 40px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fbfbfd;
+  background: var(--surface-raised);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-activity.embedded {
@@ -131,11 +151,11 @@ function isTerminalError(status?: string) {
 
 .tool-activity-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 0;
   width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
+  min-height: 40px;
+  padding: 9px 12px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -148,23 +168,48 @@ function isTerminalError(status?: string) {
   background: var(--hover-bg);
 }
 
-.tool-activity-title {
+.tool-activity-rail {
+  width: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.tool-activity-copy {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tool-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-activity-title {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
+.tool-activity-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .tool-activity-count {
-  min-width: 20px;
+  min-width: 22px;
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: 11px;
@@ -175,46 +220,79 @@ function isTerminalError(status?: string) {
 }
 
 .tool-activity-pulse {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--accent);
+  margin-top: 6px;
   animation: pulse 1s ease-in-out infinite;
+}
+
+.tool-activity-pulse.idle {
+  background: var(--text-secondary);
+  animation: none;
+}
+
+.tool-activity-chevron {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--text-muted);
 }
 
 .tool-activity-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px;
+  padding: 0 12px 12px;
   border-top: 1px solid var(--border);
 }
 
 .tool-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
+  position: relative;
+  margin-left: 10px;
+  padding-left: 18px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.tool-card.running {
-  border-color: rgba(99, 102, 241, 0.34);
+.tool-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: -6px;
+  border-left: 1px dashed var(--border-strong);
 }
 
-.tool-card.failed {
-  border-color: rgba(245, 158, 11, 0.42);
+.tool-card:last-child::before {
+  bottom: 10px;
 }
 
 .tool-card-main {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
   display: flex;
   gap: 9px;
   padding: 9px 10px;
+}
+
+.tool-card.running .tool-card-main {
+  border-color: rgba(22, 163, 74, 0.34);
+}
+
+.tool-card.failed .tool-card-main {
+  border-color: rgba(245, 158, 11, 0.42);
 }
 
 .tool-icon {
   width: 18px;
   height: 18px;
   margin-top: 1px;
-  color: #16a34a;
+  color: var(--accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;

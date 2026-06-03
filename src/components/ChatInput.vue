@@ -249,7 +249,31 @@ function selectModel(m: ModelOption) {
           @click="pickSkill(s)"
           @mouseenter="skillHighlight = idx"
         >
-          <span class="skill-option-icon">{{ s.icon === 'languages' ? '🌐' : s.icon === 'code' ? '🔍' : s.icon === 'file-text' ? '📝' : '⚡' }}</span>
+          <span class="skill-option-icon">
+            <svg v-if="s.icon === 'languages'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <path d="M5 8h10" />
+              <path d="M8 4v4" />
+              <path d="M3 12c3.5 0 6.5-2.5 7.5-6" />
+              <path d="M7 12c1.3 1.6 3 2.7 5 3.2" />
+              <path d="M14 20l4-9 4 9" />
+              <path d="M16 16h4" />
+            </svg>
+            <svg v-else-if="s.icon === 'code'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <path d="M8 9l-4 3 4 3" />
+              <path d="M16 9l4 3-4 3" />
+              <path d="M13 5l-2 14" />
+            </svg>
+            <svg v-else-if="s.icon === 'file-text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M8 13h8" />
+              <path d="M8 17h6" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+          </span>
           <div class="skill-option-info">
             <span class="skill-option-name">/{{ s.name }}</span>
             <span class="skill-option-desc">{{ s.description }}</span>
@@ -299,8 +323,8 @@ function selectModel(m: ModelOption) {
 <style scoped>
 .chat-footer {
   padding: 12px 24px 16px;
-  background: #fff;
-  border-top: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(255,255,255,0), var(--surface) 22%);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -376,7 +400,7 @@ function selectModel(m: ModelOption) {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: rgba(99, 102, 241, 0.1);
+  background: var(--accent-soft);
   border: 1px solid var(--accent);
   border-radius: 16px;
   font-size: 12px;
@@ -401,7 +425,7 @@ function selectModel(m: ModelOption) {
 }
 
 .skill-tag-close:hover {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(22, 163, 74, 0.16);
 }
 
 /* skill dropdown */
@@ -413,7 +437,7 @@ function selectModel(m: ModelOption) {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow-md);
   padding: 4px;
   z-index: 100;
   max-height: 200px;
@@ -466,7 +490,7 @@ function selectModel(m: ModelOption) {
 
 .chat-input {
   width: 100%;
-  padding: 12px 56px 12px 16px;
+  padding: 13px 58px 13px 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--input-bg);
@@ -478,7 +502,8 @@ function selectModel(m: ModelOption) {
   outline: none;
   transition: border-color 0.15s, background 0.15s;
   max-height: 200px;
-  min-height: 44px;
+  min-height: 48px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), var(--shadow-sm);
 }
 
 .chat-input:disabled {
@@ -487,7 +512,7 @@ function selectModel(m: ModelOption) {
 }
 
 .chat-input::placeholder {
-  color: #b0b0be;
+  color: var(--text-muted);
 }
 
 .chat-input:focus {
@@ -533,12 +558,16 @@ function selectModel(m: ModelOption) {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.15s;
 }
 
 .send-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.send-btn:not(:disabled):hover {
+  background: var(--accent-strong);
 }
 
 .stop-btn {
@@ -579,6 +608,10 @@ function selectModel(m: ModelOption) {
   color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.15s;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .footer-link:hover {
@@ -600,16 +633,17 @@ function selectModel(m: ModelOption) {
   padding: 5px 8px 5px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface-raised);
   color: var(--text-primary);
   cursor: pointer;
   font-family: inherit;
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
 .model-selector:hover {
-  border-color: rgba(99, 102, 241, 0.35);
-  background: #fbfbff;
+  border-color: rgba(22, 163, 74, 0.34);
+  background: #fbfffc;
 }
 
 .model-selector-icon {
@@ -675,7 +709,7 @@ function selectModel(m: ModelOption) {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow-md);
   padding: 8px;
   width: min(420px, calc(100vw - 48px));
   z-index: 100;
@@ -701,7 +735,7 @@ function selectModel(m: ModelOption) {
 }
 
 .model-option.active {
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--accent-soft);
 }
 
 .model-option-main {

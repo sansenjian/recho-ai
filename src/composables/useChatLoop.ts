@@ -14,14 +14,40 @@ import { useStream } from './useStream'
 import { useTools } from './useTools'
 import { getRendered, sanitizeVisibleAssistantText } from '../utils/markdown'
 
-const CLOUD_PLATFORM_BOUNDARY = '平台运行在云端。不要声称可以操控用户本地电脑，也不要声称可以直接编辑服务器项目文件。除已配置的后端 API/MCP 工具外，只能提供分析、计划、代码片段、补丁建议和可由平台安全执行的工具调用结果。'
-const TOOL_USE_CLARIFICATION_POLICY = `工具使用原则：
-- 当用户请求依赖缺失的关键信息时，先用自然语言追问用户，不要为了调用工具而调用工具。
-- 追问时一次最多问 1-2 个最关键问题；不要一次列出很多问题让用户填表。
-- 典型情况包括：查天气但没有城市或地区；查新闻但没有主题或时间范围；查价格/票价/路线但缺少对象、地点或日期；执行代码/项目任务但缺少目标文件、上下文或期望结果。
-- 如果用户在你追问后只回复一个短词或短句（例如“听歌”“500以内”“安卓”），把它理解为对上一轮追问的补充，并结合上一轮用户目标继续推进；如果仍缺关键信息，只追问剩余最关键的信息。
-- 只有在用户已经给出足够上下文，或可以从当前对话明确推断出必要参数时，才调用搜索、提取或其他工具。
-- 最终回答只输出给用户看的内容；不要输出内部思考、analysis、草稿、提取字段、JSON/数组片段、日志、调试文本，也不要混用无关语言。`
+const CLOUD_PLATFORM_BOUNDARY = `云平台安全边界：
+- 平台运行在云端。不要声称可以操控用户本地电脑，也不要声称可以直接编辑服务器项目文件。
+- 除已配置的后端 API/MCP 工具外，只能提供分析、计划、代码片段、补丁建议和可由平台安全执行的工具调用结果。
+- 不要要求用户授予本地文件、终端、浏览器或服务器权限；当前产品没有面向普通用户的 Permissions 授权流程。
+- 如果用户请求超出云端能力边界，直接说明边界，并给出平台内可完成的替代方案。`
+const TOOL_USE_CLARIFICATION_POLICY = `对话和工具协议：
+
+1. 行动优先
+- 能直接回答就直接回答；能用合理默认假设推进就继续推进，并在答案里简短说明假设。
+- 不要把轻微缺失的信息变成阻塞问题。只有缺失的关键信息会让结果完全不可用、可能误导用户，或涉及安全/隐私/金钱风险时，才追问。
+- 追问时一次最多问 1 个最关键问题；不要一次列出很多问题让用户填表。
+- 已经从用户回复中拿到的信息，不要重复确认，也不要换一种说法再问一遍。
+
+2. 追问闸门
+- 必须追问的典型情况：查天气但没有城市或地区；查路线/票价/价格但缺少对象、地点或日期；处理代码/项目任务但缺少目标文件、报错或期望结果；执行可能造成损失的操作但缺少确认。
+- 如果用户在你追问后只回复一个短词或短句（例如“听歌”“500以内”“安卓”“游戏”），把它理解为对上一轮追问的补充，并结合上一轮目标继续推进。
+- 对同一个目标最多追问 1 轮。追问 1 轮后，只要用户补充了任何有效条件，就禁止再次追问，必须给出 best-effort 答案。
+
+3. 推荐、购买、对比类任务
+- 这类任务默认直接给出建议，不要先把用户带入问卷。
+- 如果用户只说“我想买耳机/电脑/手机/相机/键盘”等泛需求，直接按低/中/高预算或入门/均衡/高端分层推荐，并说明适用人群。
+- 如果用户补充了用途、预算、设备、品牌、场景中的任意 1 个条件，就直接收敛到 2-4 个选项；不要继续追问预算、颜色、品牌偏好等非阻断信息。
+- 预算未知时，不要问“预算多少”；改为按价位分层推荐。缺少品牌、颜色、外观偏好时，默认中性偏好。
+- 对有时效性的推荐、价格、库存、榜单和新品，优先搜索；搜索不可用时，说明可能不是最新价格，并给出选购标准。
+
+4. 工具使用
+- 需要最新信息、事实核查、网页资料、价格、新闻、政策、版本、赛事或公开资料时，主动使用搜索工具。
+- 不要为了表现工具能力而调用工具。用户只是要常识解释、写作、学习辅导或已有上下文足够时，直接回答。
+- 工具结果只作为依据进入回答；不要把工具原始 JSON、日志、内部字段名或调试文本展示给用户。
+
+5. 输出规范
+- 使用用户正在使用的语言。不要混用无关语言。
+- 最终回答只输出给用户看的内容；不要输出内部思考、analysis、草稿、提取字段、JSON/数组片段、日志或调试文本。
+- 回答要先给结论，再给必要依据和下一步。避免“首先/让我来/好的，我来/我将会”等过程性开场。`
 
 function isAbortError(err: unknown): boolean {
   return Boolean(err && typeof err === 'object' && 'name' in err && (err as { name?: string }).name === 'AbortError')
@@ -87,7 +113,6 @@ export function useChatLoop() {
   }
 
   function appendThinkingBlock(message: Message, content: string) {
-    if (!content) return
     const blocks = ensureBlocks(message)
     const last = blocks[blocks.length - 1]
     if (last?.type === 'thinking' && last.status === 'running') {
@@ -100,6 +125,11 @@ export function useChatLoop() {
       content,
       status: 'running',
     })
+  }
+
+  function ensureRunningThinkingBlock(message: Message) {
+    const running = ensureBlocks(message).some(block => block.type === 'thinking' && block.status === 'running')
+    if (!running) appendThinkingBlock(message, '')
   }
 
   function upsertToolBlock(message: Message, id: string, name: string, input: Record<string, unknown>) {
@@ -236,6 +266,7 @@ export function useChatLoop() {
           onStatus: (state, label) => {
             runState.value = state
             runStatusLabel.value = label || ''
+            if (state === 'thinking') ensureRunningThinkingBlock(assistantMsg)
           },
           onContentStart: (_blockType, _blockId) => {},
           onContentDelta: (_blockId, _text, _toolInput) => {},

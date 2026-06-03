@@ -71,13 +71,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 0 0 12px 40px;
-  min-height: 30px;
-  padding: 5px 10px;
+  min-height: 32px;
+  padding: 5px 11px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #fbfbfd;
+  background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 .status-spark {

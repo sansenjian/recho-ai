@@ -76,16 +76,16 @@ defineEmits<{
 
 <style scoped>
 .agent-panel {
-  width: 292px;
+  width: 320px;
   border-left: 1px solid var(--border);
-  background: #fbfbfd;
-  padding: 14px;
+  background: #f8fafc;
+  padding: 16px;
   overflow-y: auto;
   flex-shrink: 0;
 }
 
 .panel-section {
-  padding: 12px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -124,7 +124,8 @@ defineEmits<{
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  transition: border-color 0.15s, background 0.15s;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
 .mode-card {
@@ -136,7 +137,8 @@ defineEmits<{
 .mode-card.active,
 .skill-row.active {
   border-color: var(--accent);
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.12);
 }
 
 .mode-name,
@@ -170,11 +172,14 @@ defineEmits<{
 }
 
 .clear-btn {
-  border: none;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
 }
 
 .tool-row {
@@ -186,6 +191,7 @@ defineEmits<{
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-name {
@@ -206,7 +212,7 @@ defineEmits<{
 }
 
 .check {
-  color: #16a34a;
+  color: var(--accent);
   font-size: 13px;
 }
 

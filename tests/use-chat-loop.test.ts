@@ -100,6 +100,42 @@ describe('useChatLoop', () => {
     expect(assistant?.content).toBe('根据搜索结果整理如下')
   })
 
+  it('keeps assistant blocks without thinking text when the model only emits tools and answer text', async () => {
+    streamChatMock.mockImplementationOnce(async (_messages, callbacks: any) => {
+      callbacks.onToolCall('tool-1', 'tavily_search', { query: '游戏耳机推荐' })
+      callbacks.onToolResult('tool-1', 'tavily_search', 'search result', false)
+      callbacks.onToolEnd('tool-1', 'done')
+      callbacks.onDelta('根据搜索结果，整理了几款游戏耳机。')
+      callbacks.onMessageComplete?.({ finishReason: 'stop', incomplete: false })
+    })
+    const { submitMessage } = useChatLoop()
+
+    await submitMessage('推荐游戏耳机', 'test-model')
+
+    const assistant = conversations.value[0].messages.find(m => m.role === 'assistant')
+    expect(assistant?.blocks?.some(block => block.type === 'thinking')).toBe(false)
+    expect(assistant?.blocks).toEqual([
+      {
+        id: 'tool-1',
+        type: 'tool_use',
+        toolUseId: 'tool-1',
+        name: 'tavily_search',
+        input: { query: '游戏耳机推荐' },
+        result: 'search result',
+        isError: false,
+        status: 'done',
+        startedAt: expect.any(Number),
+        completedAt: expect.any(Number),
+      },
+      {
+        id: expect.any(String),
+        type: 'assistant_text',
+        content: '根据搜索结果，整理了几款游戏耳机。',
+        status: 'complete',
+      },
+    ])
+  })
+
   it('stores visible thinking on the assistant message without mixing it into content', async () => {
     streamChatMock.mockImplementationOnce(async (_messages, callbacks: any) => {
       callbacks.onThinkingDelta('先判断是否需要搜索')
@@ -127,6 +163,34 @@ describe('useChatLoop', () => {
     ])
     expect(assistant?.thinking).toBe('先判断是否需要搜索')
     expect(assistant?.content).toBe('需要搜索最新天气。')
+  })
+
+  it('shows a running thinking block as soon as the stream enters thinking state', async () => {
+    let releaseStream!: () => void
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    streamChatMock.mockImplementationOnce(async (_messages, callbacks: any) => {
+      callbacks.onStatus('thinking', '正在思考')
+      markStarted()
+      await new Promise<void>(resolve => { releaseStream = resolve })
+    })
+    const { submitMessage } = useChatLoop()
+
+    const pending = submitMessage('分析一个复杂问题', 'test-model')
+    await started
+
+    const assistant = conversations.value[0].messages.find(m => m.role === 'assistant')
+    expect(assistant?.blocks).toEqual([
+      {
+        id: expect.any(String),
+        type: 'thinking',
+        content: '',
+        status: 'running',
+      },
+    ])
+
+    releaseStream()
+    await pending
   })
 
   it('marks unfinished blocks as cancelled when generation is stopped', async () => {
@@ -174,10 +238,20 @@ describe('useChatLoop', () => {
     expect(streamChatMock).toHaveBeenCalledOnce()
     const messages = streamChatMock.mock.calls[0]?.[0] as unknown as ChatMessage[]
     expect(messages[0].role).toBe('system')
+    expect(messages[0].content).toContain('Recho AI 的云端助手')
+    expect(messages[0].content).toContain('行动优先')
     expect(messages[0].content).toContain('缺失的关键信息')
     expect(messages[0].content).toContain('查天气但没有城市或地区')
-    expect(messages[0].content).toContain('一次最多问 1-2 个最关键问题')
+    expect(messages[0].content).toContain('一次最多问 1 个最关键问题')
     expect(messages[0].content).toContain('短词或短句')
+    expect(messages[0].content).toContain('不要重复确认')
+    expect(messages[0].content).toContain('最多追问 1 轮')
+    expect(messages[0].content).toContain('我想买耳机')
+    expect(messages[0].content).toContain('默认直接给出建议')
+    expect(messages[0].content).toContain('不要问“预算多少”')
+    expect(messages[0].content).toContain('按价位分层推荐')
+    expect(messages[0].content).toContain('禁止再次追问')
+    expect(messages[0].content).toContain('不要要求用户授予本地文件、终端、浏览器或服务器权限')
     expect(messages[0].content).toContain('不要输出内部思考')
   })
 

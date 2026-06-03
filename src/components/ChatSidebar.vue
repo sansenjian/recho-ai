@@ -335,9 +335,9 @@ function onContextMenuBackdrop() {
 
 <style scoped>
 .sidebar {
-  width: 260px;
+  width: 280px;
   height: 100%;
-  background: #f9f9fb;
+  background: #f8fafc;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -354,8 +354,9 @@ function onContextMenuBackdrop() {
 }
 
 .sidebar-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
   color: var(--text-primary);
 }
 
@@ -371,6 +372,7 @@ function onContextMenuBackdrop() {
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  box-shadow: var(--shadow-sm);
 }
 
 .new-chat-btn:hover {
@@ -388,6 +390,7 @@ function onContextMenuBackdrop() {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .search-icon {
@@ -537,7 +540,7 @@ function onContextMenuBackdrop() {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
   transition: background 0.15s;
   border-left: 2px solid transparent;
@@ -546,7 +549,7 @@ function onContextMenuBackdrop() {
 .conv-item:hover { background: var(--hover-bg); }
 
 .conv-item.active {
-  background: #e8ecf4;
+  background: #ecfdf3;
   border-left-color: var(--accent);
 }
 
