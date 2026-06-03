@@ -91,6 +91,13 @@ interface MentionState {
   activeIndex: number
 }
 
+interface ImageViewerState {
+  imageUrl: string
+  title: string
+  caption: string
+  zoom: number
+}
+
 const NODE_SIZE: Record<CanvasNodeType, { width: number; height: number }> = {
   text: { width: 270, height: 156 },
   image: { width: 232, height: 286 },
@@ -149,6 +156,7 @@ const dragState = ref<DragState | null>(null)
 const panState = ref<PanState | null>(null)
 const resizeState = ref<ResizeState | null>(null)
 const mentionState = ref<MentionState | null>(null)
+const imageViewer = ref<ImageViewerState | null>(null)
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
 const activeWorkspace = ref<WorkspaceMode>('canvas')
@@ -1252,12 +1260,63 @@ function createContinuation(node: CanvasNode) {
 
 function handleDownload(node: CanvasNode) {
   if (!node.imageUrl) return
+  downloadImageUrl(node.imageUrl, node.content || node.title)
+}
+
+function openImageViewer(node: CanvasNode) {
+  if (!node.imageUrl) return
+  imageViewer.value = {
+    imageUrl: node.imageUrl,
+    title: node.title,
+    caption: imageAltText(node),
+    zoom: 1,
+  }
+}
+
+function closeImageViewer() {
+  imageViewer.value = null
+}
+
+function downloadImageUrl(imageUrl: string, title: string) {
   const a = document.createElement('a')
-  a.href = node.imageUrl
-  a.download = `${(node.content || node.title).slice(0, 30).replace(/[^a-zA-Z0-9一-鿿]/g, '_') || 'recho_image'}.png`
+  a.href = imageUrl
+  a.download = `${title.slice(0, 30).replace(/[^a-zA-Z0-9一-鿿]/g, '_') || 'recho_image'}.png`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+function zoomImageViewer(step: number) {
+  if (!imageViewer.value) return
+  imageViewer.value.zoom = clamp(imageViewer.value.zoom + step, 0.35, 4)
+}
+
+function resetImageViewerZoom() {
+  if (!imageViewer.value) return
+  imageViewer.value.zoom = 1
+}
+
+function handleImageViewerWheel(event: WheelEvent) {
+  if (!imageViewer.value) return
+  event.preventDefault()
+  zoomImageViewer(event.deltaY > 0 ? -0.12 : 0.12)
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (!imageViewer.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeImageViewer()
+  } else if (event.key === '+' || event.key === '=') {
+    event.preventDefault()
+    zoomImageViewer(0.12)
+  } else if (event.key === '-' || event.key === '_') {
+    event.preventDefault()
+    zoomImageViewer(-0.12)
+  } else if (event.key === '0') {
+    event.preventDefault()
+    resetImageViewerZoom()
+  }
 }
 
 function fitView() {
@@ -1278,12 +1337,14 @@ onMounted(() => {
   window.addEventListener('mousemove', handleWindowMouseMove)
   window.addEventListener('mouseup', handleWindowMouseUp)
   window.addEventListener('click', closeContextMenu)
+  window.addEventListener('keydown', handleWindowKeydown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('mousemove', handleWindowMouseMove)
   window.removeEventListener('mouseup', handleWindowMouseUp)
   window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('keydown', handleWindowKeydown)
 })
 </script>
 
@@ -1503,12 +1564,32 @@ onUnmounted(() => {
                 @mouseup.stop.prevent="finishConnection($event, node, 'image-in')"
               />
               <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode(node) }">
-                <img v-if="node.imageUrl" :src="node.imageUrl" :alt="imageAltText(node)" loading="lazy">
+                <img
+                  v-if="node.imageUrl"
+                  :src="node.imageUrl"
+                  :alt="imageAltText(node)"
+                  loading="lazy"
+                  @dblclick.stop="openImageViewer(node)"
+                >
                 <button v-else class="pick-image" type="button" @click.stop="chooseImage(node.id)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="26" height="26">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                     <path d="M12 8v8" />
                     <path d="M8 12h8" />
+                  </svg>
+                </button>
+                <button
+                  v-if="node.imageUrl"
+                  class="zoom-image"
+                  type="button"
+                  title="放大查看"
+                  @click.stop="openImageViewer(node)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                    <circle cx="11" cy="11" r="6.5" />
+                    <path d="m16.2 16.2 4.3 4.3" />
+                    <path d="M11 8.8v4.4" />
+                    <path d="M8.8 11h4.4" />
                   </svg>
                 </button>
                 <button v-if="node.imageUrl" class="replace-image" type="button" title="替换图片" @click.stop="chooseImage(node.id)">
@@ -1837,6 +1918,66 @@ onUnmounted(() => {
 
       <div v-if="error" class="global-error">{{ error }}</div>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="imageViewer"
+        class="image-viewer-overlay"
+        @mousedown.self="closeImageViewer"
+      >
+        <div class="image-viewer-shell" @mousedown.stop>
+          <header class="image-viewer-header">
+            <div class="image-viewer-meta">
+              <strong>{{ imageViewer.title }}</strong>
+              <span>{{ imageViewer.caption }}</span>
+            </div>
+            <div class="image-viewer-controls">
+              <button type="button" title="缩小" @click="zoomImageViewer(-0.12)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M8 11h6" />
+                  <path d="m16 16 4 4" />
+                </svg>
+              </button>
+              <button type="button" title="复位" @click="resetImageViewerZoom">1:1</button>
+              <span class="image-viewer-zoom">{{ Math.round((imageViewer.zoom || 1) * 100) }}%</span>
+              <button type="button" title="放大" @click="zoomImageViewer(0.12)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M8 11h6" />
+                  <path d="M11 8v6" />
+                  <path d="m16 16 4 4" />
+                </svg>
+              </button>
+              <button type="button" title="下载" @click="downloadImageUrl(imageViewer.imageUrl, imageViewer.title)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                  <path d="M12 3v12" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M5 19h14" />
+                </svg>
+              </button>
+              <button type="button" class="image-viewer-close" title="关闭" @click="closeImageViewer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+          </header>
+          <div class="image-viewer-stage" @wheel.prevent="handleImageViewerWheel">
+            <img
+              :src="imageViewer.imageUrl"
+              :alt="imageViewer.caption"
+              :style="{
+                width: `${Math.round(imageViewer.zoom * 100)}%`,
+                height: `${Math.round(imageViewer.zoom * 100)}%`,
+              }"
+              draggable="false"
+            >
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -2525,6 +2666,28 @@ onUnmounted(() => {
   height: 30px;
 }
 
+.zoom-image {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.zoom-image:hover {
+  border-color: var(--border-strong);
+  background: #fff;
+  color: var(--text-primary);
+}
+
 .image-caption {
   height: 48px;
   padding: 8px 10px 2px;
@@ -2613,6 +2776,120 @@ onUnmounted(() => {
 .image-node-actions button:disabled {
   opacity: 0.46;
   cursor: not-allowed;
+}
+
+.image-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 15, 25, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.image-viewer-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: min(1120px, calc(100vw - 48px));
+  max-width: 100%;
+  height: min(88vh, 920px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(10, 15, 25, 0.96);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+  overflow: hidden;
+}
+
+.image-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.image-viewer-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.image-viewer-meta strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-meta span {
+  overflow: hidden;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-viewer-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
+.image-viewer-controls button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.image-viewer-close {
+  color: #fff;
+}
+
+.image-viewer-zoom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.image-viewer-stage {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+}
+
+.image-viewer-stage img {
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .resize-corner {
