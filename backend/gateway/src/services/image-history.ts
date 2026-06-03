@@ -1,4 +1,5 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { storeImageDataUrl } from './image-storage.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
@@ -7,6 +8,7 @@ export interface ImageHistoryReference {
   id?: string
   title?: string
   dataUrl: string
+  storagePath?: string
   content?: string
   fileName?: string
 }
@@ -14,6 +16,7 @@ export interface ImageHistoryReference {
 export interface ImageHistoryItem {
   id: string
   dataUrl: string
+  storagePath?: string
   prompt: string
   references?: ImageHistoryReference[]
   revisedPrompt?: string
@@ -27,6 +30,7 @@ export interface ImageHistoryItem {
 interface ImageHistoryRow {
   id: string
   data_url: string
+  storage_path: string | null
   prompt: string
   revised_prompt: string | null
   size: string
@@ -44,6 +48,7 @@ function plainReference(reference: ImageHistoryReference): ImageHistoryReference
     id: reference.id ? String(reference.id) : undefined,
     title: reference.title ? String(reference.title) : '参考图',
     dataUrl: String(reference.dataUrl),
+    storagePath: reference.storagePath ? String(reference.storagePath) : undefined,
     content: reference.content ? String(reference.content) : undefined,
     fileName: reference.fileName ? String(reference.fileName) : undefined,
   }
@@ -55,10 +60,36 @@ function plainReferences(references: ImageHistoryReference[] = []) {
     .filter((reference): reference is ImageHistoryReference => Boolean(reference))
 }
 
+async function storedReference(reference: ImageHistoryReference, imageId: string, index: number) {
+  const plain = plainReference(reference)
+  if (!plain) return null
+
+  const stored = await storeImageDataUrl(plain.dataUrl, `references/${imageId}/${plain.id || `ref_${index + 1}`}`)
+  return stored
+    ? { ...plain, dataUrl: stored.publicUrl, storagePath: stored.storagePath }
+    : plain
+}
+
+async function storedImage(image: ImageHistoryItem) {
+  const id = String(image.id)
+  const stored = await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
+  const references = await Promise.all(
+    plainReferences(image.references).map((reference, index) => storedReference(reference, id, index)),
+  )
+
+  return {
+    ...image,
+    dataUrl: stored?.publicUrl || image.dataUrl,
+    storagePath: stored?.storagePath || image.storagePath,
+    references: references.filter((reference): reference is ImageHistoryReference => Boolean(reference)),
+  }
+}
+
 function rowFromImage(image: ImageHistoryItem): ImageHistoryRow {
   return {
     id: String(image.id),
     data_url: String(image.dataUrl),
+    storage_path: image.storagePath ? String(image.storagePath) : null,
     prompt: String(image.prompt || ''),
     revised_prompt: image.revisedPrompt ? String(image.revisedPrompt) : null,
     size: String(image.size || 'auto'),
@@ -74,6 +105,7 @@ function imageFromRow(row: ImageHistoryRow): ImageHistoryItem {
   return {
     id: row.id,
     dataUrl: row.data_url,
+    storagePath: row.storage_path || undefined,
     prompt: row.prompt || '',
     references: plainReferences(row.reference_images || []),
     revisedPrompt: row.revised_prompt || undefined,
@@ -99,7 +131,7 @@ export async function listImageHistory(limit = MAX_HISTORY_LIMIT) {
 
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
-    .select('id,data_url,prompt,revised_prompt,size,aspect_ratio,resolution,quality,reference_images,generated_at')
+    .select('id,data_url,storage_path,prompt,revised_prompt,size,aspect_ratio,resolution,quality,reference_images,generated_at')
     .order('generated_at', { ascending: false })
     .limit(Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit)))
 
@@ -111,7 +143,12 @@ export async function saveImageHistory(images: ImageHistoryItem[]) {
   const client = historyClient()
   if (!client || !images.length) return false
 
-  const rows = images
+  const storedImages = await Promise.all(
+    images
+      .filter(image => image?.id && image?.dataUrl)
+      .map(image => storedImage(image)),
+  )
+  const rows = storedImages
     .filter(image => image?.id && image?.dataUrl)
     .map(rowFromImage)
 

@@ -23,6 +23,7 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
     id: String(raw.id || ''),
     title: String(raw.title || '参考图'),
     dataUrl: String(raw.dataUrl),
+    ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
     ...(raw.content ? { content: String(raw.content) } : {}),
     ...(raw.fileName ? { fileName: String(raw.fileName) } : {}),
   }
@@ -41,6 +42,7 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   return {
     id: String(raw.id),
     dataUrl: String(raw.dataUrl),
+    ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
     prompt: String(raw.prompt || ''),
     references,
     ...(raw.revisedPrompt ? { revisedPrompt: String(raw.revisedPrompt) } : {}),

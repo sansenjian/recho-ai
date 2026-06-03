@@ -23,6 +23,7 @@ export interface ImageGenReference {
   id: string
   title: string
   dataUrl: string
+  storagePath?: string
   content?: string
   fileName?: string
 }
@@ -43,6 +44,7 @@ export interface ImageGenResponse {
 export interface GeneratedImage {
   id: string
   dataUrl: string
+  storagePath?: string
   prompt: string
   references?: ImageGenReference[]
   revisedPrompt?: string

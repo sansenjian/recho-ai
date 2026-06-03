@@ -1,6 +1,7 @@
 create table if not exists public.image_generations (
   id text primary key,
   data_url text not null,
+  storage_path text,
   prompt text not null default '',
   revised_prompt text,
   size text not null default 'auto',
