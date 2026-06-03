@@ -4,6 +4,7 @@ import {
   deleteImageHistory,
   hasImageHistoryStore,
   listImageHistory,
+  saveImageHistory,
 } from '../services/image-history.js'
 
 const router = Router()
@@ -16,6 +17,17 @@ router.get('/image/history', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[image-history] list failed:', err.message)
     res.status(500).json({ error: err.message || 'image history list failed' })
+  }
+})
+
+router.post('/image/history', async (req: Request, res: Response) => {
+  try {
+    const images = Array.isArray(req.body?.images) ? req.body.images.slice(0, 50) : []
+    const saved = await saveImageHistory(images)
+    res.json({ ok: true, saved, count: images.length, persistence: { enabled: hasImageHistoryStore() } })
+  } catch (err: any) {
+    console.error('[image-history] save failed:', err.message)
+    res.status(500).json({ error: err.message || 'image history save failed' })
   }
 })
 

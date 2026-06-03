@@ -214,6 +214,21 @@ async function saveHistory(images: GeneratedImage[]) {
   }
 }
 
+async function saveRemoteHistory(images: GeneratedImage[]) {
+  const payload = uniqueHistory(images)
+  if (!payload.length) return
+
+  try {
+    await fetch(`${API_BASE}/api/image/history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: payload }),
+    })
+  } catch (err) {
+    console.warn('[image-history] Supabase history save failed', err)
+  }
+}
+
 async function deleteRemoteHistory(id: string) {
   try {
     await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}`, { method: 'DELETE' })
@@ -238,6 +253,7 @@ export function useImageGen() {
   void Promise.all([loadPersistedHistory(), loadRemoteHistory()]).then(([history, remoteHistory]) => {
     generatedImages.value = uniqueHistory([...generatedImages.value, ...history, ...remoteHistory])
     void saveHistory(generatedImages.value)
+    void saveRemoteHistory(generatedImages.value)
   })
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage | null> {
@@ -278,6 +294,7 @@ export function useImageGen() {
 
       generatedImages.value = [imageWithReferences, ...generatedImages.value]
       void saveHistory(generatedImages.value)
+      void saveRemoteHistory([imageWithReferences])
       return imageWithReferences
     } catch (err: any) {
       error.value = err?.name === 'AbortError'
