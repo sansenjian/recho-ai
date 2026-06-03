@@ -1,22 +1,28 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
-import { storeImageDataUrl } from './image-storage.js'
+import { imagePublicUrl, storeImageDataUrl } from './image-storage.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
+const DEFAULT_HISTORY_LIMIT = 12
 
 export interface ImageHistoryReference {
   id?: string
   title?: string
   dataUrl: string
   storagePath?: string
+  thumbnailUrl?: string
+  thumbnailPath?: string
   content?: string
   fileName?: string
 }
 
 export interface ImageHistoryItem {
   id: string
+  userId?: string | null
   dataUrl: string
   storagePath?: string
+  thumbnailUrl?: string
+  thumbnailPath?: string
   prompt: string
   references?: ImageHistoryReference[]
   revisedPrompt?: string
@@ -29,8 +35,11 @@ export interface ImageHistoryItem {
 
 interface ImageHistoryRow {
   id: string
+  user_id?: string | null
   data_url: string
-  storage_path: string | null
+  storage_path?: string | null
+  thumbnail_url?: string | null
+  thumbnail_path?: string | null
   prompt: string
   revised_prompt: string | null
   size: string
@@ -49,6 +58,8 @@ function plainReference(reference: ImageHistoryReference): ImageHistoryReference
     title: reference.title ? String(reference.title) : '参考图',
     dataUrl: String(reference.dataUrl),
     storagePath: reference.storagePath ? String(reference.storagePath) : undefined,
+    thumbnailUrl: reference.thumbnailUrl ? String(reference.thumbnailUrl) : undefined,
+    thumbnailPath: reference.thumbnailPath ? String(reference.thumbnailPath) : undefined,
     content: reference.content ? String(reference.content) : undefined,
     fileName: reference.fileName ? String(reference.fileName) : undefined,
   }
@@ -66,7 +77,13 @@ async function storedReference(reference: ImageHistoryReference, imageId: string
 
   const stored = await storeImageDataUrl(plain.dataUrl, `references/${imageId}/${plain.id || `ref_${index + 1}`}`)
   return stored
-    ? { ...plain, dataUrl: stored.publicUrl, storagePath: stored.storagePath }
+    ? {
+      ...plain,
+      dataUrl: stored.publicUrl,
+      storagePath: stored.storagePath,
+      thumbnailUrl: stored.thumbnailUrl,
+      thumbnailPath: stored.thumbnailPath,
+    }
     : plain
 }
 
@@ -81,12 +98,19 @@ async function storedImage(image: ImageHistoryItem) {
     ...image,
     dataUrl: stored?.publicUrl || image.dataUrl,
     storagePath: stored?.storagePath || image.storagePath,
+    thumbnailUrl: stored?.thumbnailUrl || image.thumbnailUrl,
+    thumbnailPath: stored?.thumbnailPath || image.thumbnailPath,
     references: references.filter((reference): reference is ImageHistoryReference => Boolean(reference)),
   }
 }
 
-function rowFromImage(image: ImageHistoryItem): ImageHistoryRow {
-  return {
+interface ImageRowOptions {
+  includeThumbnails?: boolean
+  includeUserId?: boolean
+}
+
+function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
+  const row: ImageHistoryRow = {
     id: String(image.id),
     data_url: String(image.dataUrl),
     storage_path: image.storagePath ? String(image.storagePath) : null,
@@ -99,13 +123,36 @@ function rowFromImage(image: ImageHistoryItem): ImageHistoryRow {
     reference_images: plainReferences(image.references),
     generated_at: String(image.timestamp || new Date().toISOString()),
   }
+
+  if (options.includeThumbnails !== false) {
+    row.thumbnail_url = image.thumbnailUrl ? String(image.thumbnailUrl) : null
+    row.thumbnail_path = image.thumbnailPath ? String(image.thumbnailPath) : null
+  }
+
+  if (options.includeUserId !== false && image.userId) {
+    row.user_id = String(image.userId)
+  }
+
+  return row
+}
+
+function missingOptionalColumn(error: { message?: string; code?: string }) {
+  const message = error.message || ''
+  if (error.code !== 'PGRST204') return null
+  if (/thumbnail_(url|path)/i.test(message)) return 'thumbnail'
+  if (/user_id/i.test(message)) return 'user_id'
+  return null
 }
 
 function imageFromRow(row: ImageHistoryRow): ImageHistoryItem {
+  const thumbnailPath = row.thumbnail_path || undefined
   return {
     id: row.id,
+    userId: row.user_id || null,
     dataUrl: row.data_url,
     storagePath: row.storage_path || undefined,
+    thumbnailUrl: row.thumbnail_url || imagePublicUrl(thumbnailPath),
+    thumbnailPath,
     prompt: row.prompt || '',
     references: plainReferences(row.reference_images || []),
     revisedPrompt: row.revised_prompt || undefined,
@@ -125,41 +172,87 @@ export function hasImageHistoryStore() {
   return Boolean(historyClient())
 }
 
-export async function listImageHistory(limit = MAX_HISTORY_LIMIT) {
+export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0) {
   const client = historyClient()
-  if (!client) return []
+  const cappedLimit = Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit))
+  const safeOffset = Math.max(0, offset)
+  if (!client) {
+    return {
+      images: [],
+      total: 0,
+      limit: cappedLimit,
+      offset: safeOffset,
+      hasMore: false,
+      nextOffset: null,
+    }
+  }
 
-  const { data, error } = await client
+  const { data, error, count } = await client
     .from(IMAGE_HISTORY_TABLE)
-    .select('id,data_url,storage_path,prompt,revised_prompt,size,aspect_ratio,resolution,quality,reference_images,generated_at')
+    .select('*', { count: 'exact' })
     .order('generated_at', { ascending: false })
-    .limit(Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit)))
+    .range(safeOffset, safeOffset + cappedLimit - 1)
 
   if (error) throw error
-  return (data || []).map(row => imageFromRow(row as ImageHistoryRow))
+  const images = (data || []).map(row => imageFromRow(row as ImageHistoryRow))
+  const total = count ?? safeOffset + images.length
+  const nextOffset = safeOffset + images.length
+  return {
+    images,
+    total,
+    limit: cappedLimit,
+    offset: safeOffset,
+    hasMore: nextOffset < total,
+    nextOffset: nextOffset < total ? nextOffset : null,
+  }
 }
 
-export async function saveImageHistory(images: ImageHistoryItem[]) {
+export async function saveImageHistory(images: ImageHistoryItem[], options: { userId?: string | null } = {}) {
   const client = historyClient()
-  if (!client || !images.length) return false
+  if (!client || !images.length) return null
 
   const storedImages = await Promise.all(
     images
       .filter(image => image?.id && image?.dataUrl)
-      .map(image => storedImage(image)),
+      .map(image => storedImage({
+        ...image,
+        ...(options.userId ? { userId: options.userId } : {}),
+      })),
   )
-  const rows = storedImages
+  const validImages = storedImages
     .filter(image => image?.id && image?.dataUrl)
-    .map(rowFromImage)
 
-  if (!rows.length) return false
+  if (!validImages.length) return null
 
-  const { error } = await client
-    .from(IMAGE_HISTORY_TABLE)
-    .upsert(rows, { onConflict: 'id' })
+  const rowOptions: Required<ImageRowOptions> = {
+    includeThumbnails: true,
+    includeUserId: true,
+  }
 
-  if (error) throw error
-  return true
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const rows = validImages.map(image => rowFromImage(image, rowOptions))
+    const { error } = await client
+      .from(IMAGE_HISTORY_TABLE)
+      .upsert(rows, { onConflict: 'id' })
+
+    if (!error) return storedImages
+
+    const missingColumn = missingOptionalColumn(error)
+    if (missingColumn === 'thumbnail' && rowOptions.includeThumbnails) {
+      rowOptions.includeThumbnails = false
+      console.warn('[image-history] thumbnail columns missing; retrying save without thumbnail fields')
+      continue
+    }
+    if (missingColumn === 'user_id' && rowOptions.includeUserId) {
+      rowOptions.includeUserId = false
+      console.warn('[image-history] user_id column missing; retrying save without user id')
+      continue
+    }
+
+    throw error
+  }
+
+  return storedImages
 }
 
 export async function deleteImageHistory(id: string) {

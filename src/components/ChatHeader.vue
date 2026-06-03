@@ -8,6 +8,9 @@ defineProps<{
   showImagePanel: boolean
   agentMode: AgentModeOption
   messages: Message[]
+  authEmail: string
+  authReady: boolean
+  authLoading: boolean
 }>()
 
 defineEmits<{
@@ -16,6 +19,7 @@ defineEmits<{
   toggleImagePanel: []
   newChat: []
   toggleSettings: []
+  openAuth: []
 }>()
 </script>
 
@@ -79,6 +83,10 @@ defineEmits<{
           <circle cx="12" cy="12" r="3" />
           <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
         </svg>
+      </button>
+      <button class="auth-button" type="button" :disabled="authLoading" @click="$emit('openAuth')">
+        <span class="auth-dot" :class="{ signed: authEmail, loading: !authReady || authLoading }" />
+        <span>{{ authEmail || '登录' }}</span>
       </button>
     </div>
   </header>
@@ -233,6 +241,55 @@ defineEmits<{
   background: var(--accent-soft);
   color: var(--accent);
   border-color: rgba(22, 163, 74, 0.24);
+}
+
+.auth-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 178px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+.auth-button:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.auth-button span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.auth-dot.signed {
+  background: var(--accent);
+}
+
+.auth-dot.loading {
+  background: #f59e0b;
 }
 
 @media (max-width: 880px) {

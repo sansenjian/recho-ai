@@ -6,14 +6,19 @@ import {
   listImageHistory,
   saveImageHistory,
 } from '../services/image-history.js'
+import { getRequestUserId } from '../services/request-auth.js'
 
 const router = Router()
 
 router.get('/image/history', async (req: Request, res: Response) => {
   try {
     const rawLimit = Number(req.query.limit)
-    const images = await listImageHistory(Number.isFinite(rawLimit) ? rawLimit : undefined)
-    res.json({ images, persistence: { enabled: hasImageHistoryStore() } })
+    const rawOffset = Number(req.query.offset)
+    const history = await listImageHistory(
+      Number.isFinite(rawLimit) ? rawLimit : undefined,
+      Number.isFinite(rawOffset) ? rawOffset : undefined,
+    )
+    res.json({ ...history, persistence: { enabled: hasImageHistoryStore() } })
   } catch (err: any) {
     console.error('[image-history] list failed:', err.message)
     res.status(500).json({ error: err.message || 'image history list failed' })
@@ -23,8 +28,15 @@ router.get('/image/history', async (req: Request, res: Response) => {
 router.post('/image/history', async (req: Request, res: Response) => {
   try {
     const images = Array.isArray(req.body?.images) ? req.body.images.slice(0, 50) : []
-    const saved = await saveImageHistory(images)
-    res.json({ ok: true, saved, count: images.length, persistence: { enabled: hasImageHistoryStore() } })
+    const userId = await getRequestUserId(req)
+    const savedImages = await saveImageHistory(images, { userId })
+    res.json({
+      ok: true,
+      saved: Boolean(savedImages),
+      count: savedImages?.length ?? 0,
+      images: savedImages || [],
+      persistence: { enabled: hasImageHistoryStore() },
+    })
   } catch (err: any) {
     console.error('[image-history] save failed:', err.message)
     res.status(500).json({ error: err.message || 'image history save failed' })

@@ -111,10 +111,22 @@ const MENU_WIDTH = 176
 const MENU_HEIGHT = 150
 const MIN_NODE_SCALE = 0.72
 const MAX_NODE_SCALE = 2.4
+const GALLERY_PAGE_SIZE = 12
+const GALLERY_AUTO_LOAD_PROGRESS = 0.5
 
-const { isGenerating, error, generatedImages, generate, clearHistory } = useImageGen()
+const {
+  isGenerating,
+  isLoadingHistory,
+  hasMoreHistory,
+  error,
+  generatedImages,
+  generate,
+  clearHistory,
+  loadMoreHistory,
+} = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
+const galleryStageRef = ref<HTMLElement | null>(null)
 const nodes = ref<CanvasNode[]>([
   {
     id: 'node_text_seed',
@@ -160,6 +172,7 @@ const imageViewer = ref<ImageViewerState | null>(null)
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
 const activeWorkspace = ref<WorkspaceMode>('canvas')
+const isGalleryAutoLoading = ref(false)
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -236,7 +249,9 @@ const miniMapLayout = computed(() => {
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
-const galleryImages = computed(() => generatedImages.value)
+const galleryVisibleCount = ref(GALLERY_PAGE_SIZE)
+const galleryImages = computed(() => generatedImages.value.slice(0, galleryVisibleCount.value))
+const canLoadMoreGallery = computed(() => galleryVisibleCount.value < generatedImages.value.length || hasMoreHistory.value)
 const resolutionOptions: Array<{ value: NodeResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: '1k', label: '1K' },
@@ -803,6 +818,50 @@ function galleryPrompt(image: GeneratedImage) {
 
 function galleryReferences(image: GeneratedImage) {
   return image.references?.filter(reference => reference.dataUrl) ?? []
+}
+
+function displayImageUrl(image: GeneratedImage) {
+  return image.thumbnailUrl || image.dataUrl
+}
+
+function displayReferenceUrl(reference: NonNullable<GeneratedImage['references']>[number]) {
+  return reference.thumbnailUrl || reference.dataUrl
+}
+
+async function handleLoadMoreGallery() {
+  if (!canLoadMoreGallery.value || isGalleryAutoLoading.value || isLoadingHistory.value) return
+
+  isGalleryAutoLoading.value = true
+  try {
+    const localCount = generatedImages.value.length
+    if (galleryVisibleCount.value < localCount) {
+      galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, localCount)
+      return
+    }
+
+    if (!hasMoreHistory.value) return
+
+    await loadMoreHistory()
+    const updatedCount = generatedImages.value.length
+    if (updatedCount > galleryVisibleCount.value) {
+      galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, updatedCount)
+    }
+  } finally {
+    isGalleryAutoLoading.value = false
+  }
+}
+
+function handleGalleryScroll() {
+  const stage = galleryStageRef.value
+  if (!stage || activeWorkspace.value !== 'gallery') return
+
+  const scrollableHeight = stage.scrollHeight - stage.clientHeight
+  if (scrollableHeight <= 0) return
+
+  const scrollProgress = stage.scrollTop / scrollableHeight
+  if (scrollProgress >= GALLERY_AUTO_LOAD_PROGRESS) {
+    void handleLoadMoreGallery()
+  }
 }
 
 function galleryFileName(image: GeneratedImage) {
@@ -1429,7 +1488,7 @@ onUnmounted(() => {
       <div class="history-panel">
         <div class="side-title">
           <span>生成记录</span>
-          <button v-if="generatedImages.length" type="button" @click="clearHistory">清空</button>
+          <button v-if="generatedImages.length" type="button" disabled @click="clearHistory">清空</button>
         </div>
         <button
           v-for="img in historyImages"
@@ -1438,7 +1497,7 @@ onUnmounted(() => {
           type="button"
           @click="useHistoryImage(img)"
         >
-          <img :src="img.dataUrl" :alt="img.prompt" loading="lazy">
+          <img :src="displayImageUrl(img)" :alt="img.prompt" loading="lazy">
           <span>{{ img.prompt || img.size }}</span>
         </button>
         <div v-if="!historyImages.length" class="history-empty">暂无记录</div>
@@ -1861,19 +1920,24 @@ onUnmounted(() => {
       <div v-if="error" class="global-error">{{ error }}</div>
     </section>
 
-    <section v-else class="gallery-stage">
+    <section
+      v-else
+      ref="galleryStageRef"
+      class="gallery-stage"
+      @scroll.passive="handleGalleryScroll"
+    >
       <div class="gallery-header">
         <div>
           <span class="gallery-eyebrow">作品广场</span>
           <h2>历史生成</h2>
         </div>
-        <button v-if="galleryImages.length" type="button" @click="clearHistory">清空历史</button>
+        <button v-if="galleryImages.length" type="button" disabled @click="clearHistory">清空历史</button>
       </div>
 
       <div v-if="galleryImages.length" class="gallery-grid">
         <article v-for="image in galleryImages" :key="image.id" class="gallery-card">
           <div class="gallery-image-wrap">
-            <img :src="image.dataUrl" :alt="galleryPrompt(image)" loading="lazy">
+            <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
           </div>
           <div class="gallery-card-body">
             <div class="gallery-meta-row">
@@ -1896,7 +1960,7 @@ onUnmounted(() => {
                   :key="reference.id || reference.title"
                   class="gallery-reference"
                 >
-                  <img :src="reference.dataUrl" :alt="reference.title">
+                  <img :src="displayReferenceUrl(reference)" :alt="reference.title">
                   <span>{{ reference.title || reference.fileName || '参考图' }}</span>
                 </div>
               </div>
@@ -1914,6 +1978,10 @@ onUnmounted(() => {
       <div v-else class="gallery-empty">
         <strong>还没有历史作品</strong>
         <span>生成图片后，这里会显示提示词、参考图和生成结果。</span>
+      </div>
+
+      <div v-if="galleryImages.length && (isGalleryAutoLoading || isLoadingHistory)" class="gallery-scroll-status">
+        加载中...
       </div>
 
       <div v-if="error" class="global-error">{{ error }}</div>
@@ -2173,6 +2241,12 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.side-title button:disabled,
+.gallery-header button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
 .history-item {
   display: grid;
   grid-template-columns: 38px 1fr;
@@ -2272,6 +2346,11 @@ onUnmounted(() => {
 
 .gallery-header button {
   padding: 0 12px;
+}
+
+.gallery-header button:disabled {
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
 .gallery-grid {
@@ -2405,6 +2484,19 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
+}
+
+.gallery-actions button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
+}
+
+.gallery-scroll-status {
+  padding: 20px 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .gallery-empty {

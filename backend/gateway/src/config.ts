@@ -25,6 +25,7 @@ export const KIMI_BASE_URL = process.env.KIMI_BASE_URL
 
 export const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
 export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.UPABASE_PUBLISHABLE_KEY ||
   process.env.SUPABASE_ANON_KEY ||
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY ||

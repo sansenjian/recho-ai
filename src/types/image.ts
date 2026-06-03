@@ -24,6 +24,8 @@ export interface ImageGenReference {
   title: string
   dataUrl: string
   storagePath?: string
+  thumbnailUrl?: string
+  thumbnailPath?: string
   content?: string
   fileName?: string
 }
@@ -43,8 +45,11 @@ export interface ImageGenResponse {
 
 export interface GeneratedImage {
   id: string
+  userId?: string | null
   dataUrl: string
   storagePath?: string
+  thumbnailUrl?: string
+  thumbnailPath?: string
   prompt: string
   references?: ImageGenReference[]
   revisedPrompt?: string

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
+import { getRequestUserId } from '../services/request-auth.js'
 
 const router = Router()
 
@@ -446,6 +447,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
 
   try {
     const trimmedPrompt = prompt.trim()
+    const userId = await getRequestUserId(req)
     let response: Awaited<ReturnType<typeof generateWithComfyStrategy>> | null = null
     let lastError: any = null
 
@@ -515,21 +517,25 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     console.log(`[image] generated ${images.length} image(s), refs=${references.length}, size=${size}, quality=${quality}, prompt: "${trimmedPrompt.slice(0, 60)}${trimmedPrompt.length > 60 ? '...' : ''}"`)
 
     const historyReferences = referencesForHistory(references)
-    const imagesWithReferences = images.map(image => ({
+    const imagesWithReferences: ImageHistoryItem[] = images.map(image => ({
       ...image,
+      userId,
       references: historyReferences,
     }))
 
+    let responseImages: ImageHistoryItem[] = imagesWithReferences
+
     try {
-      const saved = await saveImageHistory(imagesWithReferences)
-      if (saved) {
-        console.log(`[image-history] saved ${imagesWithReferences.length} image(s) to Supabase`)
+      const savedImages = await saveImageHistory(imagesWithReferences, { userId })
+      if (savedImages) {
+        responseImages = savedImages
+        console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
       }
     } catch (historyErr: any) {
       console.warn(`[image-history] save skipped: ${historyErr.message}`)
     }
 
-    res.json({ images: imagesWithReferences })
+    res.json({ images: responseImages })
   } catch (err: any) {
     console.error('Image generation error:', err.status, err.message)
     const status = err.status || 500

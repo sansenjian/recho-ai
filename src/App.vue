@@ -21,9 +21,21 @@ import ImageCanvas from './components/ImageCanvas.vue'
 import ToolActivity from './components/ToolActivity.vue'
 import StreamingStatus from './components/StreamingStatus.vue'
 import ThinkingActivity from './components/ThinkingActivity.vue'
+import { useAuthSession } from './composables/useAuthSession'
 
 // --- Composables ---
 const { isLoading, runState, runStatusLabel, activeToolCalls, completedToolCalls, submitMessage, stopGeneration } = useChatLoop()
+const {
+  user,
+  userEmail,
+  authError,
+  authNotice,
+  isAuthReady,
+  isAuthLoading,
+  initAuth,
+  submitAuth,
+  signOut,
+} = useAuthSession()
 // Memory system initialized for future use
 useMemory()
 
@@ -78,8 +90,8 @@ function thinkingForMessage(msg: Message) {
 
 // --- Sidebar ---
 const showSidebar = ref(false)
-const showAgentPanel = ref(true)
-const showImagePanel = ref(false)
+const showAgentPanel = ref(false)
+const showImagePanel = ref(true)
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
 function toggleAgentPanel() {
@@ -129,6 +141,36 @@ async function fetchSkills() {
 }
 
 function selectSkill(name: string | null) { activeSkill.value = name }
+
+// --- Auth ---
+type AuthMode = 'signIn' | 'signUp'
+const showAuthDialog = ref(false)
+const authMode = ref<AuthMode>('signIn')
+const authEmailDraft = ref('')
+const authPasswordDraft = ref('')
+
+function openAuthDialog(mode: AuthMode = 'signIn') {
+  authMode.value = mode
+  authEmailDraft.value = userEmail.value
+  authPasswordDraft.value = ''
+  showAuthDialog.value = true
+}
+
+function closeAuthDialog() {
+  showAuthDialog.value = false
+}
+
+async function handleAuthSubmit() {
+  const ok = await submitAuth(authMode.value, authEmailDraft.value, authPasswordDraft.value)
+  if (ok && authMode.value === 'signIn') {
+    showAuthDialog.value = false
+  }
+}
+
+async function handleSignOut() {
+  await signOut()
+  showAuthDialog.value = false
+}
 
 // --- Image upload ---
 const pendingImages = ref<string[]>([])
@@ -261,6 +303,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('paste', onPaste)
   fetchSkills()
+  void initAuth()
 })
 
 onUnmounted(() => {
@@ -305,11 +348,15 @@ function handleImageToChat(dataUrl: string) {
         :show-image-panel="showImagePanel"
         :agent-mode="currentAgentMode"
         :messages="messages"
+        :auth-email="userEmail"
+        :auth-ready="isAuthReady"
+        :auth-loading="isAuthLoading"
         @toggle-sidebar="toggleSidebar"
         @toggle-agent-panel="toggleAgentPanel"
         @toggle-image-panel="toggleImagePanel"
         @new-chat="handleNewChat"
         @toggle-settings="toggleSystemEditor"
+        @open-auth="openAuthDialog()"
       />
 
       <div v-if="showSystemEditor" class="system-editor-panel">
@@ -404,6 +451,55 @@ function handleImageToChat(dataUrl: string) {
       @change-mode="currentAgentMode = $event"
       @select-skill="selectSkill"
     />
+
+    <div v-if="showAuthDialog" class="auth-overlay" @click.self="closeAuthDialog">
+      <section class="auth-dialog" role="dialog" aria-modal="true" aria-label="账号">
+        <header class="auth-dialog-header">
+          <div>
+            <span class="auth-eyebrow">账号</span>
+            <h2>{{ user ? '账号信息' : (authMode === 'signIn' ? '登录 Recho' : '创建账号') }}</h2>
+          </div>
+          <button type="button" class="auth-close" title="关闭" @click="closeAuthDialog">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </header>
+
+        <div v-if="user" class="auth-profile">
+          <span>已登录</span>
+          <strong>{{ userEmail }}</strong>
+          <button type="button" :disabled="isAuthLoading" @click="handleSignOut">退出登录</button>
+        </div>
+
+        <form v-else class="auth-form" @submit.prevent="handleAuthSubmit">
+          <label>
+            <span>邮箱</span>
+            <input v-model.trim="authEmailDraft" type="email" autocomplete="email" placeholder="you@example.com">
+          </label>
+          <label>
+            <span>密码</span>
+            <input v-model="authPasswordDraft" type="password" autocomplete="current-password" placeholder="至少 6 位密码">
+          </label>
+
+          <p v-if="authError" class="auth-message error">{{ authError }}</p>
+          <p v-else-if="authNotice" class="auth-message">{{ authNotice }}</p>
+
+          <button class="auth-submit" type="submit" :disabled="isAuthLoading">
+            {{ isAuthLoading ? '处理中...' : (authMode === 'signIn' ? '登录' : '创建账号') }}
+          </button>
+
+          <button
+            class="auth-switch"
+            type="button"
+            @click="authMode = authMode === 'signIn' ? 'signUp' : 'signIn'"
+          >
+            {{ authMode === 'signIn' ? '没有账号，创建一个' : '已有账号，去登录' }}
+          </button>
+        </form>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -564,6 +660,166 @@ function handleImageToChat(dataUrl: string) {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-md);
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(8px);
+}
+
+.auth-dialog {
+  width: min(420px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.auth-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.auth-eyebrow {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.auth-dialog h2 {
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.auth-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.auth-close:hover {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.auth-message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.auth-message.error {
+  color: var(--danger);
+}
+
+.auth-submit,
+.auth-switch,
+.auth-profile button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.auth-submit {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.auth-submit:disabled,
+.auth-profile button:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+.auth-switch {
+  background: #fff;
+  color: var(--text-primary);
+}
+
+.auth-switch:hover,
+.auth-profile button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+.auth-profile {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-profile span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.auth-profile strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-profile button {
+  background: #fff;
+  color: var(--text-primary);
 }
 
 @media (max-width: 768px) {

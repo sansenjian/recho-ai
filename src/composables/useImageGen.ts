@@ -1,4 +1,5 @@
 import { ref, toRaw } from 'vue'
+import { getAuthAccessToken } from './useAuthSession'
 import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse } from '../types/image'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -7,12 +8,15 @@ const DB_NAME = 'recho-image-history-db'
 const DB_VERSION = 1
 const DB_STORE = 'images'
 const MAX_HISTORY = 50
+const HISTORY_PAGE_SIZE = 12
 const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 
 interface ImageHistoryResponse {
   images?: GeneratedImage[]
+  hasMore?: boolean
+  nextOffset?: number | null
 }
 
 function plainReference(reference: ImageGenReference): ImageGenReference | null {
@@ -24,6 +28,8 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
     title: String(raw.title || '参考图'),
     dataUrl: String(raw.dataUrl),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
+    ...(raw.thumbnailUrl ? { thumbnailUrl: String(raw.thumbnailUrl) } : {}),
+    ...(raw.thumbnailPath ? { thumbnailPath: String(raw.thumbnailPath) } : {}),
     ...(raw.content ? { content: String(raw.content) } : {}),
     ...(raw.fileName ? { fileName: String(raw.fileName) } : {}),
   }
@@ -43,6 +49,8 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
     id: String(raw.id),
     dataUrl: String(raw.dataUrl),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
+    ...(raw.thumbnailUrl ? { thumbnailUrl: String(raw.thumbnailUrl) } : {}),
+    ...(raw.thumbnailPath ? { thumbnailPath: String(raw.thumbnailPath) } : {}),
     prompt: String(raw.prompt || ''),
     references,
     ...(raw.revisedPrompt ? { revisedPrompt: String(raw.revisedPrompt) } : {}),
@@ -184,15 +192,23 @@ async function loadPersistedHistory() {
   }
 }
 
-async function loadRemoteHistory() {
+async function loadRemoteHistory(offset = 0) {
   try {
-    const res = await fetch(`${API_BASE}/api/image/history`, { cache: 'no-store' })
-    if (!res.ok) return []
+    const query = new URLSearchParams({
+      limit: String(HISTORY_PAGE_SIZE),
+      offset: String(offset),
+    })
+    const res = await fetch(`${API_BASE}/api/image/history?${query.toString()}`, { cache: 'no-store' })
+    if (!res.ok) return { images: [], hasMore: false, nextOffset: null }
     const data = await res.json() as ImageHistoryResponse
-    return uniqueHistory(data.images || [])
+    return {
+      images: uniqueHistory(data.images || []),
+      hasMore: Boolean(data.hasMore),
+      nextOffset: typeof data.nextOffset === 'number' ? data.nextOffset : null,
+    }
   } catch (err) {
     console.warn('[image-history] Supabase history load failed', err)
-    return []
+    return { images: [], hasMore: false, nextOffset: null }
   }
 }
 
@@ -216,21 +232,6 @@ async function saveHistory(images: GeneratedImage[]) {
   }
 }
 
-async function saveRemoteHistory(images: GeneratedImage[]) {
-  const payload = uniqueHistory(images)
-  if (!payload.length) return
-
-  try {
-    await fetch(`${API_BASE}/api/image/history`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: payload }),
-    })
-  } catch (err) {
-    console.warn('[image-history] Supabase history save failed', err)
-  }
-}
-
 async function deleteRemoteHistory(id: string) {
   try {
     await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}`, { method: 'DELETE' })
@@ -239,23 +240,19 @@ async function deleteRemoteHistory(id: string) {
   }
 }
 
-async function clearRemoteHistory() {
-  try {
-    await fetch(`${API_BASE}/api/image/history`, { method: 'DELETE' })
-  } catch (err) {
-    console.warn('[image-history] Supabase history clear failed', err)
-  }
-}
-
 export function useImageGen() {
   const isGenerating = ref(false)
+  const isLoadingHistory = ref(false)
+  const hasMoreHistory = ref(false)
+  const nextHistoryOffset = ref<number | null>(null)
   const error = ref<string | null>(null)
   const generatedImages = ref<GeneratedImage[]>(loadLegacyHistory())
 
-  void Promise.all([loadPersistedHistory(), loadRemoteHistory()]).then(([history, remoteHistory]) => {
-    generatedImages.value = uniqueHistory([...generatedImages.value, ...history, ...remoteHistory])
+  void Promise.all([loadPersistedHistory(), loadRemoteHistory(0)]).then(([history, remoteHistory]) => {
+    generatedImages.value = uniqueHistory([...generatedImages.value, ...history, ...remoteHistory.images])
+    hasMoreHistory.value = remoteHistory.hasMore
+    nextHistoryOffset.value = remoteHistory.nextOffset
     void saveHistory(generatedImages.value)
-    void saveRemoteHistory(generatedImages.value)
   })
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage | null> {
@@ -265,9 +262,13 @@ export function useImageGen() {
     const timeoutId = window.setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
 
     try {
+      const token = await getAuthAccessToken()
       const res = await fetch(`${API_BASE}/api/image/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ prompt, ...options }),
         signal: controller.signal,
       })
@@ -296,7 +297,6 @@ export function useImageGen() {
 
       generatedImages.value = [imageWithReferences, ...generatedImages.value]
       void saveHistory(generatedImages.value)
-      void saveRemoteHistory([imageWithReferences])
       return imageWithReferences
     } catch (err: any) {
       error.value = err?.name === 'AbortError'
@@ -316,11 +316,32 @@ export function useImageGen() {
   }
 
   function clearHistory() {
-    generatedImages.value = []
-    void saveHistory(generatedImages.value)
-    void clearRemoteHistory()
-    error.value = null
+    return
   }
 
-  return { isGenerating, error, generatedImages, generate, removeImage, clearHistory }
+  async function loadMoreHistory() {
+    if (isLoadingHistory.value || !hasMoreHistory.value || nextHistoryOffset.value === null) return
+    isLoadingHistory.value = true
+    try {
+      const remoteHistory = await loadRemoteHistory(nextHistoryOffset.value)
+      generatedImages.value = uniqueHistory([...generatedImages.value, ...remoteHistory.images])
+      hasMoreHistory.value = remoteHistory.hasMore
+      nextHistoryOffset.value = remoteHistory.nextOffset
+      void saveHistory(generatedImages.value)
+    } finally {
+      isLoadingHistory.value = false
+    }
+  }
+
+  return {
+    isGenerating,
+    isLoadingHistory,
+    hasMoreHistory,
+    error,
+    generatedImages,
+    generate,
+    removeImage,
+    clearHistory,
+    loadMoreHistory,
+  }
 }
