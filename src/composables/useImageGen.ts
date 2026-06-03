@@ -11,6 +11,10 @@ const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 
+interface ImageHistoryResponse {
+  images?: GeneratedImage[]
+}
+
 function plainReference(reference: ImageGenReference): ImageGenReference | null {
   const raw = toRaw(reference) as ImageGenReference
   if (!raw?.dataUrl) return null
@@ -178,6 +182,18 @@ async function loadPersistedHistory() {
   }
 }
 
+async function loadRemoteHistory() {
+  try {
+    const res = await fetch(`${API_BASE}/api/image/history`, { cache: 'no-store' })
+    if (!res.ok) return []
+    const data = await res.json() as ImageHistoryResponse
+    return uniqueHistory(data.images || [])
+  } catch (err) {
+    console.warn('[image-history] Supabase history load failed', err)
+    return []
+  }
+}
+
 async function saveHistory(images: GeneratedImage[]) {
   const capped = uniqueHistory(images)
   const db = await openHistoryDb()
@@ -198,13 +214,30 @@ async function saveHistory(images: GeneratedImage[]) {
   }
 }
 
+async function deleteRemoteHistory(id: string) {
+  try {
+    await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  } catch (err) {
+    console.warn('[image-history] Supabase history delete failed', err)
+  }
+}
+
+async function clearRemoteHistory() {
+  try {
+    await fetch(`${API_BASE}/api/image/history`, { method: 'DELETE' })
+  } catch (err) {
+    console.warn('[image-history] Supabase history clear failed', err)
+  }
+}
+
 export function useImageGen() {
   const isGenerating = ref(false)
   const error = ref<string | null>(null)
   const generatedImages = ref<GeneratedImage[]>(loadLegacyHistory())
 
-  void loadPersistedHistory().then((history) => {
-    generatedImages.value = uniqueHistory([...generatedImages.value, ...history])
+  void Promise.all([loadPersistedHistory(), loadRemoteHistory()]).then(([history, remoteHistory]) => {
+    generatedImages.value = uniqueHistory([...generatedImages.value, ...history, ...remoteHistory])
+    void saveHistory(generatedImages.value)
   })
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage | null> {
@@ -238,7 +271,9 @@ export function useImageGen() {
 
       const imageWithReferences: GeneratedImage = {
         ...image,
-        references: options.references?.map(reference => ({ ...reference })) ?? [],
+        references: image.references?.length
+          ? image.references.map(reference => ({ ...reference }))
+          : options.references?.map(reference => ({ ...reference })) ?? [],
       }
 
       generatedImages.value = [imageWithReferences, ...generatedImages.value]
@@ -258,11 +293,13 @@ export function useImageGen() {
   function removeImage(id: string) {
     generatedImages.value = generatedImages.value.filter(img => img.id !== id)
     void saveHistory(generatedImages.value)
+    void deleteRemoteHistory(id)
   }
 
   function clearHistory() {
     generatedImages.value = []
     void saveHistory(generatedImages.value)
+    void clearRemoteHistory()
     error.value = null
   }
 

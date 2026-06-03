@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
+import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 
 const router = Router()
 
@@ -144,6 +145,16 @@ function safeUploadName(reference: ImageGenReference, index: number, mime: strin
   const rawName = reference.fileName || reference.title || `image_${index + 1}`
   const stem = rawName.replace(/\.[a-z0-9]+$/i, '').replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 40)
   return `${stem || `image_${index + 1}`}.${extensionForMime(mime)}`
+}
+
+function referencesForHistory(references: ImageGenReference[]) {
+  return references.map((reference, index) => ({
+    id: reference.id ? String(reference.id) : `reference_${index + 1}`,
+    title: reference.title ? String(reference.title) : `参考图${index + 1}`,
+    dataUrl: String(reference.dataUrl),
+    content: reference.content ? String(reference.content) : undefined,
+    fileName: reference.fileName ? String(reference.fileName) : undefined,
+  }))
 }
 
 function parseDataUrl(dataUrl: string) {
@@ -457,17 +468,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
 
     if (!response) throw lastError || new Error('image generation failed')
 
-    const images: Array<{
-      id: string
-      dataUrl: string
-      prompt: string
-      revisedPrompt?: string
-      size: string
-      aspectRatio: ImageAspectRatio
-      resolution: ImageResolution
-      quality: ImageQuality
-      timestamp: string
-    }> = []
+    const images: ImageHistoryItem[] = []
 
     const generatedData: Array<{
       b64_json?: string | null
@@ -513,7 +514,22 @@ router.post('/image/generate', async (req: Request, res: Response) => {
 
     console.log(`[image] generated ${images.length} image(s), refs=${references.length}, size=${size}, quality=${quality}, prompt: "${trimmedPrompt.slice(0, 60)}${trimmedPrompt.length > 60 ? '...' : ''}"`)
 
-    res.json({ images })
+    const historyReferences = referencesForHistory(references)
+    const imagesWithReferences = images.map(image => ({
+      ...image,
+      references: historyReferences,
+    }))
+
+    try {
+      const saved = await saveImageHistory(imagesWithReferences)
+      if (saved) {
+        console.log(`[image-history] saved ${imagesWithReferences.length} image(s) to Supabase`)
+      }
+    } catch (historyErr: any) {
+      console.warn(`[image-history] save skipped: ${historyErr.message}`)
+    }
+
+    res.json({ images: imagesWithReferences })
   } catch (err: any) {
     console.error('Image generation error:', err.status, err.message)
     const status = err.status || 500
