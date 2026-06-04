@@ -21,10 +21,6 @@ const message = ref('请稍等，Recho 正在确认这封验证邮件。')
 const nextPath = ref(DEFAULT_AUTH_REDIRECT_PATH)
 let redirectTimer: ReturnType<typeof window.setTimeout> | null = null
 
-const templateLink = computed(() => {
-  return '<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email">确认邮箱</a>'
-})
-
 const stateLabel = computed(() => {
   if (state.value === 'success') return '验证成功'
   if (state.value === 'error') return '验证失败'
@@ -133,11 +129,6 @@ onUnmounted(() => {
           进入 Recho
         </button>
       </div>
-
-      <aside class="auth-confirm-template">
-        <span>Supabase Confirm signup 模板链接</span>
-        <code>{{ templateLink }}</code>
-      </aside>
     </section>
   </main>
 </template>
@@ -213,34 +204,6 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 900;
   cursor: pointer;
-}
-
-.auth-confirm-template {
-  display: grid;
-  gap: 8px;
-  margin-top: 6px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.auth-confirm-template span {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.auth-confirm-template code {
-  display: block;
-  overflow-x: auto;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: nowrap;
 }
 
 @media (max-width: 640px) {
