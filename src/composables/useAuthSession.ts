@@ -44,6 +44,22 @@ export async function getAuthAccessToken() {
 export function useAuthSession() {
   const userEmail = computed(() => user.value?.email || '')
 
+  function isEmailConfirmed(authUser: User) {
+    if (!authUser.email) return true
+    return Boolean(authUser.email_confirmed_at || authUser.confirmed_at)
+  }
+
+  async function applySessionUser(client: SupabaseClient, sessionUser: User | null) {
+    if (sessionUser && !isEmailConfirmed(sessionUser)) {
+      await client.auth.signOut()
+      user.value = null
+      authNotice.value = '请先完成邮箱验证后再登录。'
+      return
+    }
+
+    user.value = sessionUser
+  }
+
   async function initAuth() {
     const client = await authClientOrNull()
     if (!client) {
@@ -52,9 +68,9 @@ export function useAuthSession() {
     }
 
     const { data } = await client.auth.getSession()
-    user.value = data.session?.user || null
+    await applySessionUser(client, data.session?.user || null)
     client.auth.onAuthStateChange((_event, session) => {
-      user.value = session?.user || null
+      void applySessionUser(client, session?.user || null)
     })
     isAuthReady.value = true
   }
@@ -74,13 +90,20 @@ export function useAuthSession() {
     isAuthLoading.value = true
     try {
       if (mode === 'signUp') {
+        const emailAddress = email.trim()
         const { data, error } = await client.auth.signUp({
-          email: email.trim(),
+          email: emailAddress,
           password,
           options: { emailRedirectTo: window.location.origin },
         })
         if (error) throw error
-        user.value = data.user || null
+        if (data.session) {
+          await client.auth.signOut()
+          user.value = null
+          authNotice.value = '账号已创建，但当前 Supabase 项目没有强制邮箱验证，请在 Supabase Auth 开启 Confirm email。'
+          return true
+        }
+        user.value = null
         authNotice.value = '账号已创建，请查看邮箱完成验证。'
         return true
       }
@@ -90,6 +113,10 @@ export function useAuthSession() {
         password,
       })
       if (error) throw error
+      if (data.user && !isEmailConfirmed(data.user)) {
+        await client.auth.signOut()
+        throw new Error('请先完成邮箱验证后再登录。')
+      }
       user.value = data.user || null
       authNotice.value = '已登录'
       return true

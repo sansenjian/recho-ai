@@ -523,19 +523,17 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       references: historyReferences,
     }))
 
-    let responseImages: ImageHistoryItem[] = imagesWithReferences
+    void saveImageHistory(imagesWithReferences, { userId })
+      .then((savedImages) => {
+        if (savedImages) {
+          console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
+        }
+      })
+      .catch((historyErr: any) => {
+        console.warn(`[image-history] save skipped: ${historyErr.message}`)
+      })
 
-    try {
-      const savedImages = await saveImageHistory(imagesWithReferences, { userId })
-      if (savedImages) {
-        responseImages = savedImages
-        console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
-      }
-    } catch (historyErr: any) {
-      console.warn(`[image-history] save skipped: ${historyErr.message}`)
-    }
-
-    res.json({ images: responseImages })
+    res.json({ images: imagesWithReferences })
   } catch (err: any) {
     console.error('Image generation error:', err.status, err.message)
     const status = err.status || 500

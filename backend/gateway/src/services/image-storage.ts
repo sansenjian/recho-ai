@@ -5,6 +5,7 @@ import sharp from 'sharp'
 const DATA_URL_RE = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i
 const IMAGE_FILE_SIZE_LIMIT = '32MB'
 const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+const IMAGE_CACHE_CONTROL = '31536000'
 
 export interface StoredImage {
   publicUrl: string
@@ -12,6 +13,11 @@ export interface StoredImage {
   thumbnailUrl?: string
   thumbnailPath?: string
   mime: string
+}
+
+export interface StoredThumbnail {
+  thumbnailUrl: string
+  thumbnailPath: string
 }
 
 function extensionForMime(mime: string) {
@@ -88,21 +94,42 @@ export function imageThumbnailPath(storagePath?: string | null) {
   return storagePath.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
 }
 
-export async function storeImageDataUrl(dataUrl: string, pathHint: string): Promise<StoredImage | null> {
-  if (isStorageUrl(dataUrl)) return null
-
-  const parsed = parseDataUrl(dataUrl)
-  if (!parsed) return null
-
+export async function storeThumbnailBuffer(buffer: Buffer, pathHint: string): Promise<StoredThumbnail | null> {
   const client = await ensureImageBucket()
   if (!client) return null
 
-  const extension = extensionForMime(parsed.mime)
+  const thumbnailBuffer = await sharp(buffer)
+    .rotate()
+    .resize({ width: 480, height: 480, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 72 })
+    .toBuffer()
+  const thumbnailPath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.thumb.webp`
+  const { error: thumbnailError } = await client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .upload(thumbnailPath, thumbnailBuffer, {
+      cacheControl: IMAGE_CACHE_CONTROL,
+      contentType: 'image/webp',
+      upsert: true,
+    })
+  if (thumbnailError) throw thumbnailError
+  const thumbnailUrl = client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .getPublicUrl(thumbnailPath).data.publicUrl
+
+  return { thumbnailUrl, thumbnailPath }
+}
+
+export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: string): Promise<StoredImage | null> {
+  const client = await ensureImageBucket()
+  if (!client) return null
+
+  const extension = extensionForMime(mime)
   const storagePath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.${extension}`
   const { error } = await client.storage
     .from(SUPABASE_IMAGE_BUCKET)
-    .upload(storagePath, parsed.buffer, {
-      contentType: parsed.mime,
+    .upload(storagePath, buffer, {
+      cacheControl: IMAGE_CACHE_CONTROL,
+      contentType: mime,
       upsert: true,
     })
 
@@ -112,26 +139,9 @@ export async function storeImageDataUrl(dataUrl: string, pathHint: string): Prom
     .from(SUPABASE_IMAGE_BUCKET)
     .getPublicUrl(storagePath)
 
-  let thumbnailUrl: string | undefined
-  let thumbnailPath: string | undefined
-
+  let thumbnail: StoredThumbnail | null = null
   try {
-    const thumbnailBuffer = await sharp(parsed.buffer)
-      .rotate()
-      .resize({ width: 480, height: 480, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 72 })
-      .toBuffer()
-    thumbnailPath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.thumb.webp`
-    const { error: thumbnailError } = await client.storage
-      .from(SUPABASE_IMAGE_BUCKET)
-      .upload(thumbnailPath, thumbnailBuffer, {
-        contentType: 'image/webp',
-        upsert: true,
-      })
-    if (thumbnailError) throw thumbnailError
-    thumbnailUrl = client.storage
-      .from(SUPABASE_IMAGE_BUCKET)
-      .getPublicUrl(thumbnailPath).data.publicUrl
+    thumbnail = await storeThumbnailBuffer(buffer, pathHint)
   } catch (err) {
     console.warn('[image-storage] thumbnail generation skipped:', err instanceof Error ? err.message : err)
   }
@@ -139,8 +149,17 @@ export async function storeImageDataUrl(dataUrl: string, pathHint: string): Prom
   return {
     publicUrl: data.publicUrl,
     storagePath,
-    thumbnailUrl,
-    thumbnailPath,
-    mime: parsed.mime,
+    thumbnailUrl: thumbnail?.thumbnailUrl,
+    thumbnailPath: thumbnail?.thumbnailPath,
+    mime,
   }
+}
+
+export async function storeImageDataUrl(dataUrl: string, pathHint: string): Promise<StoredImage | null> {
+  if (isStorageUrl(dataUrl)) return null
+
+  const parsed = parseDataUrl(dataUrl)
+  if (!parsed) return null
+
+  return await storeImageBuffer(parsed.buffer, parsed.mime, pathHint)
 }

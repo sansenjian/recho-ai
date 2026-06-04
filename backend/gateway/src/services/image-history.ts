@@ -8,7 +8,7 @@ const DEFAULT_HISTORY_LIMIT = 12
 export interface ImageHistoryReference {
   id?: string
   title?: string
-  dataUrl: string
+  dataUrl?: string
   storagePath?: string
   thumbnailUrl?: string
   thumbnailPath?: string
@@ -19,7 +19,7 @@ export interface ImageHistoryReference {
 export interface ImageHistoryItem {
   id: string
   userId?: string | null
-  dataUrl: string
+  dataUrl?: string
   storagePath?: string
   thumbnailUrl?: string
   thumbnailPath?: string
@@ -36,7 +36,7 @@ export interface ImageHistoryItem {
 interface ImageHistoryRow {
   id: string
   user_id?: string | null
-  data_url: string
+  data_url?: string
   storage_path?: string | null
   thumbnail_url?: string | null
   thumbnail_path?: string | null
@@ -51,12 +51,12 @@ interface ImageHistoryRow {
 }
 
 function plainReference(reference: ImageHistoryReference): ImageHistoryReference | null {
-  if (!reference?.dataUrl) return null
+  if (!reference?.dataUrl && !reference?.thumbnailUrl) return null
 
   return {
     id: reference.id ? String(reference.id) : undefined,
     title: reference.title ? String(reference.title) : '参考图',
-    dataUrl: String(reference.dataUrl),
+    dataUrl: reference.dataUrl ? String(reference.dataUrl) : undefined,
     storagePath: reference.storagePath ? String(reference.storagePath) : undefined,
     thumbnailUrl: reference.thumbnailUrl ? String(reference.thumbnailUrl) : undefined,
     thumbnailPath: reference.thumbnailPath ? String(reference.thumbnailPath) : undefined,
@@ -73,7 +73,7 @@ function plainReferences(references: ImageHistoryReference[] = []) {
 
 async function storedReference(reference: ImageHistoryReference, imageId: string, index: number) {
   const plain = plainReference(reference)
-  if (!plain) return null
+  if (!plain?.dataUrl) return plain
 
   const stored = await storeImageDataUrl(plain.dataUrl, `references/${imageId}/${plain.id || `ref_${index + 1}`}`)
   return stored
@@ -89,7 +89,9 @@ async function storedReference(reference: ImageHistoryReference, imageId: string
 
 async function storedImage(image: ImageHistoryItem) {
   const id = String(image.id)
-  const stored = await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
+  const stored = image.dataUrl
+    ? await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
+    : null
   const references = await Promise.all(
     plainReferences(image.references).map((reference, index) => storedReference(reference, id, index)),
   )
@@ -112,7 +114,7 @@ interface ImageRowOptions {
 function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
   const row: ImageHistoryRow = {
     id: String(image.id),
-    data_url: String(image.dataUrl),
+    data_url: String(image.dataUrl || ''),
     storage_path: image.storagePath ? String(image.storagePath) : null,
     prompt: String(image.prompt || ''),
     revised_prompt: image.revisedPrompt ? String(image.revisedPrompt) : null,
@@ -149,12 +151,56 @@ function imageFromRow(row: ImageHistoryRow): ImageHistoryItem {
   return {
     id: row.id,
     userId: row.user_id || null,
-    dataUrl: row.data_url,
+    dataUrl: row.data_url || '',
     storagePath: row.storage_path || undefined,
     thumbnailUrl: row.thumbnail_url || imagePublicUrl(thumbnailPath),
     thumbnailPath,
     prompt: row.prompt || '',
     references: plainReferences(row.reference_images || []),
+    revisedPrompt: row.revised_prompt || undefined,
+    size: row.size || 'auto',
+    aspectRatio: row.aspect_ratio || undefined,
+    resolution: row.resolution || undefined,
+    quality: row.quality || undefined,
+    timestamp: row.generated_at,
+  }
+}
+
+function isInlineDataUrl(value?: string | null) {
+  return Boolean(value && /^data:/i.test(value))
+}
+
+function referenceSummary(reference: ImageHistoryReference): ImageHistoryReference | null {
+  const plain = plainReference(reference)
+  if (!plain) return null
+  const displayUrl = plain.thumbnailUrl || (!isInlineDataUrl(plain.dataUrl) ? plain.dataUrl : undefined)
+
+  return {
+    id: plain.id,
+    title: plain.title,
+    dataUrl: displayUrl,
+    storagePath: plain.storagePath,
+    thumbnailUrl: plain.thumbnailUrl,
+    thumbnailPath: plain.thumbnailPath,
+    content: plain.content,
+    fileName: plain.fileName,
+  }
+}
+
+function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
+  const thumbnailPath = row.thumbnail_path || undefined
+  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath)
+  return {
+    id: row.id,
+    userId: row.user_id || null,
+    dataUrl: thumbnailUrl ? undefined : (!isInlineDataUrl(row.data_url) ? row.data_url : undefined),
+    storagePath: row.storage_path || undefined,
+    thumbnailUrl,
+    thumbnailPath,
+    prompt: row.prompt || '',
+    references: plainReferences(row.reference_images || [])
+      .map(referenceSummary)
+      .filter((reference): reference is ImageHistoryReference => Boolean(reference)),
     revisedPrompt: row.revised_prompt || undefined,
     size: row.size || 'auto',
     aspectRatio: row.aspect_ratio || undefined,
@@ -194,7 +240,7 @@ export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0
     .range(safeOffset, safeOffset + cappedLimit - 1)
 
   if (error) throw error
-  const images = (data || []).map(row => imageFromRow(row as ImageHistoryRow))
+  const images = (data || []).map(row => imageSummaryFromRow(row as ImageHistoryRow))
   const total = count ?? safeOffset + images.length
   const nextOffset = safeOffset + images.length
   return {
@@ -205,6 +251,20 @@ export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0
     hasMore: nextOffset < total,
     nextOffset: nextOffset < total ? nextOffset : null,
   }
+}
+
+export async function getImageHistory(id: string) {
+  const client = historyClient()
+  if (!client) return null
+
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) throw error
+  return data ? imageFromRow(data as ImageHistoryRow) : null
 }
 
 export async function saveImageHistory(images: ImageHistoryItem[], options: { userId?: string | null } = {}) {

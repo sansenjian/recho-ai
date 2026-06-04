@@ -19,6 +19,10 @@ interface ImageHistoryResponse {
   nextOffset?: number | null
 }
 
+interface ImageHistoryDetailResponse {
+  image?: GeneratedImage
+}
+
 function plainReference(reference: ImageGenReference): ImageGenReference | null {
   const raw = toRaw(reference) as ImageGenReference
   if (!raw?.dataUrl) return null
@@ -37,7 +41,7 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
 
 function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   const raw = toRaw(image) as GeneratedImage
-  if (!raw?.id || !raw?.dataUrl) return null
+  if (!raw?.id || (!raw?.dataUrl && !raw?.thumbnailUrl)) return null
 
   const references = Array.isArray(raw.references)
     ? raw.references
@@ -47,7 +51,7 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
 
   return {
     id: String(raw.id),
-    dataUrl: String(raw.dataUrl),
+    ...(raw.dataUrl ? { dataUrl: String(raw.dataUrl) } : {}),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
     ...(raw.thumbnailUrl ? { thumbnailUrl: String(raw.thumbnailUrl) } : {}),
     ...(raw.thumbnailPath ? { thumbnailPath: String(raw.thumbnailPath) } : {}),
@@ -212,6 +216,18 @@ async function loadRemoteHistory(offset = 0) {
   }
 }
 
+async function loadRemoteImageDetail(id: string) {
+  try {
+    const res = await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}`, { cache: 'no-store' })
+    if (!res.ok) return null
+    const data = await res.json() as ImageHistoryDetailResponse
+    return data.image ? plainHistoryImage(data.image) : null
+  } catch (err) {
+    console.warn('[image-history] Supabase history detail load failed', err)
+    return null
+  }
+}
+
 async function saveHistory(images: GeneratedImage[]) {
   const capped = uniqueHistory(images)
   const db = await openHistoryDb()
@@ -284,7 +300,7 @@ export function useImageGen() {
 
       const data: ImageGenResponse = await res.json()
       const image = data.images?.[0]
-      if (!image) {
+      if (!image?.dataUrl) {
         throw new Error('no image returned')
       }
 
@@ -319,6 +335,17 @@ export function useImageGen() {
     return
   }
 
+  async function resolveImageDetail(image: GeneratedImage) {
+    if (image.dataUrl) return image
+
+    const detail = await loadRemoteImageDetail(image.id)
+    if (!detail) return image
+
+    generatedImages.value = uniqueHistory([detail, ...generatedImages.value])
+    void saveHistory(generatedImages.value)
+    return detail
+  }
+
   async function loadMoreHistory() {
     if (isLoadingHistory.value || !hasMoreHistory.value || nextHistoryOffset.value === null) return
     isLoadingHistory.value = true
@@ -343,5 +370,6 @@ export function useImageGen() {
     removeImage,
     clearHistory,
     loadMoreHistory,
+    resolveImageDetail,
   }
 }

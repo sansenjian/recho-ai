@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import {
   clearImageHistory,
   deleteImageHistory,
+  getImageHistory,
   hasImageHistoryStore,
   listImageHistory,
   saveImageHistory,
@@ -40,6 +41,27 @@ router.post('/image/history', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[image-history] save failed:', err.message)
     res.status(500).json({ error: err.message || 'image history save failed' })
+  }
+})
+
+router.get('/image/history/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
+    if (!id) {
+      res.status(400).json({ error: 'image history id is required' })
+      return
+    }
+
+    const image = await getImageHistory(id)
+    if (!image) {
+      res.status(404).json({ error: 'image history item not found' })
+      return
+    }
+
+    res.json({ image, persistence: { enabled: hasImageHistoryStore() } })
+  } catch (err: any) {
+    console.error('[image-history] detail failed:', err.message)
+    res.status(500).json({ error: err.message || 'image history detail failed' })
   }
 })
 

@@ -123,6 +123,7 @@ const {
   generate,
   clearHistory,
   loadMoreHistory,
+  resolveImageDetail,
 } = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -795,7 +796,13 @@ function chooseImage(nodeId: string) {
   input.click()
 }
 
-function useHistoryImage(image: GeneratedImage) {
+async function useHistoryImage(image: GeneratedImage) {
+  const detail = await resolveImageDetail(image)
+  if (!detail.dataUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+
   activeWorkspace.value = 'canvas'
   const rect = viewportRef.value?.getBoundingClientRect()
   const point = rect
@@ -805,10 +812,10 @@ function useHistoryImage(image: GeneratedImage) {
   createNode('image', point.x, point.y, {
     title: nextImageTitle(),
     content: '',
-    imageUrl: image.dataUrl,
-    sourceImageId: image.id,
-    sourcePrompt: image.prompt,
-    fileName: image.size,
+    imageUrl: detail.dataUrl,
+    sourceImageId: detail.id,
+    sourcePrompt: detail.prompt,
+    fileName: detail.size,
   })
 }
 
@@ -817,15 +824,15 @@ function galleryPrompt(image: GeneratedImage) {
 }
 
 function galleryReferences(image: GeneratedImage) {
-  return image.references?.filter(reference => reference.dataUrl) ?? []
+  return image.references?.filter(reference => reference.dataUrl || reference.thumbnailUrl) ?? []
 }
 
 function displayImageUrl(image: GeneratedImage) {
-  return image.thumbnailUrl || image.dataUrl
+  return image.thumbnailUrl || image.dataUrl || ''
 }
 
 function displayReferenceUrl(reference: NonNullable<GeneratedImage['references']>[number]) {
-  return reference.thumbnailUrl || reference.dataUrl
+  return reference.thumbnailUrl || reference.dataUrl || ''
 }
 
 async function handleLoadMoreGallery() {
@@ -872,13 +879,28 @@ function galleryFileName(image: GeneratedImage) {
   return `${promptName || image.id || 'recho_image'}.png`
 }
 
-function downloadGeneratedImage(image: GeneratedImage) {
+async function downloadGeneratedImage(image: GeneratedImage) {
+  const detail = await resolveImageDetail(image)
+  if (!detail.dataUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+
   const a = document.createElement('a')
-  a.href = image.dataUrl
-  a.download = galleryFileName(image)
+  a.href = detail.dataUrl
+  a.download = galleryFileName(detail)
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+async function sendHistoryImageToChat(image: GeneratedImage) {
+  const detail = await resolveImageDetail(image)
+  if (!detail.dataUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+  emit('sendToChat', detail.dataUrl)
 }
 
 function selectWorkspace(mode: WorkspaceMode) {
@@ -1969,7 +1991,7 @@ onUnmounted(() => {
             <div class="gallery-actions">
               <button type="button" @click="useHistoryImage(image)">放入画布</button>
               <button type="button" @click="downloadGeneratedImage(image)">下载</button>
-              <button type="button" @click="emit('sendToChat', image.dataUrl)">对话</button>
+              <button type="button" @click="sendHistoryImageToChat(image)">对话</button>
             </div>
           </div>
         </article>
