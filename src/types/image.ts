@@ -32,6 +32,10 @@ export interface ImageGenReference {
 
 export interface ImageGenRequest {
   prompt: string
+  displayPrompt?: string
+  userPrompt?: string
+  systemPrompt?: string
+  modelPrompt?: string
   size?: ImageSize
   aspectRatio?: ImageAspectRatio
   resolution?: ImageResolution
@@ -51,6 +55,9 @@ export interface GeneratedImage {
   thumbnailUrl?: string
   thumbnailPath?: string
   prompt: string
+  userPrompt?: string
+  systemPrompt?: string
+  modelPrompt?: string
   references?: ImageGenReference[]
   revisedPrompt?: string
   size: string

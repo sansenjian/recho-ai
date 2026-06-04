@@ -11,6 +11,10 @@ type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 
 interface ImageGenRequest {
   prompt: string
+  displayPrompt?: string
+  userPrompt?: string
+  systemPrompt?: string
+  modelPrompt?: string
   size?: string
   aspectRatio?: ImageAspectRatio
   resolution?: ImageResolution
@@ -73,6 +77,27 @@ function normalizeOption<T extends string>(value: unknown, allowed: Set<T>, fall
 
 function shortPrompt(value: string) {
   return `${value.slice(0, 80)}${value.length > 80 ? '...' : ''}`
+}
+
+function requestText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function isSystemPromptBlock(block: string) {
+  return (
+    /^已上传 \d+ 张真实参考图/.test(block) &&
+    block.includes('不要只根据文字重新想象')
+  ) || /^.+: 第 \d+ 张参考图/.test(block)
+}
+
+function stripSystemPromptBlocks(prompt: string) {
+  const visibleBlocks = prompt
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .filter(block => !isSystemPromptBlock(block))
+
+  return visibleBlocks.join('\n\n') || prompt
 }
 
 function sleep(ms: number) {
@@ -408,6 +433,10 @@ async function generateWithComfyStrategy(prompt: string, references: ImageGenRef
 router.post('/image/generate', async (req: Request, res: Response) => {
   const {
     prompt,
+    displayPrompt,
+    userPrompt,
+    systemPrompt,
+    modelPrompt,
     size: requestedSize,
     aspectRatio: rawAspectRatio,
     resolution: rawResolution,
@@ -447,6 +476,9 @@ router.post('/image/generate', async (req: Request, res: Response) => {
 
   try {
     const trimmedPrompt = prompt.trim()
+    const historyUserPrompt = requestText(userPrompt) || requestText(displayPrompt) || stripSystemPromptBlocks(trimmedPrompt)
+    const historySystemPrompt = requestText(systemPrompt)
+    const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
     const userId = await getRequestUserId(req)
     let response: Awaited<ReturnType<typeof generateWithComfyStrategy>> | null = null
     let lastError: any = null
@@ -490,7 +522,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         images.push({
           id: `img_${Date.now()}_${images.length}`,
           dataUrl,
-          prompt: trimmedPrompt,
+          prompt: historyUserPrompt,
+          userPrompt: historyUserPrompt,
+          systemPrompt: historySystemPrompt,
+          modelPrompt: historyModelPrompt,
           revisedPrompt: item.revised_prompt ?? undefined,
           size,
           aspectRatio,
@@ -503,7 +538,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         images.push({
           id: `img_${Date.now()}_${images.length}`,
           dataUrl,
-          prompt: trimmedPrompt,
+          prompt: historyUserPrompt,
+          userPrompt: historyUserPrompt,
+          systemPrompt: historySystemPrompt,
+          modelPrompt: historyModelPrompt,
           revisedPrompt: item.revised_prompt ?? undefined,
           size,
           aspectRatio,

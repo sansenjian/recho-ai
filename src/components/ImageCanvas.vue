@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
 import type { GeneratedImage, ImageGenRequest } from '../types/image'
 
 type CanvasNodeType = 'text' | 'image' | 'generation'
 type OutputHandle = 'text-out' | 'image-out' | 'generation-out'
 type InputHandle = 'prompt-in' | 'reference-in' | 'image-in'
+type CanvasHandle = OutputHandle | InputHandle
+type HandleRole = 'input' | 'output'
 type NodeSize = ImageGenRequest['size']
 type NodeAspectRatio = NonNullable<ImageGenRequest['aspectRatio']>
 type NodeResolution = NonNullable<ImageGenRequest['resolution']>
@@ -54,10 +56,19 @@ interface Connection {
 }
 
 interface DraftConnection {
-  fromNodeId: string
-  fromHandle: OutputHandle
+  nodeId: string
+  handle: CanvasHandle
+  role: HandleRole
   cursorX: number
   cursorY: number
+  startClientX: number
+  startClientY: number
+}
+
+interface PendingMenuConnection {
+  nodeId: string
+  handle: CanvasHandle
+  role: HandleRole
 }
 
 interface DragState {
@@ -116,6 +127,8 @@ const MENU_WIDTH = 176
 const MENU_HEIGHT = 150
 const MIN_NODE_SCALE = 0.72
 const MAX_NODE_SCALE = 2.4
+const MIN_VIEWPORT_ZOOM = 0.42
+const MAX_VIEWPORT_ZOOM = 1.4
 const GALLERY_PAGE_SIZE = 12
 const GALLERY_AUTO_LOAD_PROGRESS = 0.5
 
@@ -185,9 +198,12 @@ const contextMenu = ref({
   y: 0,
   canvasX: 0,
   canvasY: 0,
+  pendingConnection: null as PendingMenuConnection | null,
 })
 
 let idSeed = Date.now()
+let suppressNextWindowClick = false
+let suppressClickTimer: number | null = null
 
 watch(
   () => props.workspaceMode,
@@ -350,39 +366,101 @@ function canvasPointFromClient(clientX: number, clientY: number) {
   }
 }
 
+function visibleCanvasCenterClientPoint() {
+  const rect = viewportRef.value?.getBoundingClientRect()
+  if (!rect) return null
+
+  const isMobile = rect.width <= 760
+  const topInset = isMobile ? 142 : 0
+  const bottomInset = isMobile ? 112 : 0
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + topInset + (rect.height - topInset - bottomInset) / 2,
+  }
+}
+
+function nodePositionNearVisibleCenter(type: CanvasNodeType) {
+  const center = visibleCanvasCenterClientPoint()
+  if (!center) return null
+  const point = canvasPointFromClient(center.x, center.y)
+  const size = NODE_SIZE[type]
+  const offset = nodes.value.length * 18
+  return {
+    x: point.x - size.width / 2 + offset,
+    y: point.y - Math.min(size.height / 2, 180) + offset,
+  }
+}
+
 function createNodeAtMenu(type: CanvasNodeType) {
+  const pendingConnection = contextMenu.value.pendingConnection
   const node = createNode(type, contextMenu.value.canvasX, contextMenu.value.canvasY)
-  contextMenu.value.visible = false
+  closeContextMenu()
+  if (pendingConnection) {
+    connectPendingMenuConnection(pendingConnection, node)
+  }
   if (type === 'image') {
     requestAnimationFrame(() => chooseImage(node.id))
   }
 }
 
 function createNodeNearCenter(type: CanvasNodeType) {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const point = canvasPointFromClient(rect.left + rect.width / 2, rect.top + rect.height / 2)
-  const offset = nodes.value.length * 18
-  const node = createNode(type, point.x - 120 + offset, point.y - 60 + offset)
+  const position = nodePositionNearVisibleCenter(type)
+  if (!position) return
+  const node = createNode(type, position.x, position.y)
   if (type === 'image') {
     requestAnimationFrame(() => chooseImage(node.id))
   }
 }
 
-function openContextMenu(event: MouseEvent) {
+function openContextMenuAtClient(
+  clientX: number,
+  clientY: number,
+  pendingConnection: PendingMenuConnection | null = null,
+) {
   const rect = viewportRef.value?.getBoundingClientRect()
-  const point = canvasPointFromClient(event.clientX, event.clientY)
+  const point = canvasPointFromClient(clientX, clientY)
+  const maxX = Math.max((rect?.width ?? MENU_WIDTH) - MENU_WIDTH - 12, 12)
+  const maxY = Math.max((rect?.height ?? MENU_HEIGHT) - MENU_HEIGHT - 12, 12)
   contextMenu.value = {
     visible: true,
-    x: Math.min(event.clientX - (rect?.left ?? 0), Math.max((rect?.width ?? MENU_WIDTH) - MENU_WIDTH - 12, 12)),
-    y: Math.min(event.clientY - (rect?.top ?? 0), Math.max((rect?.height ?? MENU_HEIGHT) - MENU_HEIGHT - 12, 12)),
+    x: clamp(clientX - (rect?.left ?? 0), 12, maxX),
+    y: clamp(clientY - (rect?.top ?? 0), 12, maxY),
     canvasX: point.x,
     canvasY: point.y,
+    pendingConnection,
   }
+}
+
+function openContextMenu(event: MouseEvent) {
+  openContextMenuAtClient(event.clientX, event.clientY)
 }
 
 function closeContextMenu() {
   contextMenu.value.visible = false
+  contextMenu.value.pendingConnection = null
+}
+
+function suppressNextClickClose() {
+  suppressNextWindowClick = true
+  if (suppressClickTimer !== null) {
+    window.clearTimeout(suppressClickTimer)
+  }
+  suppressClickTimer = window.setTimeout(() => {
+    suppressNextWindowClick = false
+    suppressClickTimer = null
+  }, 120)
+}
+
+function handleWindowClick() {
+  if (suppressNextWindowClick) {
+    suppressNextWindowClick = false
+    if (suppressClickTimer !== null) {
+      window.clearTimeout(suppressClickTimer)
+      suppressClickTimer = null
+    }
+    return
+  }
+  closeContextMenu()
 }
 
 function selectNode(nodeId: string) {
@@ -419,8 +497,13 @@ function getRenderedNodeSize(node: CanvasNode) {
   }
 }
 
-function startNodeDrag(event: MouseEvent, node: CanvasNode) {
-  if (event.button !== 0) return
+function canStartPointerInteraction(event: PointerEvent) {
+  return event.isPrimary && event.button === 0
+}
+
+function startNodeDrag(event: PointerEvent, node: CanvasNode) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   dragState.value = {
     nodeId: node.id,
@@ -431,8 +514,9 @@ function startNodeDrag(event: MouseEvent, node: CanvasNode) {
   }
 }
 
-function startNodeResize(event: MouseEvent, node: CanvasNode, corner: ResizeCorner) {
-  if (event.button !== 0) return
+function startNodeResize(event: PointerEvent, node: CanvasNode, corner: ResizeCorner) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   resizeState.value = {
     nodeId: node.id,
@@ -445,8 +529,9 @@ function startNodeResize(event: MouseEvent, node: CanvasNode, corner: ResizeCorn
   }
 }
 
-function startPan(event: MouseEvent) {
-  if (event.button !== 0 || event.target !== event.currentTarget) return
+function startPan(event: PointerEvent) {
+  if (!canStartPointerInteraction(event) || event.target !== event.currentTarget) return
+  event.preventDefault()
   selectedNodeId.value = null
   closeContextMenu()
   panState.value = {
@@ -457,7 +542,7 @@ function startPan(event: MouseEvent) {
   }
 }
 
-function handleWindowMouseMove(event: MouseEvent) {
+function handleWindowPointerMove(event: PointerEvent) {
   const resizing = resizeState.value
   if (resizing) {
     const node = nodes.value.find(item => item.id === resizing.nodeId)
@@ -511,7 +596,28 @@ function handleWindowMouseMove(event: MouseEvent) {
   }
 }
 
-function handleWindowMouseUp() {
+function handleWindowPointerUp(event: PointerEvent) {
+  const draft = draftConnection.value
+  if (draft) {
+    const deltaX = event.clientX - draft.startClientX
+    const deltaY = event.clientY - draft.startClientY
+    if (Math.hypot(deltaX, deltaY) >= 12) {
+      openContextMenuAtClient(event.clientX, event.clientY, {
+        nodeId: draft.nodeId,
+        handle: draft.handle,
+        role: draft.role,
+      })
+      suppressNextClickClose()
+    }
+  }
+
+  dragState.value = null
+  panState.value = null
+  resizeState.value = null
+  draftConnection.value = null
+}
+
+function handleWindowPointerCancel() {
   dragState.value = null
   panState.value = null
   resizeState.value = null
@@ -522,7 +628,7 @@ function handleWheel(event: WheelEvent) {
   if (!event.ctrlKey && !event.metaKey) return
   event.preventDefault()
   const point = canvasPointFromClient(event.clientX, event.clientY)
-  const nextZoom = Math.min(1.4, Math.max(0.68, viewport.value.zoom - event.deltaY * 0.0012))
+  const nextZoom = Math.min(MAX_VIEWPORT_ZOOM, Math.max(MIN_VIEWPORT_ZOOM, viewport.value.zoom - event.deltaY * 0.0012))
   viewport.value = {
     x: event.clientX - (viewportRef.value?.getBoundingClientRect().left ?? 0) - point.x * nextZoom,
     y: event.clientY - (viewportRef.value?.getBoundingClientRect().top ?? 0) - point.y * nextZoom,
@@ -530,47 +636,75 @@ function handleWheel(event: WheelEvent) {
   }
 }
 
-function startConnection(event: MouseEvent, node: CanvasNode, handle: OutputHandle) {
-  if (event.button !== 0) return
+function isOutputHandle(handle: CanvasHandle): handle is OutputHandle {
+  return handle === 'text-out' || handle === 'image-out' || handle === 'generation-out'
+}
+
+function isInputHandle(handle: CanvasHandle): handle is InputHandle {
+  return handle === 'prompt-in' || handle === 'reference-in' || handle === 'image-in'
+}
+
+function handleRole(handle: CanvasHandle): HandleRole {
+  return isOutputHandle(handle) ? 'output' : 'input'
+}
+
+function startConnection(event: PointerEvent, node: CanvasNode, handle: CanvasHandle) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   const point = canvasPointFromClient(event.clientX, event.clientY)
   draftConnection.value = {
-    fromNodeId: node.id,
-    fromHandle: handle,
+    nodeId: node.id,
+    handle,
+    role: handleRole(handle),
     cursorX: point.x,
     cursorY: point.y,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
   }
 }
 
-function finishConnection(event: MouseEvent, targetNode: CanvasNode, targetHandle: InputHandle) {
+function addConnectionIfValid(fromNodeId: string, fromHandle: OutputHandle, toNodeId: string, toHandle: InputHandle) {
+  if (!isValidConnection(fromNodeId, fromHandle, toNodeId, toHandle)) return false
+
+  const isDuplicate = connections.value.some(conn => (
+    conn.fromNodeId === fromNodeId &&
+    conn.fromHandle === fromHandle &&
+    conn.toNodeId === toNodeId &&
+    conn.toHandle === toHandle
+  ))
+
+  if (isDuplicate) return true
+
+  connections.value = [
+    ...connections.value,
+    {
+      id: createId('conn'),
+      fromNodeId,
+      fromHandle,
+      toNodeId,
+      toHandle,
+    },
+  ]
+
+  const targetNode = getNodeById(toNodeId)
+  if (targetNode?.type === 'generation' && toHandle === 'prompt-in') {
+    syncMentionConnectionsForGeneration(targetNode)
+  }
+
+  return true
+}
+
+function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHandle: CanvasHandle) {
   const draft = draftConnection.value
   if (!draft) return
   event.preventDefault()
   event.stopPropagation()
 
-  if (isValidConnection(draft.fromNodeId, draft.fromHandle, targetNode.id, targetHandle)) {
-    const isDuplicate = connections.value.some(conn => (
-      conn.fromNodeId === draft.fromNodeId &&
-      conn.fromHandle === draft.fromHandle &&
-      conn.toNodeId === targetNode.id &&
-      conn.toHandle === targetHandle
-    ))
-
-    if (!isDuplicate) {
-      connections.value = [
-        ...connections.value,
-        {
-          id: createId('conn'),
-          fromNodeId: draft.fromNodeId,
-          fromHandle: draft.fromHandle,
-          toNodeId: targetNode.id,
-          toHandle: targetHandle,
-        },
-      ]
-      if (targetNode.type === 'generation' && targetHandle === 'prompt-in') {
-        syncMentionConnectionsForGeneration(targetNode)
-      }
-    }
+  if (draft.role === 'output' && isOutputHandle(draft.handle) && isInputHandle(targetHandle)) {
+    addConnectionIfValid(draft.nodeId, draft.handle, targetNode.id, targetHandle)
+  } else if (draft.role === 'input' && isInputHandle(draft.handle) && isOutputHandle(targetHandle)) {
+    addConnectionIfValid(targetNode.id, targetHandle, draft.nodeId, draft.handle)
   }
 
   draftConnection.value = null
@@ -591,6 +725,32 @@ function isValidConnection(fromNodeId: string, fromHandle: OutputHandle, toNodeI
     return target.type === 'image' && toHandle === 'image-in'
   }
   return false
+}
+
+function outputHandlesForNode(node: CanvasNode): OutputHandle[] {
+  if (node.type === 'text') return ['text-out']
+  if (node.type === 'image') return ['image-out']
+  return ['generation-out']
+}
+
+function inputHandlesForNode(node: CanvasNode): InputHandle[] {
+  if (node.type === 'image') return ['image-in']
+  if (node.type === 'generation') return ['prompt-in', 'reference-in']
+  return []
+}
+
+function connectPendingMenuConnection(pending: PendingMenuConnection, node: CanvasNode) {
+  if (pending.role === 'output' && isOutputHandle(pending.handle)) {
+    for (const targetHandle of inputHandlesForNode(node)) {
+      if (addConnectionIfValid(pending.nodeId, pending.handle, node.id, targetHandle)) return
+    }
+  }
+
+  if (pending.role === 'input' && isInputHandle(pending.handle)) {
+    for (const sourceHandle of outputHandlesForNode(node)) {
+      if (addConnectionIfValid(node.id, sourceHandle, pending.nodeId, pending.handle)) return
+    }
+  }
 }
 
 function incomingConnections(nodeId: string, handle?: InputHandle) {
@@ -774,7 +934,7 @@ function connectionPath(connection: Connection) {
 const draftPath = computed(() => {
   const draft = draftConnection.value
   if (!draft) return ''
-  const start = handlePoint(draft.fromNodeId, draft.fromHandle)
+  const start = handlePoint(draft.nodeId, draft.handle)
   return curvePath(start.x, start.y, draft.cursorX, draft.cursorY)
 })
 
@@ -789,6 +949,38 @@ function removeNode(nodeId: string) {
   if (selectedNodeId.value === nodeId) selectedNodeId.value = null
 }
 
+function fallbackImageFileName(file: File) {
+  if (file.name) return file.name
+  const extension = file.type.split('/')[1] || 'png'
+  return `剪贴板图片.${extension}`
+}
+
+function readImageFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error('图片读取失败'))
+      }
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function applyImageFileToNode(nodeId: string, file: File) {
+  const dataUrl = await readImageFileAsDataUrl(file)
+  const node = getNodeById(nodeId)
+  if (!node) return
+  node.imageUrl = dataUrl
+  node.fileName = fallbackImageFileName(file)
+  if (!/^图片\d+$/.test(node.title.trim())) {
+    node.title = nextImageTitle(node.id)
+  }
+}
+
 function chooseImage(nodeId: string) {
   const input = document.createElement('input')
   input.type = 'file'
@@ -796,19 +988,46 @@ function chooseImage(nodeId: string) {
   input.onchange = () => {
     const file = input.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const node = getNodeById(nodeId)
-      if (!node || typeof reader.result !== 'string') return
-      node.imageUrl = reader.result
-      node.fileName = file.name
-      if (!/^图片\d+$/.test(node.title.trim())) {
-        node.title = nextImageTitle(node.id)
-      }
-    }
-    reader.readAsDataURL(file)
+    void applyImageFileToNode(nodeId, file).catch(() => {
+      error.value = '图片读取失败，请重新选择图片。'
+    })
   }
   input.click()
+}
+
+function clipboardImageFile(event: ClipboardEvent) {
+  const items = Array.from(event.clipboardData?.items ?? [])
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) return file
+    }
+  }
+
+  return Array.from(event.clipboardData?.files ?? [])
+    .find(file => file.type.startsWith('image/')) ?? null
+}
+
+async function handleWindowPaste(event: ClipboardEvent) {
+  const file = clipboardImageFile(event)
+  if (!file || imageViewer.value) return
+
+  event.preventDefault()
+  selectWorkspace('canvas')
+  await nextTick()
+
+  const position = nodePositionNearVisibleCenter('image') ?? { x: 720, y: 420 }
+  const node = createNode('image', position.x, position.y, {
+    title: nextImageTitle(),
+    content: '',
+  })
+
+  try {
+    await applyImageFileToNode(node.id, file)
+  } catch {
+    removeNode(node.id)
+    error.value = '剪贴板图片读取失败，请重新复制图片后再试。'
+  }
 }
 
 async function useHistoryImage(image: GeneratedImage) {
@@ -834,8 +1053,28 @@ async function useHistoryImage(image: GeneratedImage) {
   })
 }
 
+function isGallerySystemPromptBlock(block: string) {
+  return (
+    /^已上传 \d+ 张真实参考图/.test(block) &&
+    block.includes('不要只根据文字重新想象')
+  ) || /^.+: 第 \d+ 张参考图/.test(block)
+}
+
+function galleryUserPrompt(image: GeneratedImage) {
+  return image.userPrompt || image.prompt
+}
+
 function galleryPrompt(image: GeneratedImage) {
-  return image.prompt || '无提示词'
+  const prompt = galleryUserPrompt(image)?.trim()
+  if (!prompt) return '无提示词'
+
+  const visibleBlocks = prompt
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .filter(block => !isGallerySystemPromptBlock(block))
+
+  return visibleBlocks.join('\n\n') || '无提示词'
 }
 
 function galleryReferences(image: GeneratedImage) {
@@ -1247,11 +1486,13 @@ function handleMentionKeydown(event: KeyboardEvent, node: CanvasNode, field: Men
   }
 }
 
-function buildPrompt(node: CanvasNode) {
+function generationUserPrompt(node: CanvasNode) {
   syncMentionConnectionsForGeneration(node)
   const promptText = hasPromptLink(node) ? getConnectedPrompt(node) : node.content.trim()
-  const references = referencedImageNodes(node)
-  const promptParts = [promptTextWithImageLabels(promptText)].filter(Boolean)
+  return promptTextWithImageLabels(promptText)
+}
+
+function buildSystemPrompt(references: CanvasNode[]) {
   const referenceGuide = references.length
     ? [
       `已上传 ${references.length} 张真实参考图，请严格使用这些参考图，不要只根据文字重新想象。`,
@@ -1267,7 +1508,20 @@ function buildPrompt(node: CanvasNode) {
     })
     .filter(Boolean)
 
-  return [referenceGuide, ...promptParts, ...referenceParts].filter(Boolean).join('\n\n')
+  return [referenceGuide, ...referenceParts].filter(Boolean).join('\n\n')
+}
+
+function buildPromptParts(node: CanvasNode) {
+  const userPrompt = generationUserPrompt(node)
+  const references = referencedImageNodes(node)
+  const systemPrompt = buildSystemPrompt(references)
+  const modelPrompt = [systemPrompt, userPrompt].filter(Boolean).join('\n\n')
+
+  return {
+    userPrompt,
+    systemPrompt,
+    modelPrompt,
+  }
 }
 
 function buildReferences(node: CanvasNode) {
@@ -1292,9 +1546,9 @@ function imageOutputMeta(node: CanvasNode) {
 
 async function generateFromNode(node: CanvasNode) {
   if (isGenerating.value || node.loading) return
-  const prompt = buildPrompt(node)
+  const { userPrompt, systemPrompt, modelPrompt } = buildPromptParts(node)
   const references = buildReferences(node)
-  if (!prompt.trim()) {
+  if (!userPrompt.trim()) {
     node.error = '请连接文本节点或填写提示词。'
     return
   }
@@ -1304,7 +1558,10 @@ async function generateFromNode(node: CanvasNode) {
     ? `正在上传 ${references.length} 张参考图并生成...`
     : '正在生成图片...'
   node.error = null
-  const result = await generate(prompt, {
+  const result = await generate(modelPrompt, {
+    userPrompt,
+    systemPrompt,
+    modelPrompt,
     aspectRatio: node.aspectRatio,
     resolution: node.resolution,
     quality: node.quality,
@@ -1419,7 +1676,47 @@ function handleWindowKeydown(event: KeyboardEvent) {
 }
 
 function fitView() {
-  viewport.value = { x: -120, y: -40, zoom: 1 }
+  const rect = viewportRef.value?.getBoundingClientRect()
+  if (!rect || !nodes.value.length) {
+    viewport.value = { x: -120, y: -40, zoom: 1 }
+    return
+  }
+
+  const isMobile = rect.width <= 760
+  const targetNodes = isMobile
+    ? nodes.value.filter(node => node.id === selectedNodeId.value)
+    : nodes.value
+  const boxes = (targetNodes.length ? targetNodes : nodes.value).map((node) => {
+    const size = getRenderedNodeSize(node)
+    return {
+      x: node.x,
+      y: node.y,
+      width: size.width,
+      height: size.height,
+    }
+  })
+  const minX = Math.min(...boxes.map(item => item.x))
+  const minY = Math.min(...boxes.map(item => item.y))
+  const maxX = Math.max(...boxes.map(item => item.x + item.width))
+  const maxY = Math.max(...boxes.map(item => item.y + item.height))
+  const contentWidth = Math.max(1, maxX - minX)
+  const contentHeight = Math.max(1, maxY - minY)
+  const topInset = isMobile ? 142 : 24
+  const bottomInset = isMobile ? 112 : 24
+  const padding = isMobile ? 16 : 40
+  const availableWidth = Math.max(1, rect.width - padding * 2)
+  const availableHeight = Math.max(1, rect.height - topInset - bottomInset - padding * 2)
+  const nextZoom = clamp(
+    Math.min(MAX_VIEWPORT_ZOOM, availableWidth / contentWidth, availableHeight / contentHeight),
+    MIN_VIEWPORT_ZOOM,
+    MAX_VIEWPORT_ZOOM,
+  )
+
+  viewport.value = {
+    x: padding + (availableWidth - contentWidth * nextZoom) / 2 - minX * nextZoom,
+    y: topInset + padding + (availableHeight - contentHeight * nextZoom) / 2 - minY * nextZoom,
+    zoom: nextZoom,
+  }
 }
 
 function clearCanvas() {
@@ -1433,17 +1730,31 @@ function hasIncoming(node: CanvasNode, handle: InputHandle) {
 }
 
 onMounted(() => {
-  window.addEventListener('mousemove', handleWindowMouseMove)
-  window.addEventListener('mouseup', handleWindowMouseUp)
-  window.addEventListener('click', closeContextMenu)
+  window.addEventListener('pointermove', handleWindowPointerMove)
+  window.addEventListener('pointerup', handleWindowPointerUp)
+  window.addEventListener('pointercancel', handleWindowPointerCancel)
+  window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('paste', handleWindowPaste)
+
+  requestAnimationFrame(() => {
+    if ((viewportRef.value?.getBoundingClientRect().width ?? window.innerWidth) <= 760) {
+      fitView()
+    }
+  })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('mousemove', handleWindowMouseMove)
-  window.removeEventListener('mouseup', handleWindowMouseUp)
-  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('pointermove', handleWindowPointerMove)
+  window.removeEventListener('pointerup', handleWindowPointerUp)
+  window.removeEventListener('pointercancel', handleWindowPointerCancel)
+  window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
+  window.removeEventListener('paste', handleWindowPaste)
+  if (suppressClickTimer !== null) {
+    window.clearTimeout(suppressClickTimer)
+    suppressClickTimer = null
+  }
 })
 </script>
 
@@ -1567,14 +1878,39 @@ onUnmounted(() => {
         <span class="zoom-pill">{{ Math.round(viewport.zoom * 100) }}%</span>
       </div>
 
+      <div class="mobile-create-bar" aria-label="创建节点">
+        <button type="button" @click="createNodeNearCenter('text')">
+          <span class="mobile-create-icon">T</span>
+          <span>文本</span>
+        </button>
+        <button type="button" @click="createNodeNearCenter('image')">
+          <span class="mobile-create-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="m21 15-5-5L5 21" />
+            </svg>
+          </span>
+          <span>图片</span>
+        </button>
+        <button class="primary" type="button" @click="createNodeNearCenter('generation')">
+          <span class="mobile-create-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+            </svg>
+          </span>
+          <span>生图</span>
+        </button>
+      </div>
+
       <div
         ref="viewportRef"
         class="canvas-viewport"
         @contextmenu.prevent="openContextMenu"
-        @mousedown="startPan"
+        @pointerdown="startPan"
         @wheel="handleWheel"
       >
-        <div class="graph-plane" :style="planeStyle" @mousedown="startPan">
+        <div class="graph-plane" :style="planeStyle" @pointerdown="startPan">
           <svg class="connections" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">
             <path
               v-for="connection in connections"
@@ -1591,9 +1927,9 @@ onUnmounted(() => {
             class="canvas-node"
             :class="[`node-${node.type}`, { selected: selectedNodeId === node.id }]"
             :style="nodeStyle(node)"
-            @mousedown.stop="selectNode(node.id)"
+            @pointerdown.stop="selectNode(node.id)"
           >
-            <header class="node-header" @mousedown.stop="startNodeDrag($event, node)">
+            <header class="node-header" @pointerdown.stop="startNodeDrag($event, node)">
               <span class="node-icon" aria-hidden="true">
                 <svg v-if="node.type === 'text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15">
                   <path d="M4 6h16" />
@@ -1627,21 +1963,21 @@ onUnmounted(() => {
                 @input="updateRichEditorContent($event, node, 'text')"
                 @keydown="handleMentionKeydown($event, node, 'text')"
                 @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @mouseup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
+                @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
                 @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @mousedown.stop
+                @pointerdown.stop
               />
               <div
                 v-if="isMentionIndexOpen(node, 'text')"
                 class="mention-index text-mention-index"
-                @mousedown.stop.prevent
+                @pointerdown.stop.prevent
               >
                 <button
                   v-for="(imageNode, index) in mentionOptions"
                   :key="imageNode.id"
                   type="button"
                   :class="{ active: mentionState?.activeIndex === index }"
-                  @mousedown.prevent="insertMention(node, imageNode)"
+                  @pointerdown.prevent="insertMention(node, imageNode)"
                 >
                   <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
                   <span>{{ imageNode.title }}</span>
@@ -1651,7 +1987,8 @@ onUnmounted(() => {
               <span
                 class="node-handle output"
                 title="连接到生图节点"
-                @mousedown.stop.prevent="startConnection($event, node, 'text-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'text-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'text-out')"
               />
             </template>
 
@@ -1660,7 +1997,8 @@ onUnmounted(() => {
                 class="node-handle input"
                 title="接收生成结果"
                 :class="{ connected: hasIncoming(node, 'image-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'image-in')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'image-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'image-in')"
               />
               <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode(node) }">
                 <img
@@ -1708,7 +2046,7 @@ onUnmounted(() => {
                   class="image-output-note"
                   type="text"
                   placeholder="添加参考说明..."
-                  @mousedown.stop
+                  @pointerdown.stop
                 >
               </div>
               <textarea
@@ -1716,7 +2054,7 @@ onUnmounted(() => {
                 v-model="node.content"
                 class="image-caption"
                 placeholder="图片参考说明..."
-                @mousedown.stop
+                @pointerdown.stop
               />
               <div class="image-node-actions">
                 <button type="button" :disabled="!node.imageUrl" @click.stop="createContinuation(node)">继续</button>
@@ -1726,7 +2064,8 @@ onUnmounted(() => {
               <span
                 class="node-handle output"
                 title="作为参考图连接"
-                @mousedown.stop.prevent="startConnection($event, node, 'image-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'image-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'image-out')"
               />
             </template>
 
@@ -1735,18 +2074,21 @@ onUnmounted(() => {
                 class="node-handle input prompt"
                 title="连接文本"
                 :class="{ connected: hasIncoming(node, 'prompt-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'prompt-in')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'prompt-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'prompt-in')"
               />
               <span
                 class="node-handle input reference"
                 title="连接参考图"
                 :class="{ connected: hasIncoming(node, 'reference-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'reference-in')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'reference-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'reference-in')"
               />
               <span
                 class="node-handle output generation"
                 title="输出图片"
-                @mousedown.stop.prevent="startConnection($event, node, 'generation-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'generation-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'generation-out')"
               />
 
               <div class="generation-body">
@@ -1765,21 +2107,21 @@ onUnmounted(() => {
                     @input="updateRichEditorContent($event, node, 'generation')"
                     @keydown="handleMentionKeydown($event, node, 'generation')"
                     @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @mouseup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
+                    @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
                     @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @mousedown.stop
+                    @pointerdown.stop
                   />
                   <div
                     v-if="isMentionIndexOpen(node, 'generation')"
                     class="mention-index generation-mention-index"
-                    @mousedown.stop.prevent
+                    @pointerdown.stop.prevent
                   >
                     <button
                       v-for="(imageNode, index) in mentionOptions"
                       :key="imageNode.id"
                       type="button"
                       :class="{ active: mentionState?.activeIndex === index }"
-                      @mousedown.prevent="insertMention(node, imageNode)"
+                      @pointerdown.prevent="insertMention(node, imageNode)"
                     >
                       <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
                       <span>{{ imageNode.title }}</span>
@@ -1872,22 +2214,22 @@ onUnmounted(() => {
 
             <span
               class="resize-corner top-left"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'top-left')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-left')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner top-right"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'top-right')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-right')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner bottom-left"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'bottom-left')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-left')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner bottom-right"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'bottom-right')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-right')"
               @dblclick.stop.prevent="node.scale = 1"
             />
           </article>
@@ -1938,15 +2280,15 @@ onUnmounted(() => {
           </svg>
         </button>
         <span class="toolbar-divider" />
-        <button class="tool-button" type="button" title="缩小" @click="viewport.zoom = Math.max(0.68, viewport.zoom - 0.08)">
+        <button class="tool-button" type="button" title="缩小" @click="viewport.zoom = Math.max(MIN_VIEWPORT_ZOOM, viewport.zoom - 0.08)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
             <circle cx="11" cy="11" r="7" />
             <path d="M8 11h6" />
             <path d="m16 16 4 4" />
           </svg>
         </button>
-        <input v-model.number="viewport.zoom" class="zoom-range" type="range" min="0.68" max="1.4" step="0.02" aria-label="缩放">
-        <button class="tool-button" type="button" title="放大" @click="viewport.zoom = Math.min(1.4, viewport.zoom + 0.08)">
+        <input v-model.number="viewport.zoom" class="zoom-range" type="range" :min="MIN_VIEWPORT_ZOOM" :max="MAX_VIEWPORT_ZOOM" step="0.02" aria-label="缩放">
+        <button class="tool-button" type="button" title="放大" @click="viewport.zoom = Math.min(MAX_VIEWPORT_ZOOM, viewport.zoom + 0.08)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
             <circle cx="11" cy="11" r="7" />
             <path d="M8 11h6" />
@@ -1986,7 +2328,7 @@ onUnmounted(() => {
               <span>{{ new Date(image.timestamp).toLocaleString() }}</span>
             </div>
             <section class="gallery-section">
-              <h3>提示词</h3>
+              <h3>用户提示词</h3>
               <p>{{ galleryPrompt(image) }}</p>
             </section>
             <section class="gallery-section">
@@ -2031,9 +2373,9 @@ onUnmounted(() => {
       <div
         v-if="imageViewer"
         class="image-viewer-overlay"
-        @mousedown.self="closeImageViewer"
+        @pointerdown.self="closeImageViewer"
       >
-        <div class="image-viewer-shell" @mousedown.stop>
+        <div class="image-viewer-shell" @pointerdown.stop>
           <header class="image-viewer-header">
             <div class="image-viewer-meta">
               <strong>{{ imageViewer.title }}</strong>
@@ -3427,6 +3769,10 @@ onUnmounted(() => {
   font-weight: 900;
 }
 
+.mobile-create-bar {
+  display: none;
+}
+
 .stage-actions,
 .bottom-toolbar {
   position: absolute;
@@ -3478,6 +3824,16 @@ onUnmounted(() => {
 
 .tool-button.danger:hover {
   color: var(--danger);
+}
+
+.canvas-viewport {
+  touch-action: none;
+}
+
+.node-header,
+.node-handle,
+.resize-corner {
+  touch-action: none;
 }
 
 .toolbar-divider {
@@ -3548,16 +3904,205 @@ onUnmounted(() => {
     min-height: 0;
   }
 
-  .stage-actions {
+  .mobile-create-bar {
+    position: absolute;
+    left: 10px;
     right: 10px;
     top: 10px;
+    z-index: 22;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-create-bar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 0;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .mobile-create-bar button.primary {
+    border-color: #111827;
+    background: #111827;
+    color: #fff;
+  }
+
+  .mobile-create-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    font-weight: 900;
+  }
+
+  .stage-actions {
+    left: 10px;
+    right: 10px;
+    top: 76px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .bottom-toolbar {
     left: 10px;
     right: 10px;
     bottom: 10px;
-    justify-content: center;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    padding: 8px;
+  }
+
+  .tool-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .zoom-pill,
+  .zoom-dot {
+    min-width: 44px;
+    height: 34px;
+  }
+
+  .zoom-range {
+    flex: 1 1 120px;
+    min-width: 120px;
+    height: 34px;
+  }
+
+  .node-header {
+    min-height: 56px;
+    padding: 0 8px 0 12px;
+  }
+
+  .node-remove {
+    width: 48px;
+    height: 48px;
+    opacity: 1;
+  }
+
+  .node-handle {
+    width: 30px;
+    height: 30px;
+    border-width: 3px;
+  }
+
+  .node-handle.input {
+    left: -16px;
+  }
+
+  .node-handle.output {
+    right: -16px;
+  }
+
+  .resize-corner {
+    width: 44px;
+    height: 44px;
+  }
+
+  .resize-corner.top-left {
+    left: -12px;
+    top: -12px;
+  }
+
+  .resize-corner.top-right {
+    right: -12px;
+    top: -12px;
+  }
+
+  .resize-corner.bottom-left {
+    left: -12px;
+    bottom: -12px;
+  }
+
+  .resize-corner.bottom-right {
+    right: -12px;
+    bottom: -12px;
+  }
+
+  .pick-image {
+    width: 64px;
+    height: 64px;
+  }
+
+  .replace-image,
+  .zoom-image {
+    width: 52px;
+    height: 52px;
+  }
+
+  .image-node-actions button,
+  .gallery-header button,
+  .gallery-actions button,
+  .segmented button,
+  .generate-button,
+  .mention-index button {
+    min-height: 58px;
+  }
+
+  .gallery-stage {
+    padding: 16px;
+  }
+
+  .gallery-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-actions {
+    gap: 8px;
+  }
+
+  .image-viewer-overlay {
+    padding: 10px;
+  }
+
+  .image-viewer-shell {
+    width: calc(100vw - 20px);
+    height: min(88vh, calc(100dvh - 20px));
+  }
+
+  .image-viewer-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .image-viewer-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .image-viewer-controls button {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .image-viewer-stage {
+    padding: 12px;
   }
 }
 </style>

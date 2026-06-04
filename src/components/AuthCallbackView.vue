@@ -112,11 +112,6 @@ onUnmounted(() => {
           进入 Recho
         </button>
       </div>
-
-      <aside class="auth-callback-note">
-        <span>GitHub OAuth 回调</span>
-        <code>{{ nextPath }}</code>
-      </aside>
     </section>
   </main>
 </template>
@@ -194,34 +189,6 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.auth-callback-note {
-  display: grid;
-  gap: 8px;
-  margin-top: 6px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.auth-callback-note span {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.auth-callback-note code {
-  display: block;
-  overflow-x: auto;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
 @media (max-width: 640px) {
   .auth-callback-page {
     padding: 16px;
@@ -229,6 +196,11 @@ onUnmounted(() => {
 
   .auth-callback-card {
     padding: 22px;
+  }
+
+  .auth-callback-primary {
+    min-height: 44px;
+    width: 100%;
   }
 }
 </style>

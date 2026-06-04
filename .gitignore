@@ -16,6 +16,7 @@ dist-ssr
 # Local agent tooling
 .agents/
 skills-lock.json
+output/
 
 # Editor directories and files
 .vscode/*

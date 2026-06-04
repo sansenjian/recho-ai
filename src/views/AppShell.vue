@@ -897,5 +897,30 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
   .system-editor-panel {
     width: calc(100% - 24px);
   }
+
+  .auth-overlay {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .auth-dialog {
+    width: 100%;
+    padding: 16px;
+  }
+
+  .auth-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .auth-form input,
+  .auth-submit,
+  .auth-oauth,
+  .auth-switch,
+  .auth-profile button,
+  .system-editor-btn {
+    min-height: 44px;
+    font-size: 14px;
+  }
 }
 </style>
