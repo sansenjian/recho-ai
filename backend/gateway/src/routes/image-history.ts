@@ -8,8 +8,18 @@ import {
   saveImageHistory,
 } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
+import type { ImageHistoryItem } from '../services/image-history.js'
 
 const router = Router()
+
+function publicHistoryImage(image: ImageHistoryItem) {
+  const {
+    requestIp: _requestIp,
+    requestUserAgent: _requestUserAgent,
+    ...publicImage
+  } = image
+  return publicImage
+}
 
 router.get('/image/history', async (req: Request, res: Response) => {
   try {
@@ -35,7 +45,7 @@ router.post('/image/history', async (req: Request, res: Response) => {
       ok: true,
       saved: Boolean(savedImages),
       count: savedImages?.length ?? 0,
-      images: savedImages || [],
+      images: savedImages?.map(publicHistoryImage) || [],
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
+import { requestIp, requestUserAgent } from '../services/request-ip.js'
 
 const router = Router()
 
@@ -98,6 +99,15 @@ function stripSystemPromptBlocks(prompt: string) {
     .filter(block => !isSystemPromptBlock(block))
 
   return visibleBlocks.join('\n\n') || prompt
+}
+
+function publicHistoryImage(image: ImageHistoryItem) {
+  const {
+    requestIp: _requestIp,
+    requestUserAgent: _requestUserAgent,
+    ...publicImage
+  } = image
+  return publicImage
 }
 
 function sleep(ms: number) {
@@ -480,6 +490,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     const historySystemPrompt = requestText(systemPrompt)
     const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
     const userId = await getRequestUserId(req)
+    const generationIp = requestIp(req)
+    const generationUserAgent = requestUserAgent(req)
     let response: Awaited<ReturnType<typeof generateWithComfyStrategy>> | null = null
     let lastError: any = null
 
@@ -527,6 +539,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           systemPrompt: historySystemPrompt,
           modelPrompt: historyModelPrompt,
           revisedPrompt: item.revised_prompt ?? undefined,
+          requestIp: generationIp,
+          requestUserAgent: generationUserAgent,
           size,
           aspectRatio,
           resolution,
@@ -543,6 +557,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           systemPrompt: historySystemPrompt,
           modelPrompt: historyModelPrompt,
           revisedPrompt: item.revised_prompt ?? undefined,
+          requestIp: generationIp,
+          requestUserAgent: generationUserAgent,
           size,
           aspectRatio,
           resolution,
@@ -561,17 +577,18 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       references: historyReferences,
     }))
 
-    void saveImageHistory(imagesWithReferences, { userId })
-      .then((savedImages) => {
-        if (savedImages) {
-          console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
-        }
-      })
-      .catch((historyErr: any) => {
-        console.warn(`[image-history] save skipped: ${historyErr.message}`)
-      })
+    let responseImages = imagesWithReferences
+    try {
+      const savedImages = await saveImageHistory(imagesWithReferences, { userId })
+      if (savedImages) {
+        responseImages = savedImages
+        console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
+      }
+    } catch (historyErr: any) {
+      console.warn(`[image-history] save skipped: ${historyErr.message}`)
+    }
 
-    res.json({ images: imagesWithReferences })
+    res.json({ images: responseImages.map(publicHistoryImage) })
   } catch (err: any) {
     console.error('Image generation error:', err.status, err.message)
     const status = err.status || 500
