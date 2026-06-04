@@ -24,6 +24,9 @@ export interface ImageHistoryItem {
   thumbnailUrl?: string
   thumbnailPath?: string
   prompt: string
+  userPrompt?: string
+  systemPrompt?: string
+  modelPrompt?: string
   references?: ImageHistoryReference[]
   revisedPrompt?: string
   size: string
@@ -41,6 +44,9 @@ interface ImageHistoryRow {
   thumbnail_url?: string | null
   thumbnail_path?: string | null
   prompt: string
+  user_prompt?: string | null
+  system_prompt?: string | null
+  model_prompt?: string | null
   revised_prompt: string | null
   size: string
   aspect_ratio: string | null
@@ -109,14 +115,16 @@ async function storedImage(image: ImageHistoryItem) {
 interface ImageRowOptions {
   includeThumbnails?: boolean
   includeUserId?: boolean
+  includePromptDetails?: boolean
 }
 
 function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
+  const userPrompt = String(image.userPrompt || image.prompt || '')
   const row: ImageHistoryRow = {
     id: String(image.id),
     data_url: String(image.dataUrl || ''),
     storage_path: image.storagePath ? String(image.storagePath) : null,
-    prompt: String(image.prompt || ''),
+    prompt: userPrompt,
     revised_prompt: image.revisedPrompt ? String(image.revisedPrompt) : null,
     size: String(image.size || 'auto'),
     aspect_ratio: image.aspectRatio ? String(image.aspectRatio) : null,
@@ -135,6 +143,12 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
     row.user_id = String(image.userId)
   }
 
+  if (options.includePromptDetails !== false) {
+    row.user_prompt = userPrompt
+    row.system_prompt = image.systemPrompt ? String(image.systemPrompt) : null
+    row.model_prompt = image.modelPrompt ? String(image.modelPrompt) : null
+  }
+
   return row
 }
 
@@ -143,11 +157,13 @@ function missingOptionalColumn(error: { message?: string; code?: string }) {
   if (error.code !== 'PGRST204') return null
   if (/thumbnail_(url|path)/i.test(message)) return 'thumbnail'
   if (/user_id/i.test(message)) return 'user_id'
+  if (/(user_prompt|system_prompt|model_prompt)/i.test(message)) return 'prompt_detail'
   return null
 }
 
 function imageFromRow(row: ImageHistoryRow): ImageHistoryItem {
   const thumbnailPath = row.thumbnail_path || undefined
+  const userPrompt = row.user_prompt || row.prompt || ''
   return {
     id: row.id,
     userId: row.user_id || null,
@@ -155,7 +171,10 @@ function imageFromRow(row: ImageHistoryRow): ImageHistoryItem {
     storagePath: row.storage_path || undefined,
     thumbnailUrl: row.thumbnail_url || imagePublicUrl(thumbnailPath),
     thumbnailPath,
-    prompt: row.prompt || '',
+    prompt: userPrompt,
+    userPrompt,
+    systemPrompt: row.system_prompt || undefined,
+    modelPrompt: row.model_prompt || undefined,
     references: plainReferences(row.reference_images || []),
     revisedPrompt: row.revised_prompt || undefined,
     size: row.size || 'auto',
@@ -190,6 +209,7 @@ function referenceSummary(reference: ImageHistoryReference): ImageHistoryReferen
 function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
   const thumbnailPath = row.thumbnail_path || undefined
   const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath)
+  const userPrompt = row.user_prompt || row.prompt || ''
   return {
     id: row.id,
     userId: row.user_id || null,
@@ -197,7 +217,10 @@ function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
     storagePath: row.storage_path || undefined,
     thumbnailUrl,
     thumbnailPath,
-    prompt: row.prompt || '',
+    prompt: userPrompt,
+    userPrompt,
+    systemPrompt: row.system_prompt || undefined,
+    modelPrompt: row.model_prompt || undefined,
     references: plainReferences(row.reference_images || [])
       .map(referenceSummary)
       .filter((reference): reference is ImageHistoryReference => Boolean(reference)),
@@ -287,6 +310,7 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
   const rowOptions: Required<ImageRowOptions> = {
     includeThumbnails: true,
     includeUserId: true,
+    includePromptDetails: true,
   }
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -306,6 +330,11 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     if (missingColumn === 'user_id' && rowOptions.includeUserId) {
       rowOptions.includeUserId = false
       console.warn('[image-history] user_id column missing; retrying save without user id')
+      continue
+    }
+    if (missingColumn === 'prompt_detail' && rowOptions.includePromptDetails) {
+      rowOptions.includePromptDetails = false
+      console.warn('[image-history] prompt detail columns missing; retrying save without split prompt fields')
       continue
     }
 

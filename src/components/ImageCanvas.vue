@@ -6,6 +6,8 @@ import type { GeneratedImage, ImageGenRequest } from '../types/image'
 type CanvasNodeType = 'text' | 'image' | 'generation'
 type OutputHandle = 'text-out' | 'image-out' | 'generation-out'
 type InputHandle = 'prompt-in' | 'reference-in' | 'image-in'
+type CanvasHandle = OutputHandle | InputHandle
+type HandleRole = 'input' | 'output'
 type NodeSize = ImageGenRequest['size']
 type NodeAspectRatio = NonNullable<ImageGenRequest['aspectRatio']>
 type NodeResolution = NonNullable<ImageGenRequest['resolution']>
@@ -54,10 +56,19 @@ interface Connection {
 }
 
 interface DraftConnection {
-  fromNodeId: string
-  fromHandle: OutputHandle
+  nodeId: string
+  handle: CanvasHandle
+  role: HandleRole
   cursorX: number
   cursorY: number
+  startClientX: number
+  startClientY: number
+}
+
+interface PendingMenuConnection {
+  nodeId: string
+  handle: CanvasHandle
+  role: HandleRole
 }
 
 interface DragState {
@@ -187,9 +198,12 @@ const contextMenu = ref({
   y: 0,
   canvasX: 0,
   canvasY: 0,
+  pendingConnection: null as PendingMenuConnection | null,
 })
 
 let idSeed = Date.now()
+let suppressNextWindowClick = false
+let suppressClickTimer: number | null = null
 
 watch(
   () => props.workspaceMode,
@@ -378,8 +392,12 @@ function nodePositionNearVisibleCenter(type: CanvasNodeType) {
 }
 
 function createNodeAtMenu(type: CanvasNodeType) {
+  const pendingConnection = contextMenu.value.pendingConnection
   const node = createNode(type, contextMenu.value.canvasX, contextMenu.value.canvasY)
-  contextMenu.value.visible = false
+  closeContextMenu()
+  if (pendingConnection) {
+    connectPendingMenuConnection(pendingConnection, node)
+  }
   if (type === 'image') {
     requestAnimationFrame(() => chooseImage(node.id))
   }
@@ -394,20 +412,55 @@ function createNodeNearCenter(type: CanvasNodeType) {
   }
 }
 
-function openContextMenu(event: MouseEvent) {
+function openContextMenuAtClient(
+  clientX: number,
+  clientY: number,
+  pendingConnection: PendingMenuConnection | null = null,
+) {
   const rect = viewportRef.value?.getBoundingClientRect()
-  const point = canvasPointFromClient(event.clientX, event.clientY)
+  const point = canvasPointFromClient(clientX, clientY)
+  const maxX = Math.max((rect?.width ?? MENU_WIDTH) - MENU_WIDTH - 12, 12)
+  const maxY = Math.max((rect?.height ?? MENU_HEIGHT) - MENU_HEIGHT - 12, 12)
   contextMenu.value = {
     visible: true,
-    x: Math.min(event.clientX - (rect?.left ?? 0), Math.max((rect?.width ?? MENU_WIDTH) - MENU_WIDTH - 12, 12)),
-    y: Math.min(event.clientY - (rect?.top ?? 0), Math.max((rect?.height ?? MENU_HEIGHT) - MENU_HEIGHT - 12, 12)),
+    x: clamp(clientX - (rect?.left ?? 0), 12, maxX),
+    y: clamp(clientY - (rect?.top ?? 0), 12, maxY),
     canvasX: point.x,
     canvasY: point.y,
+    pendingConnection,
   }
+}
+
+function openContextMenu(event: MouseEvent) {
+  openContextMenuAtClient(event.clientX, event.clientY)
 }
 
 function closeContextMenu() {
   contextMenu.value.visible = false
+  contextMenu.value.pendingConnection = null
+}
+
+function suppressNextClickClose() {
+  suppressNextWindowClick = true
+  if (suppressClickTimer !== null) {
+    window.clearTimeout(suppressClickTimer)
+  }
+  suppressClickTimer = window.setTimeout(() => {
+    suppressNextWindowClick = false
+    suppressClickTimer = null
+  }, 120)
+}
+
+function handleWindowClick() {
+  if (suppressNextWindowClick) {
+    suppressNextWindowClick = false
+    if (suppressClickTimer !== null) {
+      window.clearTimeout(suppressClickTimer)
+      suppressClickTimer = null
+    }
+    return
+  }
+  closeContextMenu()
 }
 
 function selectNode(nodeId: string) {
@@ -543,7 +596,28 @@ function handleWindowPointerMove(event: PointerEvent) {
   }
 }
 
-function handleWindowPointerUp() {
+function handleWindowPointerUp(event: PointerEvent) {
+  const draft = draftConnection.value
+  if (draft) {
+    const deltaX = event.clientX - draft.startClientX
+    const deltaY = event.clientY - draft.startClientY
+    if (Math.hypot(deltaX, deltaY) >= 12) {
+      openContextMenuAtClient(event.clientX, event.clientY, {
+        nodeId: draft.nodeId,
+        handle: draft.handle,
+        role: draft.role,
+      })
+      suppressNextClickClose()
+    }
+  }
+
+  dragState.value = null
+  panState.value = null
+  resizeState.value = null
+  draftConnection.value = null
+}
+
+function handleWindowPointerCancel() {
   dragState.value = null
   panState.value = null
   resizeState.value = null
@@ -562,48 +636,75 @@ function handleWheel(event: WheelEvent) {
   }
 }
 
-function startConnection(event: PointerEvent, node: CanvasNode, handle: OutputHandle) {
+function isOutputHandle(handle: CanvasHandle): handle is OutputHandle {
+  return handle === 'text-out' || handle === 'image-out' || handle === 'generation-out'
+}
+
+function isInputHandle(handle: CanvasHandle): handle is InputHandle {
+  return handle === 'prompt-in' || handle === 'reference-in' || handle === 'image-in'
+}
+
+function handleRole(handle: CanvasHandle): HandleRole {
+  return isOutputHandle(handle) ? 'output' : 'input'
+}
+
+function startConnection(event: PointerEvent, node: CanvasNode, handle: CanvasHandle) {
   if (!canStartPointerInteraction(event)) return
   event.preventDefault()
   selectNode(node.id)
   const point = canvasPointFromClient(event.clientX, event.clientY)
   draftConnection.value = {
-    fromNodeId: node.id,
-    fromHandle: handle,
+    nodeId: node.id,
+    handle,
+    role: handleRole(handle),
     cursorX: point.x,
     cursorY: point.y,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
   }
 }
 
-function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHandle: InputHandle) {
+function addConnectionIfValid(fromNodeId: string, fromHandle: OutputHandle, toNodeId: string, toHandle: InputHandle) {
+  if (!isValidConnection(fromNodeId, fromHandle, toNodeId, toHandle)) return false
+
+  const isDuplicate = connections.value.some(conn => (
+    conn.fromNodeId === fromNodeId &&
+    conn.fromHandle === fromHandle &&
+    conn.toNodeId === toNodeId &&
+    conn.toHandle === toHandle
+  ))
+
+  if (isDuplicate) return true
+
+  connections.value = [
+    ...connections.value,
+    {
+      id: createId('conn'),
+      fromNodeId,
+      fromHandle,
+      toNodeId,
+      toHandle,
+    },
+  ]
+
+  const targetNode = getNodeById(toNodeId)
+  if (targetNode?.type === 'generation' && toHandle === 'prompt-in') {
+    syncMentionConnectionsForGeneration(targetNode)
+  }
+
+  return true
+}
+
+function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHandle: CanvasHandle) {
   const draft = draftConnection.value
   if (!draft) return
   event.preventDefault()
   event.stopPropagation()
 
-  if (isValidConnection(draft.fromNodeId, draft.fromHandle, targetNode.id, targetHandle)) {
-    const isDuplicate = connections.value.some(conn => (
-      conn.fromNodeId === draft.fromNodeId &&
-      conn.fromHandle === draft.fromHandle &&
-      conn.toNodeId === targetNode.id &&
-      conn.toHandle === targetHandle
-    ))
-
-    if (!isDuplicate) {
-      connections.value = [
-        ...connections.value,
-        {
-          id: createId('conn'),
-          fromNodeId: draft.fromNodeId,
-          fromHandle: draft.fromHandle,
-          toNodeId: targetNode.id,
-          toHandle: targetHandle,
-        },
-      ]
-      if (targetNode.type === 'generation' && targetHandle === 'prompt-in') {
-        syncMentionConnectionsForGeneration(targetNode)
-      }
-    }
+  if (draft.role === 'output' && isOutputHandle(draft.handle) && isInputHandle(targetHandle)) {
+    addConnectionIfValid(draft.nodeId, draft.handle, targetNode.id, targetHandle)
+  } else if (draft.role === 'input' && isInputHandle(draft.handle) && isOutputHandle(targetHandle)) {
+    addConnectionIfValid(targetNode.id, targetHandle, draft.nodeId, draft.handle)
   }
 
   draftConnection.value = null
@@ -624,6 +725,32 @@ function isValidConnection(fromNodeId: string, fromHandle: OutputHandle, toNodeI
     return target.type === 'image' && toHandle === 'image-in'
   }
   return false
+}
+
+function outputHandlesForNode(node: CanvasNode): OutputHandle[] {
+  if (node.type === 'text') return ['text-out']
+  if (node.type === 'image') return ['image-out']
+  return ['generation-out']
+}
+
+function inputHandlesForNode(node: CanvasNode): InputHandle[] {
+  if (node.type === 'image') return ['image-in']
+  if (node.type === 'generation') return ['prompt-in', 'reference-in']
+  return []
+}
+
+function connectPendingMenuConnection(pending: PendingMenuConnection, node: CanvasNode) {
+  if (pending.role === 'output' && isOutputHandle(pending.handle)) {
+    for (const targetHandle of inputHandlesForNode(node)) {
+      if (addConnectionIfValid(pending.nodeId, pending.handle, node.id, targetHandle)) return
+    }
+  }
+
+  if (pending.role === 'input' && isInputHandle(pending.handle)) {
+    for (const sourceHandle of outputHandlesForNode(node)) {
+      if (addConnectionIfValid(node.id, sourceHandle, pending.nodeId, pending.handle)) return
+    }
+  }
 }
 
 function incomingConnections(nodeId: string, handle?: InputHandle) {
@@ -807,7 +934,7 @@ function connectionPath(connection: Connection) {
 const draftPath = computed(() => {
   const draft = draftConnection.value
   if (!draft) return ''
-  const start = handlePoint(draft.fromNodeId, draft.fromHandle)
+  const start = handlePoint(draft.nodeId, draft.handle)
   return curvePath(start.x, start.y, draft.cursorX, draft.cursorY)
 })
 
@@ -926,8 +1053,28 @@ async function useHistoryImage(image: GeneratedImage) {
   })
 }
 
+function isGallerySystemPromptBlock(block: string) {
+  return (
+    /^已上传 \d+ 张真实参考图/.test(block) &&
+    block.includes('不要只根据文字重新想象')
+  ) || /^.+: 第 \d+ 张参考图/.test(block)
+}
+
+function galleryUserPrompt(image: GeneratedImage) {
+  return image.userPrompt || image.prompt
+}
+
 function galleryPrompt(image: GeneratedImage) {
-  return image.prompt || '无提示词'
+  const prompt = galleryUserPrompt(image)?.trim()
+  if (!prompt) return '无提示词'
+
+  const visibleBlocks = prompt
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .filter(block => !isGallerySystemPromptBlock(block))
+
+  return visibleBlocks.join('\n\n') || '无提示词'
 }
 
 function galleryReferences(image: GeneratedImage) {
@@ -1339,11 +1486,13 @@ function handleMentionKeydown(event: KeyboardEvent, node: CanvasNode, field: Men
   }
 }
 
-function buildPrompt(node: CanvasNode) {
+function generationUserPrompt(node: CanvasNode) {
   syncMentionConnectionsForGeneration(node)
   const promptText = hasPromptLink(node) ? getConnectedPrompt(node) : node.content.trim()
-  const references = referencedImageNodes(node)
-  const promptParts = [promptTextWithImageLabels(promptText)].filter(Boolean)
+  return promptTextWithImageLabels(promptText)
+}
+
+function buildSystemPrompt(references: CanvasNode[]) {
   const referenceGuide = references.length
     ? [
       `已上传 ${references.length} 张真实参考图，请严格使用这些参考图，不要只根据文字重新想象。`,
@@ -1359,7 +1508,20 @@ function buildPrompt(node: CanvasNode) {
     })
     .filter(Boolean)
 
-  return [referenceGuide, ...promptParts, ...referenceParts].filter(Boolean).join('\n\n')
+  return [referenceGuide, ...referenceParts].filter(Boolean).join('\n\n')
+}
+
+function buildPromptParts(node: CanvasNode) {
+  const userPrompt = generationUserPrompt(node)
+  const references = referencedImageNodes(node)
+  const systemPrompt = buildSystemPrompt(references)
+  const modelPrompt = [systemPrompt, userPrompt].filter(Boolean).join('\n\n')
+
+  return {
+    userPrompt,
+    systemPrompt,
+    modelPrompt,
+  }
 }
 
 function buildReferences(node: CanvasNode) {
@@ -1384,9 +1546,9 @@ function imageOutputMeta(node: CanvasNode) {
 
 async function generateFromNode(node: CanvasNode) {
   if (isGenerating.value || node.loading) return
-  const prompt = buildPrompt(node)
+  const { userPrompt, systemPrompt, modelPrompt } = buildPromptParts(node)
   const references = buildReferences(node)
-  if (!prompt.trim()) {
+  if (!userPrompt.trim()) {
     node.error = '请连接文本节点或填写提示词。'
     return
   }
@@ -1396,7 +1558,10 @@ async function generateFromNode(node: CanvasNode) {
     ? `正在上传 ${references.length} 张参考图并生成...`
     : '正在生成图片...'
   node.error = null
-  const result = await generate(prompt, {
+  const result = await generate(modelPrompt, {
+    userPrompt,
+    systemPrompt,
+    modelPrompt,
     aspectRatio: node.aspectRatio,
     resolution: node.resolution,
     quality: node.quality,
@@ -1567,8 +1732,8 @@ function hasIncoming(node: CanvasNode, handle: InputHandle) {
 onMounted(() => {
   window.addEventListener('pointermove', handleWindowPointerMove)
   window.addEventListener('pointerup', handleWindowPointerUp)
-  window.addEventListener('pointercancel', handleWindowPointerUp)
-  window.addEventListener('click', closeContextMenu)
+  window.addEventListener('pointercancel', handleWindowPointerCancel)
+  window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('paste', handleWindowPaste)
 
@@ -1582,10 +1747,14 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('pointermove', handleWindowPointerMove)
   window.removeEventListener('pointerup', handleWindowPointerUp)
-  window.removeEventListener('pointercancel', handleWindowPointerUp)
-  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('pointercancel', handleWindowPointerCancel)
+  window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('paste', handleWindowPaste)
+  if (suppressClickTimer !== null) {
+    window.clearTimeout(suppressClickTimer)
+    suppressClickTimer = null
+  }
 })
 </script>
 
@@ -1819,6 +1988,7 @@ onUnmounted(() => {
                 class="node-handle output"
                 title="连接到生图节点"
                 @pointerdown.stop.prevent="startConnection($event, node, 'text-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'text-out')"
               />
             </template>
 
@@ -1827,6 +1997,7 @@ onUnmounted(() => {
                 class="node-handle input"
                 title="接收生成结果"
                 :class="{ connected: hasIncoming(node, 'image-in') }"
+                @pointerdown.stop.prevent="startConnection($event, node, 'image-in')"
                 @pointerup.stop.prevent="finishConnection($event, node, 'image-in')"
               />
               <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode(node) }">
@@ -1894,6 +2065,7 @@ onUnmounted(() => {
                 class="node-handle output"
                 title="作为参考图连接"
                 @pointerdown.stop.prevent="startConnection($event, node, 'image-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'image-out')"
               />
             </template>
 
@@ -1902,18 +2074,21 @@ onUnmounted(() => {
                 class="node-handle input prompt"
                 title="连接文本"
                 :class="{ connected: hasIncoming(node, 'prompt-in') }"
+                @pointerdown.stop.prevent="startConnection($event, node, 'prompt-in')"
                 @pointerup.stop.prevent="finishConnection($event, node, 'prompt-in')"
               />
               <span
                 class="node-handle input reference"
                 title="连接参考图"
                 :class="{ connected: hasIncoming(node, 'reference-in') }"
+                @pointerdown.stop.prevent="startConnection($event, node, 'reference-in')"
                 @pointerup.stop.prevent="finishConnection($event, node, 'reference-in')"
               />
               <span
                 class="node-handle output generation"
                 title="输出图片"
                 @pointerdown.stop.prevent="startConnection($event, node, 'generation-out')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'generation-out')"
               />
 
               <div class="generation-body">
@@ -2153,7 +2328,7 @@ onUnmounted(() => {
               <span>{{ new Date(image.timestamp).toLocaleString() }}</span>
             </div>
             <section class="gallery-section">
-              <h3>提示词</h3>
+              <h3>用户提示词</h3>
               <p>{{ galleryPrompt(image) }}</p>
             </section>
             <section class="gallery-section">
