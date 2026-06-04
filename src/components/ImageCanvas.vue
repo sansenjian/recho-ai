@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
 import type { GeneratedImage, ImageGenRequest } from '../types/image'
 
@@ -352,6 +352,31 @@ function canvasPointFromClient(clientX: number, clientY: number) {
   }
 }
 
+function visibleCanvasCenterClientPoint() {
+  const rect = viewportRef.value?.getBoundingClientRect()
+  if (!rect) return null
+
+  const isMobile = rect.width <= 760
+  const topInset = isMobile ? 142 : 0
+  const bottomInset = isMobile ? 112 : 0
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + topInset + (rect.height - topInset - bottomInset) / 2,
+  }
+}
+
+function nodePositionNearVisibleCenter(type: CanvasNodeType) {
+  const center = visibleCanvasCenterClientPoint()
+  if (!center) return null
+  const point = canvasPointFromClient(center.x, center.y)
+  const size = NODE_SIZE[type]
+  const offset = nodes.value.length * 18
+  return {
+    x: point.x - size.width / 2 + offset,
+    y: point.y - Math.min(size.height / 2, 180) + offset,
+  }
+}
+
 function createNodeAtMenu(type: CanvasNodeType) {
   const node = createNode(type, contextMenu.value.canvasX, contextMenu.value.canvasY)
   contextMenu.value.visible = false
@@ -361,11 +386,9 @@ function createNodeAtMenu(type: CanvasNodeType) {
 }
 
 function createNodeNearCenter(type: CanvasNodeType) {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const point = canvasPointFromClient(rect.left + rect.width / 2, rect.top + rect.height / 2)
-  const offset = nodes.value.length * 18
-  const node = createNode(type, point.x - 120 + offset, point.y - 60 + offset)
+  const position = nodePositionNearVisibleCenter(type)
+  if (!position) return
+  const node = createNode(type, position.x, position.y)
   if (type === 'image') {
     requestAnimationFrame(() => chooseImage(node.id))
   }
@@ -799,6 +822,38 @@ function removeNode(nodeId: string) {
   if (selectedNodeId.value === nodeId) selectedNodeId.value = null
 }
 
+function fallbackImageFileName(file: File) {
+  if (file.name) return file.name
+  const extension = file.type.split('/')[1] || 'png'
+  return `剪贴板图片.${extension}`
+}
+
+function readImageFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error('图片读取失败'))
+      }
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function applyImageFileToNode(nodeId: string, file: File) {
+  const dataUrl = await readImageFileAsDataUrl(file)
+  const node = getNodeById(nodeId)
+  if (!node) return
+  node.imageUrl = dataUrl
+  node.fileName = fallbackImageFileName(file)
+  if (!/^图片\d+$/.test(node.title.trim())) {
+    node.title = nextImageTitle(node.id)
+  }
+}
+
 function chooseImage(nodeId: string) {
   const input = document.createElement('input')
   input.type = 'file'
@@ -806,19 +861,46 @@ function chooseImage(nodeId: string) {
   input.onchange = () => {
     const file = input.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const node = getNodeById(nodeId)
-      if (!node || typeof reader.result !== 'string') return
-      node.imageUrl = reader.result
-      node.fileName = file.name
-      if (!/^图片\d+$/.test(node.title.trim())) {
-        node.title = nextImageTitle(node.id)
-      }
-    }
-    reader.readAsDataURL(file)
+    void applyImageFileToNode(nodeId, file).catch(() => {
+      error.value = '图片读取失败，请重新选择图片。'
+    })
   }
   input.click()
+}
+
+function clipboardImageFile(event: ClipboardEvent) {
+  const items = Array.from(event.clipboardData?.items ?? [])
+  for (const item of items) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) return file
+    }
+  }
+
+  return Array.from(event.clipboardData?.files ?? [])
+    .find(file => file.type.startsWith('image/')) ?? null
+}
+
+async function handleWindowPaste(event: ClipboardEvent) {
+  const file = clipboardImageFile(event)
+  if (!file || imageViewer.value) return
+
+  event.preventDefault()
+  selectWorkspace('canvas')
+  await nextTick()
+
+  const position = nodePositionNearVisibleCenter('image') ?? { x: 720, y: 420 }
+  const node = createNode('image', position.x, position.y, {
+    title: nextImageTitle(),
+    content: '',
+  })
+
+  try {
+    await applyImageFileToNode(node.id, file)
+  } catch {
+    removeNode(node.id)
+    error.value = '剪贴板图片读取失败，请重新复制图片后再试。'
+  }
 }
 
 async function useHistoryImage(image: GeneratedImage) {
@@ -1488,6 +1570,7 @@ onMounted(() => {
   window.addEventListener('pointercancel', handleWindowPointerUp)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('paste', handleWindowPaste)
 
   requestAnimationFrame(() => {
     if ((viewportRef.value?.getBoundingClientRect().width ?? window.innerWidth) <= 760) {
@@ -1502,6 +1585,7 @@ onUnmounted(() => {
   window.removeEventListener('pointercancel', handleWindowPointerUp)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('keydown', handleWindowKeydown)
+  window.removeEventListener('paste', handleWindowPaste)
 })
 </script>
 
