@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getSupabaseClient } from '../lib/supabase'
+import { DEFAULT_AUTH_REDIRECT_PATH, safeSameOriginPath } from '../utils/authRedirect'
 
 type ConfirmState = 'verifying' | 'success' | 'error'
 type EmailOtpType = 'signup' | 'invite' | 'magiclink' | 'recovery' | 'email_change' | 'email'
@@ -17,7 +18,7 @@ const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
 const state = ref<ConfirmState>('verifying')
 const title = ref('正在确认邮箱')
 const message = ref('请稍等，Recho 正在确认这封验证邮件。')
-const nextPath = ref('/image')
+const nextPath = ref(DEFAULT_AUTH_REDIRECT_PATH)
 let redirectTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const templateLink = computed(() => {
@@ -51,18 +52,6 @@ function normalizeEmailOtpType(value: string | null): EmailOtpType {
     return value as EmailOtpType
   }
   return 'email'
-}
-
-function safeSameOriginPath(value: string | null) {
-  if (!value) return '/image'
-
-  try {
-    const url = new URL(value, window.location.origin)
-    if (url.origin !== window.location.origin) return '/image'
-    return `${url.pathname}${url.search}${url.hash}` || '/image'
-  } catch {
-    return '/image'
-  }
 }
 
 function cleanConfirmUrl() {

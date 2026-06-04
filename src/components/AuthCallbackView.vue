@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getSupabaseClient } from '../lib/supabase'
+import { DEFAULT_AUTH_REDIRECT_PATH, safeSameOriginPath } from '../utils/authRedirect'
 
 type CallbackState = 'verifying' | 'success' | 'error'
 
 const state = ref<CallbackState>('verifying')
 const title = ref('正在完成 GitHub 登录')
 const message = ref('请稍等，Recho 正在处理授权结果。')
-const nextPath = ref('/image')
+const nextPath = ref(DEFAULT_AUTH_REDIRECT_PATH)
 let redirectTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const stateLabel = computed(() => {
@@ -28,18 +29,6 @@ function parseAuthParams() {
       hashParams.get('error_description') ||
       url.searchParams.get('error') ||
       hashParams.get('error'),
-  }
-}
-
-function safeSameOriginPath(value: string | null) {
-  if (!value) return '/image'
-
-  try {
-    const url = new URL(value, window.location.origin)
-    if (url.origin !== window.location.origin) return '/image'
-    return `${url.pathname}${url.search}${url.hash}` || '/image'
-  } catch {
-    return '/image'
   }
 }
 

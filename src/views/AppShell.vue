@@ -840,6 +840,7 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
 }
 
 .auth-submit:disabled,
+.auth-oauth:disabled,
 .auth-profile button:disabled {
   opacity: 0.58;
   cursor: default;

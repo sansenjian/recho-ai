@@ -200,7 +200,7 @@ http://127.0.0.1:5174/auth/confirm
 
 ## 部署要求
 
-使用 `createWebHistory()` 后，生产环境必须有静态站点 fallback。当前 Render 配置已经满足：
+使用 `createWebHistory()` 后，生产环境必须有静态站点 fallback。如果前端服务是通过 Blueprint 创建的，当前 `render.yaml` 已包含：
 
 ```yaml
 routes:
@@ -208,6 +208,10 @@ routes:
     source: /*
     destination: /index.html
 ```
+
+如果前端 Static Site 是手动创建的，需要在 Render 控制台的 **Redirects/Rewrites** 页面手动添加同一条规则；否则直接打开 `/image`、`/works`、`/auth/confirm?...` 会返回 `404 Not Found`。
+
+`npm run build` 会通过 `scripts/prepare-spa-fallbacks.mjs` 生成关键路由的静态 `index.html` 兜底副本，但这只能覆盖已列出的路径，不能替代 Render 的全局 rewrite。
 
 如果以后迁移到其他平台，也要配置等价规则：
 

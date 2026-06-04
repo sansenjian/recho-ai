@@ -133,16 +133,13 @@ await client.auth.exchangeCodeForSession(code)
 - 如果没有 `code`，再兜底调用 `client.auth.getSession()`，兼容 `detectSessionInUrl` 已经处理过 session 的情况。
 - 成功后清理 URL，并跳回 `next` 或 `/image`。
 
-推荐 `next` 只允许同源路径，避免开放重定向：
+推荐 `next` 只允许同源路径，避免开放重定向。实际实现已提取到 `src/utils/authRedirect.ts`，认证页面直接复用：
 
 ```ts
-function safeSameOriginPath(value: string | null) {
-  if (!value) return '/image'
-  const url = new URL(value, window.location.origin)
-  return url.origin === window.location.origin
-    ? `${url.pathname}${url.search}${url.hash}`
-    : '/image'
-}
+import { DEFAULT_AUTH_REDIRECT_PATH, safeSameOriginPath } from '../utils/authRedirect'
+
+const nextPath = ref(DEFAULT_AUTH_REDIRECT_PATH)
+nextPath.value = safeSameOriginPath(params.next)
 ```
 
 ### 3. 扩展 useAuthSession
@@ -164,6 +161,8 @@ async function signInWithGitHub(next = window.location.pathname) {
     provider: 'github',
     options: {
       redirectTo: redirectTo.toString(),
+      // Supabase GitHub provider 会带上 user:email，这里追加 read:user 用于读取基础资料。
+      scopes: 'read:user',
     },
   })
 
@@ -230,6 +229,7 @@ const userLabel = computed(() => {
 - GitHub Client Secret 只能放在 Supabase provider 配置里。
 - 前端 `.env` 只保留 Supabase URL 和 publishable/anon key。
 - 不要申请 `repo`、`workflow` 等 GitHub 高权限 scope。
+- 当前代码只显式追加 `read:user`；Supabase GitHub provider 会带上 `user:email`，最终 GitHub 授权页应显示 `user:email + read:user`。
 - OAuth 回调里的 `next` 必须做同源校验。
 - 登录不是强制的，所以不要加全局路由守卫。
 - 继续使用 Supabase `user.id` 做数据归属，不要用 `user_metadata` 做权限判断。

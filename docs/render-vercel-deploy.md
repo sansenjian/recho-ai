@@ -60,6 +60,10 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://recho-gateway.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
 ```
 
 > `sync: false` 表示该变量值敏感，不会在 Render 控制台回显，需手动填入真实 Key。
@@ -109,6 +113,18 @@ PORT             = 3000
 ```
 VITE_API_BASE_URL = https://recho-gateway.onrender.com  （后端部署后填）
 ```
+
+手动创建 Static Site 时，`render.yaml` 里的 `routes` 不会自动套到这个服务上。必须在 Render 控制台进入前端 Static Site 的 **Redirects/Rewrites**，新增：
+
+| 字段 | 值 |
+|---|---|
+| **Source Path** | `/*` |
+| **Destination Path** | `/index.html` |
+| **Action** | `Rewrite` |
+
+没有这条规则时，`/image`、`/works`、`/auth/confirm?...` 这类 Vue Router history mode 深链接会直接返回 Render 的 `404 Not Found`。
+
+项目的 `npm run build` 还会在 `dist` 里额外生成几个关键路由的 `index.html` 兜底副本，但正式生产仍建议保留 Render rewrite，因为它能覆盖未来新增的所有前端路由。
 
 ---
 

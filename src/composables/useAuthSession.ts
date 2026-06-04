@@ -144,6 +144,7 @@ export function useAuthSession() {
         provider: 'github',
         options: {
           redirectTo: redirectTo.toString(),
+          // Supabase's GitHub provider requests user:email; add read:user for profile metadata.
           scopes: 'read:user',
         },
       })

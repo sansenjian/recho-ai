@@ -9,6 +9,7 @@
     "dev:frontend:wait": "node scripts/wait-for-url.mjs http://127.0.0.1:3000/health 30000 && vite",
     "dev:backend": "cd backend/gateway && npx tsx src/index.ts",
     "build": "vue-tsc -b && vite build",
+    "postbuild": "node scripts/prepare-spa-fallbacks.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview"
