@@ -24,6 +24,8 @@ http://127.0.0.1:5174/auth/confirm
 
 The frontend passes `emailRedirectTo` as the current origin plus `/auth/confirm`, so the matching URL must be in the allow list.
 
+If an existing Supabase email template still sends links like `https://recho.sansenjian.asia/?token_hash=...&type=email`, the Vue router forwards that root URL to `/auth/confirm` and preserves the query string. This keeps older QQ-mail links usable after deployment.
+
 ## Confirm signup template link
 
 In Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup, use this link format:

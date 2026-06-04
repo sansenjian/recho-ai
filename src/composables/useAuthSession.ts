@@ -128,6 +128,37 @@ export function useAuthSession() {
     }
   }
 
+  async function signInWithGitHub(nextPath = '/image') {
+    authError.value = null
+    authNotice.value = null
+
+    const client = await authClientOrNull()
+    if (!client) return false
+
+    isAuthLoading.value = true
+    try {
+      const redirectTo = new URL('/auth/callback', window.location.origin)
+      redirectTo.searchParams.set('next', nextPath || '/image')
+
+      const { error } = await client.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: redirectTo.toString(),
+          scopes: 'read:user',
+        },
+      })
+
+      if (error) throw error
+      authNotice.value = '正在跳转到 GitHub 登录...'
+      return true
+    } catch (err) {
+      authError.value = err instanceof Error ? err.message : 'GitHub 登录失败'
+      return false
+    } finally {
+      isAuthLoading.value = false
+    }
+  }
+
   async function signOut() {
     authError.value = null
     authNotice.value = null
@@ -155,6 +186,7 @@ export function useAuthSession() {
     isAuthLoading,
     initAuth,
     submitAuth,
+    signInWithGitHub,
     signOut,
   }
 }

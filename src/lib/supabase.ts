@@ -15,7 +15,8 @@ function createBrowserClient(url: string, publishableKey: string) {
   return createClient(url, publishableKey, {
     auth: {
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
+      flowType: 'pkce',
       persistSession: true,
     },
   })
