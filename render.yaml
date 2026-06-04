@@ -50,3 +50,7 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://recho-gateway.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
