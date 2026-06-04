@@ -38,6 +38,7 @@ const {
   isAuthLoading,
   initAuth,
   submitAuth,
+  signInWithGitHub,
   signOut,
 } = useAuthSession()
 // Memory system initialized for future use
@@ -122,7 +123,7 @@ async function toggleAgentPanel() {
   showAgentPanel.value = !showAgentPanel.value
 }
 function toggleImagePanel() {
-  void router.push(currentRouteWorkspace() === 'image' ? '/chat' : '/image')
+  void router.push(currentRouteWorkspace() === 'chat' ? '/image' : '/chat')
 }
 
 // --- System prompt editor ---
@@ -185,6 +186,13 @@ function closeAuthDialog() {
 async function handleAuthSubmit() {
   const ok = await submitAuth(authMode.value, authEmailDraft.value, authPasswordDraft.value)
   if (ok && authMode.value === 'signIn') {
+    showAuthDialog.value = false
+  }
+}
+
+async function handleGitHubAuth() {
+  const ok = await signInWithGitHub(route.fullPath || '/image')
+  if (ok) {
     showAuthDialog.value = false
   }
 }
@@ -521,6 +529,15 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
           </button>
 
           <button
+            class="auth-oauth"
+            type="button"
+            :disabled="isAuthLoading"
+            @click="handleGitHubAuth"
+          >
+            使用 GitHub 登录
+          </button>
+
+          <button
             class="auth-switch"
             type="button"
             @click="authMode = authMode === 'signIn' ? 'signUp' : 'signIn'"
@@ -795,6 +812,7 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
 }
 
 .auth-submit,
+.auth-oauth,
 .auth-switch,
 .auth-profile button {
   min-height: 38px;
@@ -809,6 +827,16 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+}
+
+.auth-oauth {
+  background: #fff;
+  color: var(--text-primary);
+}
+
+.auth-oauth:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
 }
 
 .auth-submit:disabled,
