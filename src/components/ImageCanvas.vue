@@ -1,11 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, type DirectiveBinding } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
 import type { GeneratedImage, ImageGenRequest } from '../types/image'
-
-const emit = defineEmits<{
-  sendToChat: [dataUrl: string]
-}>()
 
 type CanvasNodeType = 'text' | 'image' | 'generation'
 type OutputHandle = 'text-out' | 'image-out' | 'generation-out'
@@ -16,6 +12,15 @@ type NodeResolution = NonNullable<ImageGenRequest['resolution']>
 type NodeQuality = NonNullable<ImageGenRequest['quality']>
 type MentionField = 'text' | 'generation'
 type WorkspaceMode = 'canvas' | 'gallery'
+
+const props = defineProps<{
+  workspaceMode?: WorkspaceMode
+}>()
+
+const emit = defineEmits<{
+  sendToChat: [dataUrl: string]
+  workspaceChange: [mode: WorkspaceMode]
+}>()
 
 interface CanvasNode {
   id: string
@@ -183,6 +188,16 @@ const contextMenu = ref({
 })
 
 let idSeed = Date.now()
+
+watch(
+  () => props.workspaceMode,
+  (mode) => {
+    if (mode && mode !== activeWorkspace.value) {
+      selectWorkspace(mode, { emitChange: false })
+    }
+  },
+  { immediate: true },
+)
 
 const planeStyle = computed(() => ({
   width: `${PLANE_SIZE.width}px`,
@@ -903,9 +918,12 @@ async function sendHistoryImageToChat(image: GeneratedImage) {
   emit('sendToChat', detail.dataUrl)
 }
 
-function selectWorkspace(mode: WorkspaceMode) {
+function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
   activeWorkspace.value = mode
   closeContextMenu()
+  if (options.emitChange !== false) {
+    emit('workspaceChange', mode)
+  }
 }
 
 function getConnectedPrompt(node: CanvasNode) {

@@ -94,7 +94,7 @@ export function useAuthSession() {
         const { data, error } = await client.auth.signUp({
           email: emailAddress,
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: { emailRedirectTo: `${window.location.origin}/auth/confirm` },
         })
         if (error) throw error
         if (data.session) {
