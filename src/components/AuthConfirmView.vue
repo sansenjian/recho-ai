@@ -214,5 +214,10 @@ onUnmounted(() => {
   .auth-confirm-card {
     padding: 22px;
   }
+
+  .auth-confirm-primary {
+    min-height: 44px;
+    width: 100%;
+  }
 }
 </style>

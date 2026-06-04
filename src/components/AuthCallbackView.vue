@@ -197,5 +197,10 @@ onUnmounted(() => {
   .auth-callback-card {
     padding: 22px;
   }
+
+  .auth-callback-primary {
+    min-height: 44px;
+    width: 100%;
+  }
 }
 </style>

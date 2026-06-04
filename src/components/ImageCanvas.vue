@@ -116,6 +116,8 @@ const MENU_WIDTH = 176
 const MENU_HEIGHT = 150
 const MIN_NODE_SCALE = 0.72
 const MAX_NODE_SCALE = 2.4
+const MIN_VIEWPORT_ZOOM = 0.42
+const MAX_VIEWPORT_ZOOM = 1.4
 const GALLERY_PAGE_SIZE = 12
 const GALLERY_AUTO_LOAD_PROGRESS = 0.5
 
@@ -419,8 +421,13 @@ function getRenderedNodeSize(node: CanvasNode) {
   }
 }
 
-function startNodeDrag(event: MouseEvent, node: CanvasNode) {
-  if (event.button !== 0) return
+function canStartPointerInteraction(event: PointerEvent) {
+  return event.isPrimary && event.button === 0
+}
+
+function startNodeDrag(event: PointerEvent, node: CanvasNode) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   dragState.value = {
     nodeId: node.id,
@@ -431,8 +438,9 @@ function startNodeDrag(event: MouseEvent, node: CanvasNode) {
   }
 }
 
-function startNodeResize(event: MouseEvent, node: CanvasNode, corner: ResizeCorner) {
-  if (event.button !== 0) return
+function startNodeResize(event: PointerEvent, node: CanvasNode, corner: ResizeCorner) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   resizeState.value = {
     nodeId: node.id,
@@ -445,8 +453,9 @@ function startNodeResize(event: MouseEvent, node: CanvasNode, corner: ResizeCorn
   }
 }
 
-function startPan(event: MouseEvent) {
-  if (event.button !== 0 || event.target !== event.currentTarget) return
+function startPan(event: PointerEvent) {
+  if (!canStartPointerInteraction(event) || event.target !== event.currentTarget) return
+  event.preventDefault()
   selectedNodeId.value = null
   closeContextMenu()
   panState.value = {
@@ -457,7 +466,7 @@ function startPan(event: MouseEvent) {
   }
 }
 
-function handleWindowMouseMove(event: MouseEvent) {
+function handleWindowPointerMove(event: PointerEvent) {
   const resizing = resizeState.value
   if (resizing) {
     const node = nodes.value.find(item => item.id === resizing.nodeId)
@@ -511,7 +520,7 @@ function handleWindowMouseMove(event: MouseEvent) {
   }
 }
 
-function handleWindowMouseUp() {
+function handleWindowPointerUp() {
   dragState.value = null
   panState.value = null
   resizeState.value = null
@@ -522,7 +531,7 @@ function handleWheel(event: WheelEvent) {
   if (!event.ctrlKey && !event.metaKey) return
   event.preventDefault()
   const point = canvasPointFromClient(event.clientX, event.clientY)
-  const nextZoom = Math.min(1.4, Math.max(0.68, viewport.value.zoom - event.deltaY * 0.0012))
+  const nextZoom = Math.min(MAX_VIEWPORT_ZOOM, Math.max(MIN_VIEWPORT_ZOOM, viewport.value.zoom - event.deltaY * 0.0012))
   viewport.value = {
     x: event.clientX - (viewportRef.value?.getBoundingClientRect().left ?? 0) - point.x * nextZoom,
     y: event.clientY - (viewportRef.value?.getBoundingClientRect().top ?? 0) - point.y * nextZoom,
@@ -530,8 +539,9 @@ function handleWheel(event: WheelEvent) {
   }
 }
 
-function startConnection(event: MouseEvent, node: CanvasNode, handle: OutputHandle) {
-  if (event.button !== 0) return
+function startConnection(event: PointerEvent, node: CanvasNode, handle: OutputHandle) {
+  if (!canStartPointerInteraction(event)) return
+  event.preventDefault()
   selectNode(node.id)
   const point = canvasPointFromClient(event.clientX, event.clientY)
   draftConnection.value = {
@@ -542,7 +552,7 @@ function startConnection(event: MouseEvent, node: CanvasNode, handle: OutputHand
   }
 }
 
-function finishConnection(event: MouseEvent, targetNode: CanvasNode, targetHandle: InputHandle) {
+function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHandle: InputHandle) {
   const draft = draftConnection.value
   if (!draft) return
   event.preventDefault()
@@ -1419,7 +1429,47 @@ function handleWindowKeydown(event: KeyboardEvent) {
 }
 
 function fitView() {
-  viewport.value = { x: -120, y: -40, zoom: 1 }
+  const rect = viewportRef.value?.getBoundingClientRect()
+  if (!rect || !nodes.value.length) {
+    viewport.value = { x: -120, y: -40, zoom: 1 }
+    return
+  }
+
+  const isMobile = rect.width <= 760
+  const targetNodes = isMobile
+    ? nodes.value.filter(node => node.id === selectedNodeId.value)
+    : nodes.value
+  const boxes = (targetNodes.length ? targetNodes : nodes.value).map((node) => {
+    const size = getRenderedNodeSize(node)
+    return {
+      x: node.x,
+      y: node.y,
+      width: size.width,
+      height: size.height,
+    }
+  })
+  const minX = Math.min(...boxes.map(item => item.x))
+  const minY = Math.min(...boxes.map(item => item.y))
+  const maxX = Math.max(...boxes.map(item => item.x + item.width))
+  const maxY = Math.max(...boxes.map(item => item.y + item.height))
+  const contentWidth = Math.max(1, maxX - minX)
+  const contentHeight = Math.max(1, maxY - minY)
+  const topInset = isMobile ? 142 : 24
+  const bottomInset = isMobile ? 112 : 24
+  const padding = isMobile ? 16 : 40
+  const availableWidth = Math.max(1, rect.width - padding * 2)
+  const availableHeight = Math.max(1, rect.height - topInset - bottomInset - padding * 2)
+  const nextZoom = clamp(
+    Math.min(MAX_VIEWPORT_ZOOM, availableWidth / contentWidth, availableHeight / contentHeight),
+    MIN_VIEWPORT_ZOOM,
+    MAX_VIEWPORT_ZOOM,
+  )
+
+  viewport.value = {
+    x: padding + (availableWidth - contentWidth * nextZoom) / 2 - minX * nextZoom,
+    y: topInset + padding + (availableHeight - contentHeight * nextZoom) / 2 - minY * nextZoom,
+    zoom: nextZoom,
+  }
 }
 
 function clearCanvas() {
@@ -1433,15 +1483,23 @@ function hasIncoming(node: CanvasNode, handle: InputHandle) {
 }
 
 onMounted(() => {
-  window.addEventListener('mousemove', handleWindowMouseMove)
-  window.addEventListener('mouseup', handleWindowMouseUp)
+  window.addEventListener('pointermove', handleWindowPointerMove)
+  window.addEventListener('pointerup', handleWindowPointerUp)
+  window.addEventListener('pointercancel', handleWindowPointerUp)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('keydown', handleWindowKeydown)
+
+  requestAnimationFrame(() => {
+    if ((viewportRef.value?.getBoundingClientRect().width ?? window.innerWidth) <= 760) {
+      fitView()
+    }
+  })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('mousemove', handleWindowMouseMove)
-  window.removeEventListener('mouseup', handleWindowMouseUp)
+  window.removeEventListener('pointermove', handleWindowPointerMove)
+  window.removeEventListener('pointerup', handleWindowPointerUp)
+  window.removeEventListener('pointercancel', handleWindowPointerUp)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('keydown', handleWindowKeydown)
 })
@@ -1567,14 +1625,39 @@ onUnmounted(() => {
         <span class="zoom-pill">{{ Math.round(viewport.zoom * 100) }}%</span>
       </div>
 
+      <div class="mobile-create-bar" aria-label="创建节点">
+        <button type="button" @click="createNodeNearCenter('text')">
+          <span class="mobile-create-icon">T</span>
+          <span>文本</span>
+        </button>
+        <button type="button" @click="createNodeNearCenter('image')">
+          <span class="mobile-create-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="m21 15-5-5L5 21" />
+            </svg>
+          </span>
+          <span>图片</span>
+        </button>
+        <button class="primary" type="button" @click="createNodeNearCenter('generation')">
+          <span class="mobile-create-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+            </svg>
+          </span>
+          <span>生图</span>
+        </button>
+      </div>
+
       <div
         ref="viewportRef"
         class="canvas-viewport"
         @contextmenu.prevent="openContextMenu"
-        @mousedown="startPan"
+        @pointerdown="startPan"
         @wheel="handleWheel"
       >
-        <div class="graph-plane" :style="planeStyle" @mousedown="startPan">
+        <div class="graph-plane" :style="planeStyle" @pointerdown="startPan">
           <svg class="connections" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">
             <path
               v-for="connection in connections"
@@ -1591,9 +1674,9 @@ onUnmounted(() => {
             class="canvas-node"
             :class="[`node-${node.type}`, { selected: selectedNodeId === node.id }]"
             :style="nodeStyle(node)"
-            @mousedown.stop="selectNode(node.id)"
+            @pointerdown.stop="selectNode(node.id)"
           >
-            <header class="node-header" @mousedown.stop="startNodeDrag($event, node)">
+            <header class="node-header" @pointerdown.stop="startNodeDrag($event, node)">
               <span class="node-icon" aria-hidden="true">
                 <svg v-if="node.type === 'text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15">
                   <path d="M4 6h16" />
@@ -1627,21 +1710,21 @@ onUnmounted(() => {
                 @input="updateRichEditorContent($event, node, 'text')"
                 @keydown="handleMentionKeydown($event, node, 'text')"
                 @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @mouseup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
+                @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
                 @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @mousedown.stop
+                @pointerdown.stop
               />
               <div
                 v-if="isMentionIndexOpen(node, 'text')"
                 class="mention-index text-mention-index"
-                @mousedown.stop.prevent
+                @pointerdown.stop.prevent
               >
                 <button
                   v-for="(imageNode, index) in mentionOptions"
                   :key="imageNode.id"
                   type="button"
                   :class="{ active: mentionState?.activeIndex === index }"
-                  @mousedown.prevent="insertMention(node, imageNode)"
+                  @pointerdown.prevent="insertMention(node, imageNode)"
                 >
                   <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
                   <span>{{ imageNode.title }}</span>
@@ -1651,7 +1734,7 @@ onUnmounted(() => {
               <span
                 class="node-handle output"
                 title="连接到生图节点"
-                @mousedown.stop.prevent="startConnection($event, node, 'text-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'text-out')"
               />
             </template>
 
@@ -1660,7 +1743,7 @@ onUnmounted(() => {
                 class="node-handle input"
                 title="接收生成结果"
                 :class="{ connected: hasIncoming(node, 'image-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'image-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'image-in')"
               />
               <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode(node) }">
                 <img
@@ -1708,7 +1791,7 @@ onUnmounted(() => {
                   class="image-output-note"
                   type="text"
                   placeholder="添加参考说明..."
-                  @mousedown.stop
+                  @pointerdown.stop
                 >
               </div>
               <textarea
@@ -1716,7 +1799,7 @@ onUnmounted(() => {
                 v-model="node.content"
                 class="image-caption"
                 placeholder="图片参考说明..."
-                @mousedown.stop
+                @pointerdown.stop
               />
               <div class="image-node-actions">
                 <button type="button" :disabled="!node.imageUrl" @click.stop="createContinuation(node)">继续</button>
@@ -1726,7 +1809,7 @@ onUnmounted(() => {
               <span
                 class="node-handle output"
                 title="作为参考图连接"
-                @mousedown.stop.prevent="startConnection($event, node, 'image-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'image-out')"
               />
             </template>
 
@@ -1735,18 +1818,18 @@ onUnmounted(() => {
                 class="node-handle input prompt"
                 title="连接文本"
                 :class="{ connected: hasIncoming(node, 'prompt-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'prompt-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'prompt-in')"
               />
               <span
                 class="node-handle input reference"
                 title="连接参考图"
                 :class="{ connected: hasIncoming(node, 'reference-in') }"
-                @mouseup.stop.prevent="finishConnection($event, node, 'reference-in')"
+                @pointerup.stop.prevent="finishConnection($event, node, 'reference-in')"
               />
               <span
                 class="node-handle output generation"
                 title="输出图片"
-                @mousedown.stop.prevent="startConnection($event, node, 'generation-out')"
+                @pointerdown.stop.prevent="startConnection($event, node, 'generation-out')"
               />
 
               <div class="generation-body">
@@ -1765,21 +1848,21 @@ onUnmounted(() => {
                     @input="updateRichEditorContent($event, node, 'generation')"
                     @keydown="handleMentionKeydown($event, node, 'generation')"
                     @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @mouseup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
+                    @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
                     @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @mousedown.stop
+                    @pointerdown.stop
                   />
                   <div
                     v-if="isMentionIndexOpen(node, 'generation')"
                     class="mention-index generation-mention-index"
-                    @mousedown.stop.prevent
+                    @pointerdown.stop.prevent
                   >
                     <button
                       v-for="(imageNode, index) in mentionOptions"
                       :key="imageNode.id"
                       type="button"
                       :class="{ active: mentionState?.activeIndex === index }"
-                      @mousedown.prevent="insertMention(node, imageNode)"
+                      @pointerdown.prevent="insertMention(node, imageNode)"
                     >
                       <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
                       <span>{{ imageNode.title }}</span>
@@ -1872,22 +1955,22 @@ onUnmounted(() => {
 
             <span
               class="resize-corner top-left"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'top-left')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-left')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner top-right"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'top-right')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-right')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner bottom-left"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'bottom-left')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-left')"
               @dblclick.stop.prevent="node.scale = 1"
             />
             <span
               class="resize-corner bottom-right"
-              @mousedown.stop.prevent="startNodeResize($event, node, 'bottom-right')"
+              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-right')"
               @dblclick.stop.prevent="node.scale = 1"
             />
           </article>
@@ -1938,15 +2021,15 @@ onUnmounted(() => {
           </svg>
         </button>
         <span class="toolbar-divider" />
-        <button class="tool-button" type="button" title="缩小" @click="viewport.zoom = Math.max(0.68, viewport.zoom - 0.08)">
+        <button class="tool-button" type="button" title="缩小" @click="viewport.zoom = Math.max(MIN_VIEWPORT_ZOOM, viewport.zoom - 0.08)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
             <circle cx="11" cy="11" r="7" />
             <path d="M8 11h6" />
             <path d="m16 16 4 4" />
           </svg>
         </button>
-        <input v-model.number="viewport.zoom" class="zoom-range" type="range" min="0.68" max="1.4" step="0.02" aria-label="缩放">
-        <button class="tool-button" type="button" title="放大" @click="viewport.zoom = Math.min(1.4, viewport.zoom + 0.08)">
+        <input v-model.number="viewport.zoom" class="zoom-range" type="range" :min="MIN_VIEWPORT_ZOOM" :max="MAX_VIEWPORT_ZOOM" step="0.02" aria-label="缩放">
+        <button class="tool-button" type="button" title="放大" @click="viewport.zoom = Math.min(MAX_VIEWPORT_ZOOM, viewport.zoom + 0.08)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
             <circle cx="11" cy="11" r="7" />
             <path d="M8 11h6" />
@@ -2031,9 +2114,9 @@ onUnmounted(() => {
       <div
         v-if="imageViewer"
         class="image-viewer-overlay"
-        @mousedown.self="closeImageViewer"
+        @pointerdown.self="closeImageViewer"
       >
-        <div class="image-viewer-shell" @mousedown.stop>
+        <div class="image-viewer-shell" @pointerdown.stop>
           <header class="image-viewer-header">
             <div class="image-viewer-meta">
               <strong>{{ imageViewer.title }}</strong>
@@ -3427,6 +3510,10 @@ onUnmounted(() => {
   font-weight: 900;
 }
 
+.mobile-create-bar {
+  display: none;
+}
+
 .stage-actions,
 .bottom-toolbar {
   position: absolute;
@@ -3478,6 +3565,16 @@ onUnmounted(() => {
 
 .tool-button.danger:hover {
   color: var(--danger);
+}
+
+.canvas-viewport {
+  touch-action: none;
+}
+
+.node-header,
+.node-handle,
+.resize-corner {
+  touch-action: none;
 }
 
 .toolbar-divider {
@@ -3548,16 +3645,205 @@ onUnmounted(() => {
     min-height: 0;
   }
 
-  .stage-actions {
+  .mobile-create-bar {
+    position: absolute;
+    left: 10px;
     right: 10px;
     top: 10px;
+    z-index: 22;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-create-bar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 0;
+    min-height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .mobile-create-bar button.primary {
+    border-color: #111827;
+    background: #111827;
+    color: #fff;
+  }
+
+  .mobile-create-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    font-weight: 900;
+  }
+
+  .stage-actions {
+    left: 10px;
+    right: 10px;
+    top: 76px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .bottom-toolbar {
     left: 10px;
     right: 10px;
     bottom: 10px;
-    justify-content: center;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    padding: 8px;
+  }
+
+  .tool-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .zoom-pill,
+  .zoom-dot {
+    min-width: 44px;
+    height: 34px;
+  }
+
+  .zoom-range {
+    flex: 1 1 120px;
+    min-width: 120px;
+    height: 34px;
+  }
+
+  .node-header {
+    min-height: 56px;
+    padding: 0 8px 0 12px;
+  }
+
+  .node-remove {
+    width: 48px;
+    height: 48px;
+    opacity: 1;
+  }
+
+  .node-handle {
+    width: 30px;
+    height: 30px;
+    border-width: 3px;
+  }
+
+  .node-handle.input {
+    left: -16px;
+  }
+
+  .node-handle.output {
+    right: -16px;
+  }
+
+  .resize-corner {
+    width: 44px;
+    height: 44px;
+  }
+
+  .resize-corner.top-left {
+    left: -12px;
+    top: -12px;
+  }
+
+  .resize-corner.top-right {
+    right: -12px;
+    top: -12px;
+  }
+
+  .resize-corner.bottom-left {
+    left: -12px;
+    bottom: -12px;
+  }
+
+  .resize-corner.bottom-right {
+    right: -12px;
+    bottom: -12px;
+  }
+
+  .pick-image {
+    width: 64px;
+    height: 64px;
+  }
+
+  .replace-image,
+  .zoom-image {
+    width: 52px;
+    height: 52px;
+  }
+
+  .image-node-actions button,
+  .gallery-header button,
+  .gallery-actions button,
+  .segmented button,
+  .generate-button,
+  .mention-index button {
+    min-height: 58px;
+  }
+
+  .gallery-stage {
+    padding: 16px;
+  }
+
+  .gallery-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-actions {
+    gap: 8px;
+  }
+
+  .image-viewer-overlay {
+    padding: 10px;
+  }
+
+  .image-viewer-shell {
+    width: calc(100vw - 20px);
+    height: min(88vh, calc(100dvh - 20px));
+  }
+
+  .image-viewer-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .image-viewer-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .image-viewer-controls button {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .image-viewer-stage {
+    padding: 12px;
   }
 }
 </style>
