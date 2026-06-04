@@ -12,7 +12,7 @@ import {
 } from '../stores/chat'
 import { useStream } from './useStream'
 import { useTools } from './useTools'
-import { getRendered, sanitizeVisibleAssistantText } from '../utils/markdown'
+import { sanitizeVisibleAssistantText } from '../utils/messageText'
 
 const CLOUD_PLATFORM_BOUNDARY = `云平台安全边界：
 - 平台运行在云端。不要声称可以操控用户本地电脑，也不要声称可以直接编辑服务器项目文件。
@@ -279,7 +279,6 @@ export function useChatLoop() {
             assistantMsg.content += content
             assistantMsg.content = sanitizeVisibleAssistantText(assistantMsg.content)
             appendAssistantTextBlock(assistantMsg, content)
-            getRendered(assistantMsg)
           },
           onToolCall: (id, name, args) => {
             onToolCall(id, name, args)

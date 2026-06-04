@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Message, MessageBlock } from '../types'
-import { getRenderedText, stripThinking } from '../utils/markdown'
+import { getRendered, getRenderedText } from '../utils/markdown'
+import { stripThinking } from '../utils/messageText'
 import ToolActivity from './ToolActivity.vue'
 import ThinkingActivity from './ThinkingActivity.vue'
 
 const props = defineProps<{
   msg: Message
-  rendered?: string
   copyFeedback?: boolean
 }>()
 
@@ -25,6 +25,7 @@ const shouldShowThinkingPlaceholder = computed(() =>
   hasToolBlock.value &&
   !hasThinkingBlock.value,
 )
+const renderedMessage = computed(() => getRendered(props.msg))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
   return getRenderedText(block.content)
@@ -78,7 +79,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
         </template>
       </template>
       <template v-else>
-        <div v-if="rendered" class="msg-text md" v-html="rendered" />
+        <div v-if="renderedMessage" class="msg-text md" v-html="renderedMessage" />
         <div v-else class="msg-text">{{ stripThinking(msg.content) }}</div>
       </template>
       <div class="msg-time-row">

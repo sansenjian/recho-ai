@@ -14,6 +14,7 @@ type NodeResolution = NonNullable<ImageGenRequest['resolution']>
 type NodeQuality = NonNullable<ImageGenRequest['quality']>
 type MentionField = 'text' | 'generation'
 type WorkspaceMode = 'canvas' | 'gallery'
+type GalleryFilter = 'all' | 'references' | 'latest'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -71,6 +72,16 @@ interface PendingMenuConnection {
   role: HandleRole
 }
 
+interface ContextMenuState {
+  visible: boolean
+  x: number
+  y: number
+  canvasX: number
+  canvasY: number
+  pendingConnection: PendingMenuConnection | null
+  targetNodeId: string | null
+}
+
 interface DragState {
   nodeId: string
   startClientX: number
@@ -114,13 +125,18 @@ interface ImageViewerState {
   zoom: number
 }
 
-const NODE_SIZE: Record<CanvasNodeType, { width: number; height: number }> = {
-  text: { width: 270, height: 156 },
-  image: { width: 232, height: 286 },
-  generation: { width: 334, height: 656 },
+interface GalleryParam {
+  label: string
+  value: string
 }
 
-const GENERATED_IMAGE_NODE_HEIGHT = 306
+const NODE_SIZE: Record<CanvasNodeType, { width: number; height: number }> = {
+  text: { width: 270, height: 156 },
+  image: { width: 232, height: 326 },
+  generation: { width: 334, height: 700 },
+}
+
+const GENERATED_IMAGE_NODE_HEIGHT = 346
 const PLANE_SIZE = { width: 3600, height: 2400 }
 const MINI_MAP_VIEW = { width: 100, height: 54, padding: 5 }
 const MENU_WIDTH = 176
@@ -131,6 +147,10 @@ const MIN_VIEWPORT_ZOOM = 0.42
 const MAX_VIEWPORT_ZOOM = 1.4
 const GALLERY_PAGE_SIZE = 12
 const GALLERY_AUTO_LOAD_PROGRESS = 0.5
+const REFERENCE_IMAGE_MAX_EDGE = 2048
+const REFERENCE_IMAGE_WEBP_QUALITY = 0.86
+const TEXT_NODE_CONTENT_SCALE_FACTOR = 0.5
+const MINI_MAP_WORLD_PADDING = 96
 
 const {
   isGenerating,
@@ -183,22 +203,27 @@ const connections = ref<Connection[]>([
 ])
 
 const selectedNodeId = ref<string | null>('node_generation_seed')
+const nodeClipboard = ref<CanvasNode | null>(null)
 const dragState = ref<DragState | null>(null)
 const panState = ref<PanState | null>(null)
 const resizeState = ref<ResizeState | null>(null)
 const mentionState = ref<MentionState | null>(null)
 const imageViewer = ref<ImageViewerState | null>(null)
+const galleryDetail = ref<GeneratedImage | null>(null)
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const isGalleryAutoLoading = ref(false)
-const contextMenu = ref({
+const galleryQuery = ref('')
+const galleryFilter = ref<GalleryFilter>('all')
+const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
   y: 0,
   canvasX: 0,
   canvasY: 0,
   pendingConnection: null as PendingMenuConnection | null,
+  targetNodeId: null,
 })
 
 let idSeed = Date.now()
@@ -215,6 +240,13 @@ watch(
   { immediate: true },
 )
 
+watch([galleryQuery, galleryFilter], () => {
+  galleryVisibleCount.value = GALLERY_PAGE_SIZE
+  void nextTick(() => {
+    galleryStageRef.value?.scrollTo({ top: 0 })
+  })
+})
+
 const planeStyle = computed(() => ({
   width: `${PLANE_SIZE.width}px`,
   height: `${PLANE_SIZE.height}px`,
@@ -223,10 +255,6 @@ const planeStyle = computed(() => ({
 
 const miniMapLayout = computed(() => {
   const visibleNodes = nodes.value
-  if (!visibleNodes.length) {
-    return { nodes: [], connections: [] }
-  }
-
   const boxes = visibleNodes.map((node) => {
     const size = getRenderedNodeSize(node)
     return {
@@ -237,12 +265,31 @@ const miniMapLayout = computed(() => {
       height: size.height,
     }
   })
-  const minX = Math.min(...boxes.map(item => item.x))
-  const minY = Math.min(...boxes.map(item => item.y))
-  const maxX = Math.max(...boxes.map(item => item.x + item.width))
-  const maxY = Math.max(...boxes.map(item => item.y + item.height))
-  const contentWidth = Math.max(1, maxX - minX)
-  const contentHeight = Math.max(1, maxY - minY)
+  const viewportRect = viewportRef.value?.getBoundingClientRect()
+  const viewportBox = viewportRect
+    ? {
+      x: -viewport.value.x / viewport.value.zoom,
+      y: -viewport.value.y / viewport.value.zoom,
+      width: viewportRect.width / viewport.value.zoom,
+      height: viewportRect.height / viewport.value.zoom,
+    }
+    : null
+  const worldBoxes = [
+    ...boxes,
+    ...(viewportBox ? [viewportBox] : []),
+  ]
+  if (!worldBoxes.length) {
+    return { nodes: [], connections: [], viewport: null }
+  }
+
+  const rawMinX = Math.min(...worldBoxes.map(item => item.x))
+  const rawMinY = Math.min(...worldBoxes.map(item => item.y))
+  const rawMaxX = Math.max(...worldBoxes.map(item => item.x + item.width))
+  const rawMaxY = Math.max(...worldBoxes.map(item => item.y + item.height))
+  const contentWidth = Math.max(1, rawMaxX - rawMinX + MINI_MAP_WORLD_PADDING * 2)
+  const contentHeight = Math.max(1, rawMaxY - rawMinY + MINI_MAP_WORLD_PADDING * 2)
+  const minX = rawMinX - MINI_MAP_WORLD_PADDING
+  const minY = rawMinY - MINI_MAP_WORLD_PADDING
   const availableWidth = MINI_MAP_VIEW.width - MINI_MAP_VIEW.padding * 2
   const availableHeight = MINI_MAP_VIEW.height - MINI_MAP_VIEW.padding * 2
   const miniScale = Math.min(availableWidth / contentWidth, availableHeight / contentHeight)
@@ -252,6 +299,15 @@ const miniMapLayout = computed(() => {
     x: offsetX + (x - minX) * miniScale,
     y: offsetY + (y - minY) * miniScale,
   })
+  const mapBox = (box: { x: number; y: number; width: number; height: number }) => {
+    const point = mapPoint(box.x, box.y)
+    return {
+      x: point.x,
+      y: point.y,
+      width: Math.max(3, box.width * miniScale),
+      height: Math.max(3, box.height * miniScale),
+    }
+  }
 
   return {
     nodes: boxes.map((item) => {
@@ -277,13 +333,41 @@ const miniMapLayout = computed(() => {
         d: `M ${miniStart.x} ${miniStart.y} C ${miniStart.x + distance} ${miniStart.y}, ${miniEnd.x - distance} ${miniEnd.y}, ${miniEnd.x} ${miniEnd.y}`,
       }
     }),
+    viewport: viewportBox ? mapBox(viewportBox) : null,
   }
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
+const galleryFilterOptions: Array<{ value: GalleryFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'references', label: '参考图' },
+  { value: 'latest', label: '最新' },
+]
 const galleryVisibleCount = ref(GALLERY_PAGE_SIZE)
-const galleryImages = computed(() => generatedImages.value.slice(0, galleryVisibleCount.value))
-const canLoadMoreGallery = computed(() => galleryVisibleCount.value < generatedImages.value.length || hasMoreHistory.value)
+const galleryHasFilter = computed(() => galleryFilter.value !== 'all' || Boolean(galleryQuery.value.trim()))
+const filteredGalleryImages = computed(() => {
+  const query = galleryQuery.value.trim().toLowerCase()
+  return generatedImages.value.filter((image) => {
+    if (galleryFilter.value === 'references' && !galleryReferences(image).length) return false
+    if (!query) return true
+
+    const searchable = [
+      galleryPrompt(image),
+      image.size,
+      image.aspectRatio,
+      image.resolution,
+      image.quality,
+      ...galleryReferences(image).map(reference => `${reference.title} ${reference.fileName ?? ''}`),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return searchable.includes(query)
+  })
+})
+const galleryImages = computed(() => filteredGalleryImages.value.slice(0, galleryVisibleCount.value))
+const canLoadMoreGallery = computed(() => galleryVisibleCount.value < filteredGalleryImages.value.length || hasMoreHistory.value)
 const resolutionOptions: Array<{ value: NodeResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: '1k', label: '1K' },
@@ -315,6 +399,9 @@ const mentionOptions = computed(() => {
     })
     .slice(0, 8)
 })
+const contextMenuNode = computed(() => (
+  contextMenu.value.targetNodeId ? getNodeById(contextMenu.value.targetNodeId) ?? null : null
+))
 
 function createId(prefix: string) {
   idSeed += 1
@@ -416,6 +503,7 @@ function openContextMenuAtClient(
   clientX: number,
   clientY: number,
   pendingConnection: PendingMenuConnection | null = null,
+  targetNodeId: string | null = null,
 ) {
   const rect = viewportRef.value?.getBoundingClientRect()
   const point = canvasPointFromClient(clientX, clientY)
@@ -428,6 +516,7 @@ function openContextMenuAtClient(
     canvasX: point.x,
     canvasY: point.y,
     pendingConnection,
+    targetNodeId,
   }
 }
 
@@ -435,9 +524,15 @@ function openContextMenu(event: MouseEvent) {
   openContextMenuAtClient(event.clientX, event.clientY)
 }
 
+function openNodeContextMenu(event: MouseEvent, node: CanvasNode) {
+  selectedNodeId.value = node.id
+  openContextMenuAtClient(event.clientX, event.clientY, null, node.id)
+}
+
 function closeContextMenu() {
   contextMenu.value.visible = false
   contextMenu.value.pendingConnection = null
+  contextMenu.value.targetNodeId = null
 }
 
 function suppressNextClickClose() {
@@ -468,6 +563,94 @@ function selectNode(nodeId: string) {
   closeContextMenu()
 }
 
+function duplicatedNodeTitle(node: CanvasNode) {
+  if (node.type === 'image' && /^图片\d+$/.test(node.title.trim())) {
+    return nextImageTitle()
+  }
+
+  const title = node.title.trim() || '节点'
+  return `${title} 副本`.slice(0, 48)
+}
+
+function cleanNodeCopy(node: CanvasNode): CanvasNode {
+  return {
+    ...node,
+    mentions: node.mentions ? [...node.mentions] : undefined,
+    loading: false,
+    status: null,
+    error: null,
+  }
+}
+
+function insertNodeCopy(node: CanvasNode) {
+  const duplicate: CanvasNode = {
+    ...cleanNodeCopy(node),
+    id: createId(node.type),
+    x: node.x + 36,
+    y: node.y + 36,
+    title: duplicatedNodeTitle(node),
+  }
+  nodes.value = [...nodes.value, duplicate]
+  selectedNodeId.value = duplicate.id
+  return duplicate
+}
+
+function copyNodeToClipboard(node: CanvasNode) {
+  nodeClipboard.value = cleanNodeCopy(node)
+}
+
+function copySelectedNode() {
+  const node = selectedNodeId.value ? getNodeById(selectedNodeId.value) : null
+  if (!node) return false
+  copyNodeToClipboard(node)
+  closeContextMenu()
+  return true
+}
+
+function pasteNodeFromClipboard() {
+  if (!nodeClipboard.value) return false
+  const duplicate = insertNodeCopy(nodeClipboard.value)
+  copyNodeToClipboard(duplicate)
+  closeContextMenu()
+  return true
+}
+
+function renameContextNode() {
+  const node = contextMenuNode.value
+  if (!node) {
+    closeContextMenu()
+    return
+  }
+
+  const nextTitle = window.prompt('重命名节点', node.title)
+  closeContextMenu()
+  if (nextTitle === null) return
+
+  const trimmed = nextTitle.trim()
+  if (trimmed) {
+    node.title = trimmed.slice(0, 48)
+  }
+}
+
+function duplicateContextNode() {
+  const node = contextMenuNode.value
+  if (!node) {
+    closeContextMenu()
+    return
+  }
+
+  insertNodeCopy(node)
+  closeContextMenu()
+}
+
+function deleteContextNode() {
+  const node = contextMenuNode.value
+  if (node) {
+    removeNode(node.id)
+  }
+  closeContextMenu()
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
@@ -482,6 +665,11 @@ function isGeneratedImageNode(node: CanvasNode) {
 
 function getBaseNodeSize(node: CanvasNode) {
   const size = NODE_SIZE[node.type]
+  if (node.type === 'generation') {
+    const referenceCount = referencedImageNodes(node).length
+    const extraReferenceHeight = Math.max(0, referenceCount - 1) * 30
+    return { ...size, height: size.height + extraReferenceHeight }
+  }
   if (isGeneratedImageNode(node)) {
     return { ...size, height: GENERATED_IMAGE_NODE_HEIGHT }
   }
@@ -624,16 +812,42 @@ function handleWindowPointerCancel() {
   draftConnection.value = null
 }
 
-function handleWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) return
-  event.preventDefault()
-  const point = canvasPointFromClient(event.clientX, event.clientY)
-  const nextZoom = Math.min(MAX_VIEWPORT_ZOOM, Math.max(MIN_VIEWPORT_ZOOM, viewport.value.zoom - event.deltaY * 0.0012))
+function shouldKeepNativeWheel(event: WheelEvent) {
+  const target = event.target as HTMLElement | null
+  return Boolean(target?.closest([
+    'input',
+    'textarea',
+    'select',
+    '[contenteditable="true"]',
+    '.mention-index',
+    '.context-menu',
+  ].join(',')))
+}
+
+function normalizedWheelDelta(event: WheelEvent) {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 16
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * 120
+  return event.deltaY
+}
+
+function setViewportZoomAtClient(clientX: number, clientY: number, nextZoom: number) {
+  const rect = viewportRef.value?.getBoundingClientRect()
+  const point = canvasPointFromClient(clientX, clientY)
   viewport.value = {
-    x: event.clientX - (viewportRef.value?.getBoundingClientRect().left ?? 0) - point.x * nextZoom,
-    y: event.clientY - (viewportRef.value?.getBoundingClientRect().top ?? 0) - point.y * nextZoom,
+    x: clientX - (rect?.left ?? 0) - point.x * nextZoom,
+    y: clientY - (rect?.top ?? 0) - point.y * nextZoom,
     zoom: nextZoom,
   }
+}
+
+function handleWheel(event: WheelEvent) {
+  if (shouldKeepNativeWheel(event)) return
+
+  event.preventDefault()
+  const delta = normalizedWheelDelta(event)
+  const speed = event.ctrlKey || event.metaKey ? 0.001 : 0.0014
+  const nextZoom = clamp(viewport.value.zoom * Math.exp(-delta * speed), MIN_VIEWPORT_ZOOM, MAX_VIEWPORT_ZOOM)
+  setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
 }
 
 function isOutputHandle(handle: CanvasHandle): handle is OutputHandle {
@@ -903,11 +1117,15 @@ function syncMentionConnectionsForTextNode(node: CanvasNode) {
 function nodeStyle(node: CanvasNode) {
   const scale = getNodeScale(node)
   const size = getBaseNodeSize(node)
+  const textContentScale = node.type === 'text'
+    ? (1 + (scale - 1) * TEXT_NODE_CONTENT_SCALE_FACTOR) / scale
+    : 1
   return {
     width: `${size.width}px`,
     height: `${size.height}px`,
     transform: `translate(${node.x}px, ${node.y}px) scale(${scale})`,
     transformOrigin: '0 0',
+    '--node-text-content-scale': textContentScale.toFixed(4),
   }
 }
 
@@ -955,7 +1173,7 @@ function fallbackImageFileName(file: File) {
   return `剪贴板图片.${extension}`
 }
 
-function readImageFileAsDataUrl(file: File) {
+function readBlobAsDataUrl(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
@@ -966,12 +1184,65 @@ function readImageFileAsDataUrl(file: File) {
       }
     }
     reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(blob)
   })
 }
 
+function readImageFileAsDataUrl(file: File) {
+  return readBlobAsDataUrl(file)
+}
+
+function isInlineImageDataUrl(value: string) {
+  return /^data:image\//i.test(value)
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('图片加载失败'))
+    image.src = src
+  })
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(blob => resolve(blob), type, quality)
+  })
+}
+
+async function compressReferenceImageDataUrl(dataUrl: string) {
+  if (!isInlineImageDataUrl(dataUrl)) return dataUrl
+
+  try {
+    const image = await loadImageElement(dataUrl)
+    const sourceWidth = image.naturalWidth || image.width
+    const sourceHeight = image.naturalHeight || image.height
+    if (!sourceWidth || !sourceHeight) return dataUrl
+
+    const scale = Math.min(1, REFERENCE_IMAGE_MAX_EDGE / Math.max(sourceWidth, sourceHeight))
+    const width = Math.max(1, Math.round(sourceWidth * scale))
+    const height = Math.max(1, Math.round(sourceHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+
+    const context = canvas.getContext('2d')
+    if (!context) return dataUrl
+
+    context.drawImage(image, 0, 0, width, height)
+    const blob = await canvasToBlob(canvas, 'image/webp', REFERENCE_IMAGE_WEBP_QUALITY)
+    if (!blob) return dataUrl
+
+    const compressed = await readBlobAsDataUrl(blob)
+    return compressed.length < dataUrl.length || scale < 1 ? compressed : dataUrl
+  } catch {
+    return dataUrl
+  }
+}
+
 async function applyImageFileToNode(nodeId: string, file: File) {
-  const dataUrl = await readImageFileAsDataUrl(file)
+  const dataUrl = await compressReferenceImageDataUrl(await readImageFileAsDataUrl(file))
   const node = getNodeById(nodeId)
   if (!node) return
   node.imageUrl = dataUrl
@@ -1010,7 +1281,14 @@ function clipboardImageFile(event: ClipboardEvent) {
 
 async function handleWindowPaste(event: ClipboardEvent) {
   const file = clipboardImageFile(event)
-  if (!file || imageViewer.value) return
+  if (imageViewer.value || isEditableEventTarget(event)) return
+
+  if (!file) {
+    if (pasteNodeFromClipboard()) {
+      event.preventDefault()
+    }
+    return
+  }
 
   event.preventDefault()
   selectWorkspace('canvas')
@@ -1031,9 +1309,15 @@ async function handleWindowPaste(event: ClipboardEvent) {
 }
 
 async function useHistoryImage(image: GeneratedImage) {
-  const detail = await resolveImageDetail(image)
-  if (!detail.dataUrl) {
-    error.value = '原图加载失败，请稍后重试。'
+  let detail = image
+  let previewUrl = displayImageUrl(detail)
+  if (!previewUrl) {
+    detail = await resolveImageDetail(image)
+    previewUrl = displayImageUrl(detail)
+  }
+
+  if (!previewUrl) {
+    error.value = '图片加载失败，请稍后重试。'
     return
   }
 
@@ -1046,7 +1330,7 @@ async function useHistoryImage(image: GeneratedImage) {
   createNode('image', point.x, point.y, {
     title: nextImageTitle(),
     content: '',
-    imageUrl: detail.dataUrl,
+    imageUrl: previewUrl,
     sourceImageId: detail.id,
     sourcePrompt: detail.prompt,
     fileName: detail.size,
@@ -1089,12 +1373,99 @@ function displayReferenceUrl(reference: NonNullable<GeneratedImage['references']
   return reference.thumbnailUrl || reference.dataUrl || ''
 }
 
+function formatGalleryDate(timestamp: string) {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return ''
+
+  return date.toLocaleDateString(undefined, {
+    month: '2-digit',
+    day: '2-digit',
+  })
+}
+
+function galleryOptionLabel<T extends string>(
+  value: T | undefined,
+  options: Array<{ value: T; label: string }>,
+) {
+  if (!value) return 'Auto'
+  return options.find(option => option.value === value)?.label ?? value
+}
+
+function galleryParamItems(image: GeneratedImage): GalleryParam[] {
+  return [
+    { label: '尺寸', value: image.size || 'auto' },
+    { label: '比例', value: galleryOptionLabel(image.aspectRatio, aspectRatioOptions) },
+    { label: '分辨率', value: galleryOptionLabel(image.resolution, resolutionOptions) },
+    { label: '质量', value: galleryOptionLabel(image.quality, qualityOptions) },
+  ]
+}
+
+function galleryDetailImageUrl(image: GeneratedImage) {
+  return displayImageUrl(image)
+}
+
+function closeGalleryDetail() {
+  galleryDetail.value = null
+}
+
+async function openGalleryDetail(image: GeneratedImage) {
+  if (galleryDetailImageUrl(image)) {
+    galleryDetail.value = image
+    return
+  }
+
+  const detail = await resolveImageDetail(image)
+  if (!galleryDetailImageUrl(detail)) {
+    error.value = '图片加载失败，请稍后重试。'
+    return
+  }
+
+  galleryDetail.value = detail
+}
+
+async function openGalleryDetailViewer() {
+  if (!galleryDetail.value) return
+  const image = await resolveImageDetail(galleryDetail.value)
+  const imageUrl = image.dataUrl || galleryDetailImageUrl(image)
+  if (!imageUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+
+  galleryDetail.value = image
+  imageViewer.value = {
+    imageUrl,
+    title: galleryFileName(image).replace(/\.png$/i, ''),
+    caption: galleryPrompt(image),
+    zoom: 1,
+  }
+}
+
+function downloadGalleryDetail() {
+  if (galleryDetail.value) {
+    void downloadGeneratedImage(galleryDetail.value)
+  }
+}
+
+function useGalleryDetailImage() {
+  if (galleryDetail.value) {
+    void useHistoryImage(galleryDetail.value)
+    closeGalleryDetail()
+  }
+}
+
+function sendGalleryDetailToChat() {
+  if (galleryDetail.value) {
+    void sendHistoryImageToChat(galleryDetail.value)
+  }
+}
+
 async function handleLoadMoreGallery() {
   if (!canLoadMoreGallery.value || isGalleryAutoLoading.value || isLoadingHistory.value) return
 
   isGalleryAutoLoading.value = true
   try {
-    const localCount = generatedImages.value.length
+    const localCount = filteredGalleryImages.value.length
     if (galleryVisibleCount.value < localCount) {
       galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, localCount)
       return
@@ -1103,7 +1474,7 @@ async function handleLoadMoreGallery() {
     if (!hasMoreHistory.value) return
 
     await loadMoreHistory()
-    const updatedCount = generatedImages.value.length
+    const updatedCount = filteredGalleryImages.value.length
     if (updatedCount > galleryVisibleCount.value) {
       galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, updatedCount)
     }
@@ -1296,7 +1667,7 @@ function createMentionTokenElement(imageNode: CanvasNode) {
     borderRadius: '7px',
     background: '#fff',
     color: 'var(--text-primary)',
-    fontSize: '12px',
+    fontSize: 'calc(12px * var(--node-text-content-scale, 1))',
     fontWeight: '900',
     verticalAlign: 'middle',
     whiteSpace: 'nowrap',
@@ -1524,18 +1895,6 @@ function buildPromptParts(node: CanvasNode) {
   }
 }
 
-function buildReferences(node: CanvasNode) {
-  return referencedImageNodes(node)
-    .filter((item): item is CanvasNode & { imageUrl: string } => Boolean(item.imageUrl))
-    .map(item => ({
-      id: item.id,
-      title: item.title,
-      dataUrl: item.imageUrl,
-      content: item.content.trim() || undefined,
-      fileName: item.fileName,
-    }))
-}
-
 function imageAltText(node: CanvasNode) {
   return node.content.trim() || node.sourcePrompt || node.title
 }
@@ -1544,20 +1903,55 @@ function imageOutputMeta(node: CanvasNode) {
   return node.fileName || 'PNG'
 }
 
+function historyImageForNode(node: CanvasNode) {
+  if (!node.sourceImageId) return null
+  return generatedImages.value.find(image => image.id === node.sourceImageId) ?? null
+}
+
+async function resolveNodeOriginalImageUrl(node: CanvasNode) {
+  const historyImage = historyImageForNode(node)
+  if (historyImage) {
+    const detail = await resolveImageDetail(historyImage)
+    if (detail.dataUrl) return detail.dataUrl
+  }
+
+  return node.imageUrl || ''
+}
+
+async function resolveReferenceImageUrl(node: CanvasNode) {
+  return await compressReferenceImageDataUrl(await resolveNodeOriginalImageUrl(node))
+}
+
+async function buildReferences(node: CanvasNode) {
+  const imageNodes = referencedImageNodes(node)
+    .filter((item): item is CanvasNode & { imageUrl: string } => Boolean(item.imageUrl))
+
+  const references = await Promise.all(imageNodes.map(async item => ({
+    id: item.id,
+    title: item.title,
+    dataUrl: await resolveReferenceImageUrl(item),
+    content: item.content.trim() || undefined,
+    fileName: item.fileName,
+  })))
+
+  return references.filter(reference => Boolean(reference.dataUrl))
+}
+
 async function generateFromNode(node: CanvasNode) {
   if (isGenerating.value || node.loading) return
   const { userPrompt, systemPrompt, modelPrompt } = buildPromptParts(node)
-  const references = buildReferences(node)
   if (!userPrompt.trim()) {
     node.error = '请连接文本节点或填写提示词。'
     return
   }
 
   node.loading = true
+  node.error = null
+  node.status = '正在准备生成...'
+  const references = await buildReferences(node)
   node.status = references.length
     ? `正在上传 ${references.length} 张参考图并生成...`
     : '正在生成图片...'
-  node.error = null
   const result = await generate(modelPrompt, {
     userPrompt,
     systemPrompt,
@@ -1578,7 +1972,7 @@ async function generateFromNode(node: CanvasNode) {
   const outputNode = createNode('image', node.x + NODE_SIZE.generation.width + 132, node.y + 46, {
     title: nextImageTitle(),
     content: '',
-    imageUrl: result.dataUrl,
+    imageUrl: displayImageUrl(result),
     sourceImageId: result.id,
     sourcePrompt: result.prompt,
     fileName: result.size,
@@ -1614,19 +2008,39 @@ function createContinuation(node: CanvasNode) {
   ]
 }
 
-function handleDownload(node: CanvasNode) {
+async function handleDownload(node: CanvasNode) {
   if (!node.imageUrl) return
-  downloadImageUrl(node.imageUrl, node.content || node.title)
+  const imageUrl = await resolveNodeOriginalImageUrl(node)
+  if (!imageUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+  downloadImageUrl(imageUrl, node.content || node.title)
 }
 
-function openImageViewer(node: CanvasNode) {
+async function openImageViewer(node: CanvasNode) {
   if (!node.imageUrl) return
+  const imageUrl = await resolveNodeOriginalImageUrl(node)
+  if (!imageUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
   imageViewer.value = {
-    imageUrl: node.imageUrl,
+    imageUrl,
     title: node.title,
     caption: imageAltText(node),
     zoom: 1,
   }
+}
+
+async function sendNodeImageToChat(node: CanvasNode) {
+  if (!node.imageUrl) return
+  const imageUrl = await resolveNodeOriginalImageUrl(node)
+  if (!imageUrl) {
+    error.value = '原图加载失败，请稍后重试。'
+    return
+  }
+  emit('sendToChat', imageUrl)
 }
 
 function closeImageViewer() {
@@ -1658,20 +2072,48 @@ function handleImageViewerWheel(event: WheelEvent) {
   zoomImageViewer(event.deltaY > 0 ? -0.12 : 0.12)
 }
 
+function isEditableEventTarget(event: Event) {
+  return event.target instanceof HTMLElement &&
+    Boolean(event.target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
 function handleWindowKeydown(event: KeyboardEvent) {
-  if (!imageViewer.value) return
-  if (event.key === 'Escape') {
+  if (imageViewer.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeImageViewer()
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault()
+      zoomImageViewer(0.12)
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault()
+      zoomImageViewer(-0.12)
+    } else if (event.key === '0') {
+      event.preventDefault()
+      resetImageViewerZoom()
+    }
+    return
+  }
+
+  if (event.key === 'Escape' && contextMenu.value.visible) {
     event.preventDefault()
-    closeImageViewer()
-  } else if (event.key === '+' || event.key === '=') {
+    closeContextMenu()
+    return
+  }
+
+  const isCopyShortcut = (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === 'c'
+  if (isCopyShortcut && !isEditableEventTarget(event) && copySelectedNode()) {
     event.preventDefault()
-    zoomImageViewer(0.12)
-  } else if (event.key === '-' || event.key === '_') {
+    return
+  }
+
+  if (event.key === 'Delete' && selectedNodeId.value && !isEditableEventTarget(event)) {
     event.preventDefault()
-    zoomImageViewer(-0.12)
-  } else if (event.key === '0') {
-    event.preventDefault()
-    resetImageViewerZoom()
+    removeNode(selectedNodeId.value)
+    closeContextMenu()
   }
 }
 
@@ -1809,6 +2251,15 @@ onUnmounted(() => {
               :height="node.height"
               rx="1.6"
             />
+            <rect
+              v-if="miniMapLayout.viewport"
+              class="mini-viewport"
+              :x="miniMapLayout.viewport.x"
+              :y="miniMapLayout.viewport.y"
+              :width="miniMapLayout.viewport.width"
+              :height="miniMapLayout.viewport.height"
+              rx="2"
+            />
           </svg>
         </div>
       </div>
@@ -1928,6 +2379,7 @@ onUnmounted(() => {
             :class="[`node-${node.type}`, { selected: selectedNodeId === node.id }]"
             :style="nodeStyle(node)"
             @pointerdown.stop="selectNode(node.id)"
+            @contextmenu.stop.prevent="openNodeContextMenu($event, node)"
           >
             <header class="node-header" @pointerdown.stop="startNodeDrag($event, node)">
               <span class="node-icon" aria-hidden="true">
@@ -2059,7 +2511,7 @@ onUnmounted(() => {
               <div class="image-node-actions">
                 <button type="button" :disabled="!node.imageUrl" @click.stop="createContinuation(node)">继续</button>
                 <button type="button" :disabled="!node.imageUrl" @click.stop="handleDownload(node)">下载</button>
-                <button type="button" :disabled="!node.imageUrl" @click.stop="emit('sendToChat', node.imageUrl!)">对话</button>
+                <button type="button" :disabled="!node.imageUrl" @click.stop="sendNodeImageToChat(node)">对话</button>
               </div>
               <span
                 class="node-handle output"
@@ -2241,28 +2693,60 @@ onUnmounted(() => {
           :style="{ transform: `translate(${contextMenu.x}px, ${contextMenu.y}px)` }"
           @click.stop
         >
-          <button type="button" @click="createNodeAtMenu('text')">
-            <span class="menu-icon">T</span>
-            <span>文本节点</span>
-          </button>
-          <button type="button" @click="createNodeAtMenu('image')">
-            <span class="menu-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="m21 15-5-5L5 21" />
-              </svg>
-            </span>
-            <span>图片节点</span>
-          </button>
-          <button type="button" @click="createNodeAtMenu('generation')">
-            <span class="menu-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-              </svg>
-            </span>
-            <span>生图节点</span>
-          </button>
+          <template v-if="contextMenuNode">
+            <button type="button" @click="renameContextNode">
+              <span class="menu-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </span>
+              <span>重命名</span>
+            </button>
+            <button type="button" @click="duplicateContextNode">
+              <span class="menu-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                  <rect x="8" y="8" width="11" height="11" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+                </svg>
+              </span>
+              <span>复制节点</span>
+            </button>
+            <button type="button" class="danger" @click="deleteContextNode">
+              <span class="menu-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="m6 6 1 15h10l1-15" />
+                </svg>
+              </span>
+              <span>删除</span>
+            </button>
+          </template>
+          <template v-else>
+            <button type="button" @click="createNodeAtMenu('text')">
+              <span class="menu-icon">T</span>
+              <span>文本节点</span>
+            </button>
+            <button type="button" @click="createNodeAtMenu('image')">
+              <span class="menu-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="m21 15-5-5L5 21" />
+                </svg>
+              </span>
+              <span>图片节点</span>
+            </button>
+            <button type="button" @click="createNodeAtMenu('generation')">
+              <span class="menu-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                  <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+                </svg>
+              </span>
+              <span>生图节点</span>
+            </button>
+          </template>
         </div>
       </div>
 
@@ -2309,57 +2793,108 @@ onUnmounted(() => {
       @scroll.passive="handleGalleryScroll"
     >
       <div class="gallery-header">
-        <div>
+        <div class="gallery-heading">
           <span class="gallery-eyebrow">作品广场</span>
-          <h2>历史生成</h2>
+          <h2>生成作品</h2>
+          <p>{{ filteredGalleryImages.length }} / {{ generatedImages.length }}</p>
         </div>
-        <button v-if="galleryImages.length" type="button" disabled @click="clearHistory">清空历史</button>
+        <div class="gallery-toolbar">
+          <div class="gallery-filter-group" role="tablist" aria-label="作品筛选">
+            <button
+              v-for="option in galleryFilterOptions"
+              :key="option.value"
+              type="button"
+              :class="{ active: galleryFilter === option.value }"
+              @click="galleryFilter = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+          <label class="gallery-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m16 16 4 4" />
+            </svg>
+            <input v-model="galleryQuery" type="search" placeholder="搜索提示词、尺寸、参考图">
+          </label>
+          <button
+            type="button"
+            class="gallery-reset"
+            :disabled="!galleryHasFilter"
+            @click="galleryQuery = ''; galleryFilter = 'all'"
+          >
+            重置
+          </button>
+        </div>
       </div>
 
-      <div v-if="galleryImages.length" class="gallery-grid">
+      <div v-if="galleryImages.length" class="gallery-grid" aria-live="polite">
         <article v-for="image in galleryImages" :key="image.id" class="gallery-card">
-          <div class="gallery-image-wrap">
-            <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
-          </div>
+          <button type="button" class="gallery-image-wrap" title="查看作品" @click="openGalleryDetail(image)">
+            <span class="gallery-card-date">{{ formatGalleryDate(image.timestamp) }}</span>
+            <span v-if="galleryReferences(image).length" class="gallery-card-reference-count">
+              {{ galleryReferences(image).length }} 张参考
+            </span>
+            <span class="gallery-image-button">
+              <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
+            </span>
+          </button>
           <div class="gallery-card-body">
-            <div class="gallery-meta-row">
+            <p class="gallery-card-prompt">{{ galleryPrompt(image) }}</p>
+            <div class="gallery-card-meta">
               <span>{{ image.size || 'auto' }}</span>
-              <span>{{ image.quality || 'auto' }}</span>
-              <span>{{ new Date(image.timestamp).toLocaleString() }}</span>
+              <span>{{ galleryOptionLabel(image.resolution, resolutionOptions) }}</span>
+              <span>{{ galleryOptionLabel(image.quality, qualityOptions) }}</span>
             </div>
-            <section class="gallery-section">
-              <h3>用户提示词</h3>
-              <p>{{ galleryPrompt(image) }}</p>
-            </section>
-            <section class="gallery-section">
-              <div class="gallery-section-title">
-                <h3>参考图</h3>
-                <span>{{ galleryReferences(image).length }} 张</span>
-              </div>
-              <div v-if="galleryReferences(image).length" class="gallery-reference-list">
-                <div
-                  v-for="reference in galleryReferences(image)"
+            <div class="gallery-card-footer">
+              <div class="gallery-reference-strip" aria-label="参考图">
+                <img
+                  v-for="reference in galleryReferences(image).slice(0, 3)"
                   :key="reference.id || reference.title"
-                  class="gallery-reference"
+                  :src="displayReferenceUrl(reference)"
+                  :alt="reference.title || '参考图'"
+                  loading="lazy"
                 >
-                  <img :src="displayReferenceUrl(reference)" :alt="reference.title">
-                  <span>{{ reference.title || reference.fileName || '参考图' }}</span>
-                </div>
               </div>
-              <p v-else class="gallery-empty-text">没有使用参考图</p>
-            </section>
-            <div class="gallery-actions">
-              <button type="button" @click="useHistoryImage(image)">放入画布</button>
-              <button type="button" @click="downloadGeneratedImage(image)">下载</button>
-              <button type="button" @click="sendHistoryImageToChat(image)">对话</button>
+              <div class="gallery-actions">
+                <button type="button" title="查看作品" @click="openGalleryDetail(image)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14 21 3" />
+                    <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+                  </svg>
+                </button>
+                <button type="button" title="放入画布" @click="useHistoryImage(image)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
+                  </svg>
+                </button>
+                <button type="button" title="下载原图" @click="downloadGeneratedImage(image)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 19h14" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  title="发送到对话"
+                  @click="sendHistoryImageToChat(image)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </article>
       </div>
 
       <div v-else class="gallery-empty">
-        <strong>还没有历史作品</strong>
-        <span>生成图片后，这里会显示提示词、参考图和生成结果。</span>
+        <strong>{{ generatedImages.length ? '没有匹配作品' : '暂无作品' }}</strong>
+        <span v-if="galleryHasFilter">换一个筛选或搜索词</span>
       </div>
 
       <div v-if="galleryImages.length && (isGalleryAutoLoading || isLoadingHistory)" class="gallery-scroll-status">
@@ -2368,6 +2903,102 @@ onUnmounted(() => {
 
       <div v-if="error" class="global-error">{{ error }}</div>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="galleryDetail"
+        class="gallery-detail-overlay"
+        @pointerdown.self="closeGalleryDetail"
+      >
+        <article class="gallery-detail-shell" @pointerdown.stop>
+          <section class="gallery-detail-preview">
+            <img
+              :src="galleryDetailImageUrl(galleryDetail)"
+              :alt="galleryPrompt(galleryDetail)"
+              draggable="false"
+            >
+            <button type="button" class="gallery-detail-zoom" title="放大查看" @click="openGalleryDetailViewer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M8 11h6" />
+                <path d="M11 8v6" />
+                <path d="m16 16 4 4" />
+              </svg>
+            </button>
+          </section>
+          <aside class="gallery-detail-panel">
+            <header class="gallery-detail-header">
+              <div>
+                <span>作品详情</span>
+                <strong>{{ galleryFileName(galleryDetail).replace(/\.png$/i, '') }}</strong>
+              </div>
+              <button type="button" title="关闭" @click="closeGalleryDetail">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </header>
+
+            <section class="gallery-detail-section">
+              <h3>用户提示词</h3>
+              <p>{{ galleryPrompt(galleryDetail) }}</p>
+            </section>
+
+            <section class="gallery-detail-section">
+              <div class="gallery-detail-section-title">
+                <h3>参考图</h3>
+                <span>{{ galleryReferences(galleryDetail).length }} 张</span>
+              </div>
+              <div v-if="galleryReferences(galleryDetail).length" class="gallery-detail-references">
+                <figure
+                  v-for="reference in galleryReferences(galleryDetail)"
+                  :key="reference.id || reference.title"
+                >
+                  <img :src="displayReferenceUrl(reference)" :alt="reference.title || '参考图'" loading="lazy">
+                  <figcaption>{{ reference.title || reference.fileName || '参考图' }}</figcaption>
+                </figure>
+              </div>
+              <p v-else class="gallery-detail-muted">没有参考图</p>
+            </section>
+
+            <section class="gallery-detail-section">
+              <h3>生成参数</h3>
+              <dl class="gallery-param-grid">
+                <template v-for="item in galleryParamItems(galleryDetail)" :key="item.label">
+                  <dt>{{ item.label }}</dt>
+                  <dd>{{ item.value }}</dd>
+                </template>
+              </dl>
+            </section>
+
+            <div class="gallery-detail-actions">
+              <button type="button" @click="useGalleryDetailImage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                放入画布
+              </button>
+              <button type="button" @click="downloadGalleryDetail">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                  <path d="M12 3v12" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M5 19h14" />
+                </svg>
+                下载
+              </button>
+              <button type="button" @click="sendGalleryDetailToChat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                </svg>
+                对话
+              </button>
+            </div>
+          </aside>
+        </article>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div
@@ -2528,7 +3159,7 @@ onUnmounted(() => {
 .mini-map-frame {
   position: relative;
   height: 100%;
-  border: 2px dashed #111827;
+  border: 1px solid #cbd5e1;
   border-radius: 6px;
   overflow: hidden;
 }
@@ -2567,6 +3198,14 @@ onUnmounted(() => {
 .mini-node.selected {
   stroke: #111827;
   stroke-width: 0.9;
+}
+
+.mini-viewport {
+  fill: rgba(37, 99, 235, 0.08);
+  stroke: #111827;
+  stroke-width: 0.9;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
 }
 
 .quick-create {
@@ -2684,21 +3323,25 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   min-width: 0;
-  padding: 28px;
+  padding: 26px clamp(18px, 3vw, 42px);
   overflow-y: auto;
-  background:
-    linear-gradient(#e3e9f1 1px, transparent 1px),
-    linear-gradient(90deg, #e3e9f1 1px, transparent 1px),
-    #fbfdff;
-  background-size: 28px 28px;
+  background: #f4f6f8;
 }
 
 .gallery-header {
+  display: grid;
+  align-items: start;
+  gap: 14px;
+  margin: 0 auto 20px;
+  max-width: 1540px;
+}
+
+.gallery-heading {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
 }
 
 .gallery-eyebrow {
@@ -2708,16 +3351,42 @@ onUnmounted(() => {
 }
 
 .gallery-header h2 {
-  margin: 3px 0 0;
+  margin: 0;
   color: var(--text-primary);
-  font-size: 24px;
+  font-size: 28px;
   letter-spacing: 0;
 }
 
-.gallery-header button,
+.gallery-header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.gallery-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gallery-filter-group {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.gallery-filter-group button,
+.gallery-reset,
 .gallery-actions button {
   min-height: 34px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 7px;
   background: #fff;
   color: var(--text-primary);
@@ -2726,36 +3395,85 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.gallery-header button {
+.gallery-filter-group button {
   padding: 0 12px;
+  color: var(--text-secondary);
 }
 
-.gallery-header button:disabled {
+.gallery-filter-group button.active {
+  background: #111827;
+  color: #fff;
+}
+
+.gallery-search {
+  display: flex;
+  align-items: center;
+  min-width: 220px;
+  height: 42px;
+  flex: 1 1 360px;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
   color: var(--text-muted);
+}
+
+.gallery-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.gallery-search input::placeholder {
+  color: #a8b1bf;
+}
+
+.gallery-reset {
+  padding: 0 12px;
+  border-color: var(--border);
+}
+
+.gallery-reset:disabled {
+  opacity: 0.42;
   pointer-events: none;
 }
 
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+  gap: 16px;
+  max-width: 1540px;
+  margin: 0 auto;
 }
 
 .gallery-card {
   display: grid;
-  grid-template-rows: 220px auto;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 }
 
 .gallery-image-wrap {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
     linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
@@ -2764,113 +3482,139 @@ onUnmounted(() => {
     #f8fafc;
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
   background-size: 18px 18px;
+  cursor: zoom-in;
+  overflow: hidden;
 }
 
 .gallery-image-wrap img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.gallery-image-button {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gallery-image-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gallery-card-date,
+.gallery-card-reference-count {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  backdrop-filter: blur(8px);
+}
+
+.gallery-card-date {
+  left: 10px;
+}
+
+.gallery-card-reference-count {
+  right: 10px;
 }
 
 .gallery-card-body {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 12px;
 }
 
-.gallery-meta-row {
+.gallery-card-prompt {
+  display: -webkit-box;
+  min-height: 38px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.46;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.gallery-card-meta {
   display: flex;
   min-width: 0;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 5px;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 800;
 }
 
-.gallery-meta-row span {
+.gallery-card-meta span {
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gallery-section {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.gallery-section h3 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.gallery-section p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.48;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-}
-
-.gallery-section-title {
+.gallery-card-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
-.gallery-section-title span,
-.gallery-empty-text {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.gallery-reference-list {
+.gallery-reference-strip {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  min-width: 0;
+  height: 30px;
 }
 
-.gallery-reference {
-  display: grid;
-  width: 64px;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-
-.gallery-reference img {
-  width: 64px;
-  height: 64px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
+.gallery-reference-strip img {
+  width: 30px;
+  height: 30px;
+  margin-right: -7px;
+  border: 2px solid #fff;
+  border-radius: 8px;
+  background: #fff;
   object-fit: cover;
-}
-
-.gallery-reference span {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
 }
 
 .gallery-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.gallery-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-color: var(--border);
+  color: var(--text-secondary);
 }
 
 .gallery-actions button:hover {
   border-color: var(--border-strong);
   background: var(--surface-soft);
+  color: var(--text-primary);
 }
 
 .gallery-scroll-status {
@@ -2884,7 +3628,10 @@ onUnmounted(() => {
 .gallery-empty {
   display: grid;
   place-items: center;
+  gap: 8px;
   min-height: 320px;
+  max-width: 720px;
+  margin: 0 auto;
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.82);
@@ -2898,7 +3645,6 @@ onUnmounted(() => {
 }
 
 .gallery-empty span {
-  margin-top: 8px;
   font-size: 13px;
 }
 
@@ -2945,6 +3691,7 @@ onUnmounted(() => {
 .canvas-node {
   position: absolute;
   display: flex;
+  box-sizing: border-box;
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2958,7 +3705,13 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08), 0 22px 56px rgba(15, 23, 42, 0.12);
 }
 
+.node-image,
+.node-generation {
+  overflow: visible;
+}
+
 .node-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3029,7 +3782,7 @@ onUnmounted(() => {
   flex: 1;
   padding: 12px;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: calc(13px * var(--node-text-content-scale, 1));
   line-height: 1.55;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -3084,7 +3837,8 @@ onUnmounted(() => {
 
 .image-preview {
   position: relative;
-  height: 136px;
+  flex: 1 1 auto;
+  min-height: 136px;
   margin: 10px 10px 0;
   border-radius: 7px;
   background:
@@ -3106,13 +3860,14 @@ onUnmounted(() => {
 }
 
 .image-preview img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
 .image-preview.generated {
-  height: 158px;
+  min-height: 148px;
 }
 
 .pick-image,
@@ -3163,13 +3918,15 @@ onUnmounted(() => {
 }
 
 .image-caption {
-  height: 48px;
+  flex: 0 0 48px;
   padding: 8px 10px 2px;
   font-size: 12px;
   line-height: 1.35;
+  overflow: hidden;
 }
 
 .image-output-panel {
+  flex: 0 0 auto;
   display: grid;
   gap: 6px;
   padding: 8px 10px 4px;
@@ -3225,6 +3982,7 @@ onUnmounted(() => {
 }
 
 .image-node-actions {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
@@ -3250,6 +4008,255 @@ onUnmounted(() => {
 .image-node-actions button:disabled {
   opacity: 0.46;
   cursor: not-allowed;
+}
+
+.gallery-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 15, 25, 0.62);
+  backdrop-filter: blur(8px);
+}
+
+.gallery-detail-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  width: min(1180px, calc(100vw - 48px));
+  height: min(760px, calc(100dvh - 48px));
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.32);
+}
+
+.gallery-detail-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.16) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.16) 75%),
+    #f8fafc;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-size: 20px 20px;
+}
+
+.gallery-detail-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 18px 52px rgba(15, 23, 42, 0.16);
+  -webkit-user-drag: none;
+}
+
+.gallery-detail-zoom {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: zoom-in;
+  backdrop-filter: blur(8px);
+}
+
+.gallery-detail-panel {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.gallery-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gallery-detail-header div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.gallery-detail-header span,
+.gallery-detail-section-title span,
+.gallery-detail-muted {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.gallery-detail-header strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-detail-header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.gallery-detail-section {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.gallery-detail-section h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.gallery-detail-section p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.58;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gallery-detail-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gallery-detail-references {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 9px;
+}
+
+.gallery-detail-references figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.gallery-detail-references img {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.gallery-detail-references figcaption {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-param-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.gallery-param-grid dt,
+.gallery-param-grid dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.gallery-param-grid dt {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.gallery-param-grid dd {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.gallery-detail-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.gallery-detail-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.gallery-detail-actions button:first-child {
+  background: #111827;
+  color: #fff;
+}
+
+.gallery-detail-actions button:hover,
+.gallery-detail-header button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.gallery-detail-actions button:first-child:hover {
+  background: #020617;
+  color: #fff;
 }
 
 .image-viewer-overlay {
@@ -3461,8 +4468,7 @@ onUnmounted(() => {
   flex: 1 1 auto;
   flex-direction: column;
   gap: 9px;
-  overflow-y: auto;
-  padding-right: 2px;
+  overflow: hidden;
 }
 
 .generation-footer {
@@ -3603,8 +4609,8 @@ onUnmounted(() => {
 .reference-list {
   display: grid;
   gap: 6px;
-  max-height: 58px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: hidden;
 }
 
 .reference-list p {
@@ -3756,6 +4762,14 @@ onUnmounted(() => {
 
 .context-menu button:hover {
   background: var(--hover-bg);
+}
+
+.context-menu button.danger {
+  color: var(--danger);
+}
+
+.context-menu button.danger .menu-icon {
+  color: var(--danger);
 }
 
 .menu-icon {
@@ -4048,7 +5062,6 @@ onUnmounted(() => {
   }
 
   .image-node-actions button,
-  .gallery-header button,
   .gallery-actions button,
   .segmented button,
   .generate-button,
@@ -4066,6 +5079,32 @@ onUnmounted(() => {
     gap: 12px;
   }
 
+  .gallery-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .gallery-filter-group {
+    width: 100%;
+  }
+
+  .gallery-filter-group button {
+    flex: 1;
+    min-height: 42px;
+  }
+
+  .gallery-search {
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    flex: 0 0 auto;
+  }
+
+  .gallery-reset {
+    min-height: 42px;
+  }
+
   .gallery-grid {
     grid-template-columns: 1fr;
   }
@@ -4074,8 +5113,33 @@ onUnmounted(() => {
     gap: 8px;
   }
 
+  .gallery-detail-overlay,
   .image-viewer-overlay {
     padding: 10px;
+  }
+
+  .gallery-detail-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(260px, 48vh) minmax(0, 1fr);
+    width: calc(100vw - 20px);
+    height: calc(100dvh - 20px);
+  }
+
+  .gallery-detail-preview {
+    padding: 12px;
+  }
+
+  .gallery-detail-panel {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .gallery-detail-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-detail-actions button {
+    min-height: 48px;
   }
 
   .image-viewer-shell {

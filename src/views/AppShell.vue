@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch, computed, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { Message } from '../types'
 import { AGENT_MODES, AVAILABLE_MODELS } from '../types'
@@ -11,14 +11,10 @@ import {
 } from '../stores/chat'
 import { useChatLoop } from '../composables/useChatLoop'
 import { useMemory } from '../composables/useMemory'
-import { extractThinking, getRendered } from '../utils/markdown'
+import { extractThinking } from '../utils/messageText'
 import { relativeTime } from '../utils/time'
 import ChatHeader from '../components/ChatHeader.vue'
-import ChatMessage from '../components/ChatMessage.vue'
-import ChatInput from '../components/ChatInput.vue'
 import ChatSidebar from '../components/ChatSidebar.vue'
-import AgentWorkspace from '../components/AgentWorkspace.vue'
-import ImageCanvas from '../components/ImageCanvas.vue'
 import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
@@ -26,6 +22,11 @@ import { useAuthSession } from '../composables/useAuthSession'
 import type { RouteWorkspace } from '../router'
 
 type ImageWorkspace = 'canvas' | 'gallery'
+
+const AgentWorkspace = defineAsyncComponent(() => import('../components/AgentWorkspace.vue'))
+const ChatInput = defineAsyncComponent(() => import('../components/ChatInput.vue'))
+const ChatMessage = defineAsyncComponent(() => import('../components/ChatMessage.vue'))
+const ImageCanvas = defineAsyncComponent(() => import('../components/ImageCanvas.vue'))
 
 // --- Composables ---
 const { isLoading, runState, runStatusLabel, activeToolCalls, completedToolCalls, submitMessage, stopGeneration } = useChatLoop()
@@ -451,7 +452,6 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
 
             <ChatMessage
               :msg="{ ...msg, timestamp: relativeTime(msg.timestamp) }"
-              :rendered="getRendered(msg)"
               :copy-feedback="copyFeedbackId === msg.id"
               @copy="handleCopy(msg)"
               @retry="handleRetry(msg)"
