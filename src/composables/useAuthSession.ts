@@ -28,17 +28,25 @@ async function authClientOrNull() {
   return await authInitPromise
 }
 
-export async function getAuthAccessToken() {
+export async function getAuthIdentity() {
   const client = await authClientOrNull()
-  if (!client) return null
+  if (!client) return { accessToken: null, userId: null }
 
   const { data, error } = await client.auth.getSession()
   if (error) {
     console.warn('[auth] session read failed', error.message)
-    return null
+    return { accessToken: null, userId: null }
   }
 
-  return data.session?.access_token || null
+  return {
+    accessToken: data.session?.access_token || null,
+    userId: data.session?.user?.id || null,
+  }
+}
+
+export async function getAuthAccessToken() {
+  const identity = await getAuthIdentity()
+  return identity.accessToken
 }
 
 export function useAuthSession() {

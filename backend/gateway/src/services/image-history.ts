@@ -29,6 +29,13 @@ const IMAGE_HISTORY_BACKFILL_COLUMNS = [
   'reference_images',
 ].join(',')
 
+export type ImageHistoryScope = 'public' | 'mine'
+
+interface ImageHistoryAccessOptions {
+  scope?: ImageHistoryScope
+  userId?: string | null
+}
+
 export interface ImageHistoryReference {
   id?: string
   title?: string
@@ -421,11 +428,15 @@ export function hasImageHistoryStore() {
   return Boolean(historyClient())
 }
 
-export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0) {
+export async function listImageHistory(
+  limit = DEFAULT_HISTORY_LIMIT,
+  offset = 0,
+  options: ImageHistoryAccessOptions = {},
+) {
   const client = historyClient()
   const cappedLimit = Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit))
   const safeOffset = Math.max(0, offset)
-  if (!client) {
+  if (!client || (options.scope === 'mine' && !options.userId)) {
     return {
       images: [],
       total: 0,
@@ -436,10 +447,16 @@ export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0
     }
   }
 
-  const { data, error, count } = await client
+  let query = client
     .from(IMAGE_HISTORY_TABLE)
     .select(IMAGE_HISTORY_LIST_COLUMNS, { count: 'exact' })
     .order('generated_at', { ascending: false })
+
+  if (options.scope === 'mine') {
+    query = query.eq('user_id', options.userId!)
+  }
+
+  const { data, error, count } = await query
     .range(safeOffset, safeOffset + cappedLimit - 1)
 
   if (error) throw error
@@ -458,14 +475,20 @@ export async function listImageHistory(limit = DEFAULT_HISTORY_LIMIT, offset = 0
   }
 }
 
-export async function getImageHistory(id: string) {
+export async function getImageHistory(id: string, options: ImageHistoryAccessOptions = {}) {
   const client = historyClient()
-  if (!client) return null
+  if (!client || (options.scope === 'mine' && !options.userId)) return null
 
-  const { data, error } = await client
+  let query = client
     .from(IMAGE_HISTORY_TABLE)
     .select('*')
     .eq('id', id)
+
+  if (options.scope === 'mine') {
+    query = query.eq('user_id', options.userId!)
+  }
+
+  const { data, error } = await query
     .maybeSingle()
 
   if (error) throw error
@@ -532,28 +555,31 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
   return storedImages
 }
 
-export async function deleteImageHistory(id: string) {
+export async function deleteImageHistory(id: string, options: { userId?: string | null } = {}) {
   const client = historyClient()
-  if (!client) return false
+  if (!client || !options.userId) return false
 
-  const { error } = await client
+  const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .delete()
     .eq('id', id)
+    .eq('user_id', options.userId)
+    .select('id')
 
   if (error) throw error
-  return true
+  return Boolean(data?.length)
 }
 
-export async function clearImageHistory() {
+export async function clearImageHistory(options: { userId?: string | null } = {}) {
   const client = historyClient()
-  if (!client) return false
+  if (!client || !options.userId) return false
 
-  const { error } = await client
+  const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .delete()
-    .neq('id', '')
+    .eq('user_id', options.userId)
+    .select('id')
 
   if (error) throw error
-  return true
+  return Boolean(data?.length)
 }
