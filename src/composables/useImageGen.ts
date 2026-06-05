@@ -25,15 +25,21 @@ interface ImageHistoryDetailResponse {
   image?: GeneratedImage
 }
 
+interface ResolveImageDetailOptions {
+  includeOriginal?: boolean
+}
+
 function plainReference(reference: ImageGenReference): ImageGenReference | null {
   const raw = toRaw(reference) as ImageGenReference
-  if (!raw?.dataUrl && !raw?.thumbnailUrl) return null
+  if (!raw?.dataUrl && !raw?.previewUrl && !raw?.thumbnailUrl) return null
 
   return {
     id: String(raw.id || ''),
     title: String(raw.title || '参考图'),
-    dataUrl: String(raw.dataUrl || raw.thumbnailUrl || ''),
+    ...(raw.dataUrl ? { dataUrl: String(raw.dataUrl) } : {}),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
+    ...(raw.previewUrl ? { previewUrl: String(raw.previewUrl) } : {}),
+    ...(raw.previewPath ? { previewPath: String(raw.previewPath) } : {}),
     ...(raw.thumbnailUrl ? { thumbnailUrl: String(raw.thumbnailUrl) } : {}),
     ...(raw.thumbnailPath ? { thumbnailPath: String(raw.thumbnailPath) } : {}),
     ...(raw.content ? { content: String(raw.content) } : {}),
@@ -43,7 +49,7 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
 
 function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   const raw = toRaw(image) as GeneratedImage
-  if (!raw?.id || (!raw?.dataUrl && !raw?.thumbnailUrl)) return null
+  if (!raw?.id || (!raw?.dataUrl && !raw?.previewUrl && !raw?.thumbnailUrl)) return null
 
   const references = Array.isArray(raw.references)
     ? raw.references
@@ -56,6 +62,8 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
     ...(raw.userId !== undefined ? { userId: raw.userId ? String(raw.userId) : null } : {}),
     ...(raw.dataUrl ? { dataUrl: String(raw.dataUrl) } : {}),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
+    ...(raw.previewUrl ? { previewUrl: String(raw.previewUrl) } : {}),
+    ...(raw.previewPath ? { previewPath: String(raw.previewPath) } : {}),
     ...(raw.thumbnailUrl ? { thumbnailUrl: String(raw.thumbnailUrl) } : {}),
     ...(raw.thumbnailPath ? { thumbnailPath: String(raw.thumbnailPath) } : {}),
     prompt: String(raw.userPrompt || raw.prompt || ''),
@@ -242,7 +250,11 @@ async function loadRemoteHistory(
   }
 }
 
-async function loadRemoteImageDetail(id: string, scope: ImageHistoryScope = 'mine') {
+async function loadRemoteImageDetail(
+  id: string,
+  scope: ImageHistoryScope = 'mine',
+  options: ResolveImageDetailOptions = {},
+) {
   try {
     const auth = scope === 'mine'
       ? await getAuthIdentity()
@@ -250,6 +262,9 @@ async function loadRemoteImageDetail(id: string, scope: ImageHistoryScope = 'min
     if (scope === 'mine' && !auth.accessToken) return null
 
     const query = new URLSearchParams({ scope })
+    if (options.includeOriginal) {
+      query.set('original', '1')
+    }
     const res = await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}?${query.toString()}`, {
       cache: 'no-store',
       headers: scope === 'mine' && auth.accessToken
@@ -373,7 +388,7 @@ export function useImageGen() {
 
       const data: ImageGenResponse = await res.json()
       const image = data.images?.[0]
-      if (!image?.dataUrl) {
+      if (!image?.dataUrl && !image?.previewUrl && !image?.thumbnailUrl) {
         throw new Error('no image returned')
       }
 
@@ -417,10 +432,14 @@ export function useImageGen() {
     return
   }
 
-  async function resolveImageDetail(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-    if (image.dataUrl) return image
+  async function resolveImageDetail(
+    image: GeneratedImage,
+    scope: ImageHistoryScope = 'mine',
+    options: ResolveImageDetailOptions = {},
+  ) {
+    if (options.includeOriginal ? image.dataUrl : image.previewUrl) return image
 
-    const detail = await loadRemoteImageDetail(image.id, scope)
+    const detail = await loadRemoteImageDetail(image.id, scope, options)
     if (!detail) return image
 
     if (scope === 'public') {

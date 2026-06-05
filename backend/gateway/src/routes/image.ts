@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
+import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
@@ -36,6 +37,19 @@ const resolutions = new Set<ImageResolution>(['auto', '1k', '2k', '4k'])
 const qualities = new Set<ImageQuality>(['auto', 'low', 'medium', 'high'])
 const IMAGE_RETRY_TIMES = 3
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
+const IMAGE_MODEL = 'gpt-image-2'
+
+interface ImageProviderResponse {
+  provider: string
+  imageModel: string
+  textModel?: string
+  data?: Array<{
+    b64_json?: string | null
+    url?: string | null
+    revised_prompt?: string | null
+  }>
+  output?: unknown
+}
 
 const sizeByResolution: Record<ImageResolution, Record<ImageAspectRatio, string>> = {
   auto: {
@@ -105,9 +119,14 @@ function publicHistoryImage(image: ImageHistoryItem) {
   const {
     requestIp: _requestIp,
     requestUserAgent: _requestUserAgent,
+    dataUrl,
     ...publicImage
   } = image
-  return publicImage
+  const hasViewingUrl = Boolean(publicImage.previewUrl || publicImage.thumbnailUrl)
+  return {
+    ...publicImage,
+    ...(!hasViewingUrl && dataUrl ? { dataUrl } : {}),
+  }
 }
 
 function sleep(ms: number) {
@@ -163,12 +182,33 @@ function validateGptImage2Size(size: string) {
 
 function imageRequestFields(prompt: string, size: string, quality: ImageQuality) {
   return {
-    model: 'gpt-image-2',
+    model: IMAGE_MODEL,
     prompt,
     n: 1,
     ...(size === 'auto' ? {} : { size }),
     ...(quality === 'auto' ? {} : { quality }),
   }
+}
+
+function providerName() {
+  try {
+    const host = new URL(IMAGE_GEN_BASE_URL).hostname
+    return host.replace(/^api\./, '')
+  } catch {
+    return IMAGE_GEN_BASE_URL || 'unknown'
+  }
+}
+
+function errorType(err: any) {
+  if (typeof err?.status === 'number') {
+    if (err.status === 401 || err.status === 403) return 'auth'
+    if (err.status === 408 || err.status === 524) return 'timeout'
+    if (err.status === 429) return 'rate_limit'
+    if (err.status >= 500) return 'provider'
+    return 'request'
+  }
+  if (err?.name === 'TimeoutError' || /timeout|aborted|timed out/i.test(err?.message || '')) return 'timeout'
+  return 'unknown'
 }
 
 function extensionForMime(mime: string) {
@@ -335,7 +375,7 @@ async function parseResponsesStream(response: globalThis.Response) {
   return { output: b64Values.map(result => ({ type: 'image_generation_call', result })) }
 }
 
-async function generateWithResponses(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality) {
+async function generateWithResponses(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality): Promise<ImageProviderResponse> {
   console.log(`[image] forwarding to /responses refs=${references.length}, model=${IMAGE_RESPONSES_MODEL}, size=${size}`)
 
   const payload = {
@@ -362,7 +402,12 @@ async function generateWithResponses(prompt: string, references: ImageGenReferen
     )
   }
 
-  return parseResponsesStream(response)
+  return {
+    ...await parseResponsesStream(response),
+    provider: providerName(),
+    imageModel: IMAGE_RESPONSES_MODEL,
+    textModel: IMAGE_RESPONSES_MODEL,
+  }
 }
 
 async function parseImagesApiResponse(response: globalThis.Response, prefix: string) {
@@ -381,11 +426,11 @@ async function parseImagesApiResponse(response: globalThis.Response, prefix: str
   }
 }
 
-async function generateWithImagesApi(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality) {
+async function generateWithImagesApi(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality): Promise<ImageProviderResponse> {
   const fields = imageRequestFields(prompt, size, quality)
 
   if (!references.length) {
-    console.log(`[image] forwarding to /images/generations refs=0, model=gpt-image-2, size=${size}`)
+    console.log(`[image] forwarding to /images/generations refs=0, model=${IMAGE_MODEL}, size=${size}`)
     const response = await fetch(apiUrl(IMAGE_GEN_BASE_URL, '/images/generations'), {
       method: 'POST',
       headers: {
@@ -395,10 +440,15 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
       body: JSON.stringify(fields),
       signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
     })
-    return parseImagesApiResponse(response, 'Images API 错误')
+    return {
+      ...await parseImagesApiResponse(response, 'Images API 错误'),
+      provider: providerName(),
+      imageModel: IMAGE_MODEL,
+      textModel: IMAGE_RESPONSES_MODEL,
+    }
   }
 
-  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=gpt-image-2, size=${size}`)
+  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=${IMAGE_MODEL}, size=${size}`)
   const form = new FormData()
   for (const [key, value] of Object.entries(fields)) {
     form.append(key, String(value))
@@ -417,7 +467,12 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
     body: form,
     signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
   })
-  return parseImagesApiResponse(response, 'Images API 错误')
+  return {
+    ...await parseImagesApiResponse(response, 'Images API 错误'),
+    provider: providerName(),
+    imageModel: IMAGE_MODEL,
+    textModel: IMAGE_RESPONSES_MODEL,
+  }
 }
 
 async function generateWithComfyStrategy(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality) {
@@ -461,6 +516,15 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     ? rawReferences.filter(item => typeof item?.dataUrl === 'string' && item.dataUrl.trim())
     : []
   const sizeError = validateGptImage2Size(size)
+  const requestStartedAt = Date.now()
+  const generationIp = requestIp(req)
+  const generationUserAgent = requestUserAgent(req)
+  let userId: string | null = null
+  let responseMeta: Pick<ImageProviderResponse, 'provider' | 'imageModel' | 'textModel'> = {
+    provider: providerName(),
+    imageModel: IMAGE_RESPONSES_MODEL,
+    textModel: IMAGE_RESPONSES_MODEL,
+  }
 
   console.log(`[image] request received refs=${references.length}, size=${size}, quality=${quality}, base=${IMAGE_GEN_BASE_URL}, prompt="${shortPrompt(prompt || '')}"`)
 
@@ -489,16 +553,19 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     const historyUserPrompt = requestText(userPrompt) || requestText(displayPrompt) || stripSystemPromptBlocks(trimmedPrompt)
     const historySystemPrompt = requestText(systemPrompt)
     const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
-    const userId = await getRequestUserId(req)
-    const generationIp = requestIp(req)
-    const generationUserAgent = requestUserAgent(req)
-    let response: Awaited<ReturnType<typeof generateWithComfyStrategy>> | null = null
+    userId = await getRequestUserId(req)
+    let response: ImageProviderResponse | null = null
     let lastError: any = null
 
     for (let attempt = 1; attempt <= IMAGE_RETRY_TIMES; attempt += 1) {
       try {
         console.log(`[image] attempt ${attempt}/${IMAGE_RETRY_TIMES}`)
         response = await generateWithComfyStrategy(trimmedPrompt, references, size, quality)
+        responseMeta = {
+          provider: response.provider,
+          imageModel: response.imageModel,
+          textModel: response.textModel,
+        }
         break
       } catch (err: any) {
         lastError = err
@@ -513,6 +580,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     }
 
     if (!response) throw lastError || new Error('image generation failed')
+    const latencyMs = Date.now() - requestStartedAt
 
     const images: ImageHistoryItem[] = []
 
@@ -541,6 +609,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           revisedPrompt: item.revised_prompt ?? undefined,
           requestIp: generationIp,
           requestUserAgent: generationUserAgent,
+          provider: response.provider,
+          imageModel: response.imageModel,
+          textModel: response.textModel,
+          latencyMs,
           size,
           aspectRatio,
           resolution,
@@ -559,6 +631,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           revisedPrompt: item.revised_prompt ?? undefined,
           requestIp: generationIp,
           requestUserAgent: generationUserAgent,
+          provider: response.provider,
+          imageModel: response.imageModel,
+          textModel: response.textModel,
+          latencyMs,
           size,
           aspectRatio,
           resolution,
@@ -588,11 +664,54 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       console.warn(`[image-history] save skipped: ${historyErr.message}`)
     }
 
+    if (!responseImages.length) {
+      await recordImageGenerationAttempt({
+        userId,
+        provider: response.provider,
+        imageModel: response.imageModel,
+        textModel: response.textModel,
+        status: 'failed',
+        latencyMs,
+        errorType: 'empty_response',
+        errorMessage: 'Provider returned no generated images',
+        requestIp: generationIp,
+        requestUserAgent: generationUserAgent,
+      })
+      res.status(502).json({ error: 'image generation returned no images' })
+      return
+    }
+
+    await Promise.all(responseImages.map(image => recordImageGenerationAttempt({
+      generationId: image.id,
+      userId,
+      provider: response.provider,
+      imageModel: response.imageModel,
+      textModel: response.textModel,
+      status: 'succeeded',
+      latencyMs,
+      requestIp: generationIp,
+      requestUserAgent: generationUserAgent,
+    })))
+
     res.json({ images: responseImages.map(publicHistoryImage) })
   } catch (err: any) {
     console.error('Image generation error:', err.status, err.message)
     const status = err.status || 500
     const unsupportedReferences = references.length > 0 && [404, 405].includes(status)
+    await recordImageGenerationAttempt({
+      userId,
+      provider: responseMeta.provider,
+      imageModel: responseMeta.imageModel,
+      textModel: responseMeta.textModel,
+      status: 'failed',
+      latencyMs: Date.now() - requestStartedAt,
+      errorType: errorType(err),
+      errorCode: err?.code ? String(err.code) : undefined,
+      errorMessage: err?.message || 'image generation failed',
+      httpStatus: status,
+      requestIp: generationIp,
+      requestUserAgent: generationUserAgent,
+    })
     res.status(status).json({
       error: unsupportedReferences
         ? 'current image provider does not support reference image input'

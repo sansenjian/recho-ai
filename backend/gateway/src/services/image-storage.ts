@@ -10,14 +10,28 @@ const IMAGE_CACHE_CONTROL = '31536000'
 export interface StoredImage {
   publicUrl: string
   storagePath: string
+  previewUrl?: string
+  previewPath?: string
   thumbnailUrl?: string
   thumbnailPath?: string
   mime: string
+  width?: number
+  height?: number
+  originalBytes?: number
+  previewBytes?: number
+  thumbnailBytes?: number
+}
+
+export interface StoredPreview {
+  previewUrl: string
+  previewPath: string
+  previewBytes: number
 }
 
 export interface StoredThumbnail {
   thumbnailUrl: string
   thumbnailPath: string
+  thumbnailBytes: number
 }
 
 function extensionForMime(mime: string) {
@@ -94,6 +108,35 @@ export function imageThumbnailPath(storagePath?: string | null) {
   return storagePath.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
 }
 
+export function imagePreviewPath(storagePath?: string | null) {
+  if (!storagePath) return undefined
+  return storagePath.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+}
+
+export async function storePreviewBuffer(buffer: Buffer, pathHint: string): Promise<StoredPreview | null> {
+  const client = await ensureImageBucket()
+  if (!client) return null
+
+  const previewBuffer = await sharp(buffer)
+    .rotate()
+    .webp({ quality: 86 })
+    .toBuffer()
+  const previewPath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.preview.webp`
+  const { error: previewError } = await client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .upload(previewPath, previewBuffer, {
+      cacheControl: IMAGE_CACHE_CONTROL,
+      contentType: 'image/webp',
+      upsert: true,
+    })
+  if (previewError) throw previewError
+  const previewUrl = client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .getPublicUrl(previewPath).data.publicUrl
+
+  return { previewUrl, previewPath, previewBytes: previewBuffer.byteLength }
+}
+
 export async function storeThumbnailBuffer(buffer: Buffer, pathHint: string): Promise<StoredThumbnail | null> {
   const client = await ensureImageBucket()
   if (!client) return null
@@ -116,13 +159,14 @@ export async function storeThumbnailBuffer(buffer: Buffer, pathHint: string): Pr
     .from(SUPABASE_IMAGE_BUCKET)
     .getPublicUrl(thumbnailPath).data.publicUrl
 
-  return { thumbnailUrl, thumbnailPath }
+  return { thumbnailUrl, thumbnailPath, thumbnailBytes: thumbnailBuffer.byteLength }
 }
 
 export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: string): Promise<StoredImage | null> {
   const client = await ensureImageBucket()
   if (!client) return null
 
+  const metadata = await sharp(buffer).metadata().catch(() => null)
   const extension = extensionForMime(mime)
   const storagePath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.${extension}`
   const { error } = await client.storage
@@ -139,6 +183,13 @@ export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: s
     .from(SUPABASE_IMAGE_BUCKET)
     .getPublicUrl(storagePath)
 
+  let preview: StoredPreview | null = null
+  try {
+    preview = await storePreviewBuffer(buffer, pathHint)
+  } catch (err) {
+    console.warn('[image-storage] preview generation skipped:', err instanceof Error ? err.message : err)
+  }
+
   let thumbnail: StoredThumbnail | null = null
   try {
     thumbnail = await storeThumbnailBuffer(buffer, pathHint)
@@ -149,9 +200,16 @@ export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: s
   return {
     publicUrl: data.publicUrl,
     storagePath,
+    previewUrl: preview?.previewUrl,
+    previewPath: preview?.previewPath,
     thumbnailUrl: thumbnail?.thumbnailUrl,
     thumbnailPath: thumbnail?.thumbnailPath,
     mime,
+    width: metadata?.width,
+    height: metadata?.height,
+    originalBytes: buffer.byteLength,
+    previewBytes: preview?.previewBytes,
+    thumbnailBytes: thumbnail?.thumbnailBytes,
   }
 }
 

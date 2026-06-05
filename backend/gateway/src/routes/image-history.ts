@@ -12,17 +12,17 @@ import type { ImageHistoryItem } from '../services/image-history.js'
 
 const router = Router()
 
-function publicHistoryImage(image: ImageHistoryItem) {
+function publicHistoryImage(image: ImageHistoryItem, options: { includeOriginal?: boolean } = {}) {
   const {
     requestIp: _requestIp,
     requestUserAgent: _requestUserAgent,
+    dataUrl,
     ...publicImage
   } = image
-  return publicImage
-}
-
-function isInlineImageDataUrl(value?: string | null) {
-  return Boolean(value && /^data:image\//i.test(value))
+  return {
+    ...publicImage,
+    ...(options.includeOriginal && dataUrl ? { dataUrl } : {}),
+  }
 }
 
 function referenceImageCount(image: ImageHistoryItem) {
@@ -44,20 +44,22 @@ function publicGallerySummaryImage(image: ImageHistoryItem) {
   }
 }
 
-function publicGalleryDetailImage(image: ImageHistoryItem) {
-  const publicImage = publicHistoryImage(image)
-  const originalUrl = publicImage.dataUrl && !isInlineImageDataUrl(publicImage.dataUrl)
-    ? publicImage.dataUrl
-    : undefined
+function publicGalleryDetailImage(image: ImageHistoryItem, options: { includeOriginal?: boolean } = {}) {
+  const publicImage = publicHistoryImage(image, options)
 
   return {
     ...publicGallerySummaryImage(publicImage),
-    ...(originalUrl ? { dataUrl: originalUrl } : {}),
+    previewUrl: publicImage.previewUrl,
+    ...(options.includeOriginal && publicImage.dataUrl ? { dataUrl: publicImage.dataUrl } : {}),
   }
 }
 
 function historyScope(req: Request) {
   return req.query.scope === 'mine' ? 'mine' : 'public'
+}
+
+function includeOriginal(req: Request) {
+  return req.query.original === '1' || req.query.original === 'true'
 }
 
 router.get('/image/history', async (req: Request, res: Response) => {
@@ -73,7 +75,9 @@ router.get('/image/history', async (req: Request, res: Response) => {
     )
     res.json({
       ...history,
-      images: history.images.map(scope === 'public' ? publicGallerySummaryImage : publicHistoryImage),
+      images: history.images.map(image => scope === 'public'
+        ? publicGallerySummaryImage(image)
+        : publicHistoryImage(image)),
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
@@ -91,7 +95,7 @@ router.post('/image/history', async (req: Request, res: Response) => {
       ok: true,
       saved: Boolean(savedImages),
       count: savedImages?.length ?? 0,
-      images: savedImages?.map(publicHistoryImage) || [],
+      images: savedImages?.map(image => publicHistoryImage(image)) || [],
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
@@ -110,14 +114,17 @@ router.get('/image/history/:id', async (req: Request, res: Response) => {
 
     const scope = historyScope(req)
     const userId = scope === 'mine' ? await getRequestUserId(req) : null
-    const image = await getImageHistory(id, { scope, userId })
+    const wantsOriginal = includeOriginal(req)
+    const image = await getImageHistory(id, { scope, userId, includeOriginal: wantsOriginal })
     if (!image) {
       res.status(404).json({ error: 'image history item not found' })
       return
     }
 
     res.json({
-      image: scope === 'public' ? publicGalleryDetailImage(image) : publicHistoryImage(image),
+      image: scope === 'public'
+        ? publicGalleryDetailImage(image, { includeOriginal: wantsOriginal })
+        : publicHistoryImage(image, { includeOriginal: wantsOriginal }),
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {

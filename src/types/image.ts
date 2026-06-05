@@ -22,8 +22,10 @@ export type ImageSize =
 export interface ImageGenReference {
   id: string
   title: string
-  dataUrl: string
+  dataUrl?: string
   storagePath?: string
+  previewUrl?: string
+  previewPath?: string
   thumbnailUrl?: string
   thumbnailPath?: string
   content?: string
@@ -52,6 +54,8 @@ export interface GeneratedImage {
   userId?: string | null
   dataUrl?: string
   storagePath?: string
+  previewUrl?: string
+  previewPath?: string
   thumbnailUrl?: string
   thumbnailPath?: string
   prompt: string

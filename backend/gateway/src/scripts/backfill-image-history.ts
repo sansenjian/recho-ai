@@ -1,5 +1,10 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
-import { storeImageDataUrl, storeThumbnailBuffer } from '../services/image-storage.js'
+import {
+  imagePublicUrl,
+  storeImageDataUrl,
+  storePreviewBuffer,
+  storeThumbnailBuffer,
+} from '../services/image-storage.js'
 
 const TABLE = 'image_generations'
 const BATCH_SIZE = 50
@@ -8,6 +13,8 @@ interface HistoryRow {
   id: string
   data_url?: string | null
   storage_path?: string | null
+  preview_url?: string | null
+  preview_path?: string | null
   thumbnail_url?: string | null
   thumbnail_path?: string | null
   reference_images?: Array<{
@@ -15,6 +22,8 @@ interface HistoryRow {
     title?: string
     dataUrl?: string
     storagePath?: string
+    previewUrl?: string
+    previewPath?: string
     thumbnailUrl?: string
     thumbnailPath?: string
     content?: string
@@ -48,18 +57,32 @@ async function backfillMainImage(row: HistoryRow) {
     if (stored) {
       updates.data_url = stored.publicUrl
       updates.storage_path = stored.storagePath
+      updates.preview_url = stored.previewUrl
+      updates.preview_path = stored.previewPath
       updates.thumbnail_url = stored.thumbnailUrl
       updates.thumbnail_path = stored.thumbnailPath
     }
     return updates
   }
 
-  if (isHttpUrl(row.data_url) && !row.thumbnail_url && !row.thumbnail_path) {
-    const { buffer } = await fetchImage(row.data_url!)
-    const thumbnail = await storeThumbnailBuffer(buffer, `generated/${row.id}`)
-    if (thumbnail) {
-      updates.thumbnail_url = thumbnail.thumbnailUrl
-      updates.thumbnail_path = thumbnail.thumbnailPath
+  if ((!row.preview_url && !row.preview_path) || (!row.thumbnail_url && !row.thumbnail_path)) {
+    const sourceUrl = isHttpUrl(row.data_url) ? row.data_url : imagePublicUrl(row.storage_path)
+    if (sourceUrl) {
+      const { buffer } = await fetchImage(sourceUrl)
+      if (!row.preview_url && !row.preview_path) {
+        const preview = await storePreviewBuffer(buffer, `generated/${row.id}`)
+        if (preview) {
+          updates.preview_url = preview.previewUrl
+          updates.preview_path = preview.previewPath
+        }
+      }
+      if (!row.thumbnail_url && !row.thumbnail_path) {
+        const thumbnail = await storeThumbnailBuffer(buffer, `generated/${row.id}`)
+        if (thumbnail) {
+          updates.thumbnail_url = thumbnail.thumbnailUrl
+          updates.thumbnail_path = thumbnail.thumbnailPath
+        }
+      }
     }
   }
 
@@ -75,18 +98,34 @@ async function backfillReference(row: HistoryRow, reference: NonNullable<History
     if (stored) {
       next.dataUrl = stored.publicUrl
       next.storagePath = stored.storagePath
+      next.previewUrl = stored.previewUrl
+      next.previewPath = stored.previewPath
       next.thumbnailUrl = stored.thumbnailUrl
       next.thumbnailPath = stored.thumbnailPath
     }
     return next
   }
 
-  if (isHttpUrl(reference.dataUrl) && !reference.thumbnailUrl && !reference.thumbnailPath) {
-    const { buffer } = await fetchImage(reference.dataUrl!)
-    const thumbnail = await storeThumbnailBuffer(buffer, pathHint)
-    if (thumbnail) {
-      next.thumbnailUrl = thumbnail.thumbnailUrl
-      next.thumbnailPath = thumbnail.thumbnailPath
+  if ((!reference.previewUrl && !reference.previewPath) || (!reference.thumbnailUrl && !reference.thumbnailPath)) {
+    const sourceUrl = isHttpUrl(reference.dataUrl)
+      ? reference.dataUrl
+      : imagePublicUrl(reference.storagePath)
+    if (sourceUrl) {
+      const { buffer } = await fetchImage(sourceUrl)
+      if (!reference.previewUrl && !reference.previewPath) {
+        const preview = await storePreviewBuffer(buffer, pathHint)
+        if (preview) {
+          next.previewUrl = preview.previewUrl
+          next.previewPath = preview.previewPath
+        }
+      }
+      if (!reference.thumbnailUrl && !reference.thumbnailPath) {
+        const thumbnail = await storeThumbnailBuffer(buffer, pathHint)
+        if (thumbnail) {
+          next.thumbnailUrl = thumbnail.thumbnailUrl
+          next.thumbnailPath = thumbnail.thumbnailPath
+        }
+      }
     }
   }
 
@@ -95,12 +134,24 @@ async function backfillReference(row: HistoryRow, reference: NonNullable<History
 
 function referenceNeedsBackfill(reference: NonNullable<HistoryRow['reference_images']>[number]) {
   return isDataUrl(reference.dataUrl) ||
-    (isHttpUrl(reference.dataUrl) && !reference.thumbnailUrl && !reference.thumbnailPath)
+    Boolean(
+      (isHttpUrl(reference.dataUrl) || reference.storagePath) &&
+      (
+        (!reference.previewUrl && !reference.previewPath) ||
+        (!reference.thumbnailUrl && !reference.thumbnailPath)
+      ),
+    )
 }
 
 function rowNeedsBackfill(row: HistoryRow) {
   return isDataUrl(row.data_url) ||
-    (isHttpUrl(row.data_url) && !row.thumbnail_url && !row.thumbnail_path) ||
+    Boolean(
+      (isHttpUrl(row.data_url) || row.storage_path) &&
+      (
+        (!row.preview_url && !row.preview_path) ||
+        (!row.thumbnail_url && !row.thumbnail_path)
+      ),
+    ) ||
     Boolean(row.reference_images?.some(referenceNeedsBackfill))
 }
 
@@ -115,7 +166,7 @@ async function main() {
   while (true) {
     const { data, error } = await client
       .from(TABLE)
-      .select('id,data_url,storage_path,thumbnail_url,thumbnail_path,reference_images')
+      .select('id,data_url,storage_path,preview_url,preview_path,thumbnail_url,thumbnail_path,reference_images')
       .order('generated_at', { ascending: false })
       .range(offset, offset + BATCH_SIZE - 1)
 
