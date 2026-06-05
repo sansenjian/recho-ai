@@ -59,6 +59,7 @@ export interface GeneratedImage {
   systemPrompt?: string
   modelPrompt?: string
   references?: ImageGenReference[]
+  referenceImageCount?: number
   revisedPrompt?: string
   size: string
   aspectRatio?: ImageAspectRatio

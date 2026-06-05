@@ -63,6 +63,7 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
     ...(raw.systemPrompt ? { systemPrompt: String(raw.systemPrompt) } : {}),
     ...(raw.modelPrompt ? { modelPrompt: String(raw.modelPrompt) } : {}),
     references,
+    ...(typeof raw.referenceImageCount === 'number' ? { referenceImageCount: raw.referenceImageCount } : {}),
     ...(raw.revisedPrompt ? { revisedPrompt: String(raw.revisedPrompt) } : {}),
     size: String(raw.size || 'auto'),
     aspectRatio: raw.aspectRatio,

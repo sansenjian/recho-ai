@@ -363,7 +363,7 @@ const galleryHasFilter = computed(() => galleryFilter.value !== 'mine' || Boolea
 const filteredGalleryImages = computed(() => {
   const query = galleryQuery.value.trim().toLowerCase()
   return gallerySourceImages.value.filter((image) => {
-    if (galleryFilter.value === 'references' && !galleryReferences(image).length) return false
+    if (galleryFilter.value === 'references' && !galleryReferenceCount(image)) return false
     if (!query) return true
 
     const searchable = [
@@ -867,6 +867,7 @@ function handleWheel(event: WheelEvent) {
 
   event.preventDefault()
   const delta = normalizedWheelDelta(event)
+
   if (event.ctrlKey) {
     viewport.value.y -= delta
     return
@@ -877,7 +878,7 @@ function handleWheel(event: WheelEvent) {
     return
   }
 
-  const speed = event.ctrlKey || event.metaKey ? 0.001 : 0.0014
+  const speed = event.metaKey ? 0.001 : 0.0014
   const nextZoom = clamp(viewport.value.zoom * Math.exp(-delta * speed), MIN_VIEWPORT_ZOOM, MAX_VIEWPORT_ZOOM)
   setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
 }
@@ -1396,6 +1397,12 @@ function galleryPrompt(image: GeneratedImage) {
 
 function galleryReferences(image: GeneratedImage) {
   return image.references?.filter(reference => reference.dataUrl || reference.thumbnailUrl) ?? []
+}
+
+function galleryReferenceCount(image: GeneratedImage) {
+  return typeof image.referenceImageCount === 'number'
+    ? image.referenceImageCount
+    : galleryReferences(image).length
 }
 
 function displayImageUrl(image: GeneratedImage) {
@@ -2882,8 +2889,8 @@ onUnmounted(() => {
         <article v-for="image in visibleGalleryImages" :key="image.id" class="gallery-card">
           <button type="button" class="gallery-image-wrap" title="查看作品" @click="openGalleryDetail(image)">
             <span class="gallery-card-date">{{ formatGalleryDate(image.timestamp) }}</span>
-            <span v-if="galleryReferences(image).length" class="gallery-card-reference-count">
-              {{ galleryReferences(image).length }} 张参考
+            <span v-if="galleryReferenceCount(image)" class="gallery-card-reference-count">
+              {{ galleryReferenceCount(image) }} 张参考
             </span>
             <span class="gallery-image-button">
               <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
@@ -2998,7 +3005,7 @@ onUnmounted(() => {
             <section class="gallery-detail-section">
               <div class="gallery-detail-section-title">
                 <h3>参考图</h3>
-                <span>{{ galleryReferences(galleryDetail).length }} 张</span>
+                <span>{{ galleryReferenceCount(galleryDetail) }} 张</span>
               </div>
               <div v-if="galleryReferences(galleryDetail).length" class="gallery-detail-references">
                 <figure
@@ -3009,7 +3016,9 @@ onUnmounted(() => {
                   <figcaption>{{ reference.title || reference.fileName || '参考图' }}</figcaption>
                 </figure>
               </div>
-              <p v-else class="gallery-detail-muted">没有参考图</p>
+              <p v-else class="gallery-detail-muted">
+                {{ galleryReferenceCount(galleryDetail) ? '参考图未公开展示' : '没有参考图' }}
+              </p>
             </section>
 
             <section class="gallery-detail-section">

@@ -21,14 +21,39 @@ function publicHistoryImage(image: ImageHistoryItem) {
   return publicImage
 }
 
-function publicGalleryImage(image: ImageHistoryItem) {
-  const {
-    userId: _userId,
-    systemPrompt: _systemPrompt,
-    modelPrompt: _modelPrompt,
-    ...galleryImage
-  } = publicHistoryImage(image)
-  return galleryImage
+function isInlineImageDataUrl(value?: string | null) {
+  return Boolean(value && /^data:image\//i.test(value))
+}
+
+function referenceImageCount(image: ImageHistoryItem) {
+  return image.references?.length ?? 0
+}
+
+function publicGallerySummaryImage(image: ImageHistoryItem) {
+  const publicImage = publicHistoryImage(image)
+  return {
+    id: publicImage.id,
+    prompt: publicImage.prompt,
+    thumbnailUrl: publicImage.thumbnailUrl,
+    size: publicImage.size,
+    aspectRatio: publicImage.aspectRatio,
+    resolution: publicImage.resolution,
+    quality: publicImage.quality,
+    timestamp: publicImage.timestamp,
+    referenceImageCount: referenceImageCount(publicImage),
+  }
+}
+
+function publicGalleryDetailImage(image: ImageHistoryItem) {
+  const publicImage = publicHistoryImage(image)
+  const originalUrl = publicImage.dataUrl && !isInlineImageDataUrl(publicImage.dataUrl)
+    ? publicImage.dataUrl
+    : undefined
+
+  return {
+    ...publicGallerySummaryImage(publicImage),
+    ...(originalUrl ? { dataUrl: originalUrl } : {}),
+  }
 }
 
 function historyScope(req: Request) {
@@ -48,7 +73,7 @@ router.get('/image/history', async (req: Request, res: Response) => {
     )
     res.json({
       ...history,
-      images: history.images.map(scope === 'public' ? publicGalleryImage : publicHistoryImage),
+      images: history.images.map(scope === 'public' ? publicGallerySummaryImage : publicHistoryImage),
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
@@ -92,7 +117,7 @@ router.get('/image/history/:id', async (req: Request, res: Response) => {
     }
 
     res.json({
-      image: scope === 'public' ? publicGalleryImage(image) : publicHistoryImage(image),
+      image: scope === 'public' ? publicGalleryDetailImage(image) : publicHistoryImage(image),
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
