@@ -4088,16 +4088,16 @@ onUnmounted(() => {
   z-index: 110;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 18px;
   background: rgba(10, 15, 25, 0.62);
   backdrop-filter: blur(8px);
 }
 
 .gallery-detail-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 390px;
-  width: min(1180px, calc(100vw - 48px));
-  height: min(760px, calc(100dvh - 48px));
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 410px);
+  width: min(1480px, calc(100vw - 36px));
+  height: min(860px, calc(100dvh - 36px));
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 10px;
@@ -4112,13 +4112,14 @@ onUnmounted(() => {
   justify-content: center;
   min-width: 0;
   min-height: 0;
-  padding: 18px;
+  padding: 14px;
   background: #f8fafc;
 }
 
 .gallery-detail-preview img {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  height: auto;
   max-height: 100%;
   border-radius: 8px;
   background:
