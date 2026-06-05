@@ -124,6 +124,7 @@ interface ImageViewerState {
   title: string
   caption: string
   zoom: number
+  loadingOriginal?: boolean
 }
 
 interface GalleryParam {
@@ -239,6 +240,7 @@ const contextMenu = ref<ContextMenuState>({
 let idSeed = Date.now()
 let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
+let imageViewerLoadSeq = 0
 
 watch(
   () => props.workspaceMode,
@@ -1468,19 +1470,41 @@ async function openGalleryDetail(image: GeneratedImage) {
 
 async function openGalleryDetailViewer() {
   if (!galleryDetail.value) return
-  const image = await resolveImageDetail(galleryDetail.value, galleryDetailScope.value)
-  const imageUrl = image.dataUrl || galleryDetailImageUrl(image)
-  if (!imageUrl) {
+  const immediateUrl = galleryDetail.value.dataUrl || galleryDetailImageUrl(galleryDetail.value)
+  if (!immediateUrl) {
     error.value = '原图加载失败，请稍后重试。'
     return
   }
 
-  galleryDetail.value = image
+  const seq = ++imageViewerLoadSeq
+  const sourceImage = galleryDetail.value
+  const sourceScope = galleryDetailScope.value
   imageViewer.value = {
-    imageUrl,
-    title: galleryFileName(image).replace(/\.png$/i, ''),
-    caption: galleryPrompt(image),
+    imageUrl: immediateUrl,
+    title: galleryFileName(sourceImage).replace(/\.png$/i, ''),
+    caption: galleryPrompt(sourceImage),
     zoom: 1,
+    loadingOriginal: !sourceImage.dataUrl,
+  }
+
+  if (!sourceImage.dataUrl) {
+    void resolveImageDetail(sourceImage, sourceScope).then((image) => {
+      const imageUrl = image.dataUrl || galleryDetailImageUrl(image)
+      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
+
+      galleryDetail.value = image
+      imageViewer.value = {
+        ...imageViewer.value,
+        imageUrl,
+        title: galleryFileName(image).replace(/\.png$/i, ''),
+        caption: galleryPrompt(image),
+        loadingOriginal: false,
+      }
+    }).catch(() => {
+      if (seq === imageViewerLoadSeq && imageViewer.value) {
+        imageViewer.value = { ...imageViewer.value, loadingOriginal: false }
+      }
+    })
   }
 }
 
@@ -2083,16 +2107,32 @@ async function handleDownload(node: CanvasNode) {
 
 async function openImageViewer(node: CanvasNode) {
   if (!node.imageUrl) return
-  const imageUrl = await resolveNodeOriginalImageUrl(node)
-  if (!imageUrl) {
-    error.value = '原图加载失败，请稍后重试。'
-    return
-  }
+  const seq = ++imageViewerLoadSeq
+  const sourceNode = { ...node }
+  const historyImage = historyImageForNode(sourceNode)
+  const immediateUrl = historyImage?.dataUrl || node.imageUrl
   imageViewer.value = {
-    imageUrl,
+    imageUrl: immediateUrl,
     title: node.title,
     caption: imageAltText(node),
     zoom: 1,
+    loadingOriginal: Boolean(node.sourceImageId && !historyImage?.dataUrl),
+  }
+
+  if (node.sourceImageId && !historyImage?.dataUrl) {
+    void resolveNodeOriginalImageUrl(sourceNode).then((imageUrl) => {
+      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
+
+      imageViewer.value = {
+        ...imageViewer.value,
+        imageUrl,
+        loadingOriginal: false,
+      }
+    }).catch(() => {
+      if (seq === imageViewerLoadSeq && imageViewer.value) {
+        imageViewer.value = { ...imageViewer.value, loadingOriginal: false }
+      }
+    })
   }
 }
 
@@ -2107,6 +2147,7 @@ async function sendNodeImageToChat(node: CanvasNode) {
 }
 
 function closeImageViewer() {
+  imageViewerLoadSeq += 1
   imageViewer.value = null
 }
 
@@ -3069,7 +3110,10 @@ onUnmounted(() => {
           <header class="image-viewer-header">
             <div class="image-viewer-meta">
               <strong>{{ imageViewer.title }}</strong>
-              <span>{{ imageViewer.caption }}</span>
+              <span>
+                {{ imageViewer.caption }}
+                <small v-if="imageViewer.loadingOriginal">正在加载原图...</small>
+              </span>
             </div>
             <div class="image-viewer-controls">
               <button type="button" title="缩小" @click="zoomImageViewer(-0.12)">
@@ -4389,6 +4433,13 @@ onUnmounted(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-viewer-meta small {
+  margin-left: 8px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .image-viewer-controls {
