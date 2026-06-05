@@ -166,6 +166,7 @@ const IMAGE_CAPTION_HEIGHT = 48
 const IMAGE_OUTPUT_PANEL_HEIGHT = 62
 const IMAGE_ACTIONS_HEIGHT = 44
 const IMAGE_NODE_BORDER_HEIGHT = 2
+const DOWNLOAD_OBJECT_URL_REVOKE_DELAY = 30_000
 
 const {
   isGenerating,
@@ -1755,12 +1756,7 @@ async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistory
     return
   }
 
-  const a = document.createElement('a')
-  a.href = detail.dataUrl
-  a.download = galleryFileName(detail)
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+  await downloadImageUrl(detail.dataUrl, galleryFileName(detail))
 }
 
 async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
@@ -2279,7 +2275,7 @@ async function handleDownload(node: CanvasNode) {
     error.value = '原图加载失败，请稍后重试。'
     return
   }
-  downloadImageUrl(imageUrl, node.content || node.title)
+  await downloadImageUrl(imageUrl, node.content || node.title)
 }
 
 async function openImageViewer(node: CanvasNode) {
@@ -2330,13 +2326,110 @@ function closeImageViewer() {
   imageViewer.value = null
 }
 
-function downloadImageUrl(imageUrl: string, title: string) {
+function extensionFromMimeType(mimeType: string | null) {
+  const normalized = mimeType?.split(';')[0]?.trim().toLowerCase()
+  if (!normalized) return ''
+
+  const extensionMap: Record<string, string> = {
+    'image/avif': 'avif',
+    'image/gif': 'gif',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  }
+
+  return extensionMap[normalized] || ''
+}
+
+function extensionFromImageUrl(imageUrl: string) {
+  const dataUrlMime = imageUrl.match(/^data:([^;,]+)/i)?.[1]
+  const dataUrlExtension = extensionFromMimeType(dataUrlMime || null)
+  if (dataUrlExtension) return dataUrlExtension
+
+  try {
+    const pathname = new URL(imageUrl, window.location.href).pathname
+    const extension = pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase()
+    if (extension && ['avif', 'gif', 'jpeg', 'jpg', 'png', 'webp'].includes(extension)) {
+      return extension === 'jpeg' ? 'jpg' : extension
+    }
+  } catch {
+    return ''
+  }
+
+  return ''
+}
+
+function fileExtensionFromTitle(title: string) {
+  const extension = title.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase()
+  if (!extension || !['avif', 'gif', 'jpeg', 'jpg', 'png', 'webp'].includes(extension)) return ''
+  return extension === 'jpeg' ? 'jpg' : extension
+}
+
+function safeDownloadFileName(title: string, extension: string) {
+  const normalizedExtension = extension.replace(/^\./, '') || 'png'
+  const withoutExtension = title.replace(/\.([a-z0-9]{2,5})$/i, '')
+  const safeBaseName = withoutExtension
+    .slice(0, 60)
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[^a-zA-Z0-9一-\u9fa5._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^\.+/, '')
+    .trim()
+
+  return `${safeBaseName || 'recho_image'}.${normalizedExtension}`
+}
+
+function directStorageDownloadUrl(imageUrl: string, fileName: string) {
+  try {
+    const url = new URL(imageUrl, window.location.href)
+    if (!/^https?:$/.test(url.protocol) || !url.pathname.includes('/storage/v1/')) {
+      return ''
+    }
+
+    url.searchParams.set('download', fileName)
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
+function triggerDownload(href: string, fileName: string) {
   const a = document.createElement('a')
-  a.href = imageUrl
-  a.download = `${title.slice(0, 30).replace(/[^a-zA-Z0-9一-鿿]/g, '_') || 'recho_image'}.png`
+  a.href = href
+  a.download = fileName
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+async function downloadImageUrl(imageUrl: string, title: string) {
+  const extension = extensionFromImageUrl(imageUrl) || fileExtensionFromTitle(title) || 'png'
+  const fileName = safeDownloadFileName(title, extension)
+  const storageDownloadUrl = directStorageDownloadUrl(imageUrl, fileName)
+  if (storageDownloadUrl || imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')) {
+    triggerDownload(storageDownloadUrl || imageUrl, fileName)
+    return
+  }
+
+  try {
+    const response = await fetch(imageUrl, { cache: 'force-cache' })
+    if (!response.ok) throw new Error(`Image download failed with ${response.status}`)
+
+    const blob = await response.blob()
+    if (!blob.size) throw new Error('Image download returned an empty file')
+
+    const extension = extensionFromMimeType(blob.type)
+      || extensionFromImageUrl(imageUrl)
+      || fileExtensionFromTitle(title)
+      || 'png'
+    const objectUrl = URL.createObjectURL(blob)
+    triggerDownload(objectUrl, safeDownloadFileName(title, extension))
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), DOWNLOAD_OBJECT_URL_REVOKE_DELAY)
+  } catch (downloadError) {
+    console.warn('Image download failed', downloadError)
+    error.value = '图片下载失败，请稍后重试。'
+  }
 }
 
 async function downloadImageViewerImage() {
@@ -2351,7 +2444,7 @@ async function downloadImageViewerImage() {
     return
   }
 
-  downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
+  await downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
 }
 
 function zoomImageViewer(step: number) {
