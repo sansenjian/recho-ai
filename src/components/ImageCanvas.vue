@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
-import { useImageGen } from '../composables/useImageGen'
+import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import type { GeneratedImage, ImageGenRequest } from '../types/image'
 
 type CanvasNodeType = 'text' | 'image' | 'generation'
@@ -14,7 +14,7 @@ type NodeResolution = NonNullable<ImageGenRequest['resolution']>
 type NodeQuality = NonNullable<ImageGenRequest['quality']>
 type MentionField = 'text' | 'generation'
 type WorkspaceMode = 'canvas' | 'gallery'
-type GalleryFilter = 'all' | 'references' | 'latest'
+type GalleryFilter = 'mine' | 'references' | 'latest'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -39,6 +39,7 @@ interface CanvasNode {
   imageUrl?: string
   fileName?: string
   sourceImageId?: string
+  sourceHistoryScope?: ImageHistoryScope
   sourcePrompt?: string
   scale?: number
   mentions?: string[]
@@ -156,11 +157,17 @@ const {
   isGenerating,
   isLoadingHistory,
   hasMoreHistory,
+  isLoadingGallery,
+  hasMoreGallery,
+  galleryLoaded,
   error,
   generatedImages,
+  galleryImages: publicGalleryImages,
   generate,
   clearHistory,
   loadMoreHistory,
+  ensureGalleryLoaded,
+  loadMoreGalleryHistory,
   resolveImageDetail,
 } = useImageGen()
 
@@ -210,12 +217,15 @@ const resizeState = ref<ResizeState | null>(null)
 const mentionState = ref<MentionState | null>(null)
 const imageViewer = ref<ImageViewerState | null>(null)
 const galleryDetail = ref<GeneratedImage | null>(null)
+const galleryDetailScope = ref<ImageHistoryScope>('mine')
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
+const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const isGalleryAutoLoading = ref(false)
 const galleryQuery = ref('')
-const galleryFilter = ref<GalleryFilter>('all')
+const galleryFilter = ref<GalleryFilter>('mine')
+const isPublicGalleryFilter = computed(() => galleryFilter.value !== 'mine')
 const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
@@ -242,6 +252,9 @@ watch(
 
 watch([galleryQuery, galleryFilter], () => {
   galleryVisibleCount.value = GALLERY_PAGE_SIZE
+  if (isPublicGalleryFilter.value) {
+    void ensureGalleryLoaded()
+  }
   void nextTick(() => {
     galleryStageRef.value?.scrollTo({ top: 0 })
   })
@@ -338,16 +351,18 @@ const miniMapLayout = computed(() => {
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
+const galleryActionScope = computed<ImageHistoryScope>(() => isPublicGalleryFilter.value ? 'public' : 'mine')
+const gallerySourceImages = computed(() => isPublicGalleryFilter.value ? publicGalleryImages.value : generatedImages.value)
 const galleryFilterOptions: Array<{ value: GalleryFilter; label: string }> = [
-  { value: 'all', label: '全部' },
+  { value: 'mine', label: '我的' },
   { value: 'references', label: '参考图' },
   { value: 'latest', label: '最新' },
 ]
 const galleryVisibleCount = ref(GALLERY_PAGE_SIZE)
-const galleryHasFilter = computed(() => galleryFilter.value !== 'all' || Boolean(galleryQuery.value.trim()))
+const galleryHasFilter = computed(() => galleryFilter.value !== 'mine' || Boolean(galleryQuery.value.trim()))
 const filteredGalleryImages = computed(() => {
   const query = galleryQuery.value.trim().toLowerCase()
-  return generatedImages.value.filter((image) => {
+  return gallerySourceImages.value.filter((image) => {
     if (galleryFilter.value === 'references' && !galleryReferences(image).length) return false
     if (!query) return true
 
@@ -366,8 +381,11 @@ const filteredGalleryImages = computed(() => {
     return searchable.includes(query)
   })
 })
-const galleryImages = computed(() => filteredGalleryImages.value.slice(0, galleryVisibleCount.value))
-const canLoadMoreGallery = computed(() => galleryVisibleCount.value < filteredGalleryImages.value.length || hasMoreHistory.value)
+const visibleGalleryImages = computed(() => filteredGalleryImages.value.slice(0, galleryVisibleCount.value))
+const canLoadMoreGallery = computed(() => (
+  galleryVisibleCount.value < filteredGalleryImages.value.length ||
+  (isPublicGalleryFilter.value ? hasMoreGallery.value : hasMoreHistory.value)
+))
 const resolutionOptions: Array<{ value: NodeResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: '1k', label: '1K' },
@@ -824,10 +842,14 @@ function shouldKeepNativeWheel(event: WheelEvent) {
   ].join(',')))
 }
 
+function normalizedWheelValue(value: number, deltaMode: number) {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) return value * 16
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return value * 120
+  return value
+}
+
 function normalizedWheelDelta(event: WheelEvent) {
-  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 16
-  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * 120
-  return event.deltaY
+  return normalizedWheelValue(event.deltaY, event.deltaMode)
 }
 
 function setViewportZoomAtClient(clientX: number, clientY: number, nextZoom: number) {
@@ -845,6 +867,16 @@ function handleWheel(event: WheelEvent) {
 
   event.preventDefault()
   const delta = normalizedWheelDelta(event)
+  if (event.ctrlKey) {
+    viewport.value.y -= delta
+    return
+  }
+
+  if (event.altKey) {
+    viewport.value.x -= normalizedWheelValue(event.deltaX || event.deltaY, event.deltaMode)
+    return
+  }
+
   const speed = event.ctrlKey || event.metaKey ? 0.001 : 0.0014
   const nextZoom = clamp(viewport.value.zoom * Math.exp(-delta * speed), MIN_VIEWPORT_ZOOM, MAX_VIEWPORT_ZOOM)
   setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
@@ -1308,11 +1340,11 @@ async function handleWindowPaste(event: ClipboardEvent) {
   }
 }
 
-async function useHistoryImage(image: GeneratedImage) {
+async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
   let detail = image
   let previewUrl = displayImageUrl(detail)
   if (!previewUrl) {
-    detail = await resolveImageDetail(image)
+    detail = await resolveImageDetail(image, scope)
     previewUrl = displayImageUrl(detail)
   }
 
@@ -1321,7 +1353,7 @@ async function useHistoryImage(image: GeneratedImage) {
     return
   }
 
-  activeWorkspace.value = 'canvas'
+  selectWorkspace('canvas')
   const rect = viewportRef.value?.getBoundingClientRect()
   const point = rect
     ? canvasPointFromClient(rect.left + rect.width * 0.56, rect.top + rect.height * 0.58)
@@ -1332,6 +1364,7 @@ async function useHistoryImage(image: GeneratedImage) {
     content: '',
     imageUrl: previewUrl,
     sourceImageId: detail.id,
+    sourceHistoryScope: scope,
     sourcePrompt: detail.prompt,
     fileName: detail.size,
   })
@@ -1406,15 +1439,18 @@ function galleryDetailImageUrl(image: GeneratedImage) {
 
 function closeGalleryDetail() {
   galleryDetail.value = null
+  galleryDetailScope.value = 'mine'
 }
 
 async function openGalleryDetail(image: GeneratedImage) {
+  const scope = galleryActionScope.value
+  galleryDetailScope.value = scope
   if (galleryDetailImageUrl(image)) {
     galleryDetail.value = image
     return
   }
 
-  const detail = await resolveImageDetail(image)
+  const detail = await resolveImageDetail(image, scope)
   if (!galleryDetailImageUrl(detail)) {
     error.value = '图片加载失败，请稍后重试。'
     return
@@ -1425,7 +1461,7 @@ async function openGalleryDetail(image: GeneratedImage) {
 
 async function openGalleryDetailViewer() {
   if (!galleryDetail.value) return
-  const image = await resolveImageDetail(galleryDetail.value)
+  const image = await resolveImageDetail(galleryDetail.value, galleryDetailScope.value)
   const imageUrl = image.dataUrl || galleryDetailImageUrl(image)
   if (!imageUrl) {
     error.value = '原图加载失败，请稍后重试。'
@@ -1443,37 +1479,50 @@ async function openGalleryDetailViewer() {
 
 function downloadGalleryDetail() {
   if (galleryDetail.value) {
-    void downloadGeneratedImage(galleryDetail.value)
+    void downloadGeneratedImage(galleryDetail.value, galleryDetailScope.value)
   }
 }
 
 function useGalleryDetailImage() {
   if (galleryDetail.value) {
-    void useHistoryImage(galleryDetail.value)
+    void useHistoryImage(galleryDetail.value, galleryDetailScope.value)
     closeGalleryDetail()
   }
 }
 
 function sendGalleryDetailToChat() {
   if (galleryDetail.value) {
-    void sendHistoryImageToChat(galleryDetail.value)
+    void sendHistoryImageToChat(galleryDetail.value, galleryDetailScope.value)
   }
 }
 
 async function handleLoadMoreGallery() {
-  if (!canLoadMoreGallery.value || isGalleryAutoLoading.value || isLoadingHistory.value) return
+  if (
+    !canLoadMoreGallery.value ||
+    isGalleryAutoLoading.value ||
+    (isPublicGalleryFilter.value ? isLoadingGallery.value : isLoadingHistory.value)
+  ) return
 
   isGalleryAutoLoading.value = true
   try {
+    if (isPublicGalleryFilter.value) {
+      await ensureGalleryLoaded()
+    }
     const localCount = filteredGalleryImages.value.length
     if (galleryVisibleCount.value < localCount) {
       galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, localCount)
       return
     }
 
-    if (!hasMoreHistory.value) return
+    if (isPublicGalleryFilter.value) {
+      if (!hasMoreGallery.value) return
 
-    await loadMoreHistory()
+      await loadMoreGalleryHistory()
+    } else {
+      if (!hasMoreHistory.value) return
+
+      await loadMoreHistory()
+    }
     const updatedCount = filteredGalleryImages.value.length
     if (updatedCount > galleryVisibleCount.value) {
       galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, updatedCount)
@@ -1504,8 +1553,8 @@ function galleryFileName(image: GeneratedImage) {
   return `${promptName || image.id || 'recho_image'}.png`
 }
 
-async function downloadGeneratedImage(image: GeneratedImage) {
-  const detail = await resolveImageDetail(image)
+async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  const detail = await resolveImageDetail(image, scope)
   if (!detail.dataUrl) {
     error.value = '原图加载失败，请稍后重试。'
     return
@@ -1519,8 +1568,8 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   document.body.removeChild(a)
 }
 
-async function sendHistoryImageToChat(image: GeneratedImage) {
-  const detail = await resolveImageDetail(image)
+async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  const detail = await resolveImageDetail(image, scope)
   if (!detail.dataUrl) {
     error.value = '原图加载失败，请稍后重试。'
     return
@@ -1531,6 +1580,9 @@ async function sendHistoryImageToChat(image: GeneratedImage) {
 function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
   activeWorkspace.value = mode
   closeContextMenu()
+  if (mode === 'gallery' && isPublicGalleryFilter.value) {
+    void ensureGalleryLoaded()
+  }
   if (options.emitChange !== false) {
     emit('workspaceChange', mode)
   }
@@ -1905,13 +1957,16 @@ function imageOutputMeta(node: CanvasNode) {
 
 function historyImageForNode(node: CanvasNode) {
   if (!node.sourceImageId) return null
-  return generatedImages.value.find(image => image.id === node.sourceImageId) ?? null
+  const sourceImages = node.sourceHistoryScope === 'public'
+    ? gallerySourceImages.value
+    : generatedImages.value
+  return sourceImages.find(image => image.id === node.sourceImageId) ?? null
 }
 
 async function resolveNodeOriginalImageUrl(node: CanvasNode) {
   const historyImage = historyImageForNode(node)
   if (historyImage) {
-    const detail = await resolveImageDetail(historyImage)
+    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine')
     if (detail.dataUrl) return detail.dataUrl
   }
 
@@ -1974,6 +2029,7 @@ async function generateFromNode(node: CanvasNode) {
     content: '',
     imageUrl: displayImageUrl(result),
     sourceImageId: result.id,
+    sourceHistoryScope: 'mine',
     sourcePrompt: result.prompt,
     fileName: result.size,
   })
@@ -2308,11 +2364,30 @@ onUnmounted(() => {
 
     <section v-if="activeWorkspace === 'canvas'" class="canvas-stage">
       <div class="stage-actions">
-        <button class="tool-button active" type="button" title="选择">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="m5 3 14 8-6 2-3 6L5 3Z" />
-          </svg>
-        </button>
+        <div class="mobile-create-bar" aria-label="创建节点">
+          <button type="button" @click="createNodeNearCenter('text')">
+            <span class="mobile-create-icon">T</span>
+            <span>文本</span>
+          </button>
+          <button type="button" @click="createNodeNearCenter('image')">
+            <span class="mobile-create-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="m21 15-5-5L5 21" />
+              </svg>
+            </span>
+            <span>图片</span>
+          </button>
+          <button class="primary" type="button" @click="createNodeNearCenter('generation')">
+            <span class="mobile-create-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+              </svg>
+            </span>
+            <span>生图</span>
+          </button>
+        </div>
         <button class="tool-button" type="button" title="复位视图" @click="fitView">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
             <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -2326,32 +2401,7 @@ onUnmounted(() => {
             <path d="m6 6 1 15h10l1-15" />
           </svg>
         </button>
-        <span class="zoom-pill">{{ Math.round(viewport.zoom * 100) }}%</span>
-      </div>
-
-      <div class="mobile-create-bar" aria-label="创建节点">
-        <button type="button" @click="createNodeNearCenter('text')">
-          <span class="mobile-create-icon">T</span>
-          <span>文本</span>
-        </button>
-        <button type="button" @click="createNodeNearCenter('image')">
-          <span class="mobile-create-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="m21 15-5-5L5 21" />
-            </svg>
-          </span>
-          <span>图片</span>
-        </button>
-        <button class="primary" type="button" @click="createNodeNearCenter('generation')">
-          <span class="mobile-create-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-            </svg>
-          </span>
-          <span>生图</span>
-        </button>
+        <span class="zoom-pill">{{ viewportZoomLabel }}</span>
       </div>
 
       <div
@@ -2780,7 +2830,7 @@ onUnmounted(() => {
             <path d="m16 16 4 4" />
           </svg>
         </button>
-        <span class="zoom-dot">{{ connections.length }}</span>
+        <span class="zoom-pill">{{ viewportZoomLabel }}</span>
       </div>
 
       <div v-if="error" class="global-error">{{ error }}</div>
@@ -2796,7 +2846,7 @@ onUnmounted(() => {
         <div class="gallery-heading">
           <span class="gallery-eyebrow">作品广场</span>
           <h2>生成作品</h2>
-          <p>{{ filteredGalleryImages.length }} / {{ generatedImages.length }}</p>
+          <p>{{ filteredGalleryImages.length }} / {{ gallerySourceImages.length }}</p>
         </div>
         <div class="gallery-toolbar">
           <div class="gallery-filter-group" role="tablist" aria-label="作品筛选">
@@ -2804,8 +2854,8 @@ onUnmounted(() => {
               v-for="option in galleryFilterOptions"
               :key="option.value"
               type="button"
-              :class="{ active: galleryFilter === option.value }"
-              @click="galleryFilter = option.value"
+            :class="{ active: galleryFilter === option.value }"
+            @click="galleryFilter = option.value"
             >
               {{ option.label }}
             </button>
@@ -2821,15 +2871,15 @@ onUnmounted(() => {
             type="button"
             class="gallery-reset"
             :disabled="!galleryHasFilter"
-            @click="galleryQuery = ''; galleryFilter = 'all'"
+            @click="galleryQuery = ''; galleryFilter = 'mine'"
           >
             重置
           </button>
         </div>
       </div>
 
-      <div v-if="galleryImages.length" class="gallery-grid" aria-live="polite">
-        <article v-for="image in galleryImages" :key="image.id" class="gallery-card">
+      <div v-if="visibleGalleryImages.length" class="gallery-grid" aria-live="polite">
+        <article v-for="image in visibleGalleryImages" :key="image.id" class="gallery-card">
           <button type="button" class="gallery-image-wrap" title="查看作品" @click="openGalleryDetail(image)">
             <span class="gallery-card-date">{{ formatGalleryDate(image.timestamp) }}</span>
             <span v-if="galleryReferences(image).length" class="gallery-card-reference-count">
@@ -2864,13 +2914,13 @@ onUnmounted(() => {
                     <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
                   </svg>
                 </button>
-                <button type="button" title="放入画布" @click="useHistoryImage(image)">
+                <button type="button" title="放入画布" @click="useHistoryImage(image, galleryActionScope)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                     <path d="M12 5v14" />
                     <path d="M5 12h14" />
                   </svg>
                 </button>
-                <button type="button" title="下载原图" @click="downloadGeneratedImage(image)">
+                <button type="button" title="下载原图" @click="downloadGeneratedImage(image, galleryActionScope)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                     <path d="M12 3v12" />
                     <path d="m7 10 5 5 5-5" />
@@ -2880,7 +2930,7 @@ onUnmounted(() => {
                 <button
                   type="button"
                   title="发送到对话"
-                  @click="sendHistoryImageToChat(image)"
+                  @click="sendHistoryImageToChat(image, galleryActionScope)"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                     <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
@@ -2893,11 +2943,11 @@ onUnmounted(() => {
       </div>
 
       <div v-else class="gallery-empty">
-        <strong>{{ generatedImages.length ? '没有匹配作品' : '暂无作品' }}</strong>
-        <span v-if="galleryHasFilter">换一个筛选或搜索词</span>
+        <strong>{{ (isPublicGalleryFilter ? (!galleryLoaded && isLoadingGallery) : isLoadingHistory) ? '正在加载作品' : (gallerySourceImages.length ? '没有匹配作品' : '暂无作品') }}</strong>
+        <span v-if="galleryHasFilter && (!isPublicGalleryFilter || galleryLoaded)">换一个筛选或搜索词</span>
       </div>
 
-      <div v-if="galleryImages.length && (isGalleryAutoLoading || isLoadingHistory)" class="gallery-scroll-status">
+      <div v-if="visibleGalleryImages.length && (isGalleryAutoLoading || (isPublicGalleryFilter ? isLoadingGallery : isLoadingHistory))" class="gallery-scroll-status">
         加载中...
       </div>
 
@@ -3837,9 +3887,36 @@ onUnmounted(() => {
 
 .image-preview {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 136px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 0;
   margin: 10px 10px 0;
+  border-radius: 7px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.image-preview.empty {
+  min-height: 136px;
+  border: 1px dashed var(--border-strong);
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
+    #f8fafc;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.image-preview img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 206px;
   border-radius: 7px;
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
@@ -3849,25 +3926,11 @@ onUnmounted(() => {
     #f8fafc;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
-  overflow: hidden;
-}
-
-.image-preview.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--border-strong);
-}
-
-.image-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
   object-fit: contain;
 }
 
 .image-preview.generated {
-  min-height: 148px;
+  max-height: 214px;
 }
 
 .pick-image,
@@ -4040,7 +4103,15 @@ onUnmounted(() => {
   justify-content: center;
   min-width: 0;
   min-height: 0;
-  padding: 24px;
+  padding: 18px;
+  background: #f8fafc;
+}
+
+.gallery-detail-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
     linear-gradient(-45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
@@ -4049,12 +4120,6 @@ onUnmounted(() => {
     #f8fafc;
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
   background-size: 20px 20px;
-}
-
-.gallery-detail-preview img {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 8px;
   object-fit: contain;
   box-shadow: 0 18px 52px rgba(15, 23, 42, 0.16);
   -webkit-user-drag: none;
@@ -4856,8 +4921,7 @@ onUnmounted(() => {
   background: var(--border);
 }
 
-.zoom-pill,
-.zoom-dot {
+.zoom-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4869,12 +4933,6 @@ onUnmounted(() => {
   color: #fff;
   font-size: 12px;
   font-weight: 900;
-}
-
-.zoom-dot {
-  min-width: 26px;
-  width: 26px;
-  padding: 0;
 }
 
 .zoom-range {
@@ -4919,38 +4977,32 @@ onUnmounted(() => {
   }
 
   .mobile-create-bar {
-    position: absolute;
-    left: 10px;
-    right: 10px;
-    top: 10px;
-    z-index: 22;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: var(--shadow-md);
-    backdrop-filter: blur(12px);
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 6px;
+    min-width: 0;
   }
 
   .mobile-create-bar button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    min-width: 0;
-    min-height: 44px;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-width: 68px;
+    min-height: 40px;
+    padding: 0 11px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: #fff;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 900;
+    white-space: nowrap;
   }
 
   .mobile-create-bar button.primary {
+    min-width: 76px;
     border-color: #111827;
     background: #111827;
     color: #fff;
@@ -4960,18 +5012,23 @@ onUnmounted(() => {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     flex: 0 0 auto;
     font-weight: 900;
   }
 
   .stage-actions {
     left: 10px;
-    right: 10px;
-    top: 76px;
-    flex-wrap: wrap;
+    right: auto;
+    top: 10px;
+    width: max-content;
+    max-width: calc(100% - 20px);
+    overflow-x: auto;
+    flex-wrap: nowrap;
     justify-content: flex-start;
+    padding: 6px;
+    scrollbar-width: thin;
   }
 
   .bottom-toolbar {
@@ -4988,8 +5045,7 @@ onUnmounted(() => {
     height: 44px;
   }
 
-  .zoom-pill,
-  .zoom-dot {
+  .zoom-pill {
     min-width: 44px;
     height: 34px;
   }

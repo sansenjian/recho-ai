@@ -2,7 +2,7 @@ services:
   # ── 后端 API 网关 ──
   - type: web
     name: recho-gateway
-    env: node
+    runtime: node
     rootDir: backend/gateway
     buildCommand: npm install && npm run build
     startCommand: npm start
@@ -42,8 +42,9 @@ services:
         value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
 
   # ── 前端静态站点 ──
-  - type: static
+  - type: web
     name: recho-ai
+    runtime: static
     rootDir: .
     buildCommand: npm install && npm run build
     staticPublishPath: dist

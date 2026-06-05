@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { AgentModeOption, Message } from '../types'
 import ContextMeter from './ContextMeter.vue'
 
-defineProps<{
+const props = defineProps<{
   showSidebar: boolean
   showAgentPanel: boolean
   showImagePanel: boolean
@@ -12,6 +13,8 @@ defineProps<{
   authReady: boolean
   authLoading: boolean
 }>()
+
+const statusLabel = computed(() => props.showImagePanel ? 'Image' : props.agentMode.label)
 
 defineEmits<{
   toggleSidebar: []
@@ -26,7 +29,7 @@ defineEmits<{
 <template>
   <header class="chat-header">
     <div class="header-left">
-      <button class="sidebar-toggle" title="History" @click="$emit('toggleSidebar')">
+      <button v-if="!showImagePanel" class="sidebar-toggle" title="History" @click="$emit('toggleSidebar')">
         <svg v-if="!showSidebar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="18" height="18">
           <line x1="4" y1="6" x2="20" y2="6" />
           <line x1="4" y1="12" x2="20" y2="12" />
@@ -37,7 +40,7 @@ defineEmits<{
           <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
-      <button class="project-selector" @click="$emit('newChat')">
+      <button v-if="!showImagePanel" class="project-selector" @click="$emit('newChat')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
@@ -45,7 +48,7 @@ defineEmits<{
         <span class="project-name">New Chat</span>
       </button>
       <div class="agent-status">
-        <span class="status-pill">{{ agentMode.label }}</span>
+        <span class="status-pill">{{ statusLabel }}</span>
         <ContextMeter :messages="messages" />
       </div>
     </div>
