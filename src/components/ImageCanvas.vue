@@ -37,6 +37,8 @@ interface CanvasNode {
   resolution: NodeResolution
   quality: NodeQuality
   imageUrl?: string
+  imageWidth?: number
+  imageHeight?: number
   fileName?: string
   sourceImageId?: string
   sourceHistoryScope?: ImageHistoryScope
@@ -124,6 +126,9 @@ interface ImageViewerState {
   title: string
   caption: string
   zoom: number
+  loadingPreview?: boolean
+  sourceImageId?: string
+  sourceScope?: ImageHistoryScope
 }
 
 interface GalleryParam {
@@ -137,7 +142,6 @@ const NODE_SIZE: Record<CanvasNodeType, { width: number; height: number }> = {
   generation: { width: 334, height: 700 },
 }
 
-const GENERATED_IMAGE_NODE_HEIGHT = 346
 const PLANE_SIZE = { width: 3600, height: 2400 }
 const MINI_MAP_VIEW = { width: 100, height: 54, padding: 5 }
 const MENU_WIDTH = 176
@@ -152,6 +156,16 @@ const REFERENCE_IMAGE_MAX_EDGE = 2048
 const REFERENCE_IMAGE_WEBP_QUALITY = 0.86
 const TEXT_NODE_CONTENT_SCALE_FACTOR = 0.5
 const MINI_MAP_WORLD_PADDING = 96
+const IMAGE_NODE_HEADER_HEIGHT = 36
+const IMAGE_PREVIEW_HORIZONTAL_INSET = 20
+const IMAGE_PREVIEW_TOP_MARGIN = 10
+const IMAGE_PREVIEW_EMPTY_HEIGHT = 136
+const IMAGE_PREVIEW_MIN_HEIGHT = 116
+const IMAGE_PREVIEW_MAX_HEIGHT = 220
+const IMAGE_CAPTION_HEIGHT = 48
+const IMAGE_OUTPUT_PANEL_HEIGHT = 62
+const IMAGE_ACTIONS_HEIGHT = 44
+const IMAGE_NODE_BORDER_HEIGHT = 2
 
 const {
   isGenerating,
@@ -218,6 +232,8 @@ const mentionState = ref<MentionState | null>(null)
 const imageViewer = ref<ImageViewerState | null>(null)
 const galleryDetail = ref<GeneratedImage | null>(null)
 const galleryDetailScope = ref<ImageHistoryScope>('mine')
+const galleryDetailDisplayUrl = ref('')
+const isGalleryDetailLoadingPreview = ref(false)
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
@@ -239,6 +255,8 @@ const contextMenu = ref<ContextMenuState>({
 let idSeed = Date.now()
 let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
+let imageViewerLoadSeq = 0
+let galleryDetailLoadSeq = 0
 
 watch(
   () => props.workspaceMode,
@@ -681,15 +699,72 @@ function isGeneratedImageNode(node: CanvasNode) {
   return node.type === 'image' && Boolean(node.sourceImageId)
 }
 
+function dimensionsFromSize(value?: string) {
+  const match = /^([1-9]\d*)x([1-9]\d*)$/.exec(value || '')
+  if (!match) return null
+
+  return {
+    width: Number(match[1]),
+    height: Number(match[2]),
+  }
+}
+
+function dimensionsFromAspectRatio(value?: string) {
+  const match = /^([1-9]\d*):([1-9]\d*)$/.exec(value || '')
+  if (!match) return null
+
+  return {
+    width: Number(match[1]),
+    height: Number(match[2]),
+  }
+}
+
+function imageDimensionsFromHistory(image: GeneratedImage): Pick<CanvasNode, 'imageWidth' | 'imageHeight'> {
+  const dimensions = dimensionsFromSize(image.size) ?? dimensionsFromAspectRatio(image.aspectRatio)
+  return dimensions
+    ? { imageWidth: dimensions.width, imageHeight: dimensions.height }
+    : {}
+}
+
+function imageAspectRatio(node: CanvasNode) {
+  const dimensions = node.imageWidth && node.imageHeight
+    ? { width: node.imageWidth, height: node.imageHeight }
+    : dimensionsFromSize(node.fileName) ?? dimensionsFromAspectRatio(node.aspectRatio)
+  if (!dimensions?.width || !dimensions.height) return 1
+
+  return clamp(dimensions.width / dimensions.height, 0.36, 3.2)
+}
+
+function imagePreviewHeight(node: CanvasNode) {
+  if (!node.imageUrl) return IMAGE_PREVIEW_EMPTY_HEIGHT
+
+  const previewWidth = NODE_SIZE.image.width - IMAGE_PREVIEW_HORIZONTAL_INSET
+  const fittedHeight = Math.round(previewWidth / imageAspectRatio(node))
+  return clamp(fittedHeight, IMAGE_PREVIEW_MIN_HEIGHT, IMAGE_PREVIEW_MAX_HEIGHT)
+}
+
 function getBaseNodeSize(node: CanvasNode) {
   const size = NODE_SIZE[node.type]
+  if (node.type === 'image') {
+    const detailHeight = isGeneratedImageNode(node)
+      ? IMAGE_OUTPUT_PANEL_HEIGHT
+      : IMAGE_CAPTION_HEIGHT
+    return {
+      ...size,
+      height:
+        IMAGE_NODE_HEADER_HEIGHT +
+        IMAGE_PREVIEW_TOP_MARGIN +
+        imagePreviewHeight(node) +
+        detailHeight +
+        IMAGE_ACTIONS_HEIGHT +
+        IMAGE_NODE_BORDER_HEIGHT,
+    }
+  }
+
   if (node.type === 'generation') {
     const referenceCount = referencedImageNodes(node).length
     const extraReferenceHeight = Math.max(0, referenceCount - 1) * 30
     return { ...size, height: size.height + extraReferenceHeight }
-  }
-  if (isGeneratedImageNode(node)) {
-    return { ...size, height: GENERATED_IMAGE_NODE_HEIGHT }
   }
   return size
 }
@@ -1159,6 +1234,7 @@ function nodeStyle(node: CanvasNode) {
     transform: `translate(${node.x}px, ${node.y}px) scale(${scale})`,
     transformOrigin: '0 0',
     '--node-text-content-scale': textContentScale.toFixed(4),
+    '--image-preview-height': `${imagePreviewHeight(node)}px`,
   }
 }
 
@@ -1238,6 +1314,32 @@ function loadImageElement(src: string) {
   })
 }
 
+function naturalImageDimensions(image: HTMLImageElement): Pick<CanvasNode, 'imageWidth' | 'imageHeight'> {
+  const width = image.naturalWidth || image.width
+  const height = image.naturalHeight || image.height
+  return width > 0 && height > 0
+    ? { imageWidth: width, imageHeight: height }
+    : {}
+}
+
+function updateNodeImageDimensions(node: CanvasNode, image: HTMLImageElement) {
+  const dimensions = naturalImageDimensions(image)
+  if (!dimensions.imageWidth || !dimensions.imageHeight) return
+
+  node.imageWidth = dimensions.imageWidth
+  node.imageHeight = dimensions.imageHeight
+}
+
+function handleNodeImageLoad(node: CanvasNode, event: Event) {
+  if (event.currentTarget instanceof HTMLImageElement) {
+    updateNodeImageDimensions(node, event.currentTarget)
+  }
+}
+
+async function readImageDimensions(src: string) {
+  return naturalImageDimensions(await loadImageElement(src))
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
   return new Promise<Blob | null>((resolve) => {
     canvas.toBlob(blob => resolve(blob), type, quality)
@@ -1279,6 +1381,7 @@ async function applyImageFileToNode(nodeId: string, file: File) {
   const node = getNodeById(nodeId)
   if (!node) return
   node.imageUrl = dataUrl
+  Object.assign(node, await readImageDimensions(dataUrl).catch(() => ({})))
   node.fileName = fallbackImageFileName(file)
   if (!/^图片\d+$/.test(node.title.trim())) {
     node.title = nextImageTitle(node.id)
@@ -1343,10 +1446,10 @@ async function handleWindowPaste(event: ClipboardEvent) {
 
 async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
   let detail = image
-  let previewUrl = displayImageUrl(detail)
+  let previewUrl = detail.previewUrl || ''
   if (!previewUrl) {
     detail = await resolveImageDetail(image, scope)
-    previewUrl = displayImageUrl(detail)
+    previewUrl = previewImageUrl(detail)
   }
 
   if (!previewUrl) {
@@ -1368,6 +1471,7 @@ async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope =
     sourceHistoryScope: scope,
     sourcePrompt: detail.prompt,
     fileName: detail.size,
+    ...imageDimensionsFromHistory(detail),
   })
 }
 
@@ -1396,7 +1500,7 @@ function galleryPrompt(image: GeneratedImage) {
 }
 
 function galleryReferences(image: GeneratedImage) {
-  return image.references?.filter(reference => reference.dataUrl || reference.thumbnailUrl) ?? []
+  return image.references?.filter(reference => reference.dataUrl || reference.previewUrl || reference.thumbnailUrl) ?? []
 }
 
 function galleryReferenceCount(image: GeneratedImage) {
@@ -1406,11 +1510,15 @@ function galleryReferenceCount(image: GeneratedImage) {
 }
 
 function displayImageUrl(image: GeneratedImage) {
-  return image.thumbnailUrl || image.dataUrl || ''
+  return image.thumbnailUrl || image.previewUrl || image.dataUrl || ''
+}
+
+function previewImageUrl(image: GeneratedImage) {
+  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
 }
 
 function displayReferenceUrl(reference: NonNullable<GeneratedImage['references']>[number]) {
-  return reference.thumbnailUrl || reference.dataUrl || ''
+  return reference.thumbnailUrl || reference.previewUrl || reference.dataUrl || ''
 }
 
 function formatGalleryDate(timestamp: string) {
@@ -1441,46 +1549,126 @@ function galleryParamItems(image: GeneratedImage): GalleryParam[] {
 }
 
 function galleryDetailImageUrl(image: GeneratedImage) {
-  return displayImageUrl(image)
+  return galleryDetail.value?.id === image.id
+    ? galleryDetailDisplayUrl.value || previewImageUrl(image)
+    : previewImageUrl(image)
+}
+
+function immediateGalleryDetailImageUrl(image: GeneratedImage) {
+  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
+}
+
+async function preloadImageUrl(src: string) {
+  const image = await loadImageElement(src)
+  await image.decode?.().catch(() => undefined)
 }
 
 function closeGalleryDetail() {
+  galleryDetailLoadSeq += 1
   galleryDetail.value = null
   galleryDetailScope.value = 'mine'
+  galleryDetailDisplayUrl.value = ''
+  isGalleryDetailLoadingPreview.value = false
+}
+
+async function loadGalleryDetailPreview(image: GeneratedImage, seq: number) {
+  const previewUrl = image.previewUrl || ''
+  const fallbackUrl = immediateGalleryDetailImageUrl(image)
+
+  if (!previewUrl) {
+    galleryDetailDisplayUrl.value = fallbackUrl
+    isGalleryDetailLoadingPreview.value = false
+    return
+  }
+
+  if (!galleryDetailDisplayUrl.value) {
+    galleryDetailDisplayUrl.value = fallbackUrl || previewUrl
+  }
+
+  if (galleryDetailDisplayUrl.value === previewUrl) {
+    isGalleryDetailLoadingPreview.value = false
+    return
+  }
+
+  isGalleryDetailLoadingPreview.value = true
+  try {
+    await preloadImageUrl(previewUrl)
+    if (seq !== galleryDetailLoadSeq) return
+    galleryDetailDisplayUrl.value = previewUrl
+  } catch {
+    if (seq === galleryDetailLoadSeq && fallbackUrl) {
+      galleryDetailDisplayUrl.value = fallbackUrl
+    }
+  } finally {
+    if (seq === galleryDetailLoadSeq) {
+      isGalleryDetailLoadingPreview.value = false
+    }
+  }
 }
 
 async function openGalleryDetail(image: GeneratedImage) {
   const scope = galleryActionScope.value
+  const seq = ++galleryDetailLoadSeq
   galleryDetailScope.value = scope
-  if (galleryDetailImageUrl(image)) {
+
+  const immediateUrl = immediateGalleryDetailImageUrl(image)
+  if (immediateUrl) {
     galleryDetail.value = image
-    return
+    galleryDetailDisplayUrl.value = immediateUrl
+    isGalleryDetailLoadingPreview.value = Boolean(!image.previewUrl)
   }
 
-  const detail = await resolveImageDetail(image, scope)
-  if (!galleryDetailImageUrl(detail)) {
+  const detail = image.previewUrl ? image : await resolveImageDetail(image, scope)
+  if (seq !== galleryDetailLoadSeq) return
+
+  if (!previewImageUrl(detail) && !immediateUrl) {
     error.value = '图片加载失败，请稍后重试。'
     return
   }
 
   galleryDetail.value = detail
+  await loadGalleryDetailPreview(detail, seq)
 }
 
 async function openGalleryDetailViewer() {
   if (!galleryDetail.value) return
-  const image = await resolveImageDetail(galleryDetail.value, galleryDetailScope.value)
-  const imageUrl = image.dataUrl || galleryDetailImageUrl(image)
-  if (!imageUrl) {
-    error.value = '原图加载失败，请稍后重试。'
+  const immediateUrl = galleryDetailImageUrl(galleryDetail.value)
+  if (!immediateUrl) {
+    error.value = '预览图加载失败，请稍后重试。'
     return
   }
 
-  galleryDetail.value = image
+  const seq = ++imageViewerLoadSeq
+  const sourceImage = galleryDetail.value
+  const sourceScope = galleryDetailScope.value
   imageViewer.value = {
-    imageUrl,
-    title: galleryFileName(image).replace(/\.png$/i, ''),
-    caption: galleryPrompt(image),
+    imageUrl: immediateUrl,
+    title: galleryFileName(sourceImage).replace(/\.png$/i, ''),
+    caption: galleryPrompt(sourceImage),
     zoom: 1,
+    loadingPreview: !sourceImage.previewUrl,
+    sourceImageId: sourceImage.id,
+    sourceScope,
+  }
+
+  if (!sourceImage.previewUrl) {
+    void resolveImageDetail(sourceImage, sourceScope).then((image) => {
+      const imageUrl = previewImageUrl(image)
+      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
+
+      galleryDetail.value = image
+      imageViewer.value = {
+        ...imageViewer.value,
+        imageUrl,
+        title: galleryFileName(image).replace(/\.png$/i, ''),
+        caption: galleryPrompt(image),
+        loadingPreview: false,
+      }
+    }).catch(() => {
+      if (seq === imageViewerLoadSeq && imageViewer.value) {
+        imageViewer.value = { ...imageViewer.value, loadingPreview: false }
+      }
+    })
   }
 }
 
@@ -1561,7 +1749,7 @@ function galleryFileName(image: GeneratedImage) {
 }
 
 async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-  const detail = await resolveImageDetail(image, scope)
+  const detail = await resolveImageDetail(image, scope, { includeOriginal: true })
   if (!detail.dataUrl) {
     error.value = '原图加载失败，请稍后重试。'
     return
@@ -1577,11 +1765,12 @@ async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistory
 
 async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
   const detail = await resolveImageDetail(image, scope)
-  if (!detail.dataUrl) {
-    error.value = '原图加载失败，请稍后重试。'
+  const imageUrl = previewImageUrl(detail)
+  if (!imageUrl) {
+    error.value = '预览图加载失败，请稍后重试。'
     return
   }
-  emit('sendToChat', detail.dataUrl)
+  emit('sendToChat', imageUrl)
 }
 
 function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
@@ -1973,15 +2162,26 @@ function historyImageForNode(node: CanvasNode) {
 async function resolveNodeOriginalImageUrl(node: CanvasNode) {
   const historyImage = historyImageForNode(node)
   if (historyImage) {
-    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine')
+    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine', { includeOriginal: true })
     if (detail.dataUrl) return detail.dataUrl
   }
 
   return node.imageUrl || ''
 }
 
+async function resolveNodePreviewImageUrl(node: CanvasNode) {
+  const historyImage = historyImageForNode(node)
+  if (historyImage) {
+    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine')
+    const imageUrl = previewImageUrl(detail)
+    if (imageUrl) return imageUrl
+  }
+
+  return node.imageUrl || ''
+}
+
 async function resolveReferenceImageUrl(node: CanvasNode) {
-  return await compressReferenceImageDataUrl(await resolveNodeOriginalImageUrl(node))
+  return await compressReferenceImageDataUrl(await resolveNodePreviewImageUrl(node))
 }
 
 async function buildReferences(node: CanvasNode) {
@@ -2034,11 +2234,12 @@ async function generateFromNode(node: CanvasNode) {
   const outputNode = createNode('image', node.x + NODE_SIZE.generation.width + 132, node.y + 46, {
     title: nextImageTitle(),
     content: '',
-    imageUrl: displayImageUrl(result),
+    imageUrl: previewImageUrl(result),
     sourceImageId: result.id,
     sourceHistoryScope: 'mine',
     sourcePrompt: result.prompt,
     fileName: result.size,
+    ...imageDimensionsFromHistory(result),
   })
 
   connections.value = [
@@ -2083,30 +2284,49 @@ async function handleDownload(node: CanvasNode) {
 
 async function openImageViewer(node: CanvasNode) {
   if (!node.imageUrl) return
-  const imageUrl = await resolveNodeOriginalImageUrl(node)
-  if (!imageUrl) {
-    error.value = '原图加载失败，请稍后重试。'
-    return
-  }
+  const seq = ++imageViewerLoadSeq
+  const sourceNode = { ...node }
+  const historyImage = historyImageForNode(sourceNode)
+  const immediateUrl = historyImage ? previewImageUrl(historyImage) || node.imageUrl : node.imageUrl
   imageViewer.value = {
-    imageUrl,
+    imageUrl: immediateUrl,
     title: node.title,
     caption: imageAltText(node),
     zoom: 1,
+    loadingPreview: Boolean(node.sourceImageId && !historyImage?.previewUrl),
+    sourceImageId: node.sourceImageId,
+    sourceScope: node.sourceHistoryScope,
+  }
+
+  if (node.sourceImageId && !historyImage?.previewUrl) {
+    void resolveNodePreviewImageUrl(sourceNode).then((imageUrl) => {
+      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
+
+      imageViewer.value = {
+        ...imageViewer.value,
+        imageUrl,
+        loadingPreview: false,
+      }
+    }).catch(() => {
+      if (seq === imageViewerLoadSeq && imageViewer.value) {
+        imageViewer.value = { ...imageViewer.value, loadingPreview: false }
+      }
+    })
   }
 }
 
 async function sendNodeImageToChat(node: CanvasNode) {
   if (!node.imageUrl) return
-  const imageUrl = await resolveNodeOriginalImageUrl(node)
+  const imageUrl = await resolveNodePreviewImageUrl(node)
   if (!imageUrl) {
-    error.value = '原图加载失败，请稍后重试。'
+    error.value = '预览图加载失败，请稍后重试。'
     return
   }
   emit('sendToChat', imageUrl)
 }
 
 function closeImageViewer() {
+  imageViewerLoadSeq += 1
   imageViewer.value = null
 }
 
@@ -2117,6 +2337,21 @@ function downloadImageUrl(imageUrl: string, title: string) {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+async function downloadImageViewerImage() {
+  if (!imageViewer.value) return
+  const sourceImage = imageViewer.value.sourceImageId
+    ? [...generatedImages.value, ...publicGalleryImages.value]
+      .find(image => image.id === imageViewer.value?.sourceImageId)
+    : null
+
+  if (sourceImage) {
+    await downloadGeneratedImage(sourceImage, imageViewer.value.sourceScope || 'mine')
+    return
+  }
+
+  downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
 }
 
 function zoomImageViewer(step: number) {
@@ -2515,6 +2750,7 @@ onUnmounted(() => {
                   :src="node.imageUrl"
                   :alt="imageAltText(node)"
                   loading="lazy"
+                  @load="handleNodeImageLoad(node, $event)"
                   @dblclick.stop="openImageViewer(node)"
                 >
                 <button v-else class="pick-image" type="button" @click.stop="chooseImage(node.id)">
@@ -2972,8 +3208,12 @@ onUnmounted(() => {
             <img
               :src="galleryDetailImageUrl(galleryDetail)"
               :alt="galleryPrompt(galleryDetail)"
+              :class="{ 'loading-preview': isGalleryDetailLoadingPreview }"
               draggable="false"
             >
+            <span v-if="isGalleryDetailLoadingPreview" class="gallery-detail-loading">
+              正在加载预览图...
+            </span>
             <button type="button" class="gallery-detail-zoom" title="放大查看" @click="openGalleryDetailViewer">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
                 <circle cx="11" cy="11" r="7" />
@@ -3069,7 +3309,10 @@ onUnmounted(() => {
           <header class="image-viewer-header">
             <div class="image-viewer-meta">
               <strong>{{ imageViewer.title }}</strong>
-              <span>{{ imageViewer.caption }}</span>
+              <span>
+                {{ imageViewer.caption }}
+                <small v-if="imageViewer.loadingPreview">正在加载预览图...</small>
+              </span>
             </div>
             <div class="image-viewer-controls">
               <button type="button" title="缩小" @click="zoomImageViewer(-0.12)">
@@ -3089,7 +3332,7 @@ onUnmounted(() => {
                   <path d="m16 16 4 4" />
                 </svg>
               </button>
-              <button type="button" title="下载" @click="downloadImageUrl(imageViewer.imageUrl, imageViewer.title)">
+              <button type="button" title="下载" @click="downloadImageViewerImage">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                   <path d="M12 3v12" />
                   <path d="m7 10 5 5 5-5" />
@@ -3900,6 +4143,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  height: var(--image-preview-height, 136px);
   min-height: 0;
   margin: 10px 10px 0;
   border-radius: 7px;
@@ -3908,7 +4152,8 @@ onUnmounted(() => {
 }
 
 .image-preview.empty {
-  min-height: 136px;
+  height: var(--image-preview-height, 136px);
+  min-height: 0;
   border: 1px dashed var(--border-strong);
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
@@ -3922,10 +4167,10 @@ onUnmounted(() => {
 
 .image-preview img {
   display: block;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
-  max-height: 206px;
+  max-height: 100%;
   border-radius: 7px;
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
@@ -3939,7 +4184,7 @@ onUnmounted(() => {
 }
 
 .image-preview.generated {
-  max-height: 214px;
+  max-height: none;
 }
 
 .pick-image,
@@ -4088,16 +4333,16 @@ onUnmounted(() => {
   z-index: 110;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 18px;
   background: rgba(10, 15, 25, 0.62);
   backdrop-filter: blur(8px);
 }
 
 .gallery-detail-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 390px;
-  width: min(1180px, calc(100vw - 48px));
-  height: min(760px, calc(100dvh - 48px));
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 410px);
+  width: min(1480px, calc(100vw - 36px));
+  height: min(860px, calc(100dvh - 36px));
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 10px;
@@ -4112,13 +4357,14 @@ onUnmounted(() => {
   justify-content: center;
   min-width: 0;
   min-height: 0;
-  padding: 18px;
+  padding: 14px;
   background: #f8fafc;
 }
 
 .gallery-detail-preview img {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  height: auto;
   max-height: 100%;
   border-radius: 8px;
   background:
@@ -4132,6 +4378,27 @@ onUnmounted(() => {
   object-fit: contain;
   box-shadow: 0 18px 52px rgba(15, 23, 42, 0.16);
   -webkit-user-drag: none;
+}
+
+.gallery-detail-preview img.loading-preview {
+  filter: saturate(0.92);
+}
+
+.gallery-detail-loading {
+  position: absolute;
+  left: 24px;
+  bottom: 22px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  backdrop-filter: blur(8px);
 }
 
 .gallery-detail-zoom {
@@ -4388,6 +4655,13 @@ onUnmounted(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-viewer-meta small {
+  margin-left: 8px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .image-viewer-controls {
