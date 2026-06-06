@@ -37,3 +37,5 @@ export const IMAGE_GEN_API_KEY = process.env.IMAGE_GEN_API_KEY || ''
 export const IMAGE_GEN_BASE_URL = process.env.IMAGE_GEN_BASE_URL || 'https://lucen.plus/v1'
 export const IMAGE_RESPONSES_MODEL = process.env.IMAGE_RESPONSES_MODEL || 'gpt-image-2'
 export const IMAGE_RESPONSES_IMAGE_MODEL = process.env.IMAGE_RESPONSES_IMAGE_MODEL || 'gpt-image-1'
+
+export const IMAGE_ANALYTICS_ENABLED = process.env.IMAGE_ANALYTICS_ENABLED === 'true'

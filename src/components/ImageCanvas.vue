@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
-import type { GeneratedImage, ImageGenRequest } from '../types/image'
+import {
+  buildCanvasExportDocument as buildCanvasExportDocumentPayload,
+  isInputHandle,
+  isOutputHandle,
+  isValidCanvasConnection,
+  normalizeCanvasImport,
+  parseCanvasExportDocument,
+  type CanvasHandle,
+  type CanvasNodeType,
+  type CanvasRuntimeNode,
+  type InputHandle,
+  type OutputHandle,
+} from '../lib/canvas-document'
+import type { GeneratedImage, ImageCanvasContext, ImageGenRequest } from '../types/image'
 
-type CanvasNodeType = 'text' | 'image' | 'generation'
-type OutputHandle = 'text-out' | 'image-out' | 'generation-out'
-type InputHandle = 'prompt-in' | 'reference-in' | 'image-in'
-type CanvasHandle = OutputHandle | InputHandle
 type HandleRole = 'input' | 'output'
-type NodeSize = ImageGenRequest['size']
+type NodeSize = NonNullable<ImageGenRequest['size']>
 type NodeAspectRatio = NonNullable<ImageGenRequest['aspectRatio']>
 type NodeResolution = NonNullable<ImageGenRequest['resolution']>
 type NodeQuality = NonNullable<ImageGenRequest['quality']>
@@ -25,7 +34,7 @@ const emit = defineEmits<{
   workspaceChange: [mode: WorkspaceMode]
 }>()
 
-interface CanvasNode {
+interface CanvasNode extends CanvasRuntimeNode {
   id: string
   type: CanvasNodeType
   x: number
@@ -166,7 +175,32 @@ const IMAGE_CAPTION_HEIGHT = 48
 const IMAGE_OUTPUT_PANEL_HEIGHT = 62
 const IMAGE_ACTIONS_HEIGHT = 44
 const IMAGE_NODE_BORDER_HEIGHT = 2
-const DOWNLOAD_OBJECT_URL_REVOKE_DELAY = 30_000
+const CANVAS_EXPORT_VERSION = 1
+const CANVAS_TITLE = 'Imagio canvas'
+const CANVAS_CONTEXT_ENABLED = import.meta.env.VITE_CANVAS_CONTEXT_ENABLED === 'true'
+const CANVAS_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024
+const SUPABASE_STORAGE_PUBLIC_PATH_PREFIX = '/storage/v1/object/public/'
+// Blob downloads are fallback-only; keep the URL alive long enough for slow download managers to adopt it.
+const DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MINUTES = 5
+const DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MS = DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MINUTES * 60_000
+const IMAGE_DOWNLOAD_EXTENSION_ALIASES = {
+  avif: 'avif',
+  gif: 'gif',
+  jpeg: 'jpg',
+  jpg: 'jpg',
+  png: 'png',
+  webp: 'webp',
+} as const
+type ImageDownloadExtension = typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES[keyof typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES]
+const IMAGE_MIME_EXTENSION_MAP: Record<string, ImageDownloadExtension> = {
+  'image/avif': IMAGE_DOWNLOAD_EXTENSION_ALIASES.avif,
+  'image/gif': IMAGE_DOWNLOAD_EXTENSION_ALIASES.gif,
+  'image/jpeg': IMAGE_DOWNLOAD_EXTENSION_ALIASES.jpg,
+  'image/jpg': IMAGE_DOWNLOAD_EXTENSION_ALIASES.jpg,
+  'image/png': IMAGE_DOWNLOAD_EXTENSION_ALIASES.png,
+  'image/webp': IMAGE_DOWNLOAD_EXTENSION_ALIASES.webp,
+}
+const SUPABASE_STORAGE_ORIGIN = storageOriginFromSupabaseUrl(import.meta.env.VITE_SUPABASE_URL)
 
 const {
   isGenerating,
@@ -188,6 +222,8 @@ const {
 
 const viewportRef = ref<HTMLElement | null>(null)
 const galleryStageRef = ref<HTMLElement | null>(null)
+const canvasImportInputRef = ref<HTMLInputElement | null>(null)
+const pendingCanvasImportMode = ref<'append' | 'replace'>('append')
 const nodes = ref<CanvasNode[]>([
   {
     id: 'node_text_seed',
@@ -254,6 +290,7 @@ const contextMenu = ref<ContextMenuState>({
 })
 
 let idSeed = Date.now()
+const canvasId = `canvas_${idSeed}`
 let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
 let imageViewerLoadSeq = 0
@@ -619,6 +656,116 @@ function cleanNodeCopy(node: CanvasNode): CanvasNode {
   }
 }
 
+function buildCanvasExportDocument() {
+  return buildCanvasExportDocumentPayload({
+    canvasId,
+    title: CANVAS_TITLE,
+    version: CANVAS_EXPORT_VERSION,
+    viewport: { ...viewport.value },
+    nodes: nodes.value,
+    connections: connections.value,
+  })
+}
+
+function buildCanvasContext(node: CanvasNode, userPrompt: string): ImageCanvasContext {
+  const imageNodeCount = nodes.value.filter(item => item.type === 'image').length
+  const textNodeCount = nodes.value.filter(item => item.type === 'text').length
+  const generationNodeCount = nodes.value.filter(item => item.type === 'generation').length
+  const connectedReferences = connectedImageNodes(node).filter(item => item.imageUrl)
+  const mentionedReferences = promptMentionedImageNodesForGeneration(node)
+
+  return {
+    canvasId,
+    nodeCount: nodes.value.length,
+    connectionCount: connections.value.length,
+    imageNodeCount,
+    textNodeCount,
+    generationNodeCount,
+    referenceCount: referencedImageNodes(node).length,
+    mentionedReferenceCount: mentionedReferences.length,
+    connectedReferenceCount: connectedReferences.length,
+    promptCharCount: userPrompt.length,
+    hasConnectedPrompt: hasPromptLink(node),
+    canvasVersion: CANVAS_EXPORT_VERSION,
+  }
+}
+
+function safeCanvasFileName() {
+  const date = new Date().toISOString().slice(0, 10)
+  return `recho-canvas-${date}.json`
+}
+
+function exportCanvasToFile() {
+  const json = JSON.stringify(buildCanvasExportDocument(), null, 2)
+  const objectUrl = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+  triggerDownload(objectUrl, safeCanvasFileName())
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+function importCanvasDocument(document: ReturnType<typeof parseCanvasExportDocument>, mode: 'append' | 'replace' = 'append') {
+  const append = mode === 'append'
+  const imported = normalizeCanvasImport(document, {
+    mode,
+    existingNodeIds: nodes.value.map(node => node.id),
+    createNodeId: type => createId(type),
+    createConnectionId: () => createId('conn'),
+    minNodeScale: MIN_NODE_SCALE,
+    maxNodeScale: MAX_NODE_SCALE,
+    minViewportZoom: MIN_VIEWPORT_ZOOM,
+    maxViewportZoom: MAX_VIEWPORT_ZOOM,
+  })
+  const importedNodes = imported.nodes as CanvasNode[]
+  const importedConnections = imported.connections as Connection[]
+
+  if (append) {
+    nodes.value = [...nodes.value, ...importedNodes]
+    connections.value = [...connections.value, ...importedConnections]
+  } else {
+    nodes.value = importedNodes
+    connections.value = importedConnections
+    viewport.value = imported.viewport
+  }
+
+  selectedNodeId.value = importedNodes[0]?.id ?? null
+  activeWorkspace.value = 'canvas'
+  void nextTick(() => {
+    if (append) fitView()
+  })
+}
+
+function importCanvasFromFile(event: Event, mode: 'append' | 'replace' = 'append') {
+  const input = event.currentTarget as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file) return
+  if (file.size > CANVAS_IMPORT_MAX_FILE_BYTES) {
+    error.value = '画布文件过大，请导入 5MB 以内的 JSON 文件。'
+    if (input) input.value = ''
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    try {
+      const document = parseCanvasExportDocument(JSON.parse(String(reader.result || '')))
+      importCanvasDocument(document, mode)
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '画布导入失败'
+    } finally {
+      if (input) input.value = ''
+    }
+  }
+  reader.onerror = () => {
+    error.value = '画布文件读取失败'
+    if (input) input.value = ''
+  }
+  reader.readAsText(file)
+}
+
+function openCanvasImportPicker(event: MouseEvent) {
+  pendingCanvasImportMode.value = event.shiftKey ? 'replace' : 'append'
+  canvasImportInputRef.value?.click()
+}
+
 function insertNodeCopy(node: CanvasNode) {
   const duplicate: CanvasNode = {
     ...cleanNodeCopy(node),
@@ -959,14 +1106,6 @@ function handleWheel(event: WheelEvent) {
   setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
 }
 
-function isOutputHandle(handle: CanvasHandle): handle is OutputHandle {
-  return handle === 'text-out' || handle === 'image-out' || handle === 'generation-out'
-}
-
-function isInputHandle(handle: CanvasHandle): handle is InputHandle {
-  return handle === 'prompt-in' || handle === 'reference-in' || handle === 'image-in'
-}
-
 function handleRole(handle: CanvasHandle): HandleRole {
   return isOutputHandle(handle) ? 'output' : 'input'
 }
@@ -1034,20 +1173,7 @@ function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHan
 }
 
 function isValidConnection(fromNodeId: string, fromHandle: OutputHandle, toNodeId: string, toHandle: InputHandle) {
-  if (fromNodeId === toNodeId) return false
-  const source = nodes.value.find(node => node.id === fromNodeId)
-  const target = nodes.value.find(node => node.id === toNodeId)
-  if (!source || !target) return false
-  if (source.type === 'text' && fromHandle === 'text-out') {
-    return target.type === 'generation' && toHandle === 'prompt-in'
-  }
-  if (source.type === 'image' && fromHandle === 'image-out') {
-    return target.type === 'generation' && toHandle === 'reference-in'
-  }
-  if (source.type === 'generation' && fromHandle === 'generation-out') {
-    return target.type === 'image' && toHandle === 'image-in'
-  }
-  return false
+  return isValidCanvasConnection(nodes.value, fromNodeId, fromHandle, toNodeId, toHandle)
 }
 
 function outputHandlesForNode(node: CanvasNode): OutputHandle[] {
@@ -2207,6 +2333,9 @@ async function generateFromNode(node: CanvasNode) {
   node.error = null
   node.status = '正在准备生成...'
   const references = await buildReferences(node)
+  const canvasContext = CANVAS_CONTEXT_ENABLED
+    ? buildCanvasContext(node, userPrompt)
+    : undefined
   node.status = references.length
     ? `正在上传 ${references.length} 张参考图并生成...`
     : '正在生成图片...'
@@ -2218,6 +2347,7 @@ async function generateFromNode(node: CanvasNode) {
     resolution: node.resolution,
     quality: node.quality,
     references,
+    ...(canvasContext ? { canvasContext } : {}),
   })
   node.loading = false
   node.status = null
@@ -2326,20 +2456,27 @@ function closeImageViewer() {
   imageViewer.value = null
 }
 
+function storageOriginFromSupabaseUrl(supabaseUrl: string | undefined) {
+  if (!supabaseUrl) return ''
+
+  try {
+    return new URL(supabaseUrl).origin
+  } catch {
+    return ''
+  }
+}
+
+function normalizeImageExtension(extension: string | undefined) {
+  if (!extension) return ''
+  const normalized = extension.toLowerCase().replace(/^\./, '')
+  return IMAGE_DOWNLOAD_EXTENSION_ALIASES[normalized as keyof typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES] || ''
+}
+
 function extensionFromMimeType(mimeType: string | null) {
   const normalized = mimeType?.split(';')[0]?.trim().toLowerCase()
   if (!normalized) return ''
 
-  const extensionMap: Record<string, string> = {
-    'image/avif': 'avif',
-    'image/gif': 'gif',
-    'image/jpeg': 'jpg',
-    'image/jpg': 'jpg',
-    'image/png': 'png',
-    'image/webp': 'webp',
-  }
-
-  return extensionMap[normalized] || ''
+  return IMAGE_MIME_EXTENSION_MAP[normalized] || ''
 }
 
 function extensionFromImageUrl(imageUrl: string) {
@@ -2349,21 +2486,14 @@ function extensionFromImageUrl(imageUrl: string) {
 
   try {
     const pathname = new URL(imageUrl, window.location.href).pathname
-    const extension = pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase()
-    if (extension && ['avif', 'gif', 'jpeg', 'jpg', 'png', 'webp'].includes(extension)) {
-      return extension === 'jpeg' ? 'jpg' : extension
-    }
+    return normalizeImageExtension(pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1])
   } catch {
     return ''
   }
-
-  return ''
 }
 
 function fileExtensionFromTitle(title: string) {
-  const extension = title.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase()
-  if (!extension || !['avif', 'gif', 'jpeg', 'jpg', 'png', 'webp'].includes(extension)) return ''
-  return extension === 'jpeg' ? 'jpg' : extension
+  return normalizeImageExtension(title.match(/\.([a-z0-9]{2,5})$/i)?.[1])
 }
 
 function safeDownloadFileName(title: string, extension: string) {
@@ -2380,10 +2510,20 @@ function safeDownloadFileName(title: string, extension: string) {
   return `${safeBaseName || 'recho_image'}.${normalizedExtension}`
 }
 
+function isSupabaseStorageHost(url: URL) {
+  if (SUPABASE_STORAGE_ORIGIN && url.origin === SUPABASE_STORAGE_ORIGIN) return true
+  return url.protocol === 'https:' && url.hostname.endsWith('.supabase.co')
+}
+
 function directStorageDownloadUrl(imageUrl: string, fileName: string) {
   try {
     const url = new URL(imageUrl, window.location.href)
-    if (!/^https?:$/.test(url.protocol) || !url.pathname.includes('/storage/v1/')) {
+    const isKnownStorageUrl = Boolean(
+      /^https?:$/.test(url.protocol) &&
+      isSupabaseStorageHost(url) &&
+      url.pathname.startsWith(SUPABASE_STORAGE_PUBLIC_PATH_PREFIX),
+    )
+    if (!isKnownStorageUrl) {
       return ''
     }
 
@@ -2425,7 +2565,7 @@ async function downloadImageUrl(imageUrl: string, title: string) {
       || 'png'
     const objectUrl = URL.createObjectURL(blob)
     triggerDownload(objectUrl, safeDownloadFileName(title, extension))
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), DOWNLOAD_OBJECT_URL_REVOKE_DELAY)
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MS)
   } catch (downloadError) {
     console.warn('Image download failed', downloadError)
     error.value = '图片下载失败，请稍后重试。'
@@ -2727,6 +2867,32 @@ onUnmounted(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
             <path d="M3 12a9 9 0 1 0 3-6.7" />
             <path d="M3 4v6h6" />
+          </svg>
+        </button>
+        <input
+          ref="canvasImportInputRef"
+          class="canvas-file-input"
+          type="file"
+          accept="application/json,.json"
+          @change="importCanvasFromFile($event, pendingCanvasImportMode)"
+        >
+        <button
+          class="tool-button"
+          type="button"
+          title="导入画布 JSON，默认追加；按住 Shift 替换"
+          @click="openCanvasImportPicker"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <path d="M12 3v12" />
+            <path d="m7 8 5-5 5 5" />
+            <path d="M5 15v4h14v-4" />
+          </svg>
+        </button>
+        <button class="tool-button" type="button" title="导出画布 JSON" @click="exportCanvasToFile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <path d="M12 21V9" />
+            <path d="m7 16 5 5 5-5" />
+            <path d="M5 5h14v4" />
           </svg>
         </button>
         <button class="tool-button danger" type="button" title="清空画布" @click="clearCanvas">
@@ -5279,6 +5445,10 @@ onUnmounted(() => {
 
 .tool-button.danger:hover {
   color: var(--danger);
+}
+
+.canvas-file-input {
+  display: none;
 }
 
 .canvas-viewport {

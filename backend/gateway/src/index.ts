@@ -10,6 +10,7 @@ import toolsRouter from './routes/tools.js'
 import healthRouter from './routes/health.js'
 import imageRouter from './routes/image.js'
 import imageHistoryRouter from './routes/image-history.js'
+import imageEventsRouter from './routes/image-events.js'
 import configRouter from './routes/config.js'
 
 const app = express()
@@ -28,6 +29,7 @@ app.use('/api', skillsRouter)
 app.use('/api', toolsRouter)
 app.use('/api', imageRouter)
 app.use('/api', imageHistoryRouter)
+app.use('/api', imageEventsRouter)
 app.use('/api', configRouter)
 app.use('/', healthRouter)
 

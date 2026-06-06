@@ -1,6 +1,6 @@
 import { ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
-import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse } from '../types/image'
+import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse, ImageHistoryScope } from '../types/image'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const STORAGE_KEY = 'recho-private-image-history'
@@ -13,7 +13,7 @@ const HISTORY_PAGE_SIZE = 12
 const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
-export type ImageHistoryScope = 'mine' | 'public'
+export type { ImageHistoryScope }
 
 interface ImageHistoryResponse {
   images?: GeneratedImage[]
