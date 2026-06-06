@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
+import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
@@ -22,6 +23,7 @@ interface ImageGenRequest {
   resolution?: ImageResolution
   quality?: ImageQuality
   references?: ImageGenReference[]
+  canvasContext?: ImageCanvasContext
 }
 
 interface ImageGenReference {
@@ -507,6 +509,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     resolution: rawResolution,
     quality: rawQuality,
     references: rawReferences,
+    canvasContext,
   } = req.body as ImageGenRequest
   const aspectRatio = normalizeOption(rawAspectRatio, aspectRatios, 'auto')
   const resolution = normalizeOption(rawResolution, resolutions, 'auto')
@@ -692,6 +695,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       requestIp: generationIp,
       requestUserAgent: generationUserAgent,
     })))
+
+    await Promise.all(responseImages.map(image => recordImageGenerationContext(image.id, userId, canvasContext)))
 
     res.json({ images: responseImages.map(publicHistoryImage) })
   } catch (err: any) {
