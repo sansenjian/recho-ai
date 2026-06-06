@@ -1,6 +1,7 @@
 export type ImageAspectRatio = 'auto' | '1:1' | '3:2' | '2:3' | '16:9' | '9:16'
 export type ImageResolution = 'auto' | '1k' | '2k' | '4k'
 export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
+export type ImageHistoryScope = 'mine' | 'public'
 export type ImageSize =
   | 'auto'
   | '1024x1024'
@@ -43,6 +44,22 @@ export interface ImageGenRequest {
   resolution?: ImageResolution
   quality?: ImageQuality
   references?: ImageGenReference[]
+  canvasContext?: ImageCanvasContext
+}
+
+export interface ImageCanvasContext {
+  canvasId: string
+  nodeCount: number
+  connectionCount: number
+  imageNodeCount: number
+  textNodeCount: number
+  generationNodeCount: number
+  referenceCount: number
+  mentionedReferenceCount: number
+  connectedReferenceCount: number
+  promptCharCount: number
+  hasConnectedPrompt: boolean
+  canvasVersion: number
 }
 
 export interface ImageGenResponse {
