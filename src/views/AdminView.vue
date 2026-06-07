@@ -62,6 +62,23 @@ interface AdminLedgerEntry {
   createdAt: string | null
 }
 
+interface AdminImageItem {
+  id: string
+  userId: string | null
+  email: string | null
+  prompt: string
+  previewUrl: string | null
+  thumbnailUrl: string | null
+  visibility: 'public' | 'private'
+  fundingSource: string | null
+  creditCost: number
+  size: string | null
+  aspectRatio: string | null
+  resolution: string | null
+  quality: string | null
+  generatedAt: string | null
+}
+
 interface AdminOverview {
   users: {
     withCreditRows: number
@@ -118,12 +135,16 @@ const users = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
 const ledgerTransactions = ref<AdminLedgerEntry[]>([])
+const adminImages = ref<AdminImageItem[]>([])
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
 
 const userQuery = ref('')
 const ledgerReason = ref('')
+const imageVisibilityFilter = ref('')
+const imagesLoading = ref(false)
+const imageActionId = ref<string | null>(null)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -224,6 +245,30 @@ function ledgerDetails(tx: AdminLedgerEntry) {
     tx.details.referenceCount !== null && tx.details.referenceCount > 0 ? `参考图 ${tx.details.referenceCount}` : '',
     tx.details.refundReason ? `退款原因 ${tx.details.refundReason}` : '',
     tx.generationId ? `生成 ${shortId(tx.generationId)}` : '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
+}
+
+function imageVisibilityLabel(visibility: AdminImageItem['visibility']) {
+  return visibility === 'private' ? '已隐藏' : '公开'
+}
+
+function imageFundingLabel(image: AdminImageItem) {
+  return image.fundingSource === 'credit' ? '额度' : '免费'
+}
+
+function imagePreviewSrc(image: AdminImageItem) {
+  return image.thumbnailUrl || image.previewUrl || ''
+}
+
+function imageDetails(image: AdminImageItem) {
+  const parts = [
+    image.quality ? `质量 ${image.quality}` : '',
+    image.resolution ? `分辨率 ${image.resolution}` : '',
+    image.size ? `尺寸 ${image.size}` : '',
+    image.aspectRatio ? `比例 ${image.aspectRatio}` : '',
+    image.creditCost > 0 ? `${image.creditCost} 额度` : '',
   ].filter(Boolean)
 
   return parts.length ? parts.join(' / ') : '-'
@@ -332,6 +377,22 @@ async function refreshLedger() {
   }
 }
 
+async function refreshImages() {
+  imagesLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '24')
+    if (imageVisibilityFilter.value) query.set('visibility', imageVisibilityFilter.value)
+    const data = await apiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${query.toString()}`)
+    adminImages.value = data.images
+  } catch (error) {
+    setError(error)
+  } finally {
+    imagesLoading.value = false
+  }
+}
+
 async function selectUser(target: AdminUser) {
   selectedUser.value = target
   errorMessage.value = ''
@@ -341,6 +402,33 @@ async function selectUser(target: AdminUser) {
     transactions.value = data.transactions
   } catch (error) {
     setError(error)
+  }
+}
+
+async function setImageVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
+  if (visibility === 'public' && image.fundingSource === 'credit') return
+  if (visibility === 'private' && !window.confirm('确认从作品广场隐藏这张图片？')) return
+
+  imageActionId.value = image.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ image: AdminImageItem }>(
+      `/api/admin/images/${encodeURIComponent(image.id)}/visibility`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ visibility }),
+      },
+    )
+    const nextImages = adminImages.value.map(item => item.id === data.image.id ? data.image : item)
+    adminImages.value = imageVisibilityFilter.value
+      ? nextImages.filter(item => item.visibility === imageVisibilityFilter.value)
+      : nextImages
+    noticeMessage.value = visibility === 'private' ? '作品已隐藏' : '作品已恢复公开'
+  } catch (error) {
+    setError(error)
+  } finally {
+    imageActionId.value = null
   }
 }
 
@@ -444,7 +532,7 @@ onMounted(async () => {
   await initAuth()
   await checkAdmin()
   if (isAdmin.value) {
-    await Promise.all([refreshOverview(), refreshLedger(), refreshUsers(), refreshCodes()])
+    await Promise.all([refreshOverview(), refreshLedger(), refreshImages(), refreshUsers(), refreshCodes()])
   }
 })
 </script>
@@ -573,6 +661,77 @@ onMounted(async () => {
               </tr>
               <tr v-if="!ledgerTransactions.length">
                 <td colspan="7">暂无流水</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-panel images-panel" aria-label="作品管理">
+        <div class="panel-header image-header">
+          <div>
+            <span>作品管理</span>
+            <strong>{{ adminImages.length }}</strong>
+          </div>
+          <div class="image-controls">
+            <select v-model="imageVisibilityFilter" :disabled="imagesLoading" @change="refreshImages">
+              <option value="">全部状态</option>
+              <option value="public">公开</option>
+              <option value="private">已隐藏</option>
+            </select>
+            <button type="button" :disabled="imagesLoading" @click="refreshImages">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap image-table-wrap">
+          <table class="image-table">
+            <thead>
+              <tr>
+                <th>预览</th>
+                <th>时间</th>
+                <th>用户</th>
+                <th>状态</th>
+                <th>来源</th>
+                <th>参数</th>
+                <th>提示词</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="image in adminImages" :key="image.id">
+                <td>
+                  <img v-if="imagePreviewSrc(image)" class="image-thumb" :src="imagePreviewSrc(image)" alt="">
+                  <span v-else class="image-thumb empty">无图</span>
+                </td>
+                <td>{{ dateTime(image.generatedAt) }}</td>
+                <td>{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
+                <td>{{ imageVisibilityLabel(image.visibility) }}</td>
+                <td>{{ imageFundingLabel(image) }}</td>
+                <td>{{ imageDetails(image) }}</td>
+                <td class="prompt-cell">{{ image.prompt || '-' }}</td>
+                <td>
+                  <button
+                    v-if="image.visibility === 'public'"
+                    type="button"
+                    class="table-action"
+                    :disabled="imageActionId === image.id"
+                    @click="setImageVisibility(image, 'private')"
+                  >
+                    隐藏
+                  </button>
+                  <button
+                    v-else-if="image.fundingSource !== 'credit'"
+                    type="button"
+                    class="table-action"
+                    :disabled="imageActionId === image.id"
+                    @click="setImageVisibility(image, 'public')"
+                  >
+                    公开
+                  </button>
+                  <span v-else class="table-muted">私有</span>
+                </td>
+              </tr>
+              <tr v-if="!adminImages.length">
+                <td colspan="8">暂无作品</td>
               </tr>
             </tbody>
           </table>
@@ -816,6 +975,7 @@ onMounted(async () => {
 .admin-state a,
 .overview-header button,
 .ledger-controls button,
+.image-controls button,
 .panel-header button,
 .search-row button,
 .adjust-form button,
@@ -838,6 +998,7 @@ onMounted(async () => {
 .admin-state a:hover,
 .overview-header button:hover:not(:disabled),
 .ledger-controls button:hover:not(:disabled),
+.image-controls button:hover:not(:disabled),
 .panel-header button:hover:not(:disabled),
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
@@ -972,16 +1133,19 @@ button:disabled {
   box-shadow: var(--shadow-sm);
 }
 
-.ledger-panel {
+.ledger-panel,
+.images-panel {
   max-width: 1360px;
   margin: 0 auto 14px;
 }
 
-.ledger-header {
+.ledger-header,
+.image-header {
   align-items: flex-start;
 }
 
-.ledger-controls {
+.ledger-controls,
+.image-controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1117,6 +1281,45 @@ textarea {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.image-table-wrap {
+  max-height: 560px;
+}
+
+.image-table {
+  min-width: 1080px;
+}
+
+.image-thumb {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.image-thumb.empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.prompt-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-muted {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 table {
