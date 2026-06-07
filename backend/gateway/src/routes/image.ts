@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express'
-import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
+import { IMAGE_CREDIT_COST_PER_IMAGE, IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
 import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
@@ -13,6 +13,7 @@ import {
   reserveUserCredits,
   type CreditReservation,
 } from '../services/credits.js'
+import { imageCreditCost } from '../services/image-credit-cost.js'
 
 const router = Router()
 
@@ -235,10 +236,6 @@ function errorType(err: any) {
   return 'unknown'
 }
 
-function imageCreditCost(count: ImageGenerationCount) {
-  return Math.max(1, Number(count) || 1)
-}
-
 function publicImageErrorMessage(err: any, fallback = '图片生成失败，请稍后重试。') {
   if (typeof err?.publicMessage === 'string' && err.publicMessage) return err.publicMessage
   return publicErrorMessage(err, fallback)
@@ -433,6 +430,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   const requestStartedAt = Date.now()
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
+  const creditCostPerImage = IMAGE_CREDIT_COST_PER_IMAGE
+  const requestedCreditCost = imageCreditCost(count, creditCostPerImage)
   let userId: string | null = null
   let creditReservation: CreditReservation | null = null
   let refundedCredits = 0
@@ -456,6 +455,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         aspectRatio,
         resolution,
         quality,
+        creditCostPerImage,
       })
       refundedCredits += refundAmount
       creditBalance = refund.balance
@@ -498,12 +498,14 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     }
     if (userId) {
       try {
-        creditReservation = await reserveUserCredits(userId, imageCreditCost(count), {
+        creditReservation = await reserveUserCredits(userId, requestedCreditCost, {
           count,
           size,
           aspectRatio,
           resolution,
           quality,
+          creditCostPerImage,
+          creditCost: requestedCreditCost,
           referenceCount: references.length,
         })
         creditBalance = creditReservation.balance
@@ -602,7 +604,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       }
     }
 
-    const maxReturnedImages = creditReservation?.amount ?? count
+    const maxReturnedImages = count
     if (images.length > maxReturnedImages) {
       console.warn(`[image] provider returned ${images.length} image(s); keeping ${maxReturnedImages}`)
       images.length = maxReturnedImages
@@ -617,7 +619,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       references: historyReferences,
       visibility: usesCredits ? 'private' : 'public',
       fundingSource: usesCredits ? 'credit' : 'free',
-      creditCost: usesCredits ? 1 : 0,
+      creditCost: usesCredits ? creditCostPerImage : 0,
       creditTransactionId: creditReservation?.transactionId || null,
     }))
 
@@ -664,8 +666,9 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       return
     }
 
-    if (creditReservation && responseImages.length < creditReservation.amount) {
-      await refundReservedCredits(creditReservation.amount - responseImages.length, 'partial_generation')
+    if (creditReservation && responseImages.length < count) {
+      const missingImages = Math.max(0, count - responseImages.length)
+      await refundReservedCredits(missingImages * creditCostPerImage, 'partial_generation')
     }
 
     const attemptRecords = await Promise.allSettled(responseImages.map(image => recordImageGenerationAttempt({

@@ -37,6 +37,31 @@ interface AdminTransaction {
   created_at: string | null
 }
 
+interface AdminLedgerEntry {
+  id: string
+  userId: string
+  email: string | null
+  amount: number
+  balanceAfter: number
+  reason: string
+  note: string | null
+  generationId: string | null
+  redemptionId: string | null
+  relatedTransactionId: string | null
+  details: {
+    count: number | null
+    creditCostPerImage: number | null
+    creditCost: number | null
+    size: string | null
+    aspectRatio: string | null
+    resolution: string | null
+    quality: string | null
+    referenceCount: number | null
+    refundReason: string | null
+  }
+  createdAt: string | null
+}
+
 interface AdminOverview {
   users: {
     withCreditRows: number
@@ -67,6 +92,9 @@ interface AdminOverview {
       amount: number
     }>
   }
+  settings: {
+    imageCreditCostPerImage: number
+  }
   generatedAt: string
 }
 
@@ -81,6 +109,7 @@ const adminChecked = ref(false)
 const isAdmin = ref(false)
 const loading = ref(false)
 const overviewLoading = ref(false)
+const ledgerLoading = ref(false)
 const actionLoading = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
@@ -88,11 +117,13 @@ const noticeMessage = ref('')
 const users = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
+const ledgerTransactions = ref<AdminLedgerEntry[]>([])
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
 
 const userQuery = ref('')
+const ledgerReason = ref('')
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -179,6 +210,23 @@ function transactionReason(reason: string) {
 function transactionNote(tx: AdminTransaction) {
   const note = tx.metadata?.note
   return typeof note === 'string' && note.trim() ? note : '-'
+}
+
+function ledgerDetails(tx: AdminLedgerEntry) {
+  const parts = [
+    tx.details.count !== null ? `${tx.details.count} 张` : '',
+    tx.details.creditCostPerImage !== null ? `单图 ${tx.details.creditCostPerImage} 额度` : '',
+    tx.details.creditCost !== null ? `合计 ${tx.details.creditCost} 额度` : '',
+    tx.details.quality ? `质量 ${tx.details.quality}` : '',
+    tx.details.resolution ? `分辨率 ${tx.details.resolution}` : '',
+    tx.details.size ? `尺寸 ${tx.details.size}` : '',
+    tx.details.aspectRatio ? `比例 ${tx.details.aspectRatio}` : '',
+    tx.details.referenceCount !== null && tx.details.referenceCount > 0 ? `参考图 ${tx.details.referenceCount}` : '',
+    tx.details.refundReason ? `退款原因 ${tx.details.refundReason}` : '',
+    tx.generationId ? `生成 ${shortId(tx.generationId)}` : '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
 }
 
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -268,6 +316,22 @@ async function refreshOverview() {
   }
 }
 
+async function refreshLedger() {
+  ledgerLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '50')
+    if (ledgerReason.value) query.set('reason', ledgerReason.value)
+    const data = await apiJson<{ transactions: AdminLedgerEntry[] }>(`/api/admin/credits/transactions?${query.toString()}`)
+    ledgerTransactions.value = data.transactions
+  } catch (error) {
+    setError(error)
+  } finally {
+    ledgerLoading.value = false
+  }
+}
+
 async function selectUser(target: AdminUser) {
   selectedUser.value = target
   errorMessage.value = ''
@@ -301,7 +365,7 @@ async function submitAdjustment() {
     users.value = users.value.map(item => item.userId === data.user.userId ? data.user : item)
     adjustNote.value = ''
     noticeMessage.value = '额度已调整'
-    await refreshOverview()
+    await Promise.all([refreshOverview(), refreshLedger()])
   } catch (error) {
     setError(error)
   } finally {
@@ -380,7 +444,7 @@ onMounted(async () => {
   await initAuth()
   await checkAdmin()
   if (isAdmin.value) {
-    await Promise.all([refreshOverview(), refreshUsers(), refreshCodes()])
+    await Promise.all([refreshOverview(), refreshLedger(), refreshUsers(), refreshCodes()])
   }
 })
 </script>
@@ -441,6 +505,10 @@ onMounted(async () => {
             <strong>{{ overview?.users.totalSpent ?? 0 }}</strong>
           </div>
           <div>
+            <span>单图成本</span>
+            <strong>{{ overview?.settings.imageCreditCostPerImage ?? 1 }}</strong>
+          </div>
+          <div>
             <span>兑换码可用</span>
             <strong>{{ overviewCodeHealth }}</strong>
           </div>
@@ -460,6 +528,54 @@ onMounted(async () => {
             <span>7 天净变化</span>
             <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
           </div>
+        </div>
+      </section>
+
+      <section class="admin-panel ledger-panel" aria-label="最近额度流水">
+        <div class="panel-header ledger-header">
+          <div>
+            <span>最近流水</span>
+            <strong>{{ ledgerTransactions.length }}</strong>
+          </div>
+          <div class="ledger-controls">
+            <select v-model="ledgerReason" :disabled="ledgerLoading" @change="refreshLedger">
+              <option value="">全部类型</option>
+              <option value="redemption">兑换</option>
+              <option value="image_generation">生图</option>
+              <option value="refund">退款</option>
+              <option value="admin_adjustment">后台调整</option>
+            </select>
+            <button type="button" :disabled="ledgerLoading" @click="refreshLedger">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户</th>
+                <th>类型</th>
+                <th>变动</th>
+                <th>余额</th>
+                <th>详情</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tx in ledgerTransactions" :key="tx.id">
+                <td>{{ dateTime(tx.createdAt) }}</td>
+                <td>{{ tx.email || shortId(tx.userId) }}</td>
+                <td>{{ transactionReason(tx.reason) }}</td>
+                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
+                <td>{{ tx.balanceAfter }}</td>
+                <td>{{ ledgerDetails(tx) }}</td>
+                <td>{{ tx.note || '-' }}</td>
+              </tr>
+              <tr v-if="!ledgerTransactions.length">
+                <td colspan="7">暂无流水</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -699,6 +815,7 @@ onMounted(async () => {
 .admin-nav a,
 .admin-state a,
 .overview-header button,
+.ledger-controls button,
 .panel-header button,
 .search-row button,
 .adjust-form button,
@@ -720,6 +837,7 @@ onMounted(async () => {
 .admin-nav a:hover,
 .admin-state a:hover,
 .overview-header button:hover:not(:disabled),
+.ledger-controls button:hover:not(:disabled),
 .panel-header button:hover:not(:disabled),
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
@@ -812,7 +930,7 @@ button:disabled {
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px;
 }
 
@@ -854,6 +972,23 @@ button:disabled {
   box-shadow: var(--shadow-sm);
 }
 
+.ledger-panel {
+  max-width: 1360px;
+  margin: 0 auto 14px;
+}
+
+.ledger-header {
+  align-items: flex-start;
+}
+
+.ledger-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .panel-header,
 .created-actions {
   display: flex;
@@ -877,6 +1012,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-height: 36px;
@@ -885,6 +1021,11 @@ textarea {
   background: var(--input-bg);
   color: var(--text-primary);
   padding: 7px 9px;
+}
+
+select {
+  min-width: 130px;
+  cursor: pointer;
 }
 
 textarea {

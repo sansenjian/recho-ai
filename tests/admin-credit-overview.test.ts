@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeAdminCreditOverview } from '../backend/gateway/src/services/admin-credits'
+import {
+  summarizeAdminCreditOverview,
+  toAdminCreditLedgerEntry,
+} from '../backend/gateway/src/services/admin-credits'
 
 describe('admin credit overview helpers', () => {
   it('summarizes balances, code states, and recent ledger totals', () => {
@@ -23,6 +26,7 @@ describe('admin credit overview helpers', () => {
         { amount: -5, reason: 'admin_adjustment', created_at: '2026-06-07T15:00:00.000Z' },
         { amount: 30, reason: 'redemption', created_at: '2026-05-01T00:00:00.000Z' },
       ],
+      imageCreditCostPerImage: 3,
     })
 
     expect(overview.users).toEqual({
@@ -53,6 +57,9 @@ describe('admin credit overview helpers', () => {
       { reason: 'refund', count: 1, amount: 1 },
       { reason: 'admin_adjustment', count: 1, amount: -5 },
     ])
+    expect(overview.settings).toEqual({
+      imageCreditCostPerImage: 3,
+    })
   })
 
   it('treats empty or malformed rows as zero-safe data', () => {
@@ -67,5 +74,46 @@ describe('admin credit overview helpers', () => {
     expect(overview.codes.totalIssuedCredits).toBe(0)
     expect(overview.codes.exhausted).toBe(1)
     expect(overview.transactions.last7Days.totalCount).toBe(0)
+  })
+
+  it('returns a redacted whitelist view for ledger metadata', () => {
+    const entry = toAdminCreditLedgerEntry({
+      id: 'tx_1',
+      user_id: 'user_1',
+      amount: -6,
+      balance_after: 10,
+      reason: 'image_generation',
+      generation_id: 'generation_123456789',
+      metadata: {
+        count: 2,
+        creditCostPerImage: 3,
+        creditCost: 6,
+        quality: 'high',
+        resolution: '2k',
+        size: '2048x2048',
+        aspectRatio: '1:1',
+        referenceCount: 1,
+        reason: 'https://secret.example.com/refund',
+        note: 'token=abc123 api_key=sk-this-secret-should-not-leak-1234567890',
+        rawPrompt: 'do not expose this prompt',
+      },
+      created_at: '2026-06-08T12:00:00.000Z',
+    })
+
+    expect(entry.details).toMatchObject({
+      count: 2,
+      creditCostPerImage: 3,
+      creditCost: 6,
+      quality: 'high',
+      resolution: '2k',
+      size: '2048x2048',
+      aspectRatio: '1:1',
+      referenceCount: 1,
+      refundReason: '[redacted-url]',
+    })
+    expect(entry.note).toContain('[redacted-secret]')
+    expect(JSON.stringify(entry)).not.toContain('rawPrompt')
+    expect(JSON.stringify(entry)).not.toContain('secret.example.com')
+    expect(JSON.stringify(entry)).not.toContain('sk-this-secret')
   })
 })

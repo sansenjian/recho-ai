@@ -1,7 +1,8 @@
 import type { User } from '@supabase/supabase-js'
-import { ADMIN_USER_EMAILS, ADMIN_USER_IDS } from '../config.js'
+import { ADMIN_USER_EMAILS, ADMIN_USER_IDS, IMAGE_CREDIT_COST_PER_IMAGE } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { createRandomCreditCode, creditCodeHash, normalizeCreditCode } from './credit-code.js'
+import { redactSensitiveText } from './safe-error.js'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
@@ -70,7 +71,35 @@ export interface AdminCreditOverview {
       amount: number
     }>
   }
+  settings: {
+    imageCreditCostPerImage: number
+  }
   generatedAt: string
+}
+
+export interface AdminCreditLedgerEntry {
+  id: string
+  userId: string
+  email: string | null
+  amount: number
+  balanceAfter: number
+  reason: string
+  note: string | null
+  generationId: string | null
+  redemptionId: string | null
+  relatedTransactionId: string | null
+  details: {
+    count: number | null
+    creditCostPerImage: number | null
+    creditCost: number | null
+    size: string | null
+    aspectRatio: string | null
+    resolution: string | null
+    quality: string | null
+    referenceCount: number | null
+    refundReason: string | null
+  }
+  createdAt: string | null
 }
 
 export class AdminCreditError extends Error {
@@ -147,10 +176,21 @@ function sanitizedLimit(value: unknown) {
   return Math.min(MAX_LIMIT, Math.max(1, Math.round(number)))
 }
 
+function sanitizedReason(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const reason = value.trim()
+  return (CREDIT_TRANSACTION_REASONS as readonly string[]).includes(reason) ? reason : null
+}
+
 function sanitizeText(value: unknown, maxLength = 240) {
   if (typeof value !== 'string') return null
   const text = value.trim()
   return text ? text.slice(0, maxLength) : null
+}
+
+function safeDisplayText(value: unknown, maxLength = 240) {
+  const text = sanitizeText(value, maxLength)
+  return text ? redactSensitiveText(text) : null
 }
 
 function parseDate(value: unknown) {
@@ -225,11 +265,59 @@ function creditCodeState(row: Record<string, unknown>, nowMs: number) {
   return 'active'
 }
 
+function stringField(row: Record<string, unknown>, key: string) {
+  const value = row[key]
+  return typeof value === 'string' && value ? value : null
+}
+
+function metadataRecord(value: unknown) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function toLedgerDetails(metadata: Record<string, unknown>) {
+  return {
+    count: Number.isFinite(Number(metadata.count)) ? normalizedInteger(metadata.count) : null,
+    creditCostPerImage: Number.isFinite(Number(metadata.creditCostPerImage)) ? normalizedInteger(metadata.creditCostPerImage) : null,
+    creditCost: Number.isFinite(Number(metadata.creditCost)) ? normalizedInteger(metadata.creditCost) : null,
+    size: safeDisplayText(metadata.size, 32),
+    aspectRatio: safeDisplayText(metadata.aspectRatio, 24),
+    resolution: safeDisplayText(metadata.resolution, 24),
+    quality: safeDisplayText(metadata.quality, 24),
+    referenceCount: Number.isFinite(Number(metadata.referenceCount)) ? normalizedInteger(metadata.referenceCount) : null,
+    refundReason: safeDisplayText(metadata.reason, 80),
+  }
+}
+
+export function toAdminCreditLedgerEntry(
+  row: Record<string, unknown>,
+  user?: ReturnType<typeof toUserSummary>,
+): AdminCreditLedgerEntry {
+  const metadata = metadataRecord(row.metadata)
+
+  return {
+    id: String(row.id || ''),
+    userId: String(row.user_id || ''),
+    email: user?.email || null,
+    amount: normalizedSignedInteger(row.amount),
+    balanceAfter: normalizedInteger(row.balance_after),
+    reason: typeof row.reason === 'string' && row.reason ? row.reason : 'unknown',
+    note: safeDisplayText(metadata.note, 240),
+    generationId: stringField(row, 'generation_id'),
+    redemptionId: stringField(row, 'redemption_id'),
+    relatedTransactionId: stringField(row, 'related_transaction_id'),
+    details: toLedgerDetails(metadata),
+    createdAt: stringField(row, 'created_at'),
+  }
+}
+
 export function summarizeAdminCreditOverview(input: {
   balanceRows?: Array<Record<string, unknown>>
   codeRows?: Array<Record<string, unknown>>
   transactionRows?: Array<Record<string, unknown>>
   now?: Date
+  imageCreditCostPerImage?: number
 }): Omit<AdminCreditOverview, 'generatedAt'> {
   const now = input.now || new Date()
   const nowMs = now.getTime()
@@ -309,6 +397,9 @@ export function summarizeAdminCreditOverview(input: {
     transactions: {
       last7Days,
       byReason: Array.from(reasonTotals.values()).filter(item => item.count > 0),
+    },
+    settings: {
+      imageCreditCostPerImage: normalizedInteger(input.imageCreditCostPerImage ?? IMAGE_CREDIT_COST_PER_IMAGE),
     },
   }
 }
@@ -452,6 +543,7 @@ export async function getAdminCreditOverview() {
       codeRows,
       transactionRows,
       now,
+      imageCreditCostPerImage: IMAGE_CREDIT_COST_PER_IMAGE,
     }),
     generatedAt: now.toISOString(),
   }
@@ -475,6 +567,43 @@ export async function listAdminCreditTransactions(userId: string, limitValue?: u
     .limit(limit)
   if (error) throw error
   return data || []
+}
+
+export async function listAdminCreditLedger(options: {
+  limit?: unknown
+  reason?: unknown
+} = {}) {
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(options.limit)
+  const reason = sanitizedReason(options.reason)
+
+  let query = client
+    .from('credit_transactions')
+    .select('id,user_id,amount,balance_after,reason,redemption_id,related_transaction_id,generation_id,metadata,created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (reason) query = query.eq('reason', reason)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  const rows = (data || []) as Array<Record<string, unknown>>
+  const userIds = Array.from(new Set(
+    rows
+      .map(row => String(row.user_id || ''))
+      .filter(Boolean),
+  ))
+  const users = new Map<string, ReturnType<typeof toUserSummary>>()
+
+  await Promise.all(userIds.map(async userId => {
+    const { data: userData, error: userError } = await client.auth.admin.getUserById(userId)
+    if (!userError && userData.user) {
+      users.set(userId, toUserSummary(userData.user))
+    }
+  }))
+
+  return rows.map(row => toAdminCreditLedgerEntry(row, users.get(String(row.user_id || ''))))
 }
 
 export async function listAdminCreditCodes(options: { limit?: unknown } = {}) {

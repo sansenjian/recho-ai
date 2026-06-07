@@ -7,6 +7,7 @@ import {
   getAdminCreditOverview,
   getAdminCreditUser,
   listAdminCreditCodes,
+  listAdminCreditLedger,
   listAdminCreditTransactions,
   listAdminCreditUsers,
   setAdminCreditCodeDisabled,
@@ -72,6 +73,21 @@ router.get('/admin/credits/overview', async (req: Request, res: Response) => {
     res.json({ overview })
   } catch (err) {
     console.error('[admin-credits] overview failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/credits/transactions', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const transactions = await listAdminCreditLedger({
+      limit: req.query.limit,
+      reason: req.query.reason,
+    })
+    res.json({ transactions })
+  } catch (err) {
+    console.error('[admin-credits] ledger failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }
