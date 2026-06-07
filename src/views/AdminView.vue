@@ -28,6 +28,16 @@ interface AdminCode {
   createdAt: string | null
 }
 
+interface AdminCodeRedemption {
+  id: string
+  userId: string
+  email: string | null
+  credits: number
+  redeemedAt: string | null
+  transactionId: string | null
+  balanceAfter: number | null
+}
+
 interface AdminTransaction {
   id: string
   amount: number
@@ -203,6 +213,8 @@ const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
 const systemStatus = ref<AdminSystemStatus | null>(null)
+const selectedCode = ref<AdminCode | null>(null)
+const codeRedemptions = ref<AdminCodeRedemption[]>([])
 
 const userQuery = ref('')
 const ledgerReason = ref('')
@@ -211,6 +223,7 @@ const imagesLoading = ref(false)
 const imageActionId = ref<string | null>(null)
 const attemptStatusFilter = ref('')
 const attemptsLoading = ref(false)
+const codeRedemptionsLoading = ref(false)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -448,6 +461,10 @@ async function refreshCodes() {
   try {
     const data = await apiJson<{ codes: AdminCode[] }>('/api/admin/credits/codes?limit=50')
     codes.value = data.codes
+    if (selectedCode.value) {
+      selectedCode.value = data.codes.find(code => code.id === selectedCode.value?.id) || null
+      if (!selectedCode.value) codeRedemptions.value = []
+    }
   } catch (error) {
     setError(error)
   } finally {
@@ -628,6 +645,23 @@ async function createCodes() {
   }
 }
 
+async function viewCodeRedemptions(code: AdminCode) {
+  selectedCode.value = code
+  codeRedemptions.value = []
+  codeRedemptionsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ redemptions: AdminCodeRedemption[] }>(
+      `/api/admin/credits/codes/${encodeURIComponent(code.id)}/redemptions?limit=50`,
+    )
+    codeRedemptions.value = data.redemptions
+  } catch (error) {
+    setError(error)
+  } finally {
+    codeRedemptionsLoading.value = false
+  }
+}
+
 async function setCodeDisabled(code: AdminCode, disabled: boolean) {
   if (disabled && !window.confirm('确认停用这个兑换码？')) return
   actionLoading.value = true
@@ -638,6 +672,7 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
       body: JSON.stringify({ disabled }),
     })
     codes.value = codes.value.map(item => item.id === data.code.id ? data.code : item)
+    if (selectedCode.value?.id === data.code.id) selectedCode.value = data.code
     noticeMessage.value = disabled ? '兑换码已停用' : '兑换码已恢复'
     await refreshOverview()
   } catch (error) {
@@ -1194,6 +1229,15 @@ onMounted(async () => {
                   <td>{{ codeStatus(code) }}</td>
                   <td>{{ code.note || '-' }}</td>
                   <td>
+                    <div class="code-actions">
+                      <button
+                        type="button"
+                        class="table-action"
+                        :disabled="codeRedemptionsLoading && selectedCode?.id === code.id"
+                        @click="viewCodeRedemptions(code)"
+                      >
+                        明细
+                      </button>
                     <button
                       type="button"
                       class="table-action"
@@ -1202,6 +1246,7 @@ onMounted(async () => {
                     >
                       {{ code.disabledAt ? '恢复' : '停用' }}
                     </button>
+                    </div>
                   </td>
                 </tr>
                 <tr v-if="!codes.length">
@@ -1209,6 +1254,38 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="selectedCode" class="code-redemptions">
+            <div class="created-actions">
+              <strong>兑换明细</strong>
+              <span>{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
+              <button type="button" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode)">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table class="code-redemption-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>用户</th>
+                    <th>额度</th>
+                    <th>余额</th>
+                    <th>流水</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="redemption in codeRedemptions" :key="redemption.id">
+                    <td>{{ dateTime(redemption.redeemedAt) }}</td>
+                    <td>{{ redemption.email || shortId(redemption.userId) }}</td>
+                    <td>{{ redemption.credits }}</td>
+                    <td>{{ redemption.balanceAfter ?? '-' }}</td>
+                    <td>{{ redemption.transactionId ? shortId(redemption.transactionId) : '-' }}</td>
+                  </tr>
+                  <tr v-if="!codeRedemptions.length">
+                    <td colspan="5">{{ codeRedemptionsLoading ? '正在加载' : '暂无兑换记录' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -1790,6 +1867,20 @@ tbody tr:last-child td {
 
 .created-codes {
   margin-top: 12px;
+}
+
+.code-redemptions {
+  margin-top: 12px;
+}
+
+.code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.code-redemption-table {
+  min-width: 620px;
 }
 
 .created-actions {

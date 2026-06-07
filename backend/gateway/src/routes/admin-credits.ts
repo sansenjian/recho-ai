@@ -7,6 +7,7 @@ import {
   getAdminCreditOverview,
   getAdminCreditUser,
   listAdminCreditCodes,
+  listAdminCreditCodeRedemptions,
   listAdminCreditLedger,
   listAdminCreditTransactions,
   listAdminCreditUsers,
@@ -134,6 +135,18 @@ router.get('/admin/credits/codes', async (req: Request, res: Response) => {
     res.json({ codes })
   } catch (err) {
     console.error('[admin-credits] list codes failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/credits/codes/:codeId/redemptions', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const redemptions = await listAdminCreditCodeRedemptions(routeParam(req.params.codeId), req.query.limit)
+    res.json({ redemptions })
+  } catch (err) {
+    console.error('[admin-credits] list code redemptions failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }

@@ -102,6 +102,16 @@ export interface AdminCreditLedgerEntry {
   createdAt: string | null
 }
 
+export interface AdminCreditCodeRedemption {
+  id: string
+  userId: string
+  email: string | null
+  credits: number
+  redeemedAt: string | null
+  transactionId: string | null
+  balanceAfter: number | null
+}
+
 export class AdminCreditError extends Error {
   status: number
   publicMessage: string
@@ -255,6 +265,22 @@ function toCreditCode(row: Record<string, unknown>): AdminCreditCode {
   }
 }
 
+function toCreditCodeRedemption(
+  row: Record<string, unknown>,
+  user?: ReturnType<typeof toUserSummary>,
+  transaction?: Record<string, unknown>,
+): AdminCreditCodeRedemption {
+  return {
+    id: String(row.id || ''),
+    userId: String(row.user_id || ''),
+    email: user?.email || null,
+    credits: normalizedInteger(row.credits),
+    redeemedAt: stringField(row, 'redeemed_at'),
+    transactionId: transaction ? String(transaction.id || '') || null : null,
+    balanceAfter: transaction ? normalizedInteger(transaction.balance_after) : null,
+  }
+}
+
 function creditCodeState(row: Record<string, unknown>, nowMs: number) {
   if (row.disabled_at) return 'disabled'
   if (typeof row.expires_at === 'string' && new Date(row.expires_at).getTime() <= nowMs) return 'expired'
@@ -274,6 +300,19 @@ function metadataRecord(value: unknown) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
+}
+
+async function usersById(client: ReturnType<typeof requireAdminClient>, userIds: string[]) {
+  const users = new Map<string, ReturnType<typeof toUserSummary>>()
+
+  await Promise.all(userIds.map(async userId => {
+    const { data: userData, error: userError } = await client.auth.admin.getUserById(userId)
+    if (!userError && userData.user) {
+      users.set(userId, toUserSummary(userData.user))
+    }
+  }))
+
+  return users
 }
 
 function toLedgerDetails(metadata: Record<string, unknown>) {
@@ -594,14 +633,7 @@ export async function listAdminCreditLedger(options: {
       .map(row => String(row.user_id || ''))
       .filter(Boolean),
   ))
-  const users = new Map<string, ReturnType<typeof toUserSummary>>()
-
-  await Promise.all(userIds.map(async userId => {
-    const { data: userData, error: userError } = await client.auth.admin.getUserById(userId)
-    if (!userError && userData.user) {
-      users.set(userId, toUserSummary(userData.user))
-    }
-  }))
+  const users = await usersById(client, userIds)
 
   return rows.map(row => toAdminCreditLedgerEntry(row, users.get(String(row.user_id || ''))))
 }
@@ -616,6 +648,59 @@ export async function listAdminCreditCodes(options: { limit?: unknown } = {}) {
     .limit(limit)
   if (error) throw error
   return (data || []).map(row => toCreditCode(row as Record<string, unknown>))
+}
+
+export async function listAdminCreditCodeRedemptions(codeId: string, limitValue?: unknown) {
+  if (!isUuid(codeId)) throw new AdminCreditError('invalid_code_id')
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(limitValue)
+
+  const { data: code, error: codeError } = await client
+    .from('credit_redemption_codes')
+    .select('id')
+    .eq('id', codeId)
+    .maybeSingle()
+  if (codeError) throw codeError
+  if (!code) throw new AdminCreditError('invalid_code_id')
+
+  const { data, error } = await client
+    .from('credit_redemptions')
+    .select('id,code_id,user_id,credits,redeemed_at')
+    .eq('code_id', codeId)
+    .order('redeemed_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+
+  const rows = (data || []) as Array<Record<string, unknown>>
+  const redemptionIds = rows.map(row => String(row.id || '')).filter(Boolean)
+  const userIds = Array.from(new Set(rows.map(row => String(row.user_id || '')).filter(Boolean)))
+  const users = await usersById(client, userIds)
+  const transactions = new Map<string, Record<string, unknown>>()
+
+  if (redemptionIds.length) {
+    const { data: transactionRows, error: transactionError } = await client
+      .from('credit_transactions')
+      .select('id,redemption_id,balance_after')
+      .in('redemption_id', redemptionIds)
+      .eq('reason', 'redemption')
+    if (transactionError) throw transactionError
+
+    for (const row of transactionRows || []) {
+      const redemptionId = String((row as Record<string, unknown>).redemption_id || '')
+      if (redemptionId && !transactions.has(redemptionId)) {
+        transactions.set(redemptionId, row as Record<string, unknown>)
+      }
+    }
+  }
+
+  return rows.map(row => {
+    const redemptionId = String(row.id || '')
+    return toCreditCodeRedemption(
+      row,
+      users.get(String(row.user_id || '')),
+      transactions.get(redemptionId),
+    )
+  })
 }
 
 export async function createAdminCreditCodes(input: Record<string, unknown>) {
