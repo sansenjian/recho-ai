@@ -79,6 +79,32 @@ interface AdminImageItem {
   generatedAt: string | null
 }
 
+interface AdminImageAttemptItem {
+  id: string
+  generationId: string | null
+  userId: string | null
+  email: string | null
+  status: 'succeeded' | 'failed'
+  latencyMs: number | null
+  errorType: string | null
+  errorCode: string | null
+  errorMessage: string | null
+  httpStatus: number | null
+  createdAt: string | null
+}
+
+interface AdminImageAttemptOverview {
+  total: number
+  succeeded: number
+  failed: number
+  failureRate: number
+  averageLatencyMs: number | null
+  byErrorType: Array<{
+    errorType: string
+    count: number
+  }>
+}
+
 interface AdminOverview {
   users: {
     withCreditRows: number
@@ -136,6 +162,8 @@ const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
 const ledgerTransactions = ref<AdminLedgerEntry[]>([])
 const adminImages = ref<AdminImageItem[]>([])
+const imageAttempts = ref<AdminImageAttemptItem[]>([])
+const imageAttemptOverview = ref<AdminImageAttemptOverview | null>(null)
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
@@ -145,6 +173,8 @@ const ledgerReason = ref('')
 const imageVisibilityFilter = ref('')
 const imagesLoading = ref(false)
 const imageActionId = ref<string | null>(null)
+const attemptStatusFilter = ref('')
+const attemptsLoading = ref(false)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -274,6 +304,27 @@ function imageDetails(image: AdminImageItem) {
   return parts.length ? parts.join(' / ') : '-'
 }
 
+function attemptStatusLabel(status: AdminImageAttemptItem['status']) {
+  return status === 'succeeded' ? '成功' : '失败'
+}
+
+function latencyLabel(value: number | null) {
+  if (value === null) return '-'
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`
+  return `${value}ms`
+}
+
+function attemptErrorSummary(attempt: AdminImageAttemptItem) {
+  const parts = [
+    attempt.errorType || '',
+    attempt.httpStatus !== null ? `HTTP ${attempt.httpStatus}` : '',
+    attempt.errorCode || '',
+    attempt.errorMessage || '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
+}
+
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAuthAccessToken()
   if (!token) throw new Error('请先登录。')
@@ -390,6 +441,26 @@ async function refreshImages() {
     setError(error)
   } finally {
     imagesLoading.value = false
+  }
+}
+
+async function refreshAttempts() {
+  attemptsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '40')
+    if (attemptStatusFilter.value) query.set('status', attemptStatusFilter.value)
+    const data = await apiJson<{
+      overview: AdminImageAttemptOverview
+      attempts: AdminImageAttemptItem[]
+    }>(`/api/admin/image-attempts?${query.toString()}`)
+    imageAttemptOverview.value = data.overview
+    imageAttempts.value = data.attempts
+  } catch (error) {
+    setError(error)
+  } finally {
+    attemptsLoading.value = false
   }
 }
 
@@ -532,7 +603,14 @@ onMounted(async () => {
   await initAuth()
   await checkAdmin()
   if (isAdmin.value) {
-    await Promise.all([refreshOverview(), refreshLedger(), refreshImages(), refreshUsers(), refreshCodes()])
+    await Promise.all([
+      refreshOverview(),
+      refreshLedger(),
+      refreshImages(),
+      refreshAttempts(),
+      refreshUsers(),
+      refreshCodes(),
+    ])
   }
 })
 </script>
@@ -732,6 +810,77 @@ onMounted(async () => {
               </tr>
               <tr v-if="!adminImages.length">
                 <td colspan="8">暂无作品</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-panel attempts-panel" aria-label="生图监控">
+        <div class="panel-header attempt-header">
+          <div>
+            <span>生图监控</span>
+            <strong>{{ imageAttemptOverview?.total ?? 0 }}</strong>
+          </div>
+          <div class="attempt-controls">
+            <select v-model="attemptStatusFilter" :disabled="attemptsLoading" @change="refreshAttempts">
+              <option value="">全部状态</option>
+              <option value="succeeded">成功</option>
+              <option value="failed">失败</option>
+            </select>
+            <button type="button" :disabled="attemptsLoading" @click="refreshAttempts">刷新</button>
+          </div>
+        </div>
+        <div class="attempt-metrics">
+          <div>
+            <span>24h 成功</span>
+            <strong>{{ imageAttemptOverview?.succeeded ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>24h 失败</span>
+            <strong>{{ imageAttemptOverview?.failed ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>失败率</span>
+            <strong>{{ imageAttemptOverview?.failureRate ?? 0 }}%</strong>
+          </div>
+          <div>
+            <span>平均耗时</span>
+            <strong>{{ latencyLabel(imageAttemptOverview?.averageLatencyMs ?? null) }}</strong>
+          </div>
+        </div>
+        <div class="attempt-error-list">
+          <span
+            v-for="item in imageAttemptOverview?.byErrorType || []"
+            :key="item.errorType"
+          >
+            {{ item.errorType }} · {{ item.count }}
+          </span>
+          <span v-if="!(imageAttemptOverview?.byErrorType || []).length">暂无错误类型</span>
+        </div>
+        <div class="table-wrap attempt-table-wrap">
+          <table class="attempt-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户</th>
+                <th>状态</th>
+                <th>耗时</th>
+                <th>生成 ID</th>
+                <th>错误摘要</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="attempt in imageAttempts" :key="attempt.id">
+                <td>{{ dateTime(attempt.createdAt) }}</td>
+                <td>{{ attempt.email || (attempt.userId ? shortId(attempt.userId) : '-') }}</td>
+                <td :class="attempt.status === 'succeeded' ? 'positive' : 'negative'">{{ attemptStatusLabel(attempt.status) }}</td>
+                <td>{{ latencyLabel(attempt.latencyMs) }}</td>
+                <td>{{ attempt.generationId ? shortId(attempt.generationId) : '-' }}</td>
+                <td class="attempt-error-cell">{{ attemptErrorSummary(attempt) }}</td>
+              </tr>
+              <tr v-if="!imageAttempts.length">
+                <td colspan="6">暂无尝试记录</td>
               </tr>
             </tbody>
           </table>
@@ -976,6 +1125,7 @@ onMounted(async () => {
 .overview-header button,
 .ledger-controls button,
 .image-controls button,
+.attempt-controls button,
 .panel-header button,
 .search-row button,
 .adjust-form button,
@@ -999,6 +1149,7 @@ onMounted(async () => {
 .overview-header button:hover:not(:disabled),
 .ledger-controls button:hover:not(:disabled),
 .image-controls button:hover:not(:disabled),
+.attempt-controls button:hover:not(:disabled),
 .panel-header button:hover:not(:disabled),
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
@@ -1134,18 +1285,21 @@ button:disabled {
 }
 
 .ledger-panel,
-.images-panel {
+.images-panel,
+.attempts-panel {
   max-width: 1360px;
   margin: 0 auto 14px;
 }
 
 .ledger-header,
-.image-header {
+.image-header,
+.attempt-header {
   align-items: flex-start;
 }
 
 .ledger-controls,
-.image-controls {
+.image-controls,
+.attempt-controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1322,6 +1476,61 @@ textarea {
   font-weight: 800;
 }
 
+.attempt-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.attempt-metrics div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.attempt-metrics span,
+.attempt-error-list span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attempt-metrics strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 18px;
+}
+
+.attempt-error-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.attempt-error-list span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.attempt-table {
+  min-width: 920px;
+}
+
+.attempt-error-cell {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1378,6 +1587,10 @@ tbody tr:last-child td {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .attempt-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -1402,6 +1615,10 @@ tbody tr:last-child td {
 
   .overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .attempt-metrics {
+    grid-template-columns: 1fr;
   }
 
   .code-form .wide {
