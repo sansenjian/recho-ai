@@ -105,6 +105,40 @@ interface AdminImageAttemptOverview {
   }>
 }
 
+interface AdminSystemTableStatus {
+  key: string
+  label: string
+  status: 'ok' | 'missing' | 'restricted' | 'error' | 'unavailable'
+  count: number | null
+  message: string
+}
+
+interface AdminSystemStatus {
+  generatedAt: string
+  status: 'ok' | 'warning' | 'error'
+  config: {
+    supabase: {
+      publicConfigured: boolean
+      adminConfigured: boolean
+      imageBucketConfigured: boolean
+    }
+    imageGeneration: {
+      apiKeyConfigured: boolean
+      creditCostPerImage: number
+      analyticsEnabled: boolean
+    }
+    adminUsers: {
+      configured: boolean
+      userIdCount: number
+      emailCount: number
+    }
+  }
+  data: {
+    tables: AdminSystemTableStatus[]
+  }
+  warnings: string[]
+}
+
 interface AdminOverview {
   users: {
     withCreditRows: number
@@ -152,6 +186,7 @@ const adminChecked = ref(false)
 const isAdmin = ref(false)
 const loading = ref(false)
 const overviewLoading = ref(false)
+const systemLoading = ref(false)
 const ledgerLoading = ref(false)
 const actionLoading = ref(false)
 const errorMessage = ref('')
@@ -167,6 +202,7 @@ const imageAttemptOverview = ref<AdminImageAttemptOverview | null>(null)
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
+const systemStatus = ref<AdminSystemStatus | null>(null)
 
 const userQuery = ref('')
 const ledgerReason = ref('')
@@ -206,6 +242,18 @@ const overviewNetChange = computed(() => {
 const overviewGeneratedAt = computed(() => {
   if (!overview.value) return '等待刷新'
   return `更新 ${dateTime(overview.value.generatedAt)}`
+})
+
+const systemGeneratedAt = computed(() => {
+  if (!systemStatus.value) return '等待检查'
+  return `检查 ${dateTime(systemStatus.value.generatedAt)}`
+})
+
+const systemStatusLabel = computed(() => {
+  if (!systemStatus.value) return '待检查'
+  if (systemStatus.value.status === 'ok') return '正常'
+  if (systemStatus.value.status === 'warning') return '有告警'
+  return '需处理'
 })
 
 const createdCsv = computed(() => {
@@ -325,6 +373,14 @@ function attemptErrorSummary(attempt: AdminImageAttemptItem) {
   return parts.length ? parts.join(' / ') : '-'
 }
 
+function tableStatusLabel(status: AdminSystemTableStatus['status']) {
+  if (status === 'ok') return '正常'
+  if (status === 'missing') return '缺失'
+  if (status === 'restricted') return '受限'
+  if (status === 'unavailable') return '未配置'
+  return '异常'
+}
+
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAuthAccessToken()
   if (!token) throw new Error('请先登录。')
@@ -409,6 +465,19 @@ async function refreshOverview() {
     setError(error)
   } finally {
     overviewLoading.value = false
+  }
+}
+
+async function refreshSystem() {
+  systemLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ system: AdminSystemStatus }>('/api/admin/system')
+    systemStatus.value = data.system
+  } catch (error) {
+    setError(error)
+  } finally {
+    systemLoading.value = false
   }
 }
 
@@ -605,6 +674,7 @@ onMounted(async () => {
   if (isAdmin.value) {
     await Promise.all([
       refreshOverview(),
+      refreshSystem(),
       refreshLedger(),
       refreshImages(),
       refreshAttempts(),
@@ -694,6 +764,73 @@ onMounted(async () => {
             <span>7 天净变化</span>
             <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
           </div>
+        </div>
+      </section>
+
+      <section class="admin-panel system-panel" aria-label="系统状态">
+        <div class="panel-header system-header">
+          <div>
+            <span>系统状态</span>
+            <strong>{{ systemGeneratedAt }}</strong>
+          </div>
+          <div class="system-controls">
+            <span :class="['system-status-pill', systemStatus?.status || 'warning']">{{ systemStatusLabel }}</span>
+            <button type="button" :disabled="systemLoading" @click="refreshSystem">刷新</button>
+          </div>
+        </div>
+        <div class="system-grid">
+          <div>
+            <span>Supabase 后端</span>
+            <strong :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'positive' : 'negative') : ''">
+              {{ systemStatus ? (systemStatus.config.supabase.adminConfigured ? '就绪' : '未就绪') : '-' }}
+            </strong>
+          </div>
+          <div>
+            <span>生图服务</span>
+            <strong :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'positive' : 'negative') : ''">
+              {{ systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? '就绪' : '未就绪') : '-' }}
+            </strong>
+          </div>
+          <div>
+            <span>管理员规则</span>
+            <strong>{{ systemStatus ? systemStatus.config.adminUsers.userIdCount + systemStatus.config.adminUsers.emailCount : '-' }}</strong>
+          </div>
+          <div>
+            <span>生图监控</span>
+            <strong>{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? '开启' : '关闭') : '-' }}</strong>
+          </div>
+          <div>
+            <span>单图成本</span>
+            <strong>{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
+          </div>
+        </div>
+        <div class="system-warnings">
+          <span v-for="warning in systemStatus?.warnings || []" :key="warning">{{ warning }}</span>
+          <span v-if="systemStatus && !systemStatus.warnings.length">无告警</span>
+          <span v-else-if="!systemStatus">等待检查</span>
+        </div>
+        <div class="table-wrap system-table-wrap">
+          <table class="system-table">
+            <thead>
+              <tr>
+                <th>模块</th>
+                <th>状态</th>
+                <th>记录数</th>
+                <th>信息</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="table in systemStatus?.data.tables || []" :key="table.key">
+                <td>{{ table.label }}</td>
+                <td :class="table.status === 'ok' ? 'positive' : 'negative'">{{ tableStatusLabel(table.status) }}</td>
+                <td>{{ table.count ?? '-' }}</td>
+                <td>{{ table.message }}</td>
+              </tr>
+              <tr v-if="!(systemStatus?.data.tables || []).length">
+                <td colspan="4">暂无检查结果</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -1286,6 +1423,7 @@ button:disabled {
 
 .ledger-panel,
 .images-panel,
+.system-panel,
 .attempts-panel {
   max-width: 1360px;
   margin: 0 auto 14px;
@@ -1293,18 +1431,51 @@ button:disabled {
 
 .ledger-header,
 .image-header,
+.system-header,
 .attempt-header {
   align-items: flex-start;
 }
 
 .ledger-controls,
 .image-controls,
+.system-controls,
 .attempt-controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.system-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.system-status-pill.ok {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent);
+}
+
+.system-status-pill.warning {
+  border-color: rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+}
+
+.system-status-pill.error {
+  border-color: rgba(239, 68, 68, 0.32);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
 }
 
 .panel-header,
@@ -1435,6 +1606,57 @@ textarea {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.system-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.system-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.system-grid span,
+.system-warnings span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.system-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+}
+
+.system-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.system-warnings span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.system-table {
+  min-width: 620px;
 }
 
 .image-table-wrap {
@@ -1589,6 +1811,10 @@ tbody tr:last-child td {
   }
 
   .attempt-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

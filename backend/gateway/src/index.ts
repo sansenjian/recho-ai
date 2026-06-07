@@ -16,6 +16,7 @@ import creditsRouter from './routes/credits.js'
 import adminCreditsRouter from './routes/admin-credits.js'
 import adminImagesRouter from './routes/admin-images.js'
 import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
+import adminSystemRouter from './routes/admin-system.js'
 
 const app = express()
 
@@ -39,6 +40,7 @@ app.use('/api', creditsRouter)
 app.use('/api', adminCreditsRouter)
 app.use('/api', adminImagesRouter)
 app.use('/api', adminImageAttemptsRouter)
+app.use('/api', adminSystemRouter)
 app.use('/', healthRouter)
 
 app.get('/', (_req, res) => {
