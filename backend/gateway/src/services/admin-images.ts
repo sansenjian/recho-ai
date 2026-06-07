@@ -26,6 +26,7 @@ const ADMIN_IMAGE_COLUMNS = [
 ].join(',')
 
 export type AdminImageVisibility = 'public' | 'private'
+export type AdminImageFundingSource = 'free' | 'credit'
 
 export interface AdminImageItem {
   id: string
@@ -84,6 +85,20 @@ function sanitizedLimit(value: unknown) {
 
 function sanitizedVisibility(value: unknown): AdminImageVisibility | null {
   return value === 'public' || value === 'private' ? value : null
+}
+
+function sanitizedFundingSource(value: unknown): AdminImageFundingSource | null {
+  return value === 'free' || value === 'credit' ? value : null
+}
+
+function sanitizedFilterText(value: unknown, maxLength = 80) {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/[%,()*\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+  return text || null
 }
 
 function safeText(value: unknown, maxLength = 180) {
@@ -155,20 +170,31 @@ async function usersById(userIds: string[]) {
 export async function listAdminImages(options: {
   limit?: unknown
   visibility?: unknown
+  fundingSource?: unknown
+  userId?: unknown
+  query?: unknown
 } = {}) {
   const client = requireAdminImageClient()
   const limit = sanitizedLimit(options.limit)
   const visibility = sanitizedVisibility(options.visibility)
+  const fundingSource = sanitizedFundingSource(options.fundingSource)
+  const userId = sanitizedFilterText(options.userId, 80)
+  const queryText = sanitizedFilterText(options.query, 80)
 
   let query = client
     .from(IMAGE_HISTORY_TABLE)
     .select(ADMIN_IMAGE_COLUMNS)
-    .order('generated_at', { ascending: false })
-    .limit(limit)
 
   if (visibility) query = query.eq('visibility', visibility)
+  if (fundingSource) query = query.eq('funding_source', fundingSource)
+  if (userId) query = query.eq('user_id', userId)
+  if (queryText) {
+    query = query.or(`user_prompt.ilike.%${queryText}%,prompt.ilike.%${queryText}%`)
+  }
 
   const { data, error } = await query
+    .order('generated_at', { ascending: false })
+    .limit(limit)
   if (error) throw error
 
   const rows = (data || []) as unknown as Array<Record<string, unknown>>

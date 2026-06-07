@@ -46,6 +46,9 @@ router.get('/admin/images', async (req: Request, res: Response) => {
     const images = await listAdminImages({
       limit: req.query.limit,
       visibility: req.query.visibility,
+      fundingSource: req.query.fundingSource,
+      userId: req.query.userId,
+      query: req.query.query,
     })
     res.json({ images })
   } catch (err) {

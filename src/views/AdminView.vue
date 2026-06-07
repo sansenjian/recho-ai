@@ -219,6 +219,9 @@ const codeRedemptions = ref<AdminCodeRedemption[]>([])
 const userQuery = ref('')
 const ledgerReason = ref('')
 const imageVisibilityFilter = ref('')
+const imageFundingFilter = ref('')
+const imageUserFilter = ref('')
+const imageQuery = ref('')
 const imagesLoading = ref(false)
 const imageActionId = ref<string | null>(null)
 const attemptStatusFilter = ref('')
@@ -521,6 +524,9 @@ async function refreshImages() {
     const query = new URLSearchParams()
     query.set('limit', '24')
     if (imageVisibilityFilter.value) query.set('visibility', imageVisibilityFilter.value)
+    if (imageFundingFilter.value) query.set('fundingSource', imageFundingFilter.value)
+    if (imageUserFilter.value.trim()) query.set('userId', imageUserFilter.value.trim())
+    if (imageQuery.value.trim()) query.set('query', imageQuery.value.trim())
     const data = await apiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${query.toString()}`)
     adminImages.value = data.images
   } catch (error) {
@@ -923,14 +929,22 @@ onMounted(async () => {
             <span>作品管理</span>
             <strong>{{ adminImages.length }}</strong>
           </div>
-          <div class="image-controls">
+          <form class="image-controls" @submit.prevent="refreshImages">
             <select v-model="imageVisibilityFilter" :disabled="imagesLoading" @change="refreshImages">
               <option value="">全部状态</option>
               <option value="public">公开</option>
               <option value="private">已隐藏</option>
             </select>
+            <select v-model="imageFundingFilter" :disabled="imagesLoading" @change="refreshImages">
+              <option value="">全部来源</option>
+              <option value="free">免费</option>
+              <option value="credit">额度</option>
+            </select>
+            <input v-model.trim="imageUserFilter" type="search" placeholder="用户 ID" :disabled="imagesLoading">
+            <input v-model.trim="imageQuery" type="search" placeholder="提示词" :disabled="imagesLoading">
+            <button type="submit" :disabled="imagesLoading">筛选</button>
             <button type="button" :disabled="imagesLoading" @click="refreshImages">刷新</button>
-          </div>
+          </form>
         </div>
         <div class="table-wrap image-table-wrap">
           <table class="image-table">
@@ -1522,6 +1536,11 @@ button:disabled {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.image-controls input {
+  width: 180px;
+  min-width: 140px;
 }
 
 .system-status-pill {

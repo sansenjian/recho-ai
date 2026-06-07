@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let rows: Array<Record<string, unknown>> = []
 let updatedVisibility: string | null = null
+let orFilter: string | null = null
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
@@ -22,8 +23,23 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         select: vi.fn(() => query),
         order: vi.fn(() => query),
         limit: vi.fn(() => Promise.resolve({ data: rows, error: null })),
-        eq: vi.fn((_key: string, value: unknown) => {
-          rows = rows.filter(row => row.id === value || row.visibility === value)
+        eq: vi.fn((key: string, value: unknown) => {
+          rows = rows.filter(row => {
+            if (key === 'id') return row.id === value
+            if (key === 'visibility') return row.visibility === value
+            if (key === 'funding_source') return row.funding_source === value
+            if (key === 'user_id') return row.user_id === value
+            return false
+          })
+          return query
+        }),
+        or: vi.fn((filter: string) => {
+          orFilter = filter
+          const match = /%([^%]+)%/.exec(filter)
+          const term = (match?.[1] || '').toLowerCase()
+          rows = term
+            ? rows.filter(row => String(row.user_prompt || row.prompt || '').toLowerCase().includes(term))
+            : rows
           return query
         }),
         update: vi.fn((patch: Record<string, unknown>) => {
@@ -42,6 +58,7 @@ describe('admin image helpers', () => {
   beforeEach(() => {
     rows = []
     updatedVisibility = null
+    orFilter = null
     vi.resetModules()
   })
 
@@ -83,6 +100,48 @@ describe('admin image helpers', () => {
     expect(JSON.stringify(images[0])).not.toContain('data:image/png')
     expect(JSON.stringify(images[0])).not.toContain('127.0.0.1')
     expect(JSON.stringify(images[0])).not.toContain('sk-secret')
+  })
+
+  it('filters by visibility, funding source, user, and sanitized prompt search', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [
+      {
+        id: 'img_keep',
+        user_id: 'user_keep',
+        visibility: 'private',
+        funding_source: 'credit',
+        user_prompt: 'quiet mountain',
+        generated_at: '2026-06-08T12:00:00.000Z',
+      },
+      {
+        id: 'img_wrong_source',
+        user_id: 'user_keep',
+        visibility: 'private',
+        funding_source: 'free',
+        user_prompt: 'quiet mountain',
+        generated_at: '2026-06-08T12:01:00.000Z',
+      },
+      {
+        id: 'img_wrong_user',
+        user_id: 'user_other',
+        visibility: 'private',
+        funding_source: 'credit',
+        user_prompt: 'quiet mountain',
+        generated_at: '2026-06-08T12:02:00.000Z',
+      },
+    ]
+
+    const images = await listAdminImages({
+      visibility: 'private',
+      fundingSource: 'credit',
+      userId: 'user_keep',
+      query: 'quiet,%()mountain',
+    })
+
+    expect(images.map(image => image.id)).toEqual(['img_keep'])
+    expect(orFilter).toContain('quiet mountain')
+    expect(orFilter).not.toContain('quiet,%()mountain')
+    expect(orFilter).not.toContain('%()')
   })
 
   it('prevents credit-funded private images from being published', async () => {
