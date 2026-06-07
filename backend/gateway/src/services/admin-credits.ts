@@ -5,6 +5,9 @@ import { createRandomCreditCode, creditCodeHash, normalizeCreditCode } from './c
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
+const OVERVIEW_PAGE_SIZE = 1000
+const RECENT_TRANSACTION_DAYS = 7
+const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
 
 export interface RequestUser {
   id: string
@@ -35,6 +38,39 @@ export interface AdminCreditCode {
 
 export interface CreatedAdminCreditCode extends AdminCreditCode {
   code: string
+}
+
+export interface AdminCreditOverview {
+  users: {
+    withCreditRows: number
+    totalBalance: number
+    totalRedeemed: number
+    totalSpent: number
+  }
+  codes: {
+    total: number
+    active: number
+    disabled: number
+    expired: number
+    exhausted: number
+    totalIssuedCredits: number
+    totalRedeemedCredits: number
+  }
+  transactions: {
+    last7Days: {
+      totalCount: number
+      redeemedCredits: number
+      spentCredits: number
+      refundedCredits: number
+      adminAdjustedCredits: number
+    }
+    byReason: Array<{
+      reason: string
+      count: number
+      amount: number
+    }>
+  }
+  generatedAt: string
 }
 
 export class AdminCreditError extends Error {
@@ -98,6 +134,11 @@ function normalizedInteger(value: unknown) {
 function normalizedSignedInteger(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.round(number) : 0
+}
+
+function normalizedCodeUses(value: unknown) {
+  const number = normalizedInteger(value)
+  return number > 0 ? number : 1
 }
 
 function sanitizedLimit(value: unknown) {
@@ -172,6 +213,131 @@ function toCreditCode(row: Record<string, unknown>): AdminCreditCode {
     note: typeof row.note === 'string' ? row.note : null,
     createdAt: typeof row.created_at === 'string' ? row.created_at : null,
   }
+}
+
+function creditCodeState(row: Record<string, unknown>, nowMs: number) {
+  if (row.disabled_at) return 'disabled'
+  if (typeof row.expires_at === 'string' && new Date(row.expires_at).getTime() <= nowMs) return 'expired'
+
+  const maxRedemptions = normalizedCodeUses(row.max_redemptions)
+  if (normalizedInteger(row.redeemed_count) >= maxRedemptions) return 'exhausted'
+
+  return 'active'
+}
+
+export function summarizeAdminCreditOverview(input: {
+  balanceRows?: Array<Record<string, unknown>>
+  codeRows?: Array<Record<string, unknown>>
+  transactionRows?: Array<Record<string, unknown>>
+  now?: Date
+}): Omit<AdminCreditOverview, 'generatedAt'> {
+  const now = input.now || new Date()
+  const nowMs = now.getTime()
+  const cutoffMs = nowMs - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000
+
+  const users = {
+    withCreditRows: 0,
+    totalBalance: 0,
+    totalRedeemed: 0,
+    totalSpent: 0,
+  }
+
+  for (const row of input.balanceRows || []) {
+    users.withCreditRows += 1
+    users.totalBalance += normalizedInteger(row.balance)
+    users.totalRedeemed += normalizedInteger(row.total_redeemed)
+    users.totalSpent += normalizedInteger(row.total_spent)
+  }
+
+  const codes = {
+    total: 0,
+    active: 0,
+    disabled: 0,
+    expired: 0,
+    exhausted: 0,
+    totalIssuedCredits: 0,
+    totalRedeemedCredits: 0,
+  }
+
+  for (const row of input.codeRows || []) {
+    const credits = normalizedInteger(row.credits)
+    const maxRedemptions = normalizedCodeUses(row.max_redemptions)
+    const redeemedCount = normalizedInteger(row.redeemed_count)
+    const state = creditCodeState(row, nowMs)
+
+    codes.total += 1
+    codes[state] += 1
+    codes.totalIssuedCredits += credits * maxRedemptions
+    codes.totalRedeemedCredits += credits * Math.min(redeemedCount, maxRedemptions)
+  }
+
+  const reasonTotals = new Map<string, { reason: string; count: number; amount: number }>()
+  const last7Days = {
+    totalCount: 0,
+    redeemedCredits: 0,
+    spentCredits: 0,
+    refundedCredits: 0,
+    adminAdjustedCredits: 0,
+  }
+
+  for (const reason of CREDIT_TRANSACTION_REASONS) {
+    reasonTotals.set(reason, { reason, count: 0, amount: 0 })
+  }
+
+  for (const row of input.transactionRows || []) {
+    const createdAt = typeof row.created_at === 'string' ? new Date(row.created_at).getTime() : Number.NaN
+    if (Number.isNaN(createdAt) || createdAt < cutoffMs || createdAt > nowMs) continue
+
+    const reason = typeof row.reason === 'string' && row.reason ? row.reason : 'unknown'
+    const amount = normalizedSignedInteger(row.amount)
+    const total = reasonTotals.get(reason) || { reason, count: 0, amount: 0 }
+
+    total.count += 1
+    total.amount += amount
+    reasonTotals.set(reason, total)
+
+    last7Days.totalCount += 1
+    if (reason === 'redemption') last7Days.redeemedCredits += Math.max(0, amount)
+    if (reason === 'image_generation') last7Days.spentCredits += Math.abs(Math.min(0, amount))
+    if (reason === 'refund') last7Days.refundedCredits += Math.max(0, amount)
+    if (reason === 'admin_adjustment') last7Days.adminAdjustedCredits += amount
+  }
+
+  return {
+    users,
+    codes,
+    transactions: {
+      last7Days,
+      byReason: Array.from(reasonTotals.values()).filter(item => item.count > 0),
+    },
+  }
+}
+
+async function selectAllAdminRows(
+  table: string,
+  columns: string,
+  apply?: (query: any) => any,
+) {
+  const client = requireAdminClient()
+  const rows: Array<Record<string, unknown>> = []
+
+  for (let from = 0; ; from += OVERVIEW_PAGE_SIZE) {
+    let query = client
+      .from(table)
+      .select(columns)
+      .range(from, from + OVERVIEW_PAGE_SIZE - 1)
+
+    if (apply) query = apply(query)
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const pageRows = (data || []) as unknown as Array<Record<string, unknown>>
+    rows.push(...pageRows)
+    if (pageRows.length < OVERVIEW_PAGE_SIZE) break
+  }
+
+  return rows
 }
 
 export function isConfiguredAdminUser(user: RequestUser | null) {
@@ -265,6 +431,30 @@ export async function listAdminCreditUsers(options: {
       const rightTime = right.updatedAt || right.createdAt || ''
       return rightTime.localeCompare(leftTime)
     })
+}
+
+export async function getAdminCreditOverview() {
+  const now = new Date()
+  const recentCutoff = new Date(now.getTime() - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const [balanceRows, codeRows, transactionRows] = await Promise.all([
+    selectAllAdminRows('user_credit_balances', 'balance,total_redeemed,total_spent'),
+    selectAllAdminRows('credit_redemption_codes', 'credits,max_redemptions,redeemed_count,expires_at,disabled_at'),
+    selectAllAdminRows(
+      'credit_transactions',
+      'amount,reason,created_at',
+      query => query.gte('created_at', recentCutoff),
+    ),
+  ])
+
+  return {
+    ...summarizeAdminCreditOverview({
+      balanceRows,
+      codeRows,
+      transactionRows,
+      now,
+    }),
+    generatedAt: now.toISOString(),
+  }
 }
 
 export async function getAdminCreditUser(userId: string) {

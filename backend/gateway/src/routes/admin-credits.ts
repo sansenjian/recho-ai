@@ -4,6 +4,7 @@ import {
   adjustAdminUserCredits,
   assertAdminUser,
   createAdminCreditCodes,
+  getAdminCreditOverview,
   getAdminCreditUser,
   listAdminCreditCodes,
   listAdminCreditTransactions,
@@ -59,6 +60,18 @@ router.get('/admin/credits/users', async (req: Request, res: Response) => {
     res.json({ users })
   } catch (err) {
     console.error('[admin-credits] list users failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/credits/overview', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const overview = await getAdminCreditOverview()
+    res.json({ overview })
+  } catch (err) {
+    console.error('[admin-credits] overview failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }

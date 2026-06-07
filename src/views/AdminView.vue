@@ -37,6 +37,39 @@ interface AdminTransaction {
   created_at: string | null
 }
 
+interface AdminOverview {
+  users: {
+    withCreditRows: number
+    totalBalance: number
+    totalRedeemed: number
+    totalSpent: number
+  }
+  codes: {
+    total: number
+    active: number
+    disabled: number
+    expired: number
+    exhausted: number
+    totalIssuedCredits: number
+    totalRedeemedCredits: number
+  }
+  transactions: {
+    last7Days: {
+      totalCount: number
+      redeemedCredits: number
+      spentCredits: number
+      refundedCredits: number
+      adminAdjustedCredits: number
+    }
+    byReason: Array<{
+      reason: string
+      count: number
+      amount: number
+    }>
+  }
+  generatedAt: string
+}
+
 const {
   user,
   userEmail,
@@ -47,6 +80,7 @@ const {
 const adminChecked = ref(false)
 const isAdmin = ref(false)
 const loading = ref(false)
+const overviewLoading = ref(false)
 const actionLoading = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
@@ -56,6 +90,7 @@ const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
+const overview = ref<AdminOverview | null>(null)
 
 const userQuery = ref('')
 const adjustAmount = ref(10)
@@ -73,6 +108,22 @@ const codeForm = ref({
 const selectedUserTitle = computed(() => {
   if (!selectedUser.value) return '未选择用户'
   return selectedUser.value.email || shortId(selectedUser.value.userId)
+})
+
+const overviewCodeHealth = computed(() => {
+  if (!overview.value) return '0 / 0'
+  return `${overview.value.codes.active} / ${overview.value.codes.total}`
+})
+
+const overviewNetChange = computed(() => {
+  const recent = overview.value?.transactions.last7Days
+  if (!recent) return 0
+  return recent.redeemedCredits + recent.refundedCredits + recent.adminAdjustedCredits - recent.spentCredits
+})
+
+const overviewGeneratedAt = computed(() => {
+  if (!overview.value) return '等待刷新'
+  return `更新 ${dateTime(overview.value.generatedAt)}`
 })
 
 const createdCsv = computed(() => {
@@ -204,6 +255,19 @@ async function refreshCodes() {
   }
 }
 
+async function refreshOverview() {
+  overviewLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ overview: AdminOverview }>('/api/admin/credits/overview')
+    overview.value = data.overview
+  } catch (error) {
+    setError(error)
+  } finally {
+    overviewLoading.value = false
+  }
+}
+
 async function selectUser(target: AdminUser) {
   selectedUser.value = target
   errorMessage.value = ''
@@ -237,6 +301,7 @@ async function submitAdjustment() {
     users.value = users.value.map(item => item.userId === data.user.userId ? data.user : item)
     adjustNote.value = ''
     noticeMessage.value = '额度已调整'
+    await refreshOverview()
   } catch (error) {
     setError(error)
   } finally {
@@ -263,7 +328,7 @@ async function createCodes() {
     })
     createdCodes.value = data.codes
     noticeMessage.value = `已生成 ${data.codes.length} 个兑换码`
-    await refreshCodes()
+    await Promise.all([refreshCodes(), refreshOverview()])
   } catch (error) {
     setError(error)
   } finally {
@@ -282,6 +347,7 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
     })
     codes.value = codes.value.map(item => item.id === data.code.id ? data.code : item)
     noticeMessage.value = disabled ? '兑换码已停用' : '兑换码已恢复'
+    await refreshOverview()
   } catch (error) {
     setError(error)
   } finally {
@@ -314,7 +380,7 @@ onMounted(async () => {
   await initAuth()
   await checkAdmin()
   if (isAdmin.value) {
-    await Promise.all([refreshUsers(), refreshCodes()])
+    await Promise.all([refreshOverview(), refreshUsers(), refreshCodes()])
   }
 })
 </script>
@@ -352,6 +418,50 @@ onMounted(async () => {
         <p v-if="errorMessage" class="admin-message error">{{ errorMessage }}</p>
         <p v-if="noticeMessage" class="admin-message success">{{ noticeMessage }}</p>
       </div>
+
+      <section class="overview-panel" aria-label="额度总览">
+        <div class="overview-header">
+          <div>
+            <span>总览</span>
+            <strong>{{ overviewGeneratedAt }}</strong>
+          </div>
+          <button type="button" :disabled="overviewLoading" @click="refreshOverview">刷新</button>
+        </div>
+        <div class="overview-grid">
+          <div>
+            <span>总余额</span>
+            <strong>{{ overview?.users.totalBalance ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>累计兑换</span>
+            <strong>{{ overview?.users.totalRedeemed ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>累计消耗</span>
+            <strong>{{ overview?.users.totalSpent ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>兑换码可用</span>
+            <strong>{{ overviewCodeHealth }}</strong>
+          </div>
+          <div>
+            <span>已兑换码额度</span>
+            <strong>{{ overview?.codes.totalRedeemedCredits ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天流水</span>
+            <strong>{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天消耗</span>
+            <strong>{{ overview?.transactions.last7Days.spentCredits ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天净变化</span>
+            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
+          </div>
+        </div>
+      </section>
 
       <section class="admin-grid">
         <div class="admin-panel users-panel">
@@ -563,6 +673,8 @@ onMounted(async () => {
 }
 
 .admin-eyebrow,
+.overview-header span,
+.overview-grid span,
 .panel-header span,
 .metric-grid span,
 .adjust-form span,
@@ -586,6 +698,7 @@ onMounted(async () => {
 
 .admin-nav a,
 .admin-state a,
+.overview-header button,
 .panel-header button,
 .search-row button,
 .adjust-form button,
@@ -606,6 +719,7 @@ onMounted(async () => {
 
 .admin-nav a:hover,
 .admin-state a:hover,
+.overview-header button:hover:not(:disabled),
 .panel-header button:hover:not(:disabled),
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
@@ -669,6 +783,54 @@ button:disabled {
 .admin-message.success {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.overview-panel {
+  max-width: 1360px;
+  margin: 0 auto 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.overview-header strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.overview-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
 }
 
 .admin-grid {
@@ -865,6 +1027,10 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .overview-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -888,6 +1054,10 @@ tbody tr:last-child td {
 
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .code-form .wide {
