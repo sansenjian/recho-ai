@@ -1,6 +1,6 @@
 import { getAuthAccessToken } from './useAuthSession'
+import { apiUrl } from '../lib/api-base'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const IMAGE_EVENTS_ENABLED = import.meta.env.VITE_IMAGE_EVENTS_ENABLED === 'true'
 const IMAGE_EVENT_DEDUPE_MS = 2_000
 const HIGH_FREQUENCY_IMAGE_EVENT_DEDUPE_MS = 5_000
@@ -77,7 +77,7 @@ export function useImageEvents() {
 
     try {
       const token = await getAuthAccessToken()
-      const res = await fetch(`${API_BASE}/api/image/events`, {
+      const res = await fetch(apiUrl('/api/image/events'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

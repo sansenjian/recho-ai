@@ -19,6 +19,8 @@ import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import { useAuthSession } from '../composables/useAuthSession'
+import { useCredits } from '../composables/useCredits'
+import { apiUrl } from '../lib/api-base'
 import type { RouteWorkspace } from '../router'
 
 type ImageWorkspace = 'canvas' | 'gallery'
@@ -42,6 +44,14 @@ const {
   signInWithGitHub,
   signOut,
 } = useAuthSession()
+const {
+  creditBalance,
+  isLoadingCredits,
+  isRedeemingCredits,
+  creditError,
+  creditNotice,
+  redeemCredits,
+} = useCredits()
 // Memory system initialized for future use
 useMemory()
 
@@ -110,8 +120,27 @@ function currentRouteWorkspace(): RouteWorkspace {
   return workspace === 'chat' || workspace === 'works' || workspace === 'image' ? workspace : 'image'
 }
 
+function requireChatAccess(nextPath = '/chat') {
+  if (user.value) return true
+  pendingAuthPath.value = nextPath
+  openAuthDialog('signIn')
+  return false
+}
+
 function syncWorkspaceFromRoute() {
   const workspace = currentRouteWorkspace()
+  if (workspace === 'chat' && !user.value) {
+    showImagePanel.value = true
+    showAgentPanel.value = false
+    imageWorkspace.value = 'canvas'
+    if (isAuthReady.value) {
+      pendingAuthPath.value = '/chat'
+      openAuthDialog('signIn')
+      void router.replace('/image')
+    }
+    return
+  }
+
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
   imageWorkspace.value = workspace === 'works' ? 'gallery' : 'canvas'
@@ -119,12 +148,18 @@ function syncWorkspaceFromRoute() {
 
 async function toggleAgentPanel() {
   if (currentRouteWorkspace() !== 'chat') {
+    if (!requireChatAccess('/chat')) return
     await router.push('/chat')
   }
   showAgentPanel.value = !showAgentPanel.value
 }
 function toggleImagePanel() {
-  void router.push(currentRouteWorkspace() === 'chat' ? '/image' : '/chat')
+  if (currentRouteWorkspace() === 'chat') {
+    void router.push('/image')
+    return
+  }
+  if (!requireChatAccess('/chat')) return
+  void router.push('/chat')
 }
 
 // --- System prompt editor ---
@@ -155,8 +190,7 @@ const activeSkill = ref<string | null>(null)
 
 async function fetchSkills() {
   try {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
-    const res = await fetch(`${API_BASE}/api/skills`)
+    const res = await fetch(apiUrl('/api/skills'))
     if (res.ok) {
       const data = await res.json()
       skills.value = data.skills || []
@@ -172,6 +206,13 @@ const showAuthDialog = ref(false)
 const authMode = ref<AuthMode>('signIn')
 const authEmailDraft = ref('')
 const authPasswordDraft = ref('')
+const redeemCodeDraft = ref('')
+const pendingAuthPath = ref<string | null>(null)
+const creditBalanceLabel = computed(() => (
+  isLoadingCredits.value && creditBalance.value === null
+    ? '...'
+    : String(creditBalance.value ?? 0)
+))
 
 function openAuthDialog(mode: AuthMode = 'signIn') {
   authMode.value = mode
@@ -181,18 +222,24 @@ function openAuthDialog(mode: AuthMode = 'signIn') {
 }
 
 function closeAuthDialog() {
+  pendingAuthPath.value = null
   showAuthDialog.value = false
 }
 
 async function handleAuthSubmit() {
   const ok = await submitAuth(authMode.value, authEmailDraft.value, authPasswordDraft.value)
   if (ok && authMode.value === 'signIn') {
+    const nextPath = pendingAuthPath.value
+    pendingAuthPath.value = null
     showAuthDialog.value = false
+    if (nextPath) {
+      void router.push(nextPath)
+    }
   }
 }
 
 async function handleGitHubAuth() {
-  const ok = await signInWithGitHub(route.fullPath || '/image')
+  const ok = await signInWithGitHub(pendingAuthPath.value || route.fullPath || '/image')
   if (ok) {
     showAuthDialog.value = false
   }
@@ -201,6 +248,13 @@ async function handleGitHubAuth() {
 async function handleSignOut() {
   await signOut()
   showAuthDialog.value = false
+}
+
+async function handleRedeemCredits() {
+  const ok = await redeemCredits(redeemCodeDraft.value)
+  if (ok) {
+    redeemCodeDraft.value = ''
+  }
 }
 
 // --- Image upload ---
@@ -273,6 +327,7 @@ function onPaste(e: ClipboardEvent) {
 
 // --- Submit ---
 async function handleSubmit(value: string) {
+  if (!requireChatAccess('/chat')) return
   await submitMessage(
     value,
     currentModel.value.id,
@@ -319,7 +374,7 @@ watch(() => messages.value[messages.value.length - 1]?.content, () => {
 })
 watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
 watch(isLoading, (v) => { scrollSmooth = !v })
-watch(() => route.meta.workspace, () => {
+watch([() => route.meta.workspace, () => user.value?.id || null, isAuthReady], () => {
   syncWorkspaceFromRoute()
 }, { immediate: true })
 
@@ -349,6 +404,7 @@ onUnmounted(() => {
 function handleChangeModel(m: typeof AVAILABLE_MODELS[number]) { currentModel.value = m }
 function handleNewChat() { createConversation(); showSidebar.value = false }
 function handleImageToChat(dataUrl: string) {
+  if (!requireChatAccess('/chat')) return
   pendingImages.value = [...pendingImages.value, dataUrl]
   void router.push('/chat')
 }
@@ -421,6 +477,7 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
       <template v-if="showImagePanel">
         <ImageCanvas
           :workspace-mode="imageWorkspace"
+          :can-select-generation-count="Boolean(user)"
           @send-to-chat="handleImageToChat"
           @workspace-change="handleImageWorkspaceChange"
         />
@@ -508,6 +565,27 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
         <div v-if="user" class="auth-profile">
           <span>已登录</span>
           <strong>{{ userEmail }}</strong>
+          <div class="auth-credit-card">
+            <div class="auth-credit-header">
+              <span>额度</span>
+              <strong>{{ creditBalanceLabel }}</strong>
+            </div>
+            <form class="auth-credit-form" @submit.prevent="handleRedeemCredits">
+              <input
+                v-model="redeemCodeDraft"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="兑换码"
+                :disabled="isRedeemingCredits"
+              >
+              <button type="submit" :disabled="isRedeemingCredits || !redeemCodeDraft.trim()">
+                {{ isRedeemingCredits ? '兑换中' : '兑换' }}
+              </button>
+            </form>
+            <p v-if="creditNotice" class="auth-credit-message success">{{ creditNotice }}</p>
+            <p v-if="creditError" class="auth-credit-message error">{{ creditError }}</p>
+          </div>
           <button type="button" :disabled="isAuthLoading" @click="handleSignOut">退出登录</button>
         </div>
 
@@ -814,7 +892,8 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
 .auth-submit,
 .auth-oauth,
 .auth-switch,
-.auth-profile button {
+.auth-profile button,
+.auth-credit-form button {
   min-height: 38px;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -841,7 +920,8 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
 
 .auth-submit:disabled,
 .auth-oauth:disabled,
-.auth-profile button:disabled {
+.auth-profile button:disabled,
+.auth-credit-form button:disabled {
   opacity: 0.58;
   cursor: default;
 }
@@ -881,6 +961,79 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
   color: var(--text-primary);
 }
 
+.auth-credit-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.auth-credit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-credit-header span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.auth-credit-header strong {
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.auth-credit-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.auth-credit-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.auth-credit-form input:focus {
+  border-color: var(--accent);
+}
+
+.auth-credit-form button {
+  padding: 0 14px;
+  background: #111827;
+  color: #fff;
+}
+
+.auth-credit-message {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.auth-credit-message.success {
+  color: #047857;
+}
+
+.auth-credit-message.error {
+  color: var(--danger);
+}
+
 @media (max-width: 768px) {
   .sidebar-backdrop {
     display: block;
@@ -918,6 +1071,8 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
   .auth-oauth,
   .auth-switch,
   .auth-profile button,
+  .auth-credit-form input,
+  .auth-credit-form button,
   .system-editor-btn {
     min-height: 44px;
     font-size: 14px;

@@ -7,6 +7,7 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import OpenAI from 'openai'
 import type { MCPServerConfig, MCPConnection, MCPTool, MCPToolCallResult } from './types.js'
+import { safeErrorDetail } from '../services/safe-error.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -76,12 +77,12 @@ class MCPManager {
 
       console.log(`MCP [${serverName}]: connected, ${tools?.length || 0} tool(s)`)
     } catch (err: any) {
-      console.error(`MCP [${serverName}]: connection failed — ${err.message}`)
+      console.error(`MCP [${serverName}]: connection failed — ${safeErrorDetail(err)}`)
       this.connections.set(serverName, {
         client: null as any,
         transport: null as any,
         tools: [],
-        status: `error: ${err.message}`,
+        status: 'error',
       })
     }
   }
@@ -129,7 +130,7 @@ class MCPManager {
         })
         return result as MCPToolCallResult
       } catch (err: any) {
-        throw new Error(`Tool ${toolName} failed: ${err.message}`)
+        throw new Error(`Tool ${toolName} failed: ${safeErrorDetail(err)}`)
       }
     }
     throw new Error(`Tool not found: ${toolName}`)

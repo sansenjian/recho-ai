@@ -1,9 +1,11 @@
 import { ref } from 'vue'
+import { getAuthAccessToken } from './useAuthSession'
+import { apiUrl } from '../lib/api-base'
+import { publicClientErrorMessage } from '../lib/safe-error'
 import type { ChatMessage } from '../types/events'
 import type { RunState, ToolStatus } from '../types/tools'
 import SSEClient from '../workers/sse-parser.worker?worker'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const STREAM_IDLE_TIMEOUT_MS = 90_000
 
 interface StreamCallbacks {
@@ -30,9 +32,13 @@ export function useStream() {
   ): Promise<void> {
     isStreaming.value = true
     try {
-      const res = await fetch(`${API_BASE}/api/chat`, {
+      const token = await getAuthAccessToken()
+      const res = await fetch(apiUrl('/api/chat'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ model, messages, skill }),
         signal,
       })
@@ -41,7 +47,7 @@ export function useStream() {
         let errText = res.statusText
         try {
           const errJson = await res.json()
-          errText = errJson.error || res.statusText
+          errText = publicClientErrorMessage(errJson.error || res.statusText)
         } catch { /* ignore */ }
         throw new Error(errText)
       }

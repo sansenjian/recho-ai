@@ -1,6 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+import { apiUrl } from './api-base'
 
 interface SupabasePublicConfig {
   configured: boolean
@@ -36,7 +35,7 @@ function envConfig(): SupabasePublicConfig {
 }
 
 async function fetchGatewayConfig(): Promise<SupabasePublicConfig> {
-  const response = await fetch(`${API_BASE}/api/config/supabase`)
+  const response = await fetch(apiUrl('/api/config/supabase'))
   if (!response.ok) {
     throw new Error('无法读取 Supabase 配置')
   }

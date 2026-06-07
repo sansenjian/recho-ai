@@ -38,6 +38,10 @@ export const router = createRouter({
       meta: { workspace: 'works' satisfies RouteWorkspace },
     },
     {
+      path: '/admin',
+      component: () => import('../views/AdminView.vue'),
+    },
+    {
       path: '/auth/confirm',
       component: () => import('../components/AuthConfirmView.vue'),
     },

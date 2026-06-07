@@ -1,4 +1,11 @@
-import type { ImageAspectRatio, ImageHistoryScope, ImageQuality, ImageResolution, ImageSize } from '../types/image'
+import type {
+  ImageAspectRatio,
+  ImageGenerationCount,
+  ImageHistoryScope,
+  ImageQuality,
+  ImageResolution,
+  ImageSize,
+} from '../types/image'
 
 export type CanvasNodeType = 'text' | 'image' | 'generation'
 export type OutputHandle = 'text-out' | 'image-out' | 'generation-out'
@@ -21,6 +28,7 @@ export interface CanvasDocumentNode {
   aspectRatio: ImageAspectRatio
   resolution: ImageResolution
   quality: ImageQuality
+  count?: ImageGenerationCount
   imageUrl?: string
   imageWidth?: number
   imageHeight?: number
@@ -105,6 +113,7 @@ export const CANVAS_EXPORT_VERSION = 1
 
 const DEFAULT_VIEWPORT: CanvasViewportState = { x: -120, y: -40, zoom: 1 }
 const nodeTypes = new Set<CanvasNodeType>(['text', 'image', 'generation'])
+const imageGenerationCounts = new Set<ImageGenerationCount>([1, 2, 4, 8])
 
 export function isEmbeddedImageUrl(value: string | undefined) {
   return Boolean(value && (/^(data|blob):/i.test(value)))
@@ -112,6 +121,10 @@ export function isEmbeddedImageUrl(value: string | undefined) {
 
 export function exportableImageUrl(value: string | undefined) {
   return isEmbeddedImageUrl(value) ? undefined : value
+}
+
+function normalizeImageGenerationCount(value: unknown): ImageGenerationCount {
+  return imageGenerationCounts.has(value as ImageGenerationCount) ? value as ImageGenerationCount : 1
 }
 
 export function isOutputHandle(handle: unknown): handle is OutputHandle {
@@ -236,6 +249,7 @@ function serializableCanvasNode(node: CanvasRuntimeNode): CanvasDocumentNode {
     aspectRatio: node.aspectRatio,
     resolution: node.resolution,
     quality: node.quality,
+    ...(node.type === 'generation' ? { count: normalizeImageGenerationCount(node.count) } : {}),
     ...(exportableImageUrl(node.imageUrl) ? { imageUrl: exportableImageUrl(node.imageUrl) } : {}),
     ...(typeof node.imageWidth === 'number' ? { imageWidth: node.imageWidth } : {}),
     ...(typeof node.imageHeight === 'number' ? { imageHeight: node.imageHeight } : {}),
@@ -269,6 +283,7 @@ function normalizeImportedNode(
     aspectRatio: raw.aspectRatio || 'auto',
     resolution: raw.resolution || 'auto',
     quality: raw.quality || 'auto',
+    ...(raw.type === 'generation' ? { count: normalizeImageGenerationCount(raw.count) } : {}),
     ...(exportableImageUrl(raw.imageUrl) ? { imageUrl: exportableImageUrl(raw.imageUrl) } : {}),
     ...(typeof raw.imageWidth === 'number' ? { imageWidth: raw.imageWidth } : {}),
     ...(typeof raw.imageHeight === 'number' ? { imageHeight: raw.imageHeight } : {}),

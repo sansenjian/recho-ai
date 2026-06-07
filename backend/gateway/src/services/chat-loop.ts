@@ -2,6 +2,7 @@ import type { Response } from 'express'
 import OpenAI from 'openai'
 import { MAX_TOOL_ROUNDS, STREAM_START_TIMEOUT_MS, STREAM_TIMEOUT_MS } from '../config.js'
 import { mcpManager } from '../mcp/manager.js'
+import { publicErrorMessage, safeErrorDetail } from './safe-error.js'
 
 interface ToolCallAccumulator {
   id: string
@@ -131,7 +132,8 @@ export async function runTAORLoop(
         '模型服务响应超时，请稍后重试或切换其他模型。',
       )
     } catch (err: any) {
-      const message = err?.message || 'model stream failed'
+      const message = publicErrorMessage(err, '模型服务暂时不可用，请稍后重试。')
+      console.warn('[chat] stream start failed:', safeErrorDetail(err, 'model stream failed'))
       await writeSSE(res, { type: 'message_complete', finishReason: 'error', incomplete: true } as ToolCallEvent)
       await writeSSE(res, { type: 'status', state: 'idle', label: '失败' } as ToolCallEvent)
       await writeSSE(res, { type: 'error', error: message })
@@ -269,7 +271,8 @@ export async function runTAORLoop(
         } catch (err: any) {
           isError = true
           toolStatus = err?.message?.includes('timeout') ? 'timeout' : 'error'
-          toolResult = { content: [{ type: 'text', text: `Error: ${err.message}` }] }
+          console.warn(`[chat] tool ${acc.name} failed:`, safeErrorDetail(err))
+          toolResult = { content: [{ type: 'text', text: 'Error: 工具执行失败，请稍后重试。' }] }
         }
 
         const content = toolResult?.content?.map((c: any) => c.text || '').join('\n')

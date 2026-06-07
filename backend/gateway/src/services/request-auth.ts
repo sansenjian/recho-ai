@@ -1,5 +1,6 @@
 import type { Request } from 'express'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { safeErrorDetail } from './safe-error.js'
 
 function bearerToken(req: Request) {
   const authorization = req.get('authorization') || ''
@@ -7,7 +8,7 @@ function bearerToken(req: Request) {
   return match?.[1]?.trim() || null
 }
 
-export async function getRequestUserId(req: Request) {
+export async function getRequestUser(req: Request) {
   const token = bearerToken(req)
   if (!token) return null
 
@@ -16,9 +17,19 @@ export async function getRequestUserId(req: Request) {
 
   const { data, error } = await client.auth.getUser(token)
   if (error) {
-    console.warn('[auth] ignoring invalid Supabase access token:', error.message)
+    console.warn('[auth] ignoring invalid Supabase access token:', safeErrorDetail(error))
     return null
   }
 
-  return data.user?.id || null
+  const user = data.user
+  if (!user?.id) return null
+  return {
+    id: user.id,
+    email: user.email || null,
+  }
+}
+
+export async function getRequestUserId(req: Request) {
+  const user = await getRequestUser(req)
+  return user?.id || null
 }

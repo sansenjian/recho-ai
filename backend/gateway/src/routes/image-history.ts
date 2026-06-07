@@ -9,6 +9,7 @@ import {
 } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
 import type { ImageHistoryItem } from '../services/image-history.js'
+import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
 
@@ -16,6 +17,11 @@ function publicHistoryImage(image: ImageHistoryItem, options: { includeOriginal?
   const {
     requestIp: _requestIp,
     requestUserAgent: _requestUserAgent,
+    provider: _provider,
+    imageModel: _imageModel,
+    textModel: _textModel,
+    latencyMs: _latencyMs,
+    creditTransactionId: _creditTransactionId,
     dataUrl,
     ...publicImage
   } = image
@@ -81,8 +87,8 @@ router.get('/image/history', async (req: Request, res: Response) => {
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
-    console.error('[image-history] list failed:', err.message)
-    res.status(500).json({ error: err.message || 'image history list failed' })
+    console.error('[image-history] list failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, '图片历史加载失败，请稍后重试。') })
   }
 })
 
@@ -99,8 +105,8 @@ router.post('/image/history', async (req: Request, res: Response) => {
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
-    console.error('[image-history] save failed:', err.message)
-    res.status(500).json({ error: err.message || 'image history save failed' })
+    console.error('[image-history] save failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, '图片历史保存失败，请稍后重试。') })
   }
 })
 
@@ -128,8 +134,8 @@ router.get('/image/history/:id', async (req: Request, res: Response) => {
       persistence: { enabled: hasImageHistoryStore() },
     })
   } catch (err: any) {
-    console.error('[image-history] detail failed:', err.message)
-    res.status(500).json({ error: err.message || 'image history detail failed' })
+    console.error('[image-history] detail failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, '图片详情加载失败，请稍后重试。') })
   }
 })
 
@@ -139,8 +145,8 @@ router.delete('/image/history', async (req: Request, res: Response) => {
     const deleted = await clearImageHistory({ userId })
     res.json({ ok: true, persistence: { enabled: hasImageHistoryStore(), deleted } })
   } catch (err: any) {
-    console.error('[image-history] clear failed:', err.message)
-    res.status(500).json({ error: err.message || 'image history clear failed' })
+    console.error('[image-history] clear failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, '图片历史清理失败，请稍后重试。') })
   }
 })
 
@@ -155,8 +161,8 @@ router.delete('/image/history/:id', async (req: Request, res: Response) => {
     const deleted = await deleteImageHistory(id, { userId })
     res.json({ ok: true, persistence: { enabled: hasImageHistoryStore(), deleted } })
   } catch (err: any) {
-    console.error('[image-history] delete failed:', err.message)
-    res.status(500).json({ error: err.message || 'image history delete failed' })
+    console.error('[image-history] delete failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, '图片历史删除失败，请稍后重试。') })
   }
 })
 

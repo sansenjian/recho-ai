@@ -1,8 +1,10 @@
 import { ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
+import { useCredits } from './useCredits'
+import { apiUrl } from '../lib/api-base'
+import { publicClientErrorMessage } from '../lib/safe-error'
 import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse, ImageHistoryScope } from '../types/image'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const STORAGE_KEY = 'recho-private-image-history'
 const DB_NAME = 'recho-private-image-history-db'
 const DB_VERSION = 1
@@ -73,11 +75,27 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
     references,
     ...(typeof raw.referenceImageCount === 'number' ? { referenceImageCount: raw.referenceImageCount } : {}),
     ...(raw.revisedPrompt ? { revisedPrompt: String(raw.revisedPrompt) } : {}),
+    ...(raw.visibility ? { visibility: raw.visibility } : {}),
+    ...(raw.fundingSource ? { fundingSource: raw.fundingSource } : {}),
+    ...(typeof raw.creditCost === 'number' ? { creditCost: raw.creditCost } : {}),
     size: String(raw.size || 'auto'),
     aspectRatio: raw.aspectRatio,
     resolution: raw.resolution,
     quality: raw.quality,
     timestamp: String(raw.timestamp || new Date().toISOString()),
+  }
+}
+
+function isPublicGalleryImage(image: GeneratedImage) {
+  return image.visibility !== 'private' && image.fundingSource !== 'credit'
+}
+
+async function readApiError(response: Response, fallback: string) {
+  try {
+    const errJson = await response.json()
+    return publicClientErrorMessage(errJson.error || response.statusText, fallback)
+  } catch {
+    return publicClientErrorMessage(response.statusText, fallback)
   }
 }
 
@@ -231,7 +249,7 @@ async function loadRemoteHistory(
       offset: String(offset),
       scope,
     })
-    const res = await fetch(`${API_BASE}/api/image/history?${query.toString()}`, {
+    const res = await fetch(apiUrl(`/api/image/history?${query.toString()}`), {
       cache: 'no-store',
       headers: scope === 'mine' && auth.accessToken
         ? { Authorization: `Bearer ${auth.accessToken}` }
@@ -265,7 +283,7 @@ async function loadRemoteImageDetail(
     if (options.includeOriginal) {
       query.set('original', '1')
     }
-    const res = await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}?${query.toString()}`, {
+    const res = await fetch(apiUrl(`/api/image/history/${encodeURIComponent(id)}?${query.toString()}`), {
       cache: 'no-store',
       headers: scope === 'mine' && auth.accessToken
         ? { Authorization: `Bearer ${auth.accessToken}` }
@@ -305,7 +323,7 @@ async function deleteRemoteHistory(id: string) {
     const token = await getAuthAccessToken()
     if (!token) return
 
-    await fetch(`${API_BASE}/api/image/history/${encodeURIComponent(id)}`, {
+    await fetch(apiUrl(`/api/image/history/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -316,6 +334,7 @@ async function deleteRemoteHistory(id: string) {
 
 export function useImageGen() {
   const { user } = useAuthSession()
+  const { setCreditBalance } = useCredits()
   const isGenerating = ref(false)
   const isLoadingHistory = ref(false)
   const hasMoreHistory = ref(false)
@@ -359,7 +378,7 @@ export function useImageGen() {
     { immediate: true },
   )
 
-  async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage | null> {
+  async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage[] | null> {
     error.value = null
     isGenerating.value = true
     const controller = new AbortController()
@@ -367,7 +386,7 @@ export function useImageGen() {
 
     try {
       const token = await getAuthAccessToken()
-      const res = await fetch(`${API_BASE}/api/image/generate`, {
+      const res = await fetch(apiUrl('/api/image/generate'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -378,41 +397,43 @@ export function useImageGen() {
       })
 
       if (!res.ok) {
-        let msg = res.statusText
-        try {
-          const errJson = await res.json()
-          msg = errJson.error || msg
-        } catch { /* */ }
-        throw new Error(msg)
+        throw new Error(await readApiError(res, '图片生成失败，请稍后重试。'))
       }
 
       const data: ImageGenResponse = await res.json()
-      const image = data.images?.[0]
-      if (!image?.dataUrl && !image?.previewUrl && !image?.thumbnailUrl) {
+      if (typeof data.creditBalance?.balance === 'number') {
+        setCreditBalance(data.creditBalance.balance)
+      }
+      const images = (data.images || [])
+        .filter(image => image?.dataUrl || image?.previewUrl || image?.thumbnailUrl)
+      if (!images.length) {
         throw new Error('no image returned')
       }
 
-      const imageWithReferences: GeneratedImage = {
+      const imagesWithReferences: GeneratedImage[] = images.map(image => ({
         ...image,
         references: image.references?.length
           ? image.references.map(reference => ({ ...reference }))
           : options.references?.map(reference => ({ ...reference })) ?? [],
-      }
+      }))
 
-      generatedImages.value = uniqueHistory([imageWithReferences, ...generatedImages.value])
+      generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
       if (user.value?.id) {
         hasMoreHistory.value = true
       } else {
         void saveHistory(generatedImages.value)
       }
       if (galleryLoaded.value) {
-        galleryImages.value = uniqueHistory([imageWithReferences, ...galleryImages.value], MAX_GALLERY_HISTORY)
+        const publicImages = imagesWithReferences.filter(isPublicGalleryImage)
+        if (publicImages.length) {
+          galleryImages.value = uniqueHistory([...publicImages, ...galleryImages.value], MAX_GALLERY_HISTORY)
+        }
       }
-      return imageWithReferences
+      return imagesWithReferences
     } catch (err: any) {
       error.value = err?.name === 'AbortError'
         ? '图片生成请求超时，请减少参考图数量或稍后重试。'
-        : err.message || 'image generation failed'
+        : publicClientErrorMessage(err, '图片生成失败，请稍后重试。')
       return null
     } finally {
       window.clearTimeout(timeoutId)

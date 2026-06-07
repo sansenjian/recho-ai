@@ -1,16 +1,25 @@
 import { Router, Request, Response } from 'express'
-import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL, IMAGE_RESPONSES_MODEL } from '../config.js'
+import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
 import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
+import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
+import {
+  CreditOperationError,
+  CreditServiceUnavailableError,
+  refundUserCredits,
+  reserveUserCredits,
+  type CreditReservation,
+} from '../services/credits.js'
 
 const router = Router()
 
 type ImageAspectRatio = 'auto' | '1:1' | '3:2' | '2:3' | '16:9' | '9:16'
 type ImageResolution = 'auto' | '1k' | '2k' | '4k'
 type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
+type ImageGenerationCount = 1 | 2 | 4 | 8
 
 interface ImageGenRequest {
   prompt: string
@@ -22,6 +31,7 @@ interface ImageGenRequest {
   aspectRatio?: ImageAspectRatio
   resolution?: ImageResolution
   quality?: ImageQuality
+  count?: ImageGenerationCount
   references?: ImageGenReference[]
   canvasContext?: ImageCanvasContext
 }
@@ -37,6 +47,7 @@ interface ImageGenReference {
 const aspectRatios = new Set<ImageAspectRatio>(['auto', '1:1', '3:2', '2:3', '16:9', '9:16'])
 const resolutions = new Set<ImageResolution>(['auto', '1k', '2k', '4k'])
 const qualities = new Set<ImageQuality>(['auto', 'low', 'medium', 'high'])
+const imageGenerationCounts = new Set<ImageGenerationCount>([1, 2, 4, 8])
 const IMAGE_RETRY_TIMES = 3
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const IMAGE_MODEL = 'gpt-image-2'
@@ -92,6 +103,11 @@ function normalizeOption<T extends string>(value: unknown, allowed: Set<T>, fall
   return typeof value === 'string' && allowed.has(value as T) ? value as T : fallback
 }
 
+function normalizeImageGenerationCount(value: unknown): ImageGenerationCount {
+  const count = Number(value)
+  return imageGenerationCounts.has(count as ImageGenerationCount) ? count as ImageGenerationCount : 1
+}
+
 function shortPrompt(value: string) {
   return `${value.slice(0, 80)}${value.length > 80 ? '...' : ''}`
 }
@@ -121,6 +137,11 @@ function publicHistoryImage(image: ImageHistoryItem) {
   const {
     requestIp: _requestIp,
     requestUserAgent: _requestUserAgent,
+    provider: _provider,
+    imageModel: _imageModel,
+    textModel: _textModel,
+    latencyMs: _latencyMs,
+    creditTransactionId: _creditTransactionId,
     dataUrl,
     ...publicImage
   } = image
@@ -153,7 +174,7 @@ function providerErrorMessage(prefix: string, status: number, text: string) {
   if (status === 524) {
     return `${prefix} 524: 当前生图服务源站处理超时，Cloudflare 已放弃等待。请求已到达外部服务，但上游没有及时返回。`
   }
-  return `${prefix} ${status}: ${compactErrorText(text)}`
+  return `${prefix} ${status}: ${safeErrorDetail(compactErrorText(text), 'provider error')}`
 }
 
 function apiUrl(baseUrl: string, path: string) {
@@ -182,11 +203,11 @@ function validateGptImage2Size(size: string) {
   return null
 }
 
-function imageRequestFields(prompt: string, size: string, quality: ImageQuality) {
+function imageRequestFields(prompt: string, size: string, quality: ImageQuality, count: ImageGenerationCount) {
   return {
     model: IMAGE_MODEL,
     prompt,
-    n: 1,
+    n: count,
     ...(size === 'auto' ? {} : { size }),
     ...(quality === 'auto' ? {} : { quality }),
   }
@@ -202,6 +223,7 @@ function providerName() {
 }
 
 function errorType(err: any) {
+  if (err instanceof CreditOperationError || err instanceof CreditServiceUnavailableError) return 'credits'
   if (typeof err?.status === 'number') {
     if (err.status === 401 || err.status === 403) return 'auth'
     if (err.status === 408 || err.status === 524) return 'timeout'
@@ -211,6 +233,15 @@ function errorType(err: any) {
   }
   if (err?.name === 'TimeoutError' || /timeout|aborted|timed out/i.test(err?.message || '')) return 'timeout'
   return 'unknown'
+}
+
+function imageCreditCost(count: ImageGenerationCount) {
+  return Math.max(1, Number(count) || 1)
+}
+
+function publicImageErrorMessage(err: any, fallback = '图片生成失败，请稍后重试。') {
+  if (typeof err?.publicMessage === 'string' && err.publicMessage) return err.publicMessage
+  return publicErrorMessage(err, fallback)
 }
 
 function extensionForMime(mime: string) {
@@ -288,8 +319,8 @@ async function normalizeGeneratedUrl(url: string) {
   try {
     return await imageUrlToDataUrl(url)
   } catch (err: any) {
-    console.warn(`[image] generated image url download failed, keeping original url: ${err.message}`)
-    return url
+    console.warn('[image] generated image url download failed:', safeErrorDetail(err))
+    throw Object.assign(new Error('generated image download failed'), { status: err?.status || 502 })
   }
 }
 
@@ -312,106 +343,6 @@ function collectImageGenerationResults(value: unknown, results: string[] = []) {
   return results
 }
 
-function responsesInput(prompt: string, references: ImageGenReference[]) {
-  if (!references.length) return prompt
-  return [
-    {
-      role: 'user',
-      content: [
-        { type: 'input_text', text: prompt },
-        ...references.map(reference => ({
-          type: 'input_image',
-          image_url: reference.dataUrl,
-        })),
-      ],
-    },
-  ]
-}
-
-function responsesImageTool(size: string, quality: ImageQuality) {
-  return {
-    type: 'image_generation',
-    partial_images: 1,
-    ...(size === 'auto' ? {} : { size }),
-    ...(quality === 'auto' ? {} : { quality }),
-  }
-}
-
-async function parseResponsesStream(response: globalThis.Response) {
-  const text = await response.text()
-  const b64Values: string[] = []
-  const diagnostics: string[] = []
-  const errors: unknown[] = []
-
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line) continue
-    if (!line.startsWith('data:')) {
-      if (diagnostics.length < 8) diagnostics.push(line.slice(0, 500))
-      continue
-    }
-
-    const payload = line.slice(5).trim()
-    if (!payload || payload === '[DONE]') continue
-
-    try {
-      const event = JSON.parse(payload)
-      if (event?.error) errors.push(event.error)
-      b64Values.push(...collectImageGenerationResults(event))
-      if (diagnostics.length < 8) diagnostics.push(JSON.stringify({
-        type: event?.type,
-        status: event?.status,
-        output_index: event?.output_index,
-      }))
-    } catch {
-      if (diagnostics.length < 8) diagnostics.push(payload.slice(0, 500))
-    }
-  }
-
-  if (!b64Values.length) {
-    const detail = diagnostics.slice(-8).join('\n')
-    if (errors.length) throw new Error(`Responses API 未返回图片，错误: ${JSON.stringify(errors.at(-1))}，事件摘要:\n${detail}`)
-    throw new Error(`Responses API 未返回图片数据，事件摘要:\n${detail}`)
-  }
-
-  return { output: b64Values.map(result => ({ type: 'image_generation_call', result })) }
-}
-
-async function generateWithResponses(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality): Promise<ImageProviderResponse> {
-  console.log(`[image] forwarding to /responses refs=${references.length}, model=${IMAGE_RESPONSES_MODEL}, size=${size}`)
-
-  const payload = {
-    model: IMAGE_RESPONSES_MODEL,
-    input: responsesInput(prompt, references),
-    tools: [responsesImageTool(size, quality)],
-    stream: true,
-  }
-
-  const response = await fetch(apiUrl(IMAGE_GEN_BASE_URL, '/responses'), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${IMAGE_GEN_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(360_000),
-  })
-
-  if (!response.ok) {
-    throw Object.assign(
-      new Error(providerErrorMessage('Responses API 错误', response.status, await response.text())),
-      { status: response.status },
-    )
-  }
-
-  return {
-    ...await parseResponsesStream(response),
-    provider: providerName(),
-    imageModel: IMAGE_RESPONSES_MODEL,
-    textModel: IMAGE_RESPONSES_MODEL,
-  }
-}
-
 async function parseImagesApiResponse(response: globalThis.Response, prefix: string) {
   const text = await response.text()
   if (!response.ok) {
@@ -428,11 +359,11 @@ async function parseImagesApiResponse(response: globalThis.Response, prefix: str
   }
 }
 
-async function generateWithImagesApi(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality): Promise<ImageProviderResponse> {
-  const fields = imageRequestFields(prompt, size, quality)
+async function generateWithImagesApi(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality, count: ImageGenerationCount): Promise<ImageProviderResponse> {
+  const fields = imageRequestFields(prompt, size, quality, count)
 
   if (!references.length) {
-    console.log(`[image] forwarding to /images/generations refs=0, model=${IMAGE_MODEL}, size=${size}`)
+    console.log(`[image] forwarding to /images/generations refs=0, model=${IMAGE_MODEL}, size=${size}, count=${count}`)
     const response = await fetch(apiUrl(IMAGE_GEN_BASE_URL, '/images/generations'), {
       method: 'POST',
       headers: {
@@ -446,11 +377,10 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
       ...await parseImagesApiResponse(response, 'Images API 错误'),
       provider: providerName(),
       imageModel: IMAGE_MODEL,
-      textModel: IMAGE_RESPONSES_MODEL,
     }
   }
 
-  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=${IMAGE_MODEL}, size=${size}`)
+  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=${IMAGE_MODEL}, size=${size}, count=${count}`)
   const form = new FormData()
   for (const [key, value] of Object.entries(fields)) {
     form.append(key, String(value))
@@ -473,27 +403,6 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
     ...await parseImagesApiResponse(response, 'Images API 错误'),
     provider: providerName(),
     imageModel: IMAGE_MODEL,
-    textModel: IMAGE_RESPONSES_MODEL,
-  }
-}
-
-async function generateWithComfyStrategy(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality) {
-  let responsesError: any = null
-
-  try {
-    return await generateWithResponses(prompt, references, size, quality)
-  } catch (err: any) {
-    responsesError = err
-    console.warn(`[image] responses failed, falling back to Images API: ${err.message}`)
-  }
-
-  try {
-    return await generateWithImagesApi(prompt, references, size, quality)
-  } catch (err: any) {
-    if (responsesError?.message && err?.message) {
-      err.message = `${responsesError.message}; ${err.message}`
-    }
-    throw err
   }
 }
 
@@ -508,12 +417,14 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     aspectRatio: rawAspectRatio,
     resolution: rawResolution,
     quality: rawQuality,
+    count: rawCount,
     references: rawReferences,
     canvasContext,
   } = req.body as ImageGenRequest
   const aspectRatio = normalizeOption(rawAspectRatio, aspectRatios, 'auto')
   const resolution = normalizeOption(rawResolution, resolutions, 'auto')
   const quality = normalizeOption(rawQuality, qualities, 'auto')
+  const count = normalizeImageGenerationCount(rawCount)
   const size = requestedSize || sizeByResolution[resolution][aspectRatio]
   const references = Array.isArray(rawReferences)
     ? rawReferences.filter(item => typeof item?.dataUrl === 'string' && item.dataUrl.trim())
@@ -523,13 +434,37 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
   let userId: string | null = null
+  let creditReservation: CreditReservation | null = null
+  let refundedCredits = 0
+  let creditBalance: number | null = null
   let responseMeta: Pick<ImageProviderResponse, 'provider' | 'imageModel' | 'textModel'> = {
     provider: providerName(),
-    imageModel: IMAGE_RESPONSES_MODEL,
-    textModel: IMAGE_RESPONSES_MODEL,
+    imageModel: IMAGE_MODEL,
   }
 
-  console.log(`[image] request received refs=${references.length}, size=${size}, quality=${quality}, base=${IMAGE_GEN_BASE_URL}, prompt="${shortPrompt(prompt || '')}"`)
+  async function refundReservedCredits(amount?: number, reason = 'image_generation_failed') {
+    if (!userId || !creditReservation) return
+    const remaining = creditReservation.amount - refundedCredits
+    const refundAmount = Math.min(remaining, amount ?? remaining)
+    if (refundAmount <= 0) return
+
+    try {
+      const refund = await refundUserCredits(userId, refundAmount, creditReservation.transactionId, {
+        reason,
+        count,
+        size,
+        aspectRatio,
+        resolution,
+        quality,
+      })
+      refundedCredits += refundAmount
+      creditBalance = refund.balance
+    } catch (refundErr) {
+      console.error('[credits] refund failed:', safeErrorDetail(refundErr))
+    }
+  }
+
+  console.log(`[image] request received refs=${references.length}, size=${size}, quality=${quality}, count=${count}, prompt="${shortPrompt(prompt || '')}"`)
 
   if (!prompt?.trim()) {
     res.status(400).json({ error: 'prompt is required' })
@@ -537,7 +472,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   }
 
   if (!IMAGE_GEN_API_KEY) {
-    res.status(400).json({ error: 'IMAGE_GEN_API_KEY is not configured' })
+    res.status(400).json({ error: '图片生成服务尚未配置，请稍后重试。' })
     return
   }
 
@@ -557,13 +492,33 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     const historySystemPrompt = requestText(systemPrompt)
     const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
     userId = await getRequestUserId(req)
+    if (count > 1 && !userId) {
+      res.status(401).json({ error: '请先登录后再批量生成图片' })
+      return
+    }
+    if (userId) {
+      try {
+        creditReservation = await reserveUserCredits(userId, imageCreditCost(count), {
+          count,
+          size,
+          aspectRatio,
+          resolution,
+          quality,
+          referenceCount: references.length,
+        })
+        creditBalance = creditReservation.balance
+      } catch (creditErr) {
+        console.warn('[credits] reservation skipped; generation will be public:', safeErrorDetail(creditErr))
+      }
+    }
+    let usesCredits = Boolean(creditReservation)
     let response: ImageProviderResponse | null = null
     let lastError: any = null
 
     for (let attempt = 1; attempt <= IMAGE_RETRY_TIMES; attempt += 1) {
       try {
         console.log(`[image] attempt ${attempt}/${IMAGE_RETRY_TIMES}`)
-        response = await generateWithComfyStrategy(trimmedPrompt, references, size, quality)
+        response = await generateWithImagesApi(trimmedPrompt, references, size, quality, count)
         responseMeta = {
           provider: response.provider,
           imageModel: response.imageModel,
@@ -574,7 +529,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         lastError = err
         if (attempt < IMAGE_RETRY_TIMES && isRetryableStatus(err?.status)) {
           const delayMs = Math.min(2 ** (attempt - 1), 8) * 1000
-          console.warn(`[image] retryable error status=${err.status}, retrying in ${delayMs}ms (${attempt}/${IMAGE_RETRY_TIMES}): ${err.message}`)
+          console.warn(`[image] retryable error status=${err.status}, retrying in ${delayMs}ms (${attempt}/${IMAGE_RETRY_TIMES}): ${safeErrorDetail(err)}`)
           await sleep(delayMs)
           continue
         }
@@ -647,27 +602,52 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       }
     }
 
+    const maxReturnedImages = creditReservation?.amount ?? count
+    if (images.length > maxReturnedImages) {
+      console.warn(`[image] provider returned ${images.length} image(s); keeping ${maxReturnedImages}`)
+      images.length = maxReturnedImages
+    }
+
     console.log(`[image] generated ${images.length} image(s), refs=${references.length}, size=${size}, quality=${quality}, prompt: "${trimmedPrompt.slice(0, 60)}${trimmedPrompt.length > 60 ? '...' : ''}"`)
 
     const historyReferences = referencesForHistory(references)
-    const imagesWithReferences: ImageHistoryItem[] = images.map(image => ({
+    let imagesWithReferences: ImageHistoryItem[] = images.map(image => ({
       ...image,
       userId,
       references: historyReferences,
+      visibility: usesCredits ? 'private' : 'public',
+      fundingSource: usesCredits ? 'credit' : 'free',
+      creditCost: usesCredits ? 1 : 0,
+      creditTransactionId: creditReservation?.transactionId || null,
     }))
 
     let responseImages = imagesWithReferences
+
     try {
       const savedImages = await saveImageHistory(imagesWithReferences, { userId })
       if (savedImages) {
         responseImages = savedImages
         console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)
+      } else if (usesCredits) {
+        await refundReservedCredits(undefined, 'private_history_save_unavailable')
+        throw Object.assign(new Error('private image history save unavailable'), {
+          status: 503,
+          publicMessage: '私有图片保存失败，已退回额度，请稍后重试。',
+        })
       }
     } catch (historyErr: any) {
-      console.warn(`[image-history] save skipped: ${historyErr.message}`)
+      console.warn('[image-history] save skipped:', safeErrorDetail(historyErr))
+      if (usesCredits) {
+        await refundReservedCredits(undefined, 'private_history_save_failed')
+        throw Object.assign(historyErr instanceof Error ? historyErr : new Error('private image history save failed'), {
+          status: historyErr?.status || 503,
+          publicMessage: historyErr?.publicMessage || '私有图片保存失败，已退回额度，请稍后重试。',
+        })
+      }
     }
 
     if (!responseImages.length) {
+      await refundReservedCredits(undefined, 'empty_response')
       await recordImageGenerationAttempt({
         userId,
         provider: response.provider,
@@ -684,7 +664,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       return
     }
 
-    await Promise.all(responseImages.map(image => recordImageGenerationAttempt({
+    if (creditReservation && responseImages.length < creditReservation.amount) {
+      await refundReservedCredits(creditReservation.amount - responseImages.length, 'partial_generation')
+    }
+
+    const attemptRecords = await Promise.allSettled(responseImages.map(image => recordImageGenerationAttempt({
       generationId: image.id,
       userId,
       provider: response.provider,
@@ -695,14 +679,33 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       requestIp: generationIp,
       requestUserAgent: generationUserAgent,
     })))
+    for (const result of attemptRecords) {
+      if (result.status === 'rejected') {
+        console.warn('[image-attempts] record skipped:', safeErrorDetail(result.reason))
+      }
+    }
 
-    await Promise.all(responseImages.map(image => recordImageGenerationContext(image.id, userId, canvasContext)))
+    const contextRecords = await Promise.allSettled(
+      responseImages.map(image => recordImageGenerationContext(image.id, userId, canvasContext)),
+    )
+    for (const result of contextRecords) {
+      if (result.status === 'rejected') {
+        console.warn('[image-contexts] record skipped:', safeErrorDetail(result.reason))
+      }
+    }
 
-    res.json({ images: responseImages.map(publicHistoryImage) })
+    res.json({
+      images: responseImages.map(publicHistoryImage),
+      ...(creditBalance !== null ? { creditBalance: { balance: creditBalance } } : {}),
+    })
   } catch (err: any) {
-    console.error('Image generation error:', err.status, err.message)
+    await refundReservedCredits(undefined, 'image_generation_error')
+    console.error('Image generation error:', err.status, safeErrorDetail(err))
     const status = err.status || 500
     const unsupportedReferences = references.length > 0 && [404, 405].includes(status)
+    const errorMessage = unsupportedReferences
+      ? '当前图片服务暂不支持参考图输入。'
+      : publicImageErrorMessage(err, '图片生成失败，请稍后重试。')
     await recordImageGenerationAttempt({
       userId,
       provider: responseMeta.provider,
@@ -712,16 +715,12 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       latencyMs: Date.now() - requestStartedAt,
       errorType: errorType(err),
       errorCode: err?.code ? String(err.code) : undefined,
-      errorMessage: err?.message || 'image generation failed',
+      errorMessage: safeErrorDetail(err, 'image generation failed'),
       httpStatus: status,
       requestIp: generationIp,
       requestUserAgent: generationUserAgent,
     })
-    res.status(status).json({
-      error: unsupportedReferences
-        ? 'current image provider does not support reference image input'
-        : err.message || 'image generation failed',
-    })
+    res.status(status).json({ error: errorMessage })
   }
 })
 
