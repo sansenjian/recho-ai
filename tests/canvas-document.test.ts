@@ -32,6 +32,11 @@ describe('canvas document helpers', () => {
       exportedAt: '2026-06-06T00:00:00.000Z',
       nodes: [
         baseNode({
+          id: 'generation_count',
+          type: 'generation',
+          count: 4,
+        }),
+        baseNode({
           id: 'img_data',
           type: 'image',
           imageUrl: 'data:image/png;base64,AAAA',
@@ -62,6 +67,7 @@ describe('canvas document helpers', () => {
     expect(document.canvas.nodes.find(node => node.id === 'img_blob')?.imageUrl).toBeUndefined()
     expect(document.canvas.nodes.find(node => node.id === 'img_url')?.imageUrl).toBe('https://example.com/image.png')
     expect(document.canvas.nodes.find(node => node.id === 'img_url')?.sourcePrompt).toBeUndefined()
+    expect(document.canvas.nodes.find(node => node.id === 'generation_count')?.count).toBe(4)
     expect(document.assets).toEqual({
       mode: 'references-only',
       images: [
@@ -95,7 +101,7 @@ describe('canvas document helpers', () => {
         viewport: { x: 10, y: 20, zoom: 99 },
         nodes: [
           baseNode({ id: 'text_1', type: 'text', content: 'Prompt' }),
-          baseNode({ id: 'generation_1', type: 'generation' }),
+          baseNode({ id: 'generation_1', type: 'generation', count: 8 }),
           baseNode({ id: 'image_1', type: 'image', imageUrl: 'data:image/png;base64,AAAA' }),
         ],
         connections: [
@@ -136,6 +142,7 @@ describe('canvas document helpers', () => {
 
     expect(imported.nodes.map(node => node.id)).toEqual(['text_new', 'generation_1', 'image_1'])
     expect(imported.nodes.find(node => node.id === 'image_1')?.imageUrl).toBeUndefined()
+    expect(imported.nodes.find(node => node.id === 'generation_1')?.count).toBe(8)
     expect(imported.connections).toEqual([
       {
         id: 'conn_new',

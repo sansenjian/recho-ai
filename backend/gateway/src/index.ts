@@ -12,6 +12,8 @@ import imageRouter from './routes/image.js'
 import imageHistoryRouter from './routes/image-history.js'
 import imageEventsRouter from './routes/image-events.js'
 import configRouter from './routes/config.js'
+import creditsRouter from './routes/credits.js'
+import adminCreditsRouter from './routes/admin-credits.js'
 
 const app = express()
 
@@ -31,6 +33,8 @@ app.use('/api', imageRouter)
 app.use('/api', imageHistoryRouter)
 app.use('/api', imageEventsRouter)
 app.use('/api', configRouter)
+app.use('/api', creditsRouter)
+app.use('/api', adminCreditsRouter)
 app.use('/', healthRouter)
 
 app.get('/', (_req, res) => {

@@ -21,8 +21,16 @@ const workerMock = vi.hoisted(() => {
   return { MockSSEWorker }
 })
 
+const authMock = vi.hoisted(() => ({
+  getAuthAccessToken: vi.fn(async () => null as string | null),
+}))
+
 vi.mock('../src/workers/sse-parser.worker?worker', () => ({
   default: workerMock.MockSSEWorker,
+}))
+
+vi.mock('../src/composables/useAuthSession', () => ({
+  getAuthAccessToken: authMock.getAuthAccessToken,
 }))
 
 import { useStream } from '../src/composables/useStream'
@@ -35,6 +43,8 @@ describe('useStream', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    authMock.getAuthAccessToken.mockReset()
+    authMock.getAuthAccessToken.mockResolvedValue(null)
   })
 
   it('refreshes the idle timeout when slow streams keep sending chunks', async () => {
@@ -93,5 +103,32 @@ describe('useStream', () => {
 
     expect(await result).toEqual({ status: 'rejected', message: 'stream idle timeout' })
     expect(isStreaming.value).toBe(false)
+  })
+
+  it('sends the bearer token when the user is signed in', async () => {
+    authMock.getAuthAccessToken.mockResolvedValue('token_123')
+    const encoder = new TextEncoder()
+    const messages: ChatMessage[] = [{ role: 'user', content: 'hello' }]
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('ok'))
+        controller.close()
+      },
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamChat } = useStream()
+    await streamChat(messages, {
+      onDelta: () => {},
+      onToolCall: () => {},
+      onToolResult: () => {},
+      onToolEnd: () => {},
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/chat', expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: 'Bearer token_123',
+      }),
+    }))
   })
 })

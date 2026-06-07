@@ -7,15 +7,23 @@ import { skillLoader } from '../skills/loader.js'
 const router = Router()
 
 router.get('/health', (_req: Request, res: Response) => {
-  const providers: string[] = []
-  if (clients.nvidiaPool) {
-    providers.push(`nvidia (pool: ${clients.nvidiaPool.size} keys, waiting: ${clients.nvidiaPool.waitingCount})`)
-  }
-  if (clients.openai) providers.push('openai')
-  if (clients.kimi) providers.push('kimi')
-  if (hasSupabaseConfig()) providers.push('supabase')
-  const mcpStatus = Array.from(mcpManager.connections.entries()).map(([n, c]) => `${n}: ${c.status}`)
-  res.json({ status: 'ok', providers, skills: skillLoader.getAll().length, mcp: mcpStatus })
+  const providerCount = [
+    clients.nvidiaPool,
+    clients.openai,
+    clients.kimi,
+  ].filter(Boolean).length
+  const mcp = Array.from(mcpManager.connections.values()).reduce((summary, conn) => {
+    if (conn.status === 'connected') summary.connected += 1
+    else summary.error += 1
+    return summary
+  }, { connected: 0, error: 0 })
+  res.json({
+    status: 'ok',
+    providers: { configured: providerCount },
+    auth: { configured: hasSupabaseConfig() },
+    skills: skillLoader.getAll().length,
+    mcp,
+  })
 })
 
 export default router

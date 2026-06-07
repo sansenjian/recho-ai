@@ -11,6 +11,7 @@
     "build": "vue-tsc -b && vite build",
     "postbuild": "node scripts/prepare-spa-fallbacks.mjs",
     "test": "vitest run",
+    "credits:create": "cd backend/gateway && npm run credits:create --",
     "test:watch": "vitest",
     "preview": "vite preview"
   },

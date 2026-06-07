@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = dirname(fileURLToPath(import.meta.url))
 const distRoot = join(repoRoot, '..', 'dist')
 const indexPath = join(distRoot, 'index.html')
-const fallbackRoutes = ['image', 'chat', 'works', 'auth/confirm', 'auth/callback']
+const fallbackRoutes = ['image', 'chat', 'works', 'admin', 'auth/confirm', 'auth/callback']
 
 await readFile(indexPath, 'utf8')
 

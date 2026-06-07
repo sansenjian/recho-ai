@@ -33,6 +33,15 @@ export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
 export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 export const SUPABASE_IMAGE_BUCKET = process.env.SUPABASE_IMAGE_BUCKET || 'recho-images'
 
+export const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean)
+export const ADMIN_USER_EMAILS = (process.env.ADMIN_USER_EMAILS || '')
+  .split(',')
+  .map(value => value.trim().toLowerCase())
+  .filter(Boolean)
+
 export const IMAGE_GEN_API_KEY = process.env.IMAGE_GEN_API_KEY || ''
 export const IMAGE_GEN_BASE_URL = process.env.IMAGE_GEN_BASE_URL || 'https://lucen.plus/v1'
 export const IMAGE_RESPONSES_MODEL = process.env.IMAGE_RESPONSES_MODEL || 'gpt-image-2'

@@ -109,7 +109,7 @@ describe('gateway chat loop', () => {
       { type: 'status', state: 'thinking', label: '准备生成回复' },
       { type: 'tool_call', id: 'call-1', name: 'tavily_search', arguments: { query: 'vue' }, status: 'running' },
       { type: 'status', state: 'tool_executing', label: '运行云端工具 tavily_search' },
-      { type: 'tool_result', id: 'call-1', name: 'tavily_search', result: 'Error: network failed', isError: true },
+      { type: 'tool_result', id: 'call-1', name: 'tavily_search', result: 'Error: 工具执行失败，请稍后重试。', isError: true },
       { type: 'tool_end', id: 'call-1', status: 'error' },
       { type: 'status', state: 'thinking', label: '准备生成回复' },
       { type: 'content_start', blockType: 'text', blockId: expect.any(String) },
@@ -146,7 +146,7 @@ describe('gateway chat loop', () => {
       { type: 'status', state: 'thinking', label: '准备生成回复' },
       { type: 'message_complete', finishReason: 'error', incomplete: true },
       { type: 'status', state: 'idle', label: '失败' },
-      { type: 'error', error: '模型服务响应超时，请稍后重试或切换其他模型。' },
+      { type: 'error', error: '服务响应超时，请稍后重试。' },
     ])
     expect(res.writableEnded).toBe(true)
   })

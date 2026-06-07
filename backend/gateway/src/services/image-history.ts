@@ -26,6 +26,37 @@ const IMAGE_HISTORY_LIST_COLUMNS = [
   'original_bytes',
   'preview_bytes',
   'thumbnail_bytes',
+  'visibility',
+  'funding_source',
+  'credit_cost',
+  'credit_transaction_id',
+  'prompt',
+  'user_prompt',
+  'revised_prompt',
+  'size',
+  'aspect_ratio',
+  'resolution',
+  'quality',
+  'reference_images',
+  'generated_at',
+].join(',')
+const IMAGE_HISTORY_LEGACY_LIST_COLUMNS = [
+  'id',
+  'user_id',
+  'storage_path',
+  'preview_url',
+  'preview_path',
+  'thumbnail_url',
+  'thumbnail_path',
+  'provider',
+  'image_model',
+  'text_model',
+  'latency_ms',
+  'image_width',
+  'image_height',
+  'original_bytes',
+  'preview_bytes',
+  'thumbnail_bytes',
   'prompt',
   'user_prompt',
   'revised_prompt',
@@ -48,6 +79,8 @@ const IMAGE_HISTORY_BACKFILL_COLUMNS = [
 ].join(',')
 
 export type ImageHistoryScope = 'public' | 'mine'
+export type ImageVisibility = 'public' | 'private'
+export type ImageFundingSource = 'free' | 'credit'
 
 interface ImageHistoryAccessOptions {
   scope?: ImageHistoryScope
@@ -94,6 +127,10 @@ export interface ImageHistoryItem {
   originalBytes?: number
   previewBytes?: number
   thumbnailBytes?: number
+  visibility?: ImageVisibility
+  fundingSource?: ImageFundingSource
+  creditCost?: number
+  creditTransactionId?: string | null
   size: string
   aspectRatio?: string
   resolution?: string
@@ -126,6 +163,10 @@ interface ImageHistoryRow {
   original_bytes?: number | null
   preview_bytes?: number | null
   thumbnail_bytes?: number | null
+  visibility?: ImageVisibility | null
+  funding_source?: ImageFundingSource | null
+  credit_cost?: number | null
+  credit_transaction_id?: string | null
   size: string
   aspect_ratio: string | null
   resolution: string | null
@@ -207,6 +248,7 @@ interface ImageRowOptions {
   includePromptDetails?: boolean
   includeRequestMeta?: boolean
   includeMetrics?: boolean
+  includeCredits?: boolean
 }
 
 function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
@@ -223,6 +265,13 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
     quality: image.quality ? String(image.quality) : null,
     reference_images: plainReferences(image.references),
     generated_at: String(image.timestamp || new Date().toISOString()),
+  }
+
+  if (options.includeCredits !== false) {
+    row.visibility = image.visibility === 'private' ? 'private' : 'public'
+    row.funding_source = image.fundingSource === 'credit' ? 'credit' : 'free'
+    row.credit_cost = typeof image.creditCost === 'number' ? Math.max(0, Math.round(image.creditCost)) : 0
+    row.credit_transaction_id = image.creditTransactionId ? String(image.creditTransactionId) : null
   }
 
   if (options.includeThumbnails !== false) {
@@ -270,7 +319,14 @@ function missingOptionalColumn(error: { message?: string; code?: string }) {
   if (/(user_prompt|system_prompt|model_prompt)/i.test(message)) return 'prompt_detail'
   if (/(request_ip|request_user_agent)/i.test(message)) return 'request_meta'
   if (/(provider|image_model|text_model|latency_ms|image_width|image_height|original_bytes|preview_bytes|thumbnail_bytes)/i.test(message)) return 'metrics'
+  if (/(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message)) return 'credits'
   return null
+}
+
+function missingCreditHistorySchema(error: { message?: string; code?: string }) {
+  const message = error.message || ''
+  return missingOptionalColumn(error) === 'credits' ||
+    (error.code === '42703' && /(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message))
 }
 
 function imageFromRow(row: ImageHistoryRow, options: { includeOriginal?: boolean } = {}): ImageHistoryItem {
@@ -300,6 +356,10 @@ function imageFromRow(row: ImageHistoryRow, options: { includeOriginal?: boolean
     originalBytes: row.original_bytes ?? undefined,
     previewBytes: row.preview_bytes ?? undefined,
     thumbnailBytes: row.thumbnail_bytes ?? undefined,
+    visibility: row.visibility || 'public',
+    fundingSource: row.funding_source || 'free',
+    creditCost: row.credit_cost ?? undefined,
+    creditTransactionId: row.credit_transaction_id || undefined,
     references: plainReferences(row.reference_images || []),
     revisedPrompt: row.revised_prompt || undefined,
     size: row.size || 'auto',
@@ -374,6 +434,10 @@ function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
     originalBytes: row.original_bytes ?? undefined,
     previewBytes: row.preview_bytes ?? undefined,
     thumbnailBytes: row.thumbnail_bytes ?? undefined,
+    visibility: row.visibility || 'public',
+    fundingSource: row.funding_source || 'free',
+    creditCost: row.credit_cost ?? undefined,
+    creditTransactionId: row.credit_transaction_id || undefined,
     references: plainReferences(row.reference_images || [])
       .map(referenceSummary)
       .filter((reference): reference is ImageHistoryReference => Boolean(reference)),
@@ -568,17 +632,28 @@ export async function listImageHistory(
     }
   }
 
-  let query = client
-    .from(IMAGE_HISTORY_TABLE)
-    .select(IMAGE_HISTORY_LIST_COLUMNS, { count: 'exact' })
-    .order('generated_at', { ascending: false })
+  const listWithColumns = async (columns: string, includeVisibilityFilter: boolean) => {
+    let query = client
+      .from(IMAGE_HISTORY_TABLE)
+      .select(columns, { count: 'exact' })
+      .order('generated_at', { ascending: false })
 
-  if (options.scope === 'mine') {
-    query = query.eq('user_id', options.userId!)
+    if (options.scope === 'mine') {
+      query = query.eq('user_id', options.userId!)
+    } else if (includeVisibilityFilter) {
+      query = query.eq('visibility', 'public')
+    }
+
+    return await query.range(safeOffset, safeOffset + cappedLimit - 1)
   }
 
-  const { data, error, count } = await query
-    .range(safeOffset, safeOffset + cappedLimit - 1)
+  let result = await listWithColumns(IMAGE_HISTORY_LIST_COLUMNS, true)
+  if (result.error && missingCreditHistorySchema(result.error)) {
+    console.warn('[image-history] credit visibility columns missing; listing legacy public history')
+    result = await listWithColumns(IMAGE_HISTORY_LEGACY_LIST_COLUMNS, false)
+  }
+
+  const { data, error, count } = result
 
   if (error) throw error
   const rows = (data || []) as unknown as ImageHistoryRow[]
@@ -600,17 +675,28 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   const client = historyClient()
   if (!client || (options.scope === 'mine' && !options.userId)) return null
 
-  let query = client
-    .from(IMAGE_HISTORY_TABLE)
-    .select('*')
-    .eq('id', id)
+  const getRow = async (includeVisibilityFilter: boolean) => {
+    let query = client
+      .from(IMAGE_HISTORY_TABLE)
+      .select('*')
+      .eq('id', id)
 
-  if (options.scope === 'mine') {
-    query = query.eq('user_id', options.userId!)
+    if (options.scope === 'mine') {
+      query = query.eq('user_id', options.userId!)
+    } else if (includeVisibilityFilter) {
+      query = query.eq('visibility', 'public')
+    }
+
+    return await query.maybeSingle()
   }
 
-  const { data, error } = await query
-    .maybeSingle()
+  let result = await getRow(true)
+  if (result.error && missingCreditHistorySchema(result.error)) {
+    console.warn('[image-history] credit visibility columns missing; reading legacy public history detail')
+    result = await getRow(false)
+  }
+
+  const { data, error } = result
 
   if (error) throw error
   if (!data) return null
@@ -652,6 +738,12 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     .filter(image => image?.id && image?.dataUrl)
 
   if (!validImages.length) return null
+  const canOmitCreditFields = validImages.every(image => (
+    image.visibility !== 'private' &&
+    image.fundingSource !== 'credit' &&
+    !image.creditCost &&
+    !image.creditTransactionId
+  ))
 
   const rowOptions: Required<ImageRowOptions> = {
     includeThumbnails: true,
@@ -659,6 +751,7 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     includePromptDetails: true,
     includeRequestMeta: true,
     includeMetrics: true,
+    includeCredits: true,
   }
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -693,6 +786,12 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     if (missingColumn === 'metrics' && rowOptions.includeMetrics) {
       rowOptions.includeMetrics = false
       console.warn('[image-history] metric columns missing; retrying save without generation metrics')
+      continue
+    }
+    if (missingColumn === 'credits' && rowOptions.includeCredits) {
+      if (!canOmitCreditFields) throw error
+      rowOptions.includeCredits = false
+      console.warn('[image-history] credit columns missing; retrying save without credit fields')
       continue
     }
 

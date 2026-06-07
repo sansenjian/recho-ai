@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type DirectiveBinding } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance, type DirectiveBinding } from 'vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import {
   buildCanvasExportDocument as buildCanvasExportDocumentPayload,
@@ -21,12 +21,14 @@ type NodeSize = NonNullable<ImageGenRequest['size']>
 type NodeAspectRatio = NonNullable<ImageGenRequest['aspectRatio']>
 type NodeResolution = NonNullable<ImageGenRequest['resolution']>
 type NodeQuality = NonNullable<ImageGenRequest['quality']>
+type NodeGenerationCount = NonNullable<ImageGenRequest['count']>
 type MentionField = 'text' | 'generation'
 type WorkspaceMode = 'canvas' | 'gallery'
 type GalleryFilter = 'mine' | 'references' | 'latest'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
+  canSelectGenerationCount?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +47,7 @@ interface CanvasNode extends CanvasRuntimeNode {
   aspectRatio: NodeAspectRatio
   resolution: NodeResolution
   quality: NodeQuality
+  count?: NodeGenerationCount
   imageUrl?: string
   imageWidth?: number
   imageHeight?: number
@@ -165,16 +168,8 @@ const REFERENCE_IMAGE_MAX_EDGE = 2048
 const REFERENCE_IMAGE_WEBP_QUALITY = 0.86
 const TEXT_NODE_CONTENT_SCALE_FACTOR = 0.5
 const MINI_MAP_WORLD_PADDING = 96
-const IMAGE_NODE_HEADER_HEIGHT = 36
 const IMAGE_PREVIEW_HORIZONTAL_INSET = 20
-const IMAGE_PREVIEW_TOP_MARGIN = 10
 const IMAGE_PREVIEW_EMPTY_HEIGHT = 136
-const IMAGE_PREVIEW_MIN_HEIGHT = 116
-const IMAGE_PREVIEW_MAX_HEIGHT = 220
-const IMAGE_CAPTION_HEIGHT = 48
-const IMAGE_OUTPUT_PANEL_HEIGHT = 62
-const IMAGE_ACTIONS_HEIGHT = 44
-const IMAGE_NODE_BORDER_HEIGHT = 2
 const CANVAS_EXPORT_VERSION = 1
 const CANVAS_TITLE = 'Imagio canvas'
 const CANVAS_CONTEXT_ENABLED = import.meta.env.VITE_CANVAS_CONTEXT_ENABLED === 'true'
@@ -248,6 +243,7 @@ const nodes = ref<CanvasNode[]>([
     aspectRatio: 'auto',
     resolution: 'auto',
     quality: 'auto',
+    count: 1,
   },
 ])
 const connections = ref<Connection[]>([
@@ -295,6 +291,12 @@ let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
 let imageViewerLoadSeq = 0
 let galleryDetailLoadSeq = 0
+const measuredNodeHeights = ref<Record<string, number>>({})
+const measuredNodeElements = new Map<string, HTMLElement>()
+const measuredNodeResizeObservers = new Map<string, ResizeObserver>()
+const measuredNodeMutationObservers = new Map<string, MutationObserver>()
+const measuredNodeUpdateFrames = new Map<string, number>()
+const measuredNodeRefCallbacks = new Map<string, (element: Element | ComponentPublicInstance | null) => void>()
 
 watch(
   () => props.workspaceMode,
@@ -462,6 +464,13 @@ const qualityOptions: Array<{ value: NodeQuality; label: string }> = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ]
+const generationCountOptions: Array<{ value: NodeGenerationCount; label: string }> = [
+  { value: 1, label: '1' },
+  { value: 2, label: '2' },
+  { value: 4, label: '4' },
+  { value: 8, label: '8' },
+]
+const generationCountValues = new Set<NodeGenerationCount>(generationCountOptions.map(option => option.value))
 const mentionOptions = computed(() => {
   const query = mentionState.value?.query.trim().toLowerCase() ?? ''
   return nodes.value
@@ -509,6 +518,7 @@ function createNode(type: CanvasNodeType, x: number, y: number, data: Partial<Ca
     aspectRatio: 'auto',
     resolution: 'auto',
     quality: 'auto',
+    ...(type === 'generation' ? { count: 1 as NodeGenerationCount } : {}),
     scale: 1,
     ...data,
   }
@@ -516,6 +526,15 @@ function createNode(type: CanvasNodeType, x: number, y: number, data: Partial<Ca
   nodes.value = [...nodes.value, node]
   selectedNodeId.value = node.id
   return node
+}
+
+function generationCountForNode(node: CanvasNode): NodeGenerationCount {
+  return generationCountValues.has(node.count as NodeGenerationCount) ? node.count as NodeGenerationCount : 1
+}
+
+function setGenerationCount(node: CanvasNode, count: NodeGenerationCount) {
+  if (!props.canSelectGenerationCount) return
+  node.count = count
 }
 
 function canvasPointFromClient(clientX: number, clientY: number) {
@@ -880,41 +899,137 @@ function imageAspectRatio(node: CanvasNode) {
     : dimensionsFromSize(node.fileName) ?? dimensionsFromAspectRatio(node.aspectRatio)
   if (!dimensions?.width || !dimensions.height) return 1
 
-  return clamp(dimensions.width / dimensions.height, 0.36, 3.2)
+  const ratio = dimensions.width / dimensions.height
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1
 }
 
 function imagePreviewHeight(node: CanvasNode) {
   if (!node.imageUrl) return IMAGE_PREVIEW_EMPTY_HEIGHT
 
   const previewWidth = NODE_SIZE.image.width - IMAGE_PREVIEW_HORIZONTAL_INSET
-  const fittedHeight = Math.round(previewWidth / imageAspectRatio(node))
-  return clamp(fittedHeight, IMAGE_PREVIEW_MIN_HEIGHT, IMAGE_PREVIEW_MAX_HEIGHT)
+  return Math.max(1, Math.round(previewWidth / imageAspectRatio(node)))
+}
+
+function childFlowBottom(element: HTMLElement) {
+  return Array.from(element.children).reduce((max, child) => {
+    if (!(child instanceof HTMLElement)) return max
+    const style = getComputedStyle(child)
+    if (style.position === 'absolute' || style.position === 'fixed') return max
+    const marginBottom = Number.parseFloat(style.marginBottom) || 0
+    return Math.max(max, child.offsetTop + Math.max(child.scrollHeight, child.offsetHeight) + marginBottom)
+  }, 0)
+}
+
+function naturalMeasuredNodeHeight(element: HTMLElement) {
+  const style = getComputedStyle(element)
+  const borderHeight = (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.borderBottomWidth) || 0)
+  return Math.ceil(childFlowBottom(element) + borderHeight)
+}
+
+function updateMeasuredNodeHeight(nodeId: string) {
+  measuredNodeUpdateFrames.delete(nodeId)
+  const element = measuredNodeElements.get(nodeId)
+  if (!element) return
+
+  const node = getNodeById(nodeId)
+  if (!node) return
+  const naturalHeight = naturalMeasuredNodeHeight(element)
+  const measuredHeight = node.type === 'image'
+    ? naturalHeight
+    : Math.max(NODE_SIZE[node.type].height, naturalHeight)
+  if (measuredNodeHeights.value[nodeId] === measuredHeight) return
+  measuredNodeHeights.value = {
+    ...measuredNodeHeights.value,
+    [nodeId]: measuredHeight,
+  }
+}
+
+function scheduleMeasuredNodeHeightUpdate(nodeId: string) {
+  if (measuredNodeUpdateFrames.has(nodeId)) return
+  const frame = window.requestAnimationFrame(() => updateMeasuredNodeHeight(nodeId))
+  measuredNodeUpdateFrames.set(nodeId, frame)
+}
+
+function cleanupMeasuredNodeElement(nodeId: string) {
+  measuredNodeResizeObservers.get(nodeId)?.disconnect()
+  measuredNodeResizeObservers.delete(nodeId)
+  measuredNodeMutationObservers.get(nodeId)?.disconnect()
+  measuredNodeMutationObservers.delete(nodeId)
+  const frame = measuredNodeUpdateFrames.get(nodeId)
+  if (frame !== undefined) {
+    window.cancelAnimationFrame(frame)
+    measuredNodeUpdateFrames.delete(nodeId)
+  }
+  measuredNodeElements.delete(nodeId)
+  measuredNodeRefCallbacks.delete(nodeId)
+  if (measuredNodeHeights.value[nodeId] !== undefined) {
+    const remainingHeights = { ...measuredNodeHeights.value }
+    delete remainingHeights[nodeId]
+    measuredNodeHeights.value = remainingHeights
+  }
+}
+
+function setMeasuredNodeElement(nodeId: string, value: Element | ComponentPublicInstance | null) {
+  let element: HTMLElement | null = null
+  if (value instanceof HTMLElement) {
+    element = value
+  } else if (value && !(value instanceof Element) && value.$el instanceof HTMLElement) {
+    element = value.$el
+  }
+  const existingElement = measuredNodeElements.get(nodeId)
+  if (existingElement === element) return
+
+  measuredNodeResizeObservers.get(nodeId)?.disconnect()
+  measuredNodeResizeObservers.delete(nodeId)
+  measuredNodeMutationObservers.get(nodeId)?.disconnect()
+  measuredNodeMutationObservers.delete(nodeId)
+
+  if (!element) {
+    cleanupMeasuredNodeElement(nodeId)
+    return
+  }
+
+  measuredNodeElements.set(nodeId, element)
+  const resizeObserver = new ResizeObserver(() => scheduleMeasuredNodeHeightUpdate(nodeId))
+  element.querySelectorAll<HTMLElement>('.node-header, .node-textarea, .image-preview, .image-output-panel, .image-caption, .image-node-actions, .generation-body, .generation-scroll, .generation-footer')
+    .forEach(item => resizeObserver.observe(item))
+  const mutationObserver = new MutationObserver(() => scheduleMeasuredNodeHeightUpdate(nodeId))
+  mutationObserver.observe(element, {
+    attributes: true,
+    childList: true,
+    characterData: true,
+    subtree: true,
+  })
+  measuredNodeResizeObservers.set(nodeId, resizeObserver)
+  measuredNodeMutationObservers.set(nodeId, mutationObserver)
+  scheduleMeasuredNodeHeightUpdate(nodeId)
+}
+
+function measuredNodeRef(nodeId: string) {
+  const existingCallback = measuredNodeRefCallbacks.get(nodeId)
+  if (existingCallback) return existingCallback
+
+  const callback = (value: Element | ComponentPublicInstance | null) => {
+    setMeasuredNodeElement(nodeId, value)
+  }
+  measuredNodeRefCallbacks.set(nodeId, callback)
+  return callback
 }
 
 function getBaseNodeSize(node: CanvasNode) {
   const size = NODE_SIZE[node.type]
   if (node.type === 'image') {
-    const detailHeight = isGeneratedImageNode(node)
-      ? IMAGE_OUTPUT_PANEL_HEIGHT
-      : IMAGE_CAPTION_HEIGHT
-    return {
-      ...size,
-      height:
-        IMAGE_NODE_HEADER_HEIGHT +
-        IMAGE_PREVIEW_TOP_MARGIN +
-        imagePreviewHeight(node) +
-        detailHeight +
-        IMAGE_ACTIONS_HEIGHT +
-        IMAGE_NODE_BORDER_HEIGHT,
-    }
+    const measuredHeight = measuredNodeHeights.value[node.id]
+    return { ...size, height: measuredHeight ?? size.height }
   }
 
   if (node.type === 'generation') {
     const referenceCount = referencedImageNodes(node).length
     const extraReferenceHeight = Math.max(0, referenceCount - 1) * 30
-    return { ...size, height: size.height + extraReferenceHeight }
+    const baseHeight = size.height + extraReferenceHeight
+    return { ...size, height: Math.max(baseHeight, measuredNodeHeights.value[node.id] ?? 0) }
   }
-  return size
+  return { ...size, height: Math.max(size.height, measuredNodeHeights.value[node.id] ?? 0) }
 }
 
 function getRenderedNodeSize(node: CanvasNode) {
@@ -1398,6 +1513,7 @@ function curvePath(startX: number, startY: number, endX: number, endY: number) {
 }
 
 function removeNode(nodeId: string) {
+  cleanupMeasuredNodeElement(nodeId)
   nodes.value = nodes.value.filter(node => node.id !== nodeId)
   connections.value = connections.value.filter(conn => conn.fromNodeId !== nodeId && conn.toNodeId !== nodeId)
   if (selectedNodeId.value === nodeId) selectedNodeId.value = null
@@ -2336,47 +2452,65 @@ async function generateFromNode(node: CanvasNode) {
   const canvasContext = CANVAS_CONTEXT_ENABLED
     ? buildCanvasContext(node, userPrompt)
     : undefined
+  const generationCount = props.canSelectGenerationCount ? generationCountForNode(node) : 1
   node.status = references.length
-    ? `正在上传 ${references.length} 张参考图并生成...`
-    : '正在生成图片...'
-  const result = await generate(modelPrompt, {
+    ? `正在上传 ${references.length} 张参考图并生成 ${generationCount} 张图片...`
+    : `正在生成 ${generationCount} 张图片...`
+  const results = await generate(modelPrompt, {
     userPrompt,
     systemPrompt,
     modelPrompt,
     aspectRatio: node.aspectRatio,
     resolution: node.resolution,
     quality: node.quality,
+    count: generationCount,
     references,
     ...(canvasContext ? { canvasContext } : {}),
   })
   node.loading = false
   node.status = null
 
-  if (!result) {
+  if (!results?.length) {
     node.error = error.value || '生成失败'
     return
   }
 
-  const outputNode = createNode('image', node.x + NODE_SIZE.generation.width + 132, node.y + 46, {
-    title: nextImageTitle(),
-    content: '',
-    imageUrl: previewImageUrl(result),
-    sourceImageId: result.id,
-    sourceHistoryScope: 'mine',
-    sourcePrompt: result.prompt,
-    fileName: result.size,
-    ...imageDimensionsFromHistory(result),
+  const outputColumns = Math.min(2, results.length)
+  const outputX = node.x + NODE_SIZE.generation.width + 132
+  const outputY = node.y + 46
+  let nextTitleIndex = nodes.value.reduce((max, item) => {
+    if (item.type !== 'image') return max
+    const match = /^图片(\d+)$/.exec(item.title.trim())
+    return match ? Math.max(max, Number(match[1])) : max
+  }, 0)
+  const outputNodes = results.map((result, index) => {
+    nextTitleIndex += 1
+    return createNode(
+      'image',
+      outputX + (index % outputColumns) * (NODE_SIZE.image.width + 28),
+      outputY + Math.floor(index / outputColumns) * (NODE_SIZE.image.height + 28),
+      {
+        title: `图片${nextTitleIndex}`,
+        content: '',
+        imageUrl: previewImageUrl(result),
+        sourceImageId: result.id,
+        sourceHistoryScope: 'mine',
+        sourcePrompt: result.prompt,
+        fileName: result.size,
+        ...imageDimensionsFromHistory(result),
+      },
+    )
   })
 
   connections.value = [
     ...connections.value,
-    {
+    ...outputNodes.map((outputNode): Connection => ({
       id: createId('conn'),
       fromNodeId: node.id,
       fromHandle: 'generation-out',
       toNodeId: outputNode.id,
       toHandle: 'image-in',
-    },
+    })),
   ]
 }
 
@@ -2693,6 +2827,7 @@ function fitView() {
 }
 
 function clearCanvas() {
+  nodes.value.forEach(node => cleanupMeasuredNodeElement(node.id))
   nodes.value = []
   connections.value = []
   selectedNodeId.value = null
@@ -2724,6 +2859,14 @@ onUnmounted(() => {
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('paste', handleWindowPaste)
+  measuredNodeResizeObservers.forEach(observer => observer.disconnect())
+  measuredNodeResizeObservers.clear()
+  measuredNodeMutationObservers.forEach(observer => observer.disconnect())
+  measuredNodeMutationObservers.clear()
+  measuredNodeUpdateFrames.forEach(frame => window.cancelAnimationFrame(frame))
+  measuredNodeUpdateFrames.clear()
+  measuredNodeElements.clear()
+  measuredNodeRefCallbacks.clear()
   if (suppressClickTimer !== null) {
     window.clearTimeout(suppressClickTimer)
     suppressClickTimer = null
@@ -2926,6 +3069,7 @@ onUnmounted(() => {
           <article
             v-for="node in nodes"
             :key="node.id"
+            :ref="measuredNodeRef(node.id)"
             class="canvas-node"
             :class="[`node-${node.type}`, { selected: selectedNodeId === node.id }]"
             :style="nodeStyle(node)"
@@ -3147,9 +3291,27 @@ onUnmounted(() => {
                     </div>
                   </div>
 
+                  <div v-if="props.canSelectGenerationCount" class="control-group count-control">
+                    <div class="linked-row">
+                      <span class="control-label">数量</span>
+                      <span class="linked-count">图片</span>
+                    </div>
+                    <div class="segmented count-segmented">
+                      <button
+                        v-for="option in generationCountOptions"
+                        :key="option.value"
+                        type="button"
+                        :class="{ active: generationCountForNode(node) === option.value }"
+                        @click.stop="setGenerationCount(node, option.value)"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
+                  </div>
+
                   <div class="control-group">
                     <span class="control-label">分辨率</span>
-                    <div class="segmented">
+                    <div class="segmented four-option-segmented">
                       <button
                         v-for="option in resolutionOptions"
                         :key="option.value"
@@ -3180,7 +3342,7 @@ onUnmounted(() => {
 
                   <div class="control-group">
                     <span class="control-label">质量</span>
-                    <div class="segmented">
+                    <div class="segmented four-option-segmented">
                       <button
                         v-for="option in qualityOptions"
                         :key="option.value"
@@ -4340,12 +4502,13 @@ onUnmounted(() => {
 }
 
 .node-textarea {
-  flex: 1;
+  flex: 0 0 auto;
+  min-height: 118px;
   padding: 12px;
   color: var(--text-primary);
   font-size: calc(13px * var(--node-text-content-scale, 1));
   line-height: 1.55;
-  overflow-y: auto;
+  overflow: visible;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -4406,7 +4569,7 @@ onUnmounted(() => {
   min-height: 0;
   margin: 10px 10px 0;
   border-radius: 7px;
-  background: #f8fafc;
+  background: transparent;
   overflow: hidden;
 }
 
@@ -4429,7 +4592,6 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   max-width: 100%;
-  max-height: 100%;
   border-radius: 7px;
   background:
     linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
@@ -4439,7 +4601,7 @@ onUnmounted(() => {
     #f8fafc;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .image-preview.generated {
@@ -4494,7 +4656,8 @@ onUnmounted(() => {
 }
 
 .image-caption {
-  flex: 0 0 48px;
+  flex: 0 0 auto;
+  min-height: 48px;
   padding: 8px 10px 2px;
   font-size: 12px;
   line-height: 1.35;
@@ -5062,28 +5225,32 @@ onUnmounted(() => {
 .generation-body {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   padding: 10px 12px 12px;
 }
 
 .generation-scroll {
   display: flex;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 9px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .generation-footer {
   display: grid;
+  position: relative;
+  z-index: 1;
   flex: 0 0 auto;
   gap: 6px;
+  margin-top: 8px;
   padding-top: 8px;
-  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .mention-index {
@@ -5182,16 +5349,15 @@ onUnmounted(() => {
 }
 
 .generation-prompt {
-  flex: 0 0 116px;
-  height: 116px;
-  min-height: 74px;
+  flex: 0 0 auto;
+  min-height: 116px;
   padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: #fff;
   font-size: 12px;
   line-height: 1.45;
-  overflow-y: auto;
+  overflow: visible;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -5269,6 +5435,11 @@ onUnmounted(() => {
 
 .segmented.aspect-grid {
   grid-template-columns: repeat(3, 1fr);
+}
+
+.segmented.count-segmented,
+.segmented.four-option-segmented {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .segmented button {
@@ -5581,8 +5752,9 @@ onUnmounted(() => {
     left: 10px;
     right: 10px;
     bottom: 10px;
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: 44px 44px 1px 44px minmax(0, 1fr) 44px minmax(42px, auto);
+    justify-content: stretch;
     padding: 8px;
   }
 
@@ -5593,13 +5765,18 @@ onUnmounted(() => {
 
   .zoom-pill {
     min-width: 44px;
-    height: 34px;
+    height: 44px;
+    padding: 0 8px;
   }
 
   .zoom-range {
-    flex: 1 1 120px;
-    min-width: 120px;
+    width: 100%;
+    min-width: 0;
     height: 34px;
+  }
+
+  .toolbar-divider {
+    align-self: center;
   }
 
   .node-header {
@@ -5769,6 +5946,22 @@ onUnmounted(() => {
 
   .image-viewer-stage {
     padding: 12px;
+  }
+}
+
+@media (max-width: 380px) {
+  .bottom-toolbar {
+    grid-template-columns: 38px 38px 1px 38px minmax(58px, 1fr) 38px minmax(42px, auto);
+    gap: 5px;
+  }
+
+  .bottom-toolbar .tool-button {
+    width: 38px;
+    height: 38px;
+  }
+
+  .bottom-toolbar .zoom-pill {
+    height: 38px;
   }
 }
 </style>
