@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance, type DirectiveBinding } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
+import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import {
   buildCanvasExportDocument as buildCanvasExportDocumentPayload,
   isInputHandle,
@@ -8,24 +9,92 @@ import {
   isValidCanvasConnection,
   normalizeCanvasImport,
   parseCanvasExportDocument,
-  type CanvasHandle,
-  type CanvasNodeType,
-  type CanvasRuntimeNode,
-  type InputHandle,
-  type OutputHandle,
 } from '../lib/canvas-document'
-import { downloadImage } from '../lib/image-download'
-import type { GeneratedImage, ImageCanvasContext, ImageGenReference, ImageGenRequest } from '../types/image'
-
-type HandleRole = 'input' | 'output'
-type NodeSize = NonNullable<ImageGenRequest['size']>
-type NodeAspectRatio = NonNullable<ImageGenRequest['aspectRatio']>
-type NodeResolution = NonNullable<ImageGenRequest['resolution']>
-type NodeQuality = NonNullable<ImageGenRequest['quality']>
-type NodeGenerationCount = NonNullable<ImageGenRequest['count']>
-type MentionField = 'text' | 'generation'
-type WorkspaceMode = 'canvas' | 'gallery'
-type GalleryFilter = 'mine' | 'references' | 'latest'
+import { useImageDownload, type ImageDownloadNode, type ImageDownloadViewer } from '../composables/useImageDownload'
+import {
+  CANVAS_EXPORT_VERSION,
+  CANVAS_IMPORT_MAX_FILE_BYTES,
+  CANVAS_TITLE,
+  GALLERY_AUTO_LOAD_PROGRESS,
+  GALLERY_PAGE_SIZE,
+  MAX_NODE_SCALE,
+  MAX_VIEWPORT_ZOOM,
+  MENU_HEIGHT,
+  MENU_WIDTH,
+  MINI_MAP_VIEW,
+  MIN_NODE_SCALE,
+  MIN_VIEWPORT_ZOOM,
+  NODE_SIZE,
+  PLANE_SIZE,
+  type CanvasHandle,
+  type CanvasNode,
+  type CanvasNodeType,
+  type Connection,
+  type ContextMenuState,
+  type DraftConnection,
+  type DragState,
+  type GalleryFilter,
+  type ImageViewerState,
+  type InputHandle,
+  type MentionField,
+  type MentionState,
+  type NodeAspectRatio,
+  type NodeGenerationCount,
+  type NodeQuality,
+  type NodeResolution,
+  type OutputHandle,
+  type PanState,
+  type PendingMenuConnection,
+  type ResizeCorner,
+  type ResizeState,
+  type WorkspaceMode,
+} from '../lib/image-canvas-model'
+import {
+  clamp,
+  clipboardImageFile,
+  compressReferenceImageDataUrl,
+  fallbackImageFileName,
+  getNodeScale,
+  imageDimensionsFromHistory,
+  isGeneratedImageNode,
+  preloadImageUrl,
+  readImageDimensions,
+  readImageFileAsDataUrl,
+  updateNodeImageDimensions,
+} from '../lib/image-canvas-utils'
+import {
+  displayImageUrl,
+  displayReferenceUrl,
+  formatGalleryDate,
+  galleryFileName,
+  galleryOptionLabel,
+  galleryParamItems as buildGalleryParamItems,
+  galleryPrompt,
+  galleryReferenceCount,
+  galleryReferences,
+  previewImageUrl,
+} from '../lib/image-gallery'
+import {
+  createMentionTokenElement,
+  createRichContentDirective,
+  serializeRichEditor,
+  setRichEditorSelection,
+  textBeforeCaret,
+} from '../lib/image-mention-editor'
+import {
+  buildMiniMapLayout,
+  canvasPlaneStyle,
+  canvasPointFromClientPoint,
+  DEFAULT_CANVAS_VIEWPORT,
+  fitViewportToNodeBoxes,
+  nodePositionNearVisibleCenter as nodePositionNearVisibleCenterForViewport,
+  normalizedWheelDelta,
+  normalizedWheelValue,
+  viewportForClientZoom,
+} from '../lib/image-canvas-viewport'
+import * as canvasPrompt from '../lib/image-canvas-prompt'
+import * as canvasGraph from '../lib/image-canvas-graph'
+import type { GeneratedImage, ImageGenReference } from '../types/image'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -36,146 +105,7 @@ const emit = defineEmits<{
   sendToChat: [dataUrl: string]
   workspaceChange: [mode: WorkspaceMode]
 }>()
-
-interface CanvasNode extends CanvasRuntimeNode {
-  id: string
-  type: CanvasNodeType
-  x: number
-  y: number
-  title: string
-  content: string
-  size: NodeSize
-  aspectRatio: NodeAspectRatio
-  resolution: NodeResolution
-  quality: NodeQuality
-  count?: NodeGenerationCount
-  imageUrl?: string
-  imageWidth?: number
-  imageHeight?: number
-  storagePath?: string
-  fileName?: string
-  sourceImageId?: string
-  sourceHistoryScope?: ImageHistoryScope
-  sourcePrompt?: string
-  scale?: number
-  mentions?: string[]
-  loading?: boolean
-  status?: string | null
-  error?: string | null
-}
-
-interface Connection {
-  id: string
-  fromNodeId: string
-  fromHandle: OutputHandle
-  toNodeId: string
-  toHandle: InputHandle
-  managedByMention?: boolean
-}
-
-interface DraftConnection {
-  nodeId: string
-  handle: CanvasHandle
-  role: HandleRole
-  cursorX: number
-  cursorY: number
-  startClientX: number
-  startClientY: number
-}
-
-interface PendingMenuConnection {
-  nodeId: string
-  handle: CanvasHandle
-  role: HandleRole
-}
-
-interface ContextMenuState {
-  visible: boolean
-  x: number
-  y: number
-  canvasX: number
-  canvasY: number
-  pendingConnection: PendingMenuConnection | null
-  targetNodeId: string | null
-}
-
-interface DragState {
-  nodeId: string
-  startClientX: number
-  startClientY: number
-  startX: number
-  startY: number
-}
-
-interface PanState {
-  startClientX: number
-  startClientY: number
-  startX: number
-  startY: number
-}
-
-interface ResizeState {
-  nodeId: string
-  corner: ResizeCorner
-  startClientX: number
-  startClientY: number
-  startScale: number
-  startX: number
-  startY: number
-}
-
-type ResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
-
-interface MentionState {
-  nodeId: string
-  field: MentionField
-  query: string
-  start: number
-  end: number
-  activeIndex: number
-}
-
-interface ImageViewerState {
-  imageUrl: string
-  title: string
-  caption: string
-  zoom: number
-  loadingPreview?: boolean
-  sourceImageId?: string
-  sourceScope?: ImageHistoryScope
-}
-
-interface GalleryParam {
-  label: string
-  value: string
-}
-
-const NODE_SIZE: Record<CanvasNodeType, { width: number; height: number }> = {
-  text: { width: 270, height: 156 },
-  image: { width: 232, height: 326 },
-  generation: { width: 334, height: 700 },
-}
-
-const PLANE_SIZE = { width: 3600, height: 2400 }
-const MINI_MAP_VIEW = { width: 100, height: 54, padding: 5 }
-const MENU_WIDTH = 176
-const MENU_HEIGHT = 150
-const MIN_NODE_SCALE = 0.72
-const MAX_NODE_SCALE = 2.4
-const MIN_VIEWPORT_ZOOM = 0.42
-const MAX_VIEWPORT_ZOOM = 1.4
-const GALLERY_PAGE_SIZE = 12
-const GALLERY_AUTO_LOAD_PROGRESS = 0.5
-const REFERENCE_IMAGE_MAX_EDGE = 2048
-const REFERENCE_IMAGE_WEBP_QUALITY = 0.86
-const TEXT_NODE_CONTENT_SCALE_FACTOR = 0.5
-const MINI_MAP_WORLD_PADDING = 96
-const IMAGE_PREVIEW_HORIZONTAL_INSET = 20
-const IMAGE_PREVIEW_EMPTY_HEIGHT = 136
-const CANVAS_EXPORT_VERSION = 1
-const CANVAS_TITLE = 'Imagio canvas'
 const CANVAS_CONTEXT_ENABLED = import.meta.env.VITE_CANVAS_CONTEXT_ENABLED === 'true'
-const CANVAS_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 const {
   isGenerating,
@@ -247,9 +177,8 @@ const galleryDetail = ref<GeneratedImage | null>(null)
 const galleryDetailScope = ref<ImageHistoryScope>('mine')
 const galleryDetailDisplayUrl = ref('')
 const isGalleryDetailLoadingPreview = ref(false)
-const downloadingImages = ref(new Set<string>())
 const draftConnection = ref<DraftConnection | null>(null)
-const viewport = ref({ x: -120, y: -40, zoom: 1 })
+const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const isGalleryAutoLoading = ref(false)
@@ -272,12 +201,17 @@ let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
 let imageViewerLoadSeq = 0
 let galleryDetailLoadSeq = 0
-const measuredNodeHeights = ref<Record<string, number>>({})
-const measuredNodeElements = new Map<string, HTMLElement>()
-const measuredNodeResizeObservers = new Map<string, ResizeObserver>()
-const measuredNodeMutationObservers = new Map<string, MutationObserver>()
-const measuredNodeUpdateFrames = new Map<string, number>()
-const measuredNodeRefCallbacks = new Map<string, (element: Element | ComponentPublicInstance | null) => void>()
+
+const {
+  cleanupMeasuredNodeElement,
+  measuredNodeRef,
+  getBaseNodeSize,
+  getRenderedNodeSize,
+  clearMeasuredNodes,
+} = useMeasuredCanvasNodes({
+  getNodeById,
+  referenceCountForNode: node => referencedImageNodes(node).length,
+})
 
 watch(
   () => props.workspaceMode,
@@ -299,94 +233,34 @@ watch([galleryQuery, galleryFilter], () => {
   })
 })
 
-const planeStyle = computed(() => ({
-  width: `${PLANE_SIZE.width}px`,
-  height: `${PLANE_SIZE.height}px`,
-  transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
-}))
+const planeStyle = computed(() => canvasPlaneStyle(viewport.value))
 
 const miniMapLayout = computed(() => {
-  const visibleNodes = nodes.value
-  const boxes = visibleNodes.map((node) => {
+  const miniNodes = nodes.value.map((node) => {
     const size = getRenderedNodeSize(node)
     return {
-      node,
+      id: node.id,
+      type: node.type,
+      selected: selectedNodeId.value === node.id,
       x: node.x,
       y: node.y,
       width: size.width,
       height: size.height,
     }
   })
-  const viewportRect = viewportRef.value?.getBoundingClientRect()
-  const viewportBox = viewportRect
-    ? {
-      x: -viewport.value.x / viewport.value.zoom,
-      y: -viewport.value.y / viewport.value.zoom,
-      width: viewportRect.width / viewport.value.zoom,
-      height: viewportRect.height / viewport.value.zoom,
-    }
-    : null
-  const worldBoxes = [
-    ...boxes,
-    ...(viewportBox ? [viewportBox] : []),
-  ]
-  if (!worldBoxes.length) {
-    return { nodes: [], connections: [], viewport: null }
-  }
 
-  const rawMinX = Math.min(...worldBoxes.map(item => item.x))
-  const rawMinY = Math.min(...worldBoxes.map(item => item.y))
-  const rawMaxX = Math.max(...worldBoxes.map(item => item.x + item.width))
-  const rawMaxY = Math.max(...worldBoxes.map(item => item.y + item.height))
-  const contentWidth = Math.max(1, rawMaxX - rawMinX + MINI_MAP_WORLD_PADDING * 2)
-  const contentHeight = Math.max(1, rawMaxY - rawMinY + MINI_MAP_WORLD_PADDING * 2)
-  const minX = rawMinX - MINI_MAP_WORLD_PADDING
-  const minY = rawMinY - MINI_MAP_WORLD_PADDING
-  const availableWidth = MINI_MAP_VIEW.width - MINI_MAP_VIEW.padding * 2
-  const availableHeight = MINI_MAP_VIEW.height - MINI_MAP_VIEW.padding * 2
-  const miniScale = Math.min(availableWidth / contentWidth, availableHeight / contentHeight)
-  const offsetX = (MINI_MAP_VIEW.width - contentWidth * miniScale) / 2
-  const offsetY = (MINI_MAP_VIEW.height - contentHeight * miniScale) / 2
-  const mapPoint = (x: number, y: number) => ({
-    x: offsetX + (x - minX) * miniScale,
-    y: offsetY + (y - minY) * miniScale,
-  })
-  const mapBox = (box: { x: number; y: number; width: number; height: number }) => {
-    const point = mapPoint(box.x, box.y)
-    return {
-      x: point.x,
-      y: point.y,
-      width: Math.max(3, box.width * miniScale),
-      height: Math.max(3, box.height * miniScale),
-    }
-  }
-
-  return {
-    nodes: boxes.map((item) => {
-      const point = mapPoint(item.x, item.y)
-      return {
-        id: item.node.id,
-        type: item.node.type,
-        selected: selectedNodeId.value === item.node.id,
-        x: point.x,
-        y: point.y,
-        width: Math.max(2.6, item.width * miniScale),
-        height: Math.max(2.6, item.height * miniScale),
-      }
-    }),
+  return buildMiniMapLayout({
+    nodes: miniNodes,
     connections: connections.value.map((connection) => {
-      const start = handlePoint(connection.fromNodeId, connection.fromHandle)
-      const end = handlePoint(connection.toNodeId, connection.toHandle)
-      const miniStart = mapPoint(start.x, start.y)
-      const miniEnd = mapPoint(end.x, end.y)
-      const distance = Math.max(8, Math.abs(miniEnd.x - miniStart.x) * 0.42)
       return {
         id: connection.id,
-        d: `M ${miniStart.x} ${miniStart.y} C ${miniStart.x + distance} ${miniStart.y}, ${miniEnd.x - distance} ${miniEnd.y}, ${miniEnd.x} ${miniEnd.y}`,
+        start: handlePoint(connection.fromNodeId, connection.fromHandle),
+        end: handlePoint(connection.toNodeId, connection.toHandle),
       }
     }),
-    viewport: viewportBox ? mapBox(viewportBox) : null,
-  }
+    viewport: viewport.value,
+    viewportRect: viewportRef.value?.getBoundingClientRect(),
+  })
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
@@ -467,6 +341,36 @@ const contextMenuNode = computed(() => (
   contextMenu.value.targetNodeId ? getNodeById(contextMenu.value.targetNodeId) ?? null : null
 ))
 
+function historyImageForViewer(viewer: ImageDownloadViewer) {
+  if (!viewer.sourceImageId) return null
+  const scopedImages = viewer.sourceScope === 'public'
+    ? publicGalleryImages.value
+    : generatedImages.value
+  return scopedImages.find(image => image.id === viewer.sourceImageId) ??
+    [...generatedImages.value, ...publicGalleryImages.value].find(image => image.id === viewer.sourceImageId) ??
+    null
+}
+
+const {
+  imageDownloadKey,
+  nodeDownloadKey,
+  viewerDownloadKey: imageViewerDownloadKey,
+  isDownloadingImage,
+  generatedImageTarget,
+  nodeTarget,
+  viewerTarget,
+  preloadTarget,
+  downloadTarget,
+} = useImageDownload({
+  resolveImageDetail,
+  imageFileName: galleryFileName,
+  historyImageForNode,
+  historyImageForViewer,
+  setError(message) {
+    error.value = message
+  },
+})
+
 function createId(prefix: string) {
   idSeed += 1
   return `${prefix}_${idSeed}`
@@ -519,37 +423,21 @@ function setGenerationCount(node: CanvasNode, count: NodeGenerationCount) {
 }
 
 function canvasPointFromClient(clientX: number, clientY: number) {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return { x: 0, y: 0 }
-  return {
-    x: (clientX - rect.left - viewport.value.x) / viewport.value.zoom,
-    y: (clientY - rect.top - viewport.value.y) / viewport.value.zoom,
-  }
-}
-
-function visibleCanvasCenterClientPoint() {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect) return null
-
-  const isMobile = rect.width <= 760
-  const topInset = isMobile ? 142 : 0
-  const bottomInset = isMobile ? 112 : 0
-  return {
-    x: rect.left + rect.width / 2,
-    y: rect.top + topInset + (rect.height - topInset - bottomInset) / 2,
-  }
+  return canvasPointFromClientPoint(
+    clientX,
+    clientY,
+    viewportRef.value?.getBoundingClientRect(),
+    viewport.value,
+  )
 }
 
 function nodePositionNearVisibleCenter(type: CanvasNodeType) {
-  const center = visibleCanvasCenterClientPoint()
-  if (!center) return null
-  const point = canvasPointFromClient(center.x, center.y)
-  const size = NODE_SIZE[type]
-  const offset = nodes.value.length * 18
-  return {
-    x: point.x - size.width / 2 + offset,
-    y: point.y - Math.min(size.height / 2, 180) + offset,
-  }
+  return nodePositionNearVisibleCenterForViewport(
+    type,
+    viewportRef.value?.getBoundingClientRect(),
+    viewport.value,
+    nodes.value.length,
+  )
 }
 
 function createNodeAtMenu(type: CanvasNodeType) {
@@ -667,27 +555,15 @@ function buildCanvasExportDocument() {
   })
 }
 
-function buildCanvasContext(node: CanvasNode, userPrompt: string): ImageCanvasContext {
-  const imageNodeCount = nodes.value.filter(item => item.type === 'image').length
-  const textNodeCount = nodes.value.filter(item => item.type === 'text').length
-  const generationNodeCount = nodes.value.filter(item => item.type === 'generation').length
-  const connectedReferences = connectedImageNodes(node).filter(item => item.imageUrl)
-  const mentionedReferences = promptMentionedImageNodesForGeneration(node)
-
-  return {
+function buildCanvasContext(node: CanvasNode, userPrompt: string) {
+  return canvasPrompt.buildCanvasContext({
     canvasId,
-    nodeCount: nodes.value.length,
-    connectionCount: connections.value.length,
-    imageNodeCount,
-    textNodeCount,
-    generationNodeCount,
-    referenceCount: referencedImageNodes(node).length,
-    mentionedReferenceCount: mentionedReferences.length,
-    connectedReferenceCount: connectedReferences.length,
-    promptCharCount: userPrompt.length,
-    hasConnectedPrompt: hasPromptLink(node),
     canvasVersion: CANVAS_EXPORT_VERSION,
-  }
+    nodes: nodes.value,
+    connections: connections.value,
+    node,
+    userPrompt,
+  })
 }
 
 function safeCanvasFileName() {
@@ -835,193 +711,6 @@ function deleteContextNode() {
   closeContextMenu()
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value))
-}
-
-function getNodeScale(node: CanvasNode) {
-  return node.scale ?? 1
-}
-
-function isGeneratedImageNode(node: CanvasNode) {
-  return node.type === 'image' && Boolean(node.sourceImageId)
-}
-
-function dimensionsFromSize(value?: string) {
-  const match = /^([1-9]\d*)x([1-9]\d*)$/.exec(value || '')
-  if (!match) return null
-
-  return {
-    width: Number(match[1]),
-    height: Number(match[2]),
-  }
-}
-
-function dimensionsFromAspectRatio(value?: string) {
-  const match = /^([1-9]\d*):([1-9]\d*)$/.exec(value || '')
-  if (!match) return null
-
-  return {
-    width: Number(match[1]),
-    height: Number(match[2]),
-  }
-}
-
-function imageDimensionsFromHistory(image: GeneratedImage): Pick<CanvasNode, 'imageWidth' | 'imageHeight'> {
-  const dimensions = dimensionsFromSize(image.size) ?? dimensionsFromAspectRatio(image.aspectRatio)
-  return dimensions
-    ? { imageWidth: dimensions.width, imageHeight: dimensions.height }
-    : {}
-}
-
-function imageAspectRatio(node: CanvasNode) {
-  const dimensions = node.imageWidth && node.imageHeight
-    ? { width: node.imageWidth, height: node.imageHeight }
-    : dimensionsFromSize(node.fileName) ?? dimensionsFromAspectRatio(node.aspectRatio)
-  if (!dimensions?.width || !dimensions.height) return 1
-
-  const ratio = dimensions.width / dimensions.height
-  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1
-}
-
-function imagePreviewHeight(node: CanvasNode) {
-  if (!node.imageUrl) return IMAGE_PREVIEW_EMPTY_HEIGHT
-
-  const previewWidth = NODE_SIZE.image.width - IMAGE_PREVIEW_HORIZONTAL_INSET
-  return Math.max(1, Math.round(previewWidth / imageAspectRatio(node)))
-}
-
-function childFlowBottom(element: HTMLElement) {
-  return Array.from(element.children).reduce((max, child) => {
-    if (!(child instanceof HTMLElement)) return max
-    const style = getComputedStyle(child)
-    if (style.position === 'absolute' || style.position === 'fixed') return max
-    const marginBottom = Number.parseFloat(style.marginBottom) || 0
-    return Math.max(max, child.offsetTop + Math.max(child.scrollHeight, child.offsetHeight) + marginBottom)
-  }, 0)
-}
-
-function naturalMeasuredNodeHeight(element: HTMLElement) {
-  const style = getComputedStyle(element)
-  const borderHeight = (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.borderBottomWidth) || 0)
-  return Math.ceil(childFlowBottom(element) + borderHeight)
-}
-
-function updateMeasuredNodeHeight(nodeId: string) {
-  measuredNodeUpdateFrames.delete(nodeId)
-  const element = measuredNodeElements.get(nodeId)
-  if (!element) return
-
-  const node = getNodeById(nodeId)
-  if (!node) return
-  const naturalHeight = naturalMeasuredNodeHeight(element)
-  const measuredHeight = node.type === 'image'
-    ? naturalHeight
-    : Math.max(NODE_SIZE[node.type].height, naturalHeight)
-  if (measuredNodeHeights.value[nodeId] === measuredHeight) return
-  measuredNodeHeights.value = {
-    ...measuredNodeHeights.value,
-    [nodeId]: measuredHeight,
-  }
-}
-
-function scheduleMeasuredNodeHeightUpdate(nodeId: string) {
-  if (measuredNodeUpdateFrames.has(nodeId)) return
-  const frame = window.requestAnimationFrame(() => updateMeasuredNodeHeight(nodeId))
-  measuredNodeUpdateFrames.set(nodeId, frame)
-}
-
-function cleanupMeasuredNodeElement(nodeId: string) {
-  measuredNodeResizeObservers.get(nodeId)?.disconnect()
-  measuredNodeResizeObservers.delete(nodeId)
-  measuredNodeMutationObservers.get(nodeId)?.disconnect()
-  measuredNodeMutationObservers.delete(nodeId)
-  const frame = measuredNodeUpdateFrames.get(nodeId)
-  if (frame !== undefined) {
-    window.cancelAnimationFrame(frame)
-    measuredNodeUpdateFrames.delete(nodeId)
-  }
-  measuredNodeElements.delete(nodeId)
-  measuredNodeRefCallbacks.delete(nodeId)
-  if (measuredNodeHeights.value[nodeId] !== undefined) {
-    const remainingHeights = { ...measuredNodeHeights.value }
-    delete remainingHeights[nodeId]
-    measuredNodeHeights.value = remainingHeights
-  }
-}
-
-function setMeasuredNodeElement(nodeId: string, value: Element | ComponentPublicInstance | null) {
-  let element: HTMLElement | null = null
-  if (value instanceof HTMLElement) {
-    element = value
-  } else if (value && !(value instanceof Element) && value.$el instanceof HTMLElement) {
-    element = value.$el
-  }
-  const existingElement = measuredNodeElements.get(nodeId)
-  if (existingElement === element) return
-
-  measuredNodeResizeObservers.get(nodeId)?.disconnect()
-  measuredNodeResizeObservers.delete(nodeId)
-  measuredNodeMutationObservers.get(nodeId)?.disconnect()
-  measuredNodeMutationObservers.delete(nodeId)
-
-  if (!element) {
-    cleanupMeasuredNodeElement(nodeId)
-    return
-  }
-
-  measuredNodeElements.set(nodeId, element)
-  const resizeObserver = new ResizeObserver(() => scheduleMeasuredNodeHeightUpdate(nodeId))
-  element.querySelectorAll<HTMLElement>('.node-header, .node-textarea, .image-preview, .image-output-panel, .image-caption, .image-node-actions, .generation-body, .generation-scroll, .generation-footer')
-    .forEach(item => resizeObserver.observe(item))
-  const mutationObserver = new MutationObserver(() => scheduleMeasuredNodeHeightUpdate(nodeId))
-  mutationObserver.observe(element, {
-    attributes: true,
-    childList: true,
-    characterData: true,
-    subtree: true,
-  })
-  measuredNodeResizeObservers.set(nodeId, resizeObserver)
-  measuredNodeMutationObservers.set(nodeId, mutationObserver)
-  scheduleMeasuredNodeHeightUpdate(nodeId)
-}
-
-function measuredNodeRef(nodeId: string) {
-  const existingCallback = measuredNodeRefCallbacks.get(nodeId)
-  if (existingCallback) return existingCallback
-
-  const callback = (value: Element | ComponentPublicInstance | null) => {
-    setMeasuredNodeElement(nodeId, value)
-  }
-  measuredNodeRefCallbacks.set(nodeId, callback)
-  return callback
-}
-
-function getBaseNodeSize(node: CanvasNode) {
-  const size = NODE_SIZE[node.type]
-  if (node.type === 'image') {
-    const measuredHeight = measuredNodeHeights.value[node.id]
-    return { ...size, height: measuredHeight ?? size.height }
-  }
-
-  if (node.type === 'generation') {
-    const referenceCount = referencedImageNodes(node).length
-    const extraReferenceHeight = Math.max(0, referenceCount - 1) * 30
-    const baseHeight = size.height + extraReferenceHeight
-    return { ...size, height: Math.max(baseHeight, measuredNodeHeights.value[node.id] ?? 0) }
-  }
-  return { ...size, height: Math.max(size.height, measuredNodeHeights.value[node.id] ?? 0) }
-}
-
-function getRenderedNodeSize(node: CanvasNode) {
-  const scale = getNodeScale(node)
-  const size = getBaseNodeSize(node)
-  return {
-    width: size.width * scale,
-    height: size.height * scale,
-  }
-}
-
 function canStartPointerInteraction(event: PointerEvent) {
   return event.isPrimary && event.button === 0
 }
@@ -1161,24 +850,14 @@ function shouldKeepNativeWheel(event: WheelEvent) {
   ].join(',')))
 }
 
-function normalizedWheelValue(value: number, deltaMode: number) {
-  if (deltaMode === WheelEvent.DOM_DELTA_LINE) return value * 16
-  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return value * 120
-  return value
-}
-
-function normalizedWheelDelta(event: WheelEvent) {
-  return normalizedWheelValue(event.deltaY, event.deltaMode)
-}
-
 function setViewportZoomAtClient(clientX: number, clientY: number, nextZoom: number) {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  const point = canvasPointFromClient(clientX, clientY)
-  viewport.value = {
-    x: clientX - (rect?.left ?? 0) - point.x * nextZoom,
-    y: clientY - (rect?.top ?? 0) - point.y * nextZoom,
-    zoom: nextZoom,
-  }
+  viewport.value = viewportForClientZoom(
+    clientX,
+    clientY,
+    viewportRef.value?.getBoundingClientRect(),
+    viewport.value,
+    nextZoom,
+  )
 }
 
 function handleWheel(event: WheelEvent) {
@@ -1202,10 +881,6 @@ function handleWheel(event: WheelEvent) {
   setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
 }
 
-function handleRole(handle: CanvasHandle): HandleRole {
-  return isOutputHandle(handle) ? 'output' : 'input'
-}
-
 function startConnection(event: PointerEvent, node: CanvasNode, handle: CanvasHandle) {
   if (!canStartPointerInteraction(event)) return
   event.preventDefault()
@@ -1214,7 +889,7 @@ function startConnection(event: PointerEvent, node: CanvasNode, handle: CanvasHa
   draftConnection.value = {
     nodeId: node.id,
     handle,
-    role: handleRole(handle),
+    role: canvasGraph.handleRole(handle),
     cursorX: point.x,
     cursorY: point.y,
     startClientX: event.clientX,
@@ -1272,133 +947,38 @@ function isValidConnection(fromNodeId: string, fromHandle: OutputHandle, toNodeI
   return isValidCanvasConnection(nodes.value, fromNodeId, fromHandle, toNodeId, toHandle)
 }
 
-function outputHandlesForNode(node: CanvasNode): OutputHandle[] {
-  if (node.type === 'text') return ['text-out']
-  if (node.type === 'image') return ['image-out']
-  return ['generation-out']
-}
-
-function inputHandlesForNode(node: CanvasNode): InputHandle[] {
-  if (node.type === 'image') return ['image-in']
-  if (node.type === 'generation') return ['prompt-in', 'reference-in']
-  return []
-}
-
 function connectPendingMenuConnection(pending: PendingMenuConnection, node: CanvasNode) {
   if (pending.role === 'output' && isOutputHandle(pending.handle)) {
-    for (const targetHandle of inputHandlesForNode(node)) {
+    for (const targetHandle of canvasGraph.inputHandlesForNode(node)) {
       if (addConnectionIfValid(pending.nodeId, pending.handle, node.id, targetHandle)) return
     }
   }
 
   if (pending.role === 'input' && isInputHandle(pending.handle)) {
-    for (const sourceHandle of outputHandlesForNode(node)) {
+    for (const sourceHandle of canvasGraph.outputHandlesForNode(node)) {
       if (addConnectionIfValid(node.id, sourceHandle, pending.nodeId, pending.handle)) return
     }
   }
 }
 
 function incomingConnections(nodeId: string, handle?: InputHandle) {
-  return connections.value.filter(conn => (
-    conn.toNodeId === nodeId &&
-    (!handle || conn.toHandle === handle)
-  ))
+  return canvasPrompt.incomingConnections(connections.value, nodeId, handle)
 }
 
 function getNodeById(nodeId: string) {
-  return nodes.value.find(node => node.id === nodeId)
-}
-
-function connectedTextNodes(node: CanvasNode) {
-  return incomingConnections(node.id, 'prompt-in')
-    .map(conn => getNodeById(conn.fromNodeId))
-    .filter((item): item is CanvasNode => Boolean(item && item.type === 'text'))
-}
-
-function connectedImageNodes(node: CanvasNode) {
-  return incomingConnections(node.id, 'reference-in')
-    .map(conn => getNodeById(conn.fromNodeId))
-    .filter((item): item is CanvasNode => Boolean(item && item.type === 'image'))
-}
-
-function imageNodesByMention(text: string) {
-  const names = new Set<string>()
-  const mentionPattern = /@([\u4e00-\u9fa5A-Za-z0-9_-]+)/g
-  for (const match of text.matchAll(mentionPattern)) {
-    names.add(match[1])
-  }
-  return nodes.value.filter(node => (
-    node.type === 'image' &&
-    Boolean(node.imageUrl) &&
-    names.has(node.title)
-  ))
-}
-
-function imageNodesByIds(ids: string[] = []) {
-  const idSet = new Set(ids)
-  return nodes.value.filter(node => (
-    node.type === 'image' &&
-    Boolean(node.imageUrl) &&
-    idSet.has(node.id)
-  ))
+  return canvasPrompt.getNodeById(nodes.value, nodeId)
 }
 
 function imageNodeForRichToken(id?: string, title?: string) {
-  if (id) return imageNodesByIds([id])[0] ?? null
-  if (!title) return null
-  return nodes.value.find(node => (
-    node.type === 'image' &&
-    Boolean(node.imageUrl) &&
-    node.title === title
-  )) ?? null
-}
-
-function imageTokenIds(text: string) {
-  const ids: string[] = []
-  const tokenPattern = /\{\{image:([^}]+)\}\}/g
-  for (const match of text.matchAll(tokenPattern)) {
-    ids.push(match[1])
-  }
-  return ids
-}
-
-function mentionedImageNodesForNode(node: CanvasNode) {
-  return uniqueImageNodes([
-    ...imageNodesByIds(node.mentions),
-    ...imageNodesByIds(imageTokenIds(node.content)),
-    ...imageNodesByMention(node.content),
-  ])
+  return canvasPrompt.imageNodeForRichToken(nodes.value, id, title)
 }
 
 function promptMentionedImageNodesForGeneration(node: CanvasNode) {
-  if (hasPromptLink(node)) {
-    return uniqueImageNodes(connectedTextNodes(node).flatMap(item => mentionedImageNodesForNode(item)))
-  }
-  return mentionedImageNodesForNode(node)
-}
-
-function uniqueImageNodes(items: CanvasNode[]) {
-  const seen = new Set<string>()
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false
-    seen.add(item.id)
-    return true
-  })
-}
-
-function promptTextWithImageLabels(text: string) {
-  return text
-    .replace(/\{\{image:([^}]+)\}\}/g, (_match, id: string) => imageNodeForRichToken(id)?.title ?? '')
-    .replace(/@([\u4e00-\u9fa5A-Za-z0-9_-]+)/g, (_match, title: string) => imageNodeForRichToken(undefined, title)?.title ?? title)
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
+  return canvasPrompt.promptMentionedImageNodesForGeneration(nodes.value, connections.value, node)
 }
 
 function referencedImageNodes(node: CanvasNode) {
-  return uniqueImageNodes([
-    ...connectedImageNodes(node).filter(item => item.imageUrl),
-    ...promptMentionedImageNodesForGeneration(node),
-  ])
+  return canvasPrompt.referencedImageNodes(nodes.value, connections.value, node)
 }
 
 function syncMentionConnectionsForGeneration(node: CanvasNode) {
@@ -1446,52 +1026,26 @@ function syncMentionConnectionsForTextNode(node: CanvasNode) {
 }
 
 function nodeStyle(node: CanvasNode) {
-  const scale = getNodeScale(node)
-  const size = getBaseNodeSize(node)
-  const textContentScale = node.type === 'text'
-    ? (1 + (scale - 1) * TEXT_NODE_CONTENT_SCALE_FACTOR) / scale
-    : 1
-  return {
-    width: `${size.width}px`,
-    height: `${size.height}px`,
-    transform: `translate(${node.x}px, ${node.y}px) scale(${scale})`,
-    transformOrigin: '0 0',
-    '--node-text-content-scale': textContentScale.toFixed(4),
-    '--image-preview-height': `${imagePreviewHeight(node)}px`,
-  }
+  return canvasGraph.nodeStyle(node, getBaseNodeSize(node))
 }
 
 function handlePoint(nodeId: string, handle: OutputHandle | InputHandle) {
   const node = getNodeById(nodeId)
-  if (!node) return { x: 0, y: 0 }
-  const size = getRenderedNodeSize(node)
-  const scale = getNodeScale(node)
-
-  if (handle === 'text-out') return { x: node.x + size.width, y: node.y + 78 * scale }
-  if (handle === 'image-in') return { x: node.x, y: node.y + size.height / 2 }
-  if (handle === 'image-out') return { x: node.x + size.width, y: node.y + size.height / 2 }
-  if (handle === 'prompt-in') return { x: node.x, y: node.y + 90 * scale }
-  if (handle === 'reference-in') return { x: node.x, y: node.y + 174 * scale }
-  return { x: node.x + size.width, y: node.y + 188 * scale }
+  return canvasGraph.handlePoint(node, handle, node ? getRenderedNodeSize(node) : { width: 0, height: 0 })
 }
 
 function connectionPath(connection: Connection) {
   const start = handlePoint(connection.fromNodeId, connection.fromHandle)
   const end = handlePoint(connection.toNodeId, connection.toHandle)
-  return curvePath(start.x, start.y, end.x, end.y)
+  return canvasGraph.curvePath(start.x, start.y, end.x, end.y)
 }
 
 const draftPath = computed(() => {
   const draft = draftConnection.value
   if (!draft) return ''
   const start = handlePoint(draft.nodeId, draft.handle)
-  return curvePath(start.x, start.y, draft.cursorX, draft.cursorY)
+  return canvasGraph.curvePath(start.x, start.y, draft.cursorX, draft.cursorY)
 })
-
-function curvePath(startX: number, startY: number, endX: number, endY: number) {
-  const distance = Math.max(80, Math.abs(endX - startX) * 0.48)
-  return `M ${startX} ${startY} C ${startX + distance} ${startY}, ${endX - distance} ${endY}, ${endX} ${endY}`
-}
 
 function removeNode(nodeId: string) {
   cleanupMeasuredNodeElement(nodeId)
@@ -1500,103 +1054,9 @@ function removeNode(nodeId: string) {
   if (selectedNodeId.value === nodeId) selectedNodeId.value = null
 }
 
-function fallbackImageFileName(file: File) {
-  if (file.name) return file.name
-  const extension = file.type.split('/')[1] || 'png'
-  return `剪贴板图片.${extension}`
-}
-
-function readBlobAsDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-      } else {
-        reject(new Error('图片读取失败'))
-      }
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-function readImageFileAsDataUrl(file: File) {
-  return readBlobAsDataUrl(file)
-}
-
-function isInlineImageDataUrl(value: string) {
-  return /^data:image\//i.test(value)
-}
-
-function loadImageElement(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('图片加载失败'))
-    image.src = src
-  })
-}
-
-function naturalImageDimensions(image: HTMLImageElement): Pick<CanvasNode, 'imageWidth' | 'imageHeight'> {
-  const width = image.naturalWidth || image.width
-  const height = image.naturalHeight || image.height
-  return width > 0 && height > 0
-    ? { imageWidth: width, imageHeight: height }
-    : {}
-}
-
-function updateNodeImageDimensions(node: CanvasNode, image: HTMLImageElement) {
-  const dimensions = naturalImageDimensions(image)
-  if (!dimensions.imageWidth || !dimensions.imageHeight) return
-
-  node.imageWidth = dimensions.imageWidth
-  node.imageHeight = dimensions.imageHeight
-}
-
 function handleNodeImageLoad(node: CanvasNode, event: Event) {
   if (event.currentTarget instanceof HTMLImageElement) {
     updateNodeImageDimensions(node, event.currentTarget)
-  }
-}
-
-async function readImageDimensions(src: string) {
-  return naturalImageDimensions(await loadImageElement(src))
-}
-
-function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
-  return new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(blob => resolve(blob), type, quality)
-  })
-}
-
-async function compressReferenceImageDataUrl(dataUrl: string) {
-  if (!isInlineImageDataUrl(dataUrl)) return dataUrl
-
-  try {
-    const image = await loadImageElement(dataUrl)
-    const sourceWidth = image.naturalWidth || image.width
-    const sourceHeight = image.naturalHeight || image.height
-    if (!sourceWidth || !sourceHeight) return dataUrl
-
-    const scale = Math.min(1, REFERENCE_IMAGE_MAX_EDGE / Math.max(sourceWidth, sourceHeight))
-    const width = Math.max(1, Math.round(sourceWidth * scale))
-    const height = Math.max(1, Math.round(sourceHeight * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-
-    const context = canvas.getContext('2d')
-    if (!context) return dataUrl
-
-    context.drawImage(image, 0, 0, width, height)
-    const blob = await canvasToBlob(canvas, 'image/webp', REFERENCE_IMAGE_WEBP_QUALITY)
-    if (!blob) return dataUrl
-
-    const compressed = await readBlobAsDataUrl(blob)
-    return compressed.length < dataUrl.length || scale < 1 ? compressed : dataUrl
-  } catch {
-    return dataUrl
   }
 }
 
@@ -1624,19 +1084,6 @@ function chooseImage(nodeId: string) {
     })
   }
   input.click()
-}
-
-function clipboardImageFile(event: ClipboardEvent) {
-  const items = Array.from(event.clipboardData?.items ?? [])
-  for (const item of items) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      const file = item.getAsFile()
-      if (file) return file
-    }
-  }
-
-  return Array.from(event.clipboardData?.files ?? [])
-    .find(file => file.type.startsWith('image/')) ?? null
 }
 
 async function handleWindowPaste(event: ClipboardEvent) {
@@ -1700,92 +1147,22 @@ async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope =
   })
 }
 
-function isGallerySystemPromptBlock(block: string) {
-  return (
-    /^已上传 \d+ 张真实参考图/.test(block) &&
-    block.includes('不要只根据文字重新想象')
-  ) || /^.+: 第 \d+ 张参考图/.test(block)
-}
-
-function galleryUserPrompt(image: GeneratedImage) {
-  return image.userPrompt || image.prompt
-}
-
-function galleryPrompt(image: GeneratedImage) {
-  const prompt = galleryUserPrompt(image)?.trim()
-  if (!prompt) return '无提示词'
-
-  const visibleBlocks = prompt
-    .split(/\n{2,}/)
-    .map(block => block.trim())
-    .filter(Boolean)
-    .filter(block => !isGallerySystemPromptBlock(block))
-
-  return visibleBlocks.join('\n\n') || '无提示词'
-}
-
-function galleryReferences(image: GeneratedImage) {
-  return image.references?.filter(reference => reference.dataUrl || reference.storagePath || reference.previewUrl || reference.thumbnailUrl) ?? []
-}
-
-function galleryReferenceCount(image: GeneratedImage) {
-  return typeof image.referenceImageCount === 'number'
-    ? image.referenceImageCount
-    : galleryReferences(image).length
-}
-
-function displayImageUrl(image: GeneratedImage) {
-  return image.thumbnailUrl || image.previewUrl || image.dataUrl || ''
-}
-
-function previewImageUrl(image: GeneratedImage) {
-  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
-}
-
-function displayReferenceUrl(reference: NonNullable<GeneratedImage['references']>[number]) {
-  return reference.thumbnailUrl || reference.previewUrl || reference.dataUrl || ''
-}
-
-function formatGalleryDate(timestamp: string) {
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return ''
-
-  return date.toLocaleDateString(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-  })
-}
-
-function galleryOptionLabel<T extends string>(
-  value: T | undefined,
-  options: Array<{ value: T; label: string }>,
-) {
-  if (!value) return 'Auto'
-  return options.find(option => option.value === value)?.label ?? value
-}
-
-function galleryParamItems(image: GeneratedImage): GalleryParam[] {
-  return [
-    { label: '尺寸', value: image.size || 'auto' },
-    { label: '比例', value: galleryOptionLabel(image.aspectRatio, aspectRatioOptions) },
-    { label: '分辨率', value: galleryOptionLabel(image.resolution, resolutionOptions) },
-    { label: '质量', value: galleryOptionLabel(image.quality, qualityOptions) },
-  ]
-}
-
 function galleryDetailImageUrl(image: GeneratedImage) {
   return galleryDetail.value?.id === image.id
     ? galleryDetailDisplayUrl.value || previewImageUrl(image)
     : previewImageUrl(image)
 }
 
-function immediateGalleryDetailImageUrl(image: GeneratedImage) {
-  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
+function galleryParamItems(image: GeneratedImage) {
+  return buildGalleryParamItems(image, {
+    aspectRatioOptions,
+    resolutionOptions,
+    qualityOptions,
+  })
 }
 
-async function preloadImageUrl(src: string) {
-  const image = await loadImageElement(src)
-  await image.decode?.().catch(() => undefined)
+function immediateGalleryDetailImageUrl(image: GeneratedImage) {
+  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
 }
 
 function closeGalleryDetail() {
@@ -1965,60 +1342,24 @@ function handleGalleryScroll() {
   }
 }
 
-function galleryFileName(image: GeneratedImage) {
-  const promptName = galleryPrompt(image)
-    .slice(0, 28)
-    .replace(/[^a-zA-Z0-9一-\u9fa5]/g, '_')
-    .replace(/_+/g, '_')
-  return `${promptName || image.id || 'recho_image'}.webp`
-}
-
-function imageDownloadKey(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-  return `history:${scope}:${image.id}`
-}
-
-function nodeDownloadKey(node: CanvasNode) {
-  return node.sourceImageId
-    ? `history:${node.sourceHistoryScope || 'mine'}:${node.sourceImageId}`
-    : `node:${node.id}`
-}
-
 function viewerDownloadKey() {
-  if (!imageViewer.value) return ''
-  return imageViewer.value.sourceImageId
-    ? `history:${imageViewer.value.sourceScope || 'mine'}:${imageViewer.value.sourceImageId}`
-    : `viewer:${imageViewer.value.imageUrl}`
+  return imageViewerDownloadKey(imageViewer.value)
 }
 
-function isDownloadingImage(key: string) {
-  return Boolean(key && downloadingImages.value.has(key))
+function preloadGeneratedImageDownload(image: GeneratedImage, scope: ImageHistoryScope = galleryActionScope.value) {
+  preloadTarget(generatedImageTarget(image, scope))
 }
 
-async function withImageDownloadLock(key: string, task: () => Promise<void>) {
-  if (!key || downloadingImages.value.has(key)) return
-  const next = new Set(downloadingImages.value)
-  next.add(key)
-  downloadingImages.value = next
-
-  try {
-    await task()
-  } finally {
-    const updated = new Set(downloadingImages.value)
-    updated.delete(key)
-    downloadingImages.value = updated
-  }
+function preloadNodeImageDownload(node: CanvasNode) {
+  preloadTarget(nodeTarget(node))
 }
 
-async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-  await withImageDownloadLock(imageDownloadKey(image, scope), async () => {
-    const detail = await resolveImageDetail(image, scope, { includeOriginal: true })
-    if (!detail.dataUrl) {
-      error.value = '原图加载失败，请稍后重试。'
-      return
-    }
+function preloadViewerImageDownload() {
+  preloadTarget(viewerTarget(imageViewer.value))
+}
 
-    await downloadImageUrl(detail.dataUrl, galleryFileName(detail))
-  })
+function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  void downloadTarget(generatedImageTarget(image, scope))
 }
 
 async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
@@ -2042,204 +1383,15 @@ function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } 
   }
 }
 
-function getConnectedPrompt(node: CanvasNode) {
-  return connectedTextNodes(node)
-    .map(item => item.content.trim())
-    .filter(Boolean)
-    .join('\n')
-}
-
 function hasPromptLink(node: CanvasNode) {
-  return incomingConnections(node.id, 'prompt-in').length > 0
+  return canvasPrompt.hasPromptLink(connections.value, node)
 }
 
 function getGenerationPromptValue(node: CanvasNode) {
-  return hasPromptLink(node) ? getConnectedPrompt(node) : node.content
+  return canvasPrompt.getGenerationPromptValue(nodes.value, connections.value, node)
 }
 
-function serializeRichEditor(root: HTMLElement) {
-  let value = ''
-  const visit = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      value += node.textContent ?? ''
-      return
-    }
-    if (node instanceof HTMLElement && node.classList.contains('mention-token')) {
-      const id = node.dataset.mentionId
-      if (id) value += `{{image:${id}}}`
-      return
-    }
-    node.childNodes.forEach(visit)
-  }
-  root.childNodes.forEach(visit)
-  const serialized = value.replace(/\u00a0/g, ' ')
-  root.dataset.serialized = serialized
-  return serialized
-}
-
-function textBeforeCaret(root: HTMLElement) {
-  const selection = window.getSelection()
-  if (!selection?.rangeCount) return ''
-  const activeRange = selection.getRangeAt(0)
-  if (!root.contains(activeRange.startContainer)) return ''
-
-  let value = ''
-  const appendEditableText = (node: Node) => {
-    if (node instanceof HTMLElement && node.classList.contains('mention-token')) return
-    if (node.nodeType === Node.TEXT_NODE) {
-      value += node.textContent ?? ''
-      return
-    }
-    node.childNodes.forEach(appendEditableText)
-  }
-  const visit = (node: Node): boolean => {
-    if (node instanceof HTMLElement && node.classList.contains('mention-token')) return false
-    if (node === activeRange.startContainer) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        value += (node.textContent ?? '').slice(0, activeRange.startOffset)
-      } else {
-        Array.from(node.childNodes)
-          .slice(0, activeRange.startOffset)
-          .forEach(appendEditableText)
-      }
-      return true
-    }
-    if (node.nodeType === Node.TEXT_NODE) {
-      value += node.textContent ?? ''
-      return false
-    }
-    for (const child of Array.from(node.childNodes)) {
-      if (visit(child)) return true
-    }
-    return false
-  }
-
-  visit(root)
-  return value
-}
-
-function setRichEditorSelection(root: HTMLElement, start: number, end: number) {
-  const range = document.createRange()
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(textNode) {
-      const parent = textNode.parentElement
-      return parent?.closest('.mention-token') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
-    },
-  })
-  let offset = 0
-  let current = walker.nextNode()
-  let startSet = false
-
-  while (current) {
-    const text = current.textContent ?? ''
-    const nextOffset = offset + text.length
-    if (!startSet && start <= nextOffset) {
-      range.setStart(current, Math.max(0, start - offset))
-      startSet = true
-    }
-    if (end <= nextOffset) {
-      range.setEnd(current, Math.max(0, end - offset))
-      const selection = window.getSelection()
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      return true
-    }
-    offset = nextOffset
-    current = walker.nextNode()
-  }
-
-  range.selectNodeContents(root)
-  range.collapse(false)
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  return startSet
-}
-
-function createMentionTokenElement(imageNode: CanvasNode) {
-  const token = document.createElement('span')
-  token.className = 'mention-token'
-  token.contentEditable = 'false'
-  token.dataset.mentionId = imageNode.id
-  Object.assign(token.style, {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '5px',
-    maxWidth: '132px',
-    minHeight: '26px',
-    margin: '0 2px',
-    padding: '2px 6px 2px 3px',
-    border: '1px solid #dbe3ee',
-    borderRadius: '7px',
-    background: '#fff',
-    color: 'var(--text-primary)',
-    fontSize: 'calc(12px * var(--node-text-content-scale, 1))',
-    fontWeight: '900',
-    verticalAlign: 'middle',
-    whiteSpace: 'nowrap',
-  })
-
-  if (imageNode.imageUrl) {
-    const img = document.createElement('img')
-    img.src = imageNode.imageUrl
-    img.alt = imageNode.title
-    Object.assign(img.style, {
-      width: '20px',
-      height: '20px',
-      borderRadius: '5px',
-      objectFit: 'cover',
-      flex: '0 0 auto',
-    })
-    token.appendChild(img)
-  }
-
-  const label = document.createElement('span')
-  label.textContent = imageNode.title
-  Object.assign(label.style, {
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  })
-  token.appendChild(label)
-  return token
-}
-
-function renderRichEditorContent(root: HTMLElement, value = '') {
-  const fragment = document.createDocumentFragment()
-  const tokenPattern = /\{\{image:([^}]+)\}\}|@([\u4e00-\u9fa5A-Za-z0-9_-]+)/g
-  let cursor = 0
-
-  for (const match of value.matchAll(tokenPattern)) {
-    const index = match.index ?? cursor
-    if (index > cursor) {
-      fragment.append(document.createTextNode(value.slice(cursor, index)))
-    }
-
-    const imageNode = imageNodeForRichToken(match[1], match[2])
-    fragment.append(imageNode
-      ? createMentionTokenElement(imageNode)
-      : document.createTextNode(match[0]))
-    cursor = index + match[0].length
-  }
-
-  if (cursor < value.length) {
-    fragment.append(document.createTextNode(value.slice(cursor)))
-  }
-
-  root.replaceChildren(fragment)
-  root.dataset.serialized = value
-}
-
-const vRichContent = {
-  mounted(el: HTMLElement, binding: DirectiveBinding<string>) {
-    renderRichEditorContent(el, binding.value ?? '')
-  },
-  updated(el: HTMLElement, binding: DirectiveBinding<string>) {
-    const value = binding.value ?? ''
-    if (document.activeElement === el) return
-    if (el.dataset.serialized === value) return
-    renderRichEditorContent(el, value)
-  },
-}
+const vRichContent = createRichContentDirective(imageNodeForRichToken)
 
 function updateRichEditorContent(event: Event, node: CanvasNode, field: MentionField) {
   const el = event.currentTarget as HTMLElement
@@ -2363,42 +1515,9 @@ function handleMentionKeydown(event: KeyboardEvent, node: CanvasNode, field: Men
   }
 }
 
-function generationUserPrompt(node: CanvasNode) {
-  syncMentionConnectionsForGeneration(node)
-  const promptText = hasPromptLink(node) ? getConnectedPrompt(node) : node.content.trim()
-  return promptTextWithImageLabels(promptText)
-}
-
-function buildSystemPrompt(references: CanvasNode[]) {
-  const referenceGuide = references.length
-    ? [
-      `已上传 ${references.length} 张真实参考图，请严格使用这些参考图，不要只根据文字重新想象。`,
-      '提示词中的 图片1、图片2 等名称与下方参考图顺序一一对应。',
-      '当提示词要求参考风格时，只迁移该参考图的画风、色彩、质感；当提示词要求主角、角色、姿态或内容时，要保留对应参考图的主体特征。',
-    ].join('\n')
-    : ''
-
-  const referenceParts = references
-    .map((item, index) => {
-      const label = item.content.trim()
-      return `${item.title}: 第 ${index + 1} 张参考图${label ? `，${label}` : ''}`
-    })
-    .filter(Boolean)
-
-  return [referenceGuide, ...referenceParts].filter(Boolean).join('\n\n')
-}
-
 function buildPromptParts(node: CanvasNode) {
-  const userPrompt = generationUserPrompt(node)
-  const references = referencedImageNodes(node)
-  const systemPrompt = buildSystemPrompt(references)
-  const modelPrompt = [systemPrompt, userPrompt].filter(Boolean).join('\n\n')
-
-  return {
-    userPrompt,
-    systemPrompt,
-    modelPrompt,
-  }
+  syncMentionConnectionsForGeneration(node)
+  return canvasPrompt.buildPromptParts(nodes.value, connections.value, node)
 }
 
 function imageAltText(node: CanvasNode) {
@@ -2409,22 +1528,12 @@ function imageOutputMeta(node: CanvasNode) {
   return node.fileName || 'WEBP'
 }
 
-function historyImageForNode(node: CanvasNode) {
+function historyImageForNode(node: ImageDownloadNode) {
   if (!node.sourceImageId) return null
   const sourceImages = node.sourceHistoryScope === 'public'
     ? gallerySourceImages.value
     : generatedImages.value
   return sourceImages.find(image => image.id === node.sourceImageId) ?? null
-}
-
-async function resolveNodeOriginalImageUrl(node: CanvasNode) {
-  const historyImage = historyImageForNode(node)
-  if (historyImage) {
-    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine', { includeOriginal: true })
-    if (detail.dataUrl) return detail.dataUrl
-  }
-
-  return node.imageUrl || ''
 }
 
 async function resolveNodePreviewImageUrl(node: CanvasNode) {
@@ -2585,16 +1694,9 @@ function createContinuation(node: CanvasNode) {
   ]
 }
 
-async function handleDownload(node: CanvasNode) {
+function handleDownload(node: CanvasNode) {
   if (!node.imageUrl) return
-  await withImageDownloadLock(nodeDownloadKey(node), async () => {
-    const imageUrl = await resolveNodeOriginalImageUrl(node)
-    if (!imageUrl) {
-      error.value = '原图加载失败，请稍后重试。'
-      return
-    }
-    await downloadImageUrl(imageUrl, node.content || node.title)
-  })
+  void downloadTarget(nodeTarget(node))
 }
 
 async function openImageViewer(node: CanvasNode) {
@@ -2654,35 +1756,8 @@ function triggerDownload(href: string, fileName: string) {
   document.body.removeChild(a)
 }
 
-async function downloadImageUrl(imageUrl: string, title: string) {
-  try {
-    await downloadImage({
-      imageUrl,
-      title,
-    })
-  } catch (downloadError) {
-    console.warn('Image download failed', downloadError)
-    error.value = '图片下载失败，请稍后重试。'
-  }
-}
-
-async function downloadImageViewerImage() {
-  if (!imageViewer.value) return
-  const viewer = imageViewer.value
-  const sourceImage = viewer.sourceImageId
-    ? [...generatedImages.value, ...publicGalleryImages.value]
-      .find(image => image.id === viewer.sourceImageId)
-    : null
-
-  if (sourceImage) {
-    await downloadGeneratedImage(sourceImage, viewer.sourceScope || 'mine')
-    return
-  }
-
-  await withImageDownloadLock(viewerDownloadKey(), async () => {
-    if (!imageViewer.value) return
-    await downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
-  })
+function downloadImageViewerImage() {
+  void downloadTarget(viewerTarget(imageViewer.value))
 }
 
 function zoomImageViewer(step: number) {
@@ -2747,47 +1822,21 @@ function handleWindowKeydown(event: KeyboardEvent) {
 }
 
 function fitView() {
-  const rect = viewportRef.value?.getBoundingClientRect()
-  if (!rect || !nodes.value.length) {
-    viewport.value = { x: -120, y: -40, zoom: 1 }
-    return
-  }
-
-  const isMobile = rect.width <= 760
-  const targetNodes = isMobile
-    ? nodes.value.filter(node => node.id === selectedNodeId.value)
-    : nodes.value
-  const boxes = (targetNodes.length ? targetNodes : nodes.value).map((node) => {
+  const boxes = nodes.value.map((node) => {
     const size = getRenderedNodeSize(node)
     return {
+      id: node.id,
       x: node.x,
       y: node.y,
       width: size.width,
       height: size.height,
     }
   })
-  const minX = Math.min(...boxes.map(item => item.x))
-  const minY = Math.min(...boxes.map(item => item.y))
-  const maxX = Math.max(...boxes.map(item => item.x + item.width))
-  const maxY = Math.max(...boxes.map(item => item.y + item.height))
-  const contentWidth = Math.max(1, maxX - minX)
-  const contentHeight = Math.max(1, maxY - minY)
-  const topInset = isMobile ? 142 : 24
-  const bottomInset = isMobile ? 112 : 24
-  const padding = isMobile ? 16 : 40
-  const availableWidth = Math.max(1, rect.width - padding * 2)
-  const availableHeight = Math.max(1, rect.height - topInset - bottomInset - padding * 2)
-  const nextZoom = clamp(
-    Math.min(MAX_VIEWPORT_ZOOM, availableWidth / contentWidth, availableHeight / contentHeight),
-    MIN_VIEWPORT_ZOOM,
-    MAX_VIEWPORT_ZOOM,
+  viewport.value = fitViewportToNodeBoxes(
+    viewportRef.value?.getBoundingClientRect(),
+    boxes,
+    selectedNodeId.value,
   )
-
-  viewport.value = {
-    x: padding + (availableWidth - contentWidth * nextZoom) / 2 - minX * nextZoom,
-    y: topInset + padding + (availableHeight - contentHeight * nextZoom) / 2 - minY * nextZoom,
-    zoom: nextZoom,
-  }
 }
 
 function clearCanvas() {
@@ -2823,14 +1872,7 @@ onUnmounted(() => {
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('paste', handleWindowPaste)
-  measuredNodeResizeObservers.forEach(observer => observer.disconnect())
-  measuredNodeResizeObservers.clear()
-  measuredNodeMutationObservers.forEach(observer => observer.disconnect())
-  measuredNodeMutationObservers.clear()
-  measuredNodeUpdateFrames.forEach(frame => window.cancelAnimationFrame(frame))
-  measuredNodeUpdateFrames.clear()
-  measuredNodeElements.clear()
-  measuredNodeRefCallbacks.clear()
+  clearMeasuredNodes()
   if (suppressClickTimer !== null) {
     window.clearTimeout(suppressClickTimer)
     suppressClickTimer = null
@@ -3173,6 +2215,8 @@ onUnmounted(() => {
                 <button
                   type="button"
                   :disabled="!node.imageUrl || isDownloadingImage(nodeDownloadKey(node))"
+                  @pointerenter="preloadNodeImageDownload(node)"
+                  @focus="preloadNodeImageDownload(node)"
                   @click.stop="handleDownload(node)"
                 >
                   {{ isDownloadingImage(nodeDownloadKey(node)) ? '下载中' : '下载' }}
@@ -3558,6 +2602,8 @@ onUnmounted(() => {
                   type="button"
                   title="下载原图"
                   :disabled="isDownloadingImage(imageDownloadKey(image, galleryActionScope))"
+                  @pointerenter="preloadGeneratedImageDownload(image, galleryActionScope)"
+                  @focus="preloadGeneratedImageDownload(image, galleryActionScope)"
                   @click="downloadGeneratedImage(image, galleryActionScope)"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
@@ -3678,6 +2724,8 @@ onUnmounted(() => {
               <button
                 type="button"
                 :disabled="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
+                @pointerenter="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
+                @focus="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
                 @click="downloadGalleryDetail"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
@@ -3736,6 +2784,8 @@ onUnmounted(() => {
                 type="button"
                 title="下载"
                 :disabled="isDownloadingImage(viewerDownloadKey())"
+                @pointerenter="preloadViewerImageDownload"
+                @focus="preloadViewerImageDownload"
                 @click="downloadImageViewerImage"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">

@@ -42,6 +42,7 @@ function publicGallerySummaryImage(image: ImageHistoryItem) {
   return {
     id: publicImage.id,
     prompt: publicImage.prompt,
+    storagePath: publicImage.storagePath,
     thumbnailUrl: publicImage.thumbnailUrl,
     size: publicImage.size,
     aspectRatio: publicImage.aspectRatio,
