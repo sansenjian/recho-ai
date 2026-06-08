@@ -4,8 +4,11 @@ import {
   adjustAdminUserCredits,
   assertAdminUser,
   createAdminCreditCodes,
+  getAdminCreditOverview,
   getAdminCreditUser,
-  listAdminCreditCodes,
+  listAdminCreditCodesFiltered,
+  listAdminCreditCodeRedemptions,
+  listAdminCreditLedger,
   listAdminCreditTransactions,
   listAdminCreditUsers,
   setAdminCreditCodeDisabled,
@@ -64,6 +67,33 @@ router.get('/admin/credits/users', async (req: Request, res: Response) => {
   }
 })
 
+router.get('/admin/credits/overview', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const overview = await getAdminCreditOverview()
+    res.json({ overview })
+  } catch (err) {
+    console.error('[admin-credits] overview failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/credits/transactions', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const transactions = await listAdminCreditLedger({
+      limit: req.query.limit,
+      reason: req.query.reason,
+    })
+    res.json({ transactions })
+  } catch (err) {
+    console.error('[admin-credits] ledger failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
 router.get('/admin/credits/users/:userId', async (req: Request, res: Response) => {
   try {
     await requireAdmin(req)
@@ -101,10 +131,26 @@ router.post('/admin/credits/users/:userId/adjust', async (req: Request, res: Res
 router.get('/admin/credits/codes', async (req: Request, res: Response) => {
   try {
     await requireAdmin(req)
-    const codes = await listAdminCreditCodes({ limit: req.query.limit })
+    const codes = await listAdminCreditCodesFiltered({
+      limit: req.query.limit,
+      status: req.query.status,
+      query: req.query.query,
+    })
     res.json({ codes })
   } catch (err) {
     console.error('[admin-credits] list codes failed:', safeErrorDetail(err))
+    const response = adminErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/credits/codes/:codeId/redemptions', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const redemptions = await listAdminCreditCodeRedemptions(routeParam(req.params.codeId), req.query.limit)
+    res.json({ redemptions })
+  } catch (err) {
+    console.error('[admin-credits] list code redemptions failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }

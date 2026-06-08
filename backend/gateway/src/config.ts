@@ -1,4 +1,5 @@
 import dotenv from 'dotenv'
+import { normalizeImageCreditCostPerImage } from './services/image-credit-cost.js'
 dotenv.config({ override: true })
 
 export const PORT = parseInt(process.env.PORT || '3000', 10)
@@ -44,6 +45,7 @@ export const ADMIN_USER_EMAILS = (process.env.ADMIN_USER_EMAILS || '')
 
 export const IMAGE_GEN_API_KEY = process.env.IMAGE_GEN_API_KEY || ''
 export const IMAGE_GEN_BASE_URL = process.env.IMAGE_GEN_BASE_URL || 'https://lucen.plus/v1'
+export const IMAGE_CREDIT_COST_PER_IMAGE = normalizeImageCreditCostPerImage(process.env.IMAGE_CREDIT_COST_PER_IMAGE)
 export const IMAGE_RESPONSES_MODEL = process.env.IMAGE_RESPONSES_MODEL || 'gpt-image-2'
 export const IMAGE_RESPONSES_IMAGE_MODEL = process.env.IMAGE_RESPONSES_IMAGE_MODEL || 'gpt-image-1'
 

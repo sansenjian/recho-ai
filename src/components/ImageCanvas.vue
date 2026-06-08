@@ -14,7 +14,8 @@ import {
   type InputHandle,
   type OutputHandle,
 } from '../lib/canvas-document'
-import type { GeneratedImage, ImageCanvasContext, ImageGenRequest } from '../types/image'
+import { downloadImage } from '../lib/image-download'
+import type { GeneratedImage, ImageCanvasContext, ImageGenReference, ImageGenRequest } from '../types/image'
 
 type HandleRole = 'input' | 'output'
 type NodeSize = NonNullable<ImageGenRequest['size']>
@@ -51,6 +52,7 @@ interface CanvasNode extends CanvasRuntimeNode {
   imageUrl?: string
   imageWidth?: number
   imageHeight?: number
+  storagePath?: string
   fileName?: string
   sourceImageId?: string
   sourceHistoryScope?: ImageHistoryScope
@@ -174,28 +176,6 @@ const CANVAS_EXPORT_VERSION = 1
 const CANVAS_TITLE = 'Imagio canvas'
 const CANVAS_CONTEXT_ENABLED = import.meta.env.VITE_CANVAS_CONTEXT_ENABLED === 'true'
 const CANVAS_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024
-const SUPABASE_STORAGE_PUBLIC_PATH_PREFIX = '/storage/v1/object/public/'
-// Blob downloads are fallback-only; keep the URL alive long enough for slow download managers to adopt it.
-const DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MINUTES = 5
-const DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MS = DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MINUTES * 60_000
-const IMAGE_DOWNLOAD_EXTENSION_ALIASES = {
-  avif: 'avif',
-  gif: 'gif',
-  jpeg: 'jpg',
-  jpg: 'jpg',
-  png: 'png',
-  webp: 'webp',
-} as const
-type ImageDownloadExtension = typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES[keyof typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES]
-const IMAGE_MIME_EXTENSION_MAP: Record<string, ImageDownloadExtension> = {
-  'image/avif': IMAGE_DOWNLOAD_EXTENSION_ALIASES.avif,
-  'image/gif': IMAGE_DOWNLOAD_EXTENSION_ALIASES.gif,
-  'image/jpeg': IMAGE_DOWNLOAD_EXTENSION_ALIASES.jpg,
-  'image/jpg': IMAGE_DOWNLOAD_EXTENSION_ALIASES.jpg,
-  'image/png': IMAGE_DOWNLOAD_EXTENSION_ALIASES.png,
-  'image/webp': IMAGE_DOWNLOAD_EXTENSION_ALIASES.webp,
-}
-const SUPABASE_STORAGE_ORIGIN = storageOriginFromSupabaseUrl(import.meta.env.VITE_SUPABASE_URL)
 
 const {
   isGenerating,
@@ -267,6 +247,7 @@ const galleryDetail = ref<GeneratedImage | null>(null)
 const galleryDetailScope = ref<ImageHistoryScope>('mine')
 const galleryDetailDisplayUrl = ref('')
 const isGalleryDetailLoadingPreview = ref(false)
+const downloadingImages = ref(new Set<string>())
 const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ x: -120, y: -40, zoom: 1 })
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
@@ -1690,8 +1671,8 @@ async function handleWindowPaste(event: ClipboardEvent) {
 async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
   let detail = image
   let previewUrl = detail.previewUrl || ''
-  if (!previewUrl) {
-    detail = await resolveImageDetail(image, scope)
+  if (!previewUrl || !detail.storagePath) {
+    detail = await resolveImageDetail(image, scope, { requireStoragePath: true })
     previewUrl = previewImageUrl(detail)
   }
 
@@ -1710,6 +1691,7 @@ async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope =
     title: nextImageTitle(),
     content: '',
     imageUrl: previewUrl,
+    storagePath: detail.storagePath,
     sourceImageId: detail.id,
     sourceHistoryScope: scope,
     sourcePrompt: detail.prompt,
@@ -1743,7 +1725,7 @@ function galleryPrompt(image: GeneratedImage) {
 }
 
 function galleryReferences(image: GeneratedImage) {
-  return image.references?.filter(reference => reference.dataUrl || reference.previewUrl || reference.thumbnailUrl) ?? []
+  return image.references?.filter(reference => reference.dataUrl || reference.storagePath || reference.previewUrl || reference.thumbnailUrl) ?? []
 }
 
 function galleryReferenceCount(image: GeneratedImage) {
@@ -1886,7 +1868,7 @@ async function openGalleryDetailViewer() {
   const sourceScope = galleryDetailScope.value
   imageViewer.value = {
     imageUrl: immediateUrl,
-    title: galleryFileName(sourceImage).replace(/\.png$/i, ''),
+    title: galleryFileName(sourceImage).replace(/\.[a-z0-9]{2,5}$/i, ''),
     caption: galleryPrompt(sourceImage),
     zoom: 1,
     loadingPreview: !sourceImage.previewUrl,
@@ -1903,7 +1885,7 @@ async function openGalleryDetailViewer() {
       imageViewer.value = {
         ...imageViewer.value,
         imageUrl,
-        title: galleryFileName(image).replace(/\.png$/i, ''),
+        title: galleryFileName(image).replace(/\.[a-z0-9]{2,5}$/i, ''),
         caption: galleryPrompt(image),
         loadingPreview: false,
       }
@@ -1988,17 +1970,55 @@ function galleryFileName(image: GeneratedImage) {
     .slice(0, 28)
     .replace(/[^a-zA-Z0-9一-\u9fa5]/g, '_')
     .replace(/_+/g, '_')
-  return `${promptName || image.id || 'recho_image'}.png`
+  return `${promptName || image.id || 'recho_image'}.webp`
+}
+
+function imageDownloadKey(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  return `history:${scope}:${image.id}`
+}
+
+function nodeDownloadKey(node: CanvasNode) {
+  return node.sourceImageId
+    ? `history:${node.sourceHistoryScope || 'mine'}:${node.sourceImageId}`
+    : `node:${node.id}`
+}
+
+function viewerDownloadKey() {
+  if (!imageViewer.value) return ''
+  return imageViewer.value.sourceImageId
+    ? `history:${imageViewer.value.sourceScope || 'mine'}:${imageViewer.value.sourceImageId}`
+    : `viewer:${imageViewer.value.imageUrl}`
+}
+
+function isDownloadingImage(key: string) {
+  return Boolean(key && downloadingImages.value.has(key))
+}
+
+async function withImageDownloadLock(key: string, task: () => Promise<void>) {
+  if (!key || downloadingImages.value.has(key)) return
+  const next = new Set(downloadingImages.value)
+  next.add(key)
+  downloadingImages.value = next
+
+  try {
+    await task()
+  } finally {
+    const updated = new Set(downloadingImages.value)
+    updated.delete(key)
+    downloadingImages.value = updated
+  }
 }
 
 async function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-  const detail = await resolveImageDetail(image, scope, { includeOriginal: true })
-  if (!detail.dataUrl) {
-    error.value = '原图加载失败，请稍后重试。'
-    return
-  }
+  await withImageDownloadLock(imageDownloadKey(image, scope), async () => {
+    const detail = await resolveImageDetail(image, scope, { includeOriginal: true })
+    if (!detail.dataUrl) {
+      error.value = '原图加载失败，请稍后重试。'
+      return
+    }
 
-  await downloadImageUrl(detail.dataUrl, galleryFileName(detail))
+    await downloadImageUrl(detail.dataUrl, galleryFileName(detail))
+  })
 }
 
 async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
@@ -2386,7 +2406,7 @@ function imageAltText(node: CanvasNode) {
 }
 
 function imageOutputMeta(node: CanvasNode) {
-  return node.fileName || 'PNG'
+  return node.fileName || 'WEBP'
 }
 
 function historyImageForNode(node: CanvasNode) {
@@ -2422,19 +2442,51 @@ async function resolveReferenceImageUrl(node: CanvasNode) {
   return await compressReferenceImageDataUrl(await resolveNodePreviewImageUrl(node))
 }
 
+async function storageReferenceForNode(node: CanvasNode) {
+  if (node.storagePath) {
+    return {
+      storagePath: node.storagePath,
+      ...(node.imageUrl ? { previewUrl: node.imageUrl } : {}),
+    }
+  }
+
+  const historyImage = historyImageForNode(node)
+  if (!historyImage) return null
+  const detail = historyImage.storagePath
+    ? historyImage
+    : await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine', { requireStoragePath: true })
+  if (!detail.storagePath) return null
+
+  node.storagePath = detail.storagePath
+  if (detail.previewUrl) node.imageUrl = detail.previewUrl
+
+  return {
+    storagePath: detail.storagePath,
+    ...(detail.previewUrl ? { previewUrl: detail.previewUrl } : {}),
+    ...(detail.previewPath ? { previewPath: detail.previewPath } : {}),
+    ...(detail.thumbnailUrl ? { thumbnailUrl: detail.thumbnailUrl } : {}),
+    ...(detail.thumbnailPath ? { thumbnailPath: detail.thumbnailPath } : {}),
+  }
+}
+
 async function buildReferences(node: CanvasNode) {
   const imageNodes = referencedImageNodes(node)
     .filter((item): item is CanvasNode & { imageUrl: string } => Boolean(item.imageUrl))
 
-  const references = await Promise.all(imageNodes.map(async item => ({
-    id: item.id,
-    title: item.title,
-    dataUrl: await resolveReferenceImageUrl(item),
-    content: item.content.trim() || undefined,
-    fileName: item.fileName,
-  })))
+  const references = await Promise.all(imageNodes.map(async (item): Promise<ImageGenReference> => {
+    const storageReference = await storageReferenceForNode(item)
+    return {
+      id: item.id,
+      title: item.title,
+      ...(storageReference?.storagePath
+        ? storageReference
+        : { dataUrl: await resolveReferenceImageUrl(item) }),
+      content: item.content.trim() || undefined,
+      fileName: item.fileName,
+    }
+  }))
 
-  return references.filter(reference => Boolean(reference.dataUrl))
+  return references.filter(reference => Boolean(reference.storagePath || reference.dataUrl))
 }
 
 async function generateFromNode(node: CanvasNode) {
@@ -2493,6 +2545,7 @@ async function generateFromNode(node: CanvasNode) {
         title: `图片${nextTitleIndex}`,
         content: '',
         imageUrl: previewImageUrl(result),
+        storagePath: result.storagePath,
         sourceImageId: result.id,
         sourceHistoryScope: 'mine',
         sourcePrompt: result.prompt,
@@ -2534,12 +2587,14 @@ function createContinuation(node: CanvasNode) {
 
 async function handleDownload(node: CanvasNode) {
   if (!node.imageUrl) return
-  const imageUrl = await resolveNodeOriginalImageUrl(node)
-  if (!imageUrl) {
-    error.value = '原图加载失败，请稍后重试。'
-    return
-  }
-  await downloadImageUrl(imageUrl, node.content || node.title)
+  await withImageDownloadLock(nodeDownloadKey(node), async () => {
+    const imageUrl = await resolveNodeOriginalImageUrl(node)
+    if (!imageUrl) {
+      error.value = '原图加载失败，请稍后重试。'
+      return
+    }
+    await downloadImageUrl(imageUrl, node.content || node.title)
+  })
 }
 
 async function openImageViewer(node: CanvasNode) {
@@ -2590,84 +2645,6 @@ function closeImageViewer() {
   imageViewer.value = null
 }
 
-function storageOriginFromSupabaseUrl(supabaseUrl: string | undefined) {
-  if (!supabaseUrl) return ''
-
-  try {
-    return new URL(supabaseUrl).origin
-  } catch {
-    return ''
-  }
-}
-
-function normalizeImageExtension(extension: string | undefined) {
-  if (!extension) return ''
-  const normalized = extension.toLowerCase().replace(/^\./, '')
-  return IMAGE_DOWNLOAD_EXTENSION_ALIASES[normalized as keyof typeof IMAGE_DOWNLOAD_EXTENSION_ALIASES] || ''
-}
-
-function extensionFromMimeType(mimeType: string | null) {
-  const normalized = mimeType?.split(';')[0]?.trim().toLowerCase()
-  if (!normalized) return ''
-
-  return IMAGE_MIME_EXTENSION_MAP[normalized] || ''
-}
-
-function extensionFromImageUrl(imageUrl: string) {
-  const dataUrlMime = imageUrl.match(/^data:([^;,]+)/i)?.[1]
-  const dataUrlExtension = extensionFromMimeType(dataUrlMime || null)
-  if (dataUrlExtension) return dataUrlExtension
-
-  try {
-    const pathname = new URL(imageUrl, window.location.href).pathname
-    return normalizeImageExtension(pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1])
-  } catch {
-    return ''
-  }
-}
-
-function fileExtensionFromTitle(title: string) {
-  return normalizeImageExtension(title.match(/\.([a-z0-9]{2,5})$/i)?.[1])
-}
-
-function safeDownloadFileName(title: string, extension: string) {
-  const normalizedExtension = extension.replace(/^\./, '') || 'png'
-  const withoutExtension = title.replace(/\.([a-z0-9]{2,5})$/i, '')
-  const safeBaseName = withoutExtension
-    .slice(0, 60)
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/[^a-zA-Z0-9一-\u9fa5._-]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^\.+/, '')
-    .trim()
-
-  return `${safeBaseName || 'recho_image'}.${normalizedExtension}`
-}
-
-function isSupabaseStorageHost(url: URL) {
-  if (SUPABASE_STORAGE_ORIGIN && url.origin === SUPABASE_STORAGE_ORIGIN) return true
-  return url.protocol === 'https:' && url.hostname.endsWith('.supabase.co')
-}
-
-function directStorageDownloadUrl(imageUrl: string, fileName: string) {
-  try {
-    const url = new URL(imageUrl, window.location.href)
-    const isKnownStorageUrl = Boolean(
-      /^https?:$/.test(url.protocol) &&
-      isSupabaseStorageHost(url) &&
-      url.pathname.startsWith(SUPABASE_STORAGE_PUBLIC_PATH_PREFIX),
-    )
-    if (!isKnownStorageUrl) {
-      return ''
-    }
-
-    url.searchParams.set('download', fileName)
-    return url.toString()
-  } catch {
-    return ''
-  }
-}
-
 function triggerDownload(href: string, fileName: string) {
   const a = document.createElement('a')
   a.href = href
@@ -2678,28 +2655,11 @@ function triggerDownload(href: string, fileName: string) {
 }
 
 async function downloadImageUrl(imageUrl: string, title: string) {
-  const extension = extensionFromImageUrl(imageUrl) || fileExtensionFromTitle(title) || 'png'
-  const fileName = safeDownloadFileName(title, extension)
-  const storageDownloadUrl = directStorageDownloadUrl(imageUrl, fileName)
-  if (storageDownloadUrl || imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')) {
-    triggerDownload(storageDownloadUrl || imageUrl, fileName)
-    return
-  }
-
   try {
-    const response = await fetch(imageUrl, { cache: 'force-cache' })
-    if (!response.ok) throw new Error(`Image download failed with ${response.status}`)
-
-    const blob = await response.blob()
-    if (!blob.size) throw new Error('Image download returned an empty file')
-
-    const extension = extensionFromMimeType(blob.type)
-      || extensionFromImageUrl(imageUrl)
-      || fileExtensionFromTitle(title)
-      || 'png'
-    const objectUrl = URL.createObjectURL(blob)
-    triggerDownload(objectUrl, safeDownloadFileName(title, extension))
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), DOWNLOAD_OBJECT_URL_REVOKE_DELAY_MS)
+    await downloadImage({
+      imageUrl,
+      title,
+    })
   } catch (downloadError) {
     console.warn('Image download failed', downloadError)
     error.value = '图片下载失败，请稍后重试。'
@@ -2708,17 +2668,21 @@ async function downloadImageUrl(imageUrl: string, title: string) {
 
 async function downloadImageViewerImage() {
   if (!imageViewer.value) return
-  const sourceImage = imageViewer.value.sourceImageId
+  const viewer = imageViewer.value
+  const sourceImage = viewer.sourceImageId
     ? [...generatedImages.value, ...publicGalleryImages.value]
-      .find(image => image.id === imageViewer.value?.sourceImageId)
+      .find(image => image.id === viewer.sourceImageId)
     : null
 
   if (sourceImage) {
-    await downloadGeneratedImage(sourceImage, imageViewer.value.sourceScope || 'mine')
+    await downloadGeneratedImage(sourceImage, viewer.sourceScope || 'mine')
     return
   }
 
-  await downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
+  await withImageDownloadLock(viewerDownloadKey(), async () => {
+    if (!imageViewer.value) return
+    await downloadImageUrl(imageViewer.value.imageUrl, imageViewer.value.title)
+  })
 }
 
 function zoomImageViewer(step: number) {
@@ -3206,7 +3170,13 @@ onUnmounted(() => {
               />
               <div class="image-node-actions">
                 <button type="button" :disabled="!node.imageUrl" @click.stop="createContinuation(node)">继续</button>
-                <button type="button" :disabled="!node.imageUrl" @click.stop="handleDownload(node)">下载</button>
+                <button
+                  type="button"
+                  :disabled="!node.imageUrl || isDownloadingImage(nodeDownloadKey(node))"
+                  @click.stop="handleDownload(node)"
+                >
+                  {{ isDownloadingImage(nodeDownloadKey(node)) ? '下载中' : '下载' }}
+                </button>
                 <button type="button" :disabled="!node.imageUrl" @click.stop="sendNodeImageToChat(node)">对话</button>
               </div>
               <span
@@ -3584,7 +3554,12 @@ onUnmounted(() => {
                     <path d="M5 12h14" />
                   </svg>
                 </button>
-                <button type="button" title="下载原图" @click="downloadGeneratedImage(image, galleryActionScope)">
+                <button
+                  type="button"
+                  title="下载原图"
+                  :disabled="isDownloadingImage(imageDownloadKey(image, galleryActionScope))"
+                  @click="downloadGeneratedImage(image, galleryActionScope)"
+                >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                     <path d="M12 3v12" />
                     <path d="m7 10 5 5 5-5" />
@@ -3648,7 +3623,7 @@ onUnmounted(() => {
             <header class="gallery-detail-header">
               <div>
                 <span>作品详情</span>
-                <strong>{{ galleryFileName(galleryDetail).replace(/\.png$/i, '') }}</strong>
+                <strong>{{ galleryFileName(galleryDetail).replace(/\.[a-z0-9]{2,5}$/i, '') }}</strong>
               </div>
               <button type="button" title="关闭" @click="closeGalleryDetail">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18">
@@ -3700,13 +3675,17 @@ onUnmounted(() => {
                 </svg>
                 放入画布
               </button>
-              <button type="button" @click="downloadGalleryDetail">
+              <button
+                type="button"
+                :disabled="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
+                @click="downloadGalleryDetail"
+              >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                   <path d="M12 3v12" />
                   <path d="m7 10 5 5 5-5" />
                   <path d="M5 19h14" />
                 </svg>
-                下载
+                {{ isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope)) ? '下载中' : '下载' }}
               </button>
               <button type="button" @click="sendGalleryDetailToChat">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
@@ -3753,7 +3732,12 @@ onUnmounted(() => {
                   <path d="m16 16 4 4" />
                 </svg>
               </button>
-              <button type="button" title="下载" @click="downloadImageViewerImage">
+              <button
+                type="button"
+                title="下载"
+                :disabled="isDownloadingImage(viewerDownloadKey())"
+                @click="downloadImageViewerImage"
+              >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
                   <path d="M12 3v12" />
                   <path d="m7 10 5 5 5-5" />

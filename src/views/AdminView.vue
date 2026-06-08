@@ -28,6 +28,16 @@ interface AdminCode {
   createdAt: string | null
 }
 
+interface AdminCodeRedemption {
+  id: string
+  userId: string
+  email: string | null
+  credits: number
+  redeemedAt: string | null
+  transactionId: string | null
+  balanceAfter: number | null
+}
+
 interface AdminTransaction {
   id: string
   amount: number
@@ -35,6 +45,144 @@ interface AdminTransaction {
   reason: string
   metadata?: Record<string, unknown> | null
   created_at: string | null
+}
+
+interface AdminLedgerEntry {
+  id: string
+  userId: string
+  email: string | null
+  amount: number
+  balanceAfter: number
+  reason: string
+  note: string | null
+  generationId: string | null
+  redemptionId: string | null
+  relatedTransactionId: string | null
+  details: {
+    count: number | null
+    creditCostPerImage: number | null
+    creditCost: number | null
+    size: string | null
+    aspectRatio: string | null
+    resolution: string | null
+    quality: string | null
+    referenceCount: number | null
+    refundReason: string | null
+  }
+  createdAt: string | null
+}
+
+interface AdminImageItem {
+  id: string
+  userId: string | null
+  email: string | null
+  prompt: string
+  previewUrl: string | null
+  thumbnailUrl: string | null
+  visibility: 'public' | 'private'
+  fundingSource: string | null
+  creditCost: number
+  size: string | null
+  aspectRatio: string | null
+  resolution: string | null
+  quality: string | null
+  generatedAt: string | null
+}
+
+interface AdminImageAttemptItem {
+  id: string
+  generationId: string | null
+  userId: string | null
+  email: string | null
+  status: 'succeeded' | 'failed'
+  latencyMs: number | null
+  errorType: string | null
+  errorCode: string | null
+  errorMessage: string | null
+  httpStatus: number | null
+  createdAt: string | null
+}
+
+interface AdminImageAttemptOverview {
+  total: number
+  succeeded: number
+  failed: number
+  failureRate: number
+  averageLatencyMs: number | null
+  byErrorType: Array<{
+    errorType: string
+    count: number
+  }>
+}
+
+interface AdminSystemTableStatus {
+  key: string
+  label: string
+  status: 'ok' | 'missing' | 'restricted' | 'error' | 'unavailable'
+  count: number | null
+  message: string
+}
+
+interface AdminSystemStatus {
+  generatedAt: string
+  status: 'ok' | 'warning' | 'error'
+  config: {
+    supabase: {
+      publicConfigured: boolean
+      adminConfigured: boolean
+      imageBucketConfigured: boolean
+    }
+    imageGeneration: {
+      apiKeyConfigured: boolean
+      creditCostPerImage: number
+      analyticsEnabled: boolean
+    }
+    adminUsers: {
+      configured: boolean
+      userIdCount: number
+      emailCount: number
+    }
+  }
+  data: {
+    tables: AdminSystemTableStatus[]
+  }
+  warnings: string[]
+}
+
+interface AdminOverview {
+  users: {
+    withCreditRows: number
+    totalBalance: number
+    totalRedeemed: number
+    totalSpent: number
+  }
+  codes: {
+    total: number
+    active: number
+    disabled: number
+    expired: number
+    exhausted: number
+    totalIssuedCredits: number
+    totalRedeemedCredits: number
+  }
+  transactions: {
+    last7Days: {
+      totalCount: number
+      redeemedCredits: number
+      spentCredits: number
+      refundedCredits: number
+      adminAdjustedCredits: number
+    }
+    byReason: Array<{
+      reason: string
+      count: number
+      amount: number
+    }>
+  }
+  settings: {
+    imageCreditCostPerImage: number
+  }
+  generatedAt: string
 }
 
 const {
@@ -47,6 +195,9 @@ const {
 const adminChecked = ref(false)
 const isAdmin = ref(false)
 const loading = ref(false)
+const overviewLoading = ref(false)
+const systemLoading = ref(false)
+const ledgerLoading = ref(false)
 const actionLoading = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
@@ -54,10 +205,28 @@ const noticeMessage = ref('')
 const users = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
+const ledgerTransactions = ref<AdminLedgerEntry[]>([])
+const adminImages = ref<AdminImageItem[]>([])
+const imageAttempts = ref<AdminImageAttemptItem[]>([])
+const imageAttemptOverview = ref<AdminImageAttemptOverview | null>(null)
 const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
+const overview = ref<AdminOverview | null>(null)
+const systemStatus = ref<AdminSystemStatus | null>(null)
+const selectedCode = ref<AdminCode | null>(null)
+const codeRedemptions = ref<AdminCodeRedemption[]>([])
 
 const userQuery = ref('')
+const ledgerReason = ref('')
+const imageVisibilityFilter = ref('')
+const imageFundingFilter = ref('')
+const imageUserFilter = ref('')
+const imageQuery = ref('')
+const imagesLoading = ref(false)
+const imageActionId = ref<string | null>(null)
+const attemptStatusFilter = ref('')
+const attemptsLoading = ref(false)
+const codeRedemptionsLoading = ref(false)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -73,6 +242,34 @@ const codeForm = ref({
 const selectedUserTitle = computed(() => {
   if (!selectedUser.value) return '未选择用户'
   return selectedUser.value.email || shortId(selectedUser.value.userId)
+})
+
+const overviewCodeHealth = computed(() => {
+  if (!overview.value) return '0 / 0'
+  return `${overview.value.codes.active} / ${overview.value.codes.total}`
+})
+
+const overviewNetChange = computed(() => {
+  const recent = overview.value?.transactions.last7Days
+  if (!recent) return 0
+  return recent.redeemedCredits + recent.refundedCredits + recent.adminAdjustedCredits - recent.spentCredits
+})
+
+const overviewGeneratedAt = computed(() => {
+  if (!overview.value) return '等待刷新'
+  return `更新 ${dateTime(overview.value.generatedAt)}`
+})
+
+const systemGeneratedAt = computed(() => {
+  if (!systemStatus.value) return '等待检查'
+  return `检查 ${dateTime(systemStatus.value.generatedAt)}`
+})
+
+const systemStatusLabel = computed(() => {
+  if (!systemStatus.value) return '待检查'
+  if (systemStatus.value.status === 'ok') return '正常'
+  if (systemStatus.value.status === 'warning') return '有告警'
+  return '需处理'
 })
 
 const createdCsv = computed(() => {
@@ -128,6 +325,76 @@ function transactionReason(reason: string) {
 function transactionNote(tx: AdminTransaction) {
   const note = tx.metadata?.note
   return typeof note === 'string' && note.trim() ? note : '-'
+}
+
+function ledgerDetails(tx: AdminLedgerEntry) {
+  const parts = [
+    tx.details.count !== null ? `${tx.details.count} 张` : '',
+    tx.details.creditCostPerImage !== null ? `单图 ${tx.details.creditCostPerImage} 额度` : '',
+    tx.details.creditCost !== null ? `合计 ${tx.details.creditCost} 额度` : '',
+    tx.details.quality ? `质量 ${tx.details.quality}` : '',
+    tx.details.resolution ? `分辨率 ${tx.details.resolution}` : '',
+    tx.details.size ? `尺寸 ${tx.details.size}` : '',
+    tx.details.aspectRatio ? `比例 ${tx.details.aspectRatio}` : '',
+    tx.details.referenceCount !== null && tx.details.referenceCount > 0 ? `参考图 ${tx.details.referenceCount}` : '',
+    tx.details.refundReason ? `退款原因 ${tx.details.refundReason}` : '',
+    tx.generationId ? `生成 ${shortId(tx.generationId)}` : '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
+}
+
+function imageVisibilityLabel(visibility: AdminImageItem['visibility']) {
+  return visibility === 'private' ? '已隐藏' : '公开'
+}
+
+function imageFundingLabel(image: AdminImageItem) {
+  return image.fundingSource === 'credit' ? '额度' : '免费'
+}
+
+function imagePreviewSrc(image: AdminImageItem) {
+  return image.thumbnailUrl || image.previewUrl || ''
+}
+
+function imageDetails(image: AdminImageItem) {
+  const parts = [
+    image.quality ? `质量 ${image.quality}` : '',
+    image.resolution ? `分辨率 ${image.resolution}` : '',
+    image.size ? `尺寸 ${image.size}` : '',
+    image.aspectRatio ? `比例 ${image.aspectRatio}` : '',
+    image.creditCost > 0 ? `${image.creditCost} 额度` : '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
+}
+
+function attemptStatusLabel(status: AdminImageAttemptItem['status']) {
+  return status === 'succeeded' ? '成功' : '失败'
+}
+
+function latencyLabel(value: number | null) {
+  if (value === null) return '-'
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`
+  return `${value}ms`
+}
+
+function attemptErrorSummary(attempt: AdminImageAttemptItem) {
+  const parts = [
+    attempt.errorType || '',
+    attempt.httpStatus !== null ? `HTTP ${attempt.httpStatus}` : '',
+    attempt.errorCode || '',
+    attempt.errorMessage || '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' / ') : '-'
+}
+
+function tableStatusLabel(status: AdminSystemTableStatus['status']) {
+  if (status === 'ok') return '正常'
+  if (status === 'missing') return '缺失'
+  if (status === 'restricted') return '受限'
+  if (status === 'unavailable') return '未配置'
+  return '异常'
 }
 
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -197,10 +464,95 @@ async function refreshCodes() {
   try {
     const data = await apiJson<{ codes: AdminCode[] }>('/api/admin/credits/codes?limit=50')
     codes.value = data.codes
+    if (selectedCode.value) {
+      selectedCode.value = data.codes.find(code => code.id === selectedCode.value?.id) || null
+      if (!selectedCode.value) codeRedemptions.value = []
+    }
   } catch (error) {
     setError(error)
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshOverview() {
+  overviewLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ overview: AdminOverview }>('/api/admin/credits/overview')
+    overview.value = data.overview
+  } catch (error) {
+    setError(error)
+  } finally {
+    overviewLoading.value = false
+  }
+}
+
+async function refreshSystem() {
+  systemLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ system: AdminSystemStatus }>('/api/admin/system')
+    systemStatus.value = data.system
+  } catch (error) {
+    setError(error)
+  } finally {
+    systemLoading.value = false
+  }
+}
+
+async function refreshLedger() {
+  ledgerLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '50')
+    if (ledgerReason.value) query.set('reason', ledgerReason.value)
+    const data = await apiJson<{ transactions: AdminLedgerEntry[] }>(`/api/admin/credits/transactions?${query.toString()}`)
+    ledgerTransactions.value = data.transactions
+  } catch (error) {
+    setError(error)
+  } finally {
+    ledgerLoading.value = false
+  }
+}
+
+async function refreshImages() {
+  imagesLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '24')
+    if (imageVisibilityFilter.value) query.set('visibility', imageVisibilityFilter.value)
+    if (imageFundingFilter.value) query.set('fundingSource', imageFundingFilter.value)
+    if (imageUserFilter.value.trim()) query.set('userId', imageUserFilter.value.trim())
+    if (imageQuery.value.trim()) query.set('query', imageQuery.value.trim())
+    const data = await apiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${query.toString()}`)
+    adminImages.value = data.images
+  } catch (error) {
+    setError(error)
+  } finally {
+    imagesLoading.value = false
+  }
+}
+
+async function refreshAttempts() {
+  attemptsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const query = new URLSearchParams()
+    query.set('limit', '40')
+    if (attemptStatusFilter.value) query.set('status', attemptStatusFilter.value)
+    const data = await apiJson<{
+      overview: AdminImageAttemptOverview
+      attempts: AdminImageAttemptItem[]
+    }>(`/api/admin/image-attempts?${query.toString()}`)
+    imageAttemptOverview.value = data.overview
+    imageAttempts.value = data.attempts
+  } catch (error) {
+    setError(error)
+  } finally {
+    attemptsLoading.value = false
   }
 }
 
@@ -213,6 +565,33 @@ async function selectUser(target: AdminUser) {
     transactions.value = data.transactions
   } catch (error) {
     setError(error)
+  }
+}
+
+async function setImageVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
+  if (visibility === 'public' && image.fundingSource === 'credit') return
+  if (visibility === 'private' && !window.confirm('确认从作品广场隐藏这张图片？')) return
+
+  imageActionId.value = image.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ image: AdminImageItem }>(
+      `/api/admin/images/${encodeURIComponent(image.id)}/visibility`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ visibility }),
+      },
+    )
+    const nextImages = adminImages.value.map(item => item.id === data.image.id ? data.image : item)
+    adminImages.value = imageVisibilityFilter.value
+      ? nextImages.filter(item => item.visibility === imageVisibilityFilter.value)
+      : nextImages
+    noticeMessage.value = visibility === 'private' ? '作品已隐藏' : '作品已恢复公开'
+  } catch (error) {
+    setError(error)
+  } finally {
+    imageActionId.value = null
   }
 }
 
@@ -237,6 +616,7 @@ async function submitAdjustment() {
     users.value = users.value.map(item => item.userId === data.user.userId ? data.user : item)
     adjustNote.value = ''
     noticeMessage.value = '额度已调整'
+    await Promise.all([refreshOverview(), refreshLedger()])
   } catch (error) {
     setError(error)
   } finally {
@@ -263,11 +643,28 @@ async function createCodes() {
     })
     createdCodes.value = data.codes
     noticeMessage.value = `已生成 ${data.codes.length} 个兑换码`
-    await refreshCodes()
+    await Promise.all([refreshCodes(), refreshOverview()])
   } catch (error) {
     setError(error)
   } finally {
     actionLoading.value = false
+  }
+}
+
+async function viewCodeRedemptions(code: AdminCode) {
+  selectedCode.value = code
+  codeRedemptions.value = []
+  codeRedemptionsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ redemptions: AdminCodeRedemption[] }>(
+      `/api/admin/credits/codes/${encodeURIComponent(code.id)}/redemptions?limit=50`,
+    )
+    codeRedemptions.value = data.redemptions
+  } catch (error) {
+    setError(error)
+  } finally {
+    codeRedemptionsLoading.value = false
   }
 }
 
@@ -281,7 +678,9 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
       body: JSON.stringify({ disabled }),
     })
     codes.value = codes.value.map(item => item.id === data.code.id ? data.code : item)
+    if (selectedCode.value?.id === data.code.id) selectedCode.value = data.code
     noticeMessage.value = disabled ? '兑换码已停用' : '兑换码已恢复'
+    await refreshOverview()
   } catch (error) {
     setError(error)
   } finally {
@@ -314,7 +713,15 @@ onMounted(async () => {
   await initAuth()
   await checkAdmin()
   if (isAdmin.value) {
-    await Promise.all([refreshUsers(), refreshCodes()])
+    await Promise.all([
+      refreshOverview(),
+      refreshSystem(),
+      refreshLedger(),
+      refreshImages(),
+      refreshAttempts(),
+      refreshUsers(),
+      refreshCodes(),
+    ])
   }
 })
 </script>
@@ -352,6 +759,319 @@ onMounted(async () => {
         <p v-if="errorMessage" class="admin-message error">{{ errorMessage }}</p>
         <p v-if="noticeMessage" class="admin-message success">{{ noticeMessage }}</p>
       </div>
+
+      <section class="overview-panel" aria-label="额度总览">
+        <div class="overview-header">
+          <div>
+            <span>总览</span>
+            <strong>{{ overviewGeneratedAt }}</strong>
+          </div>
+          <button type="button" :disabled="overviewLoading" @click="refreshOverview">刷新</button>
+        </div>
+        <div class="overview-grid">
+          <div>
+            <span>总余额</span>
+            <strong>{{ overview?.users.totalBalance ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>累计兑换</span>
+            <strong>{{ overview?.users.totalRedeemed ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>累计消耗</span>
+            <strong>{{ overview?.users.totalSpent ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>单图成本</span>
+            <strong>{{ overview?.settings.imageCreditCostPerImage ?? 1 }}</strong>
+          </div>
+          <div>
+            <span>兑换码可用</span>
+            <strong>{{ overviewCodeHealth }}</strong>
+          </div>
+          <div>
+            <span>已兑换码额度</span>
+            <strong>{{ overview?.codes.totalRedeemedCredits ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天流水</span>
+            <strong>{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天消耗</span>
+            <strong>{{ overview?.transactions.last7Days.spentCredits ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>7 天净变化</span>
+            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="admin-panel system-panel" aria-label="系统状态">
+        <div class="panel-header system-header">
+          <div>
+            <span>系统状态</span>
+            <strong>{{ systemGeneratedAt }}</strong>
+          </div>
+          <div class="system-controls">
+            <span :class="['system-status-pill', systemStatus?.status || 'warning']">{{ systemStatusLabel }}</span>
+            <button type="button" :disabled="systemLoading" @click="refreshSystem">刷新</button>
+          </div>
+        </div>
+        <div class="system-grid">
+          <div>
+            <span>Supabase 后端</span>
+            <strong :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'positive' : 'negative') : ''">
+              {{ systemStatus ? (systemStatus.config.supabase.adminConfigured ? '就绪' : '未就绪') : '-' }}
+            </strong>
+          </div>
+          <div>
+            <span>生图服务</span>
+            <strong :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'positive' : 'negative') : ''">
+              {{ systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? '就绪' : '未就绪') : '-' }}
+            </strong>
+          </div>
+          <div>
+            <span>管理员规则</span>
+            <strong>{{ systemStatus ? systemStatus.config.adminUsers.userIdCount + systemStatus.config.adminUsers.emailCount : '-' }}</strong>
+          </div>
+          <div>
+            <span>生图监控</span>
+            <strong>{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? '开启' : '关闭') : '-' }}</strong>
+          </div>
+          <div>
+            <span>单图成本</span>
+            <strong>{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
+          </div>
+        </div>
+        <div class="system-warnings">
+          <span v-for="warning in systemStatus?.warnings || []" :key="warning">{{ warning }}</span>
+          <span v-if="systemStatus && !systemStatus.warnings.length">无告警</span>
+          <span v-else-if="!systemStatus">等待检查</span>
+        </div>
+        <div class="table-wrap system-table-wrap">
+          <table class="system-table">
+            <thead>
+              <tr>
+                <th>模块</th>
+                <th>状态</th>
+                <th>记录数</th>
+                <th>信息</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="table in systemStatus?.data.tables || []" :key="table.key">
+                <td>{{ table.label }}</td>
+                <td :class="table.status === 'ok' ? 'positive' : 'negative'">{{ tableStatusLabel(table.status) }}</td>
+                <td>{{ table.count ?? '-' }}</td>
+                <td>{{ table.message }}</td>
+              </tr>
+              <tr v-if="!(systemStatus?.data.tables || []).length">
+                <td colspan="4">暂无检查结果</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-panel ledger-panel" aria-label="最近额度流水">
+        <div class="panel-header ledger-header">
+          <div>
+            <span>最近流水</span>
+            <strong>{{ ledgerTransactions.length }}</strong>
+          </div>
+          <div class="ledger-controls">
+            <select v-model="ledgerReason" :disabled="ledgerLoading" @change="refreshLedger">
+              <option value="">全部类型</option>
+              <option value="redemption">兑换</option>
+              <option value="image_generation">生图</option>
+              <option value="refund">退款</option>
+              <option value="admin_adjustment">后台调整</option>
+            </select>
+            <button type="button" :disabled="ledgerLoading" @click="refreshLedger">刷新</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户</th>
+                <th>类型</th>
+                <th>变动</th>
+                <th>余额</th>
+                <th>详情</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tx in ledgerTransactions" :key="tx.id">
+                <td>{{ dateTime(tx.createdAt) }}</td>
+                <td>{{ tx.email || shortId(tx.userId) }}</td>
+                <td>{{ transactionReason(tx.reason) }}</td>
+                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
+                <td>{{ tx.balanceAfter }}</td>
+                <td>{{ ledgerDetails(tx) }}</td>
+                <td>{{ tx.note || '-' }}</td>
+              </tr>
+              <tr v-if="!ledgerTransactions.length">
+                <td colspan="7">暂无流水</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-panel images-panel" aria-label="作品管理">
+        <div class="panel-header image-header">
+          <div>
+            <span>作品管理</span>
+            <strong>{{ adminImages.length }}</strong>
+          </div>
+          <form class="image-controls" @submit.prevent="refreshImages">
+            <select v-model="imageVisibilityFilter" :disabled="imagesLoading" @change="refreshImages">
+              <option value="">全部状态</option>
+              <option value="public">公开</option>
+              <option value="private">已隐藏</option>
+            </select>
+            <select v-model="imageFundingFilter" :disabled="imagesLoading" @change="refreshImages">
+              <option value="">全部来源</option>
+              <option value="free">免费</option>
+              <option value="credit">额度</option>
+            </select>
+            <input v-model.trim="imageUserFilter" type="search" placeholder="用户 ID" :disabled="imagesLoading">
+            <input v-model.trim="imageQuery" type="search" placeholder="提示词" :disabled="imagesLoading">
+            <button type="submit" :disabled="imagesLoading">筛选</button>
+            <button type="button" :disabled="imagesLoading" @click="refreshImages">刷新</button>
+          </form>
+        </div>
+        <div class="table-wrap image-table-wrap">
+          <table class="image-table">
+            <thead>
+              <tr>
+                <th>预览</th>
+                <th>时间</th>
+                <th>用户</th>
+                <th>状态</th>
+                <th>来源</th>
+                <th>参数</th>
+                <th>提示词</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="image in adminImages" :key="image.id">
+                <td>
+                  <img v-if="imagePreviewSrc(image)" class="image-thumb" :src="imagePreviewSrc(image)" alt="">
+                  <span v-else class="image-thumb empty">无图</span>
+                </td>
+                <td>{{ dateTime(image.generatedAt) }}</td>
+                <td>{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
+                <td>{{ imageVisibilityLabel(image.visibility) }}</td>
+                <td>{{ imageFundingLabel(image) }}</td>
+                <td>{{ imageDetails(image) }}</td>
+                <td class="prompt-cell">{{ image.prompt || '-' }}</td>
+                <td>
+                  <button
+                    v-if="image.visibility === 'public'"
+                    type="button"
+                    class="table-action"
+                    :disabled="imageActionId === image.id"
+                    @click="setImageVisibility(image, 'private')"
+                  >
+                    隐藏
+                  </button>
+                  <button
+                    v-else-if="image.fundingSource !== 'credit'"
+                    type="button"
+                    class="table-action"
+                    :disabled="imageActionId === image.id"
+                    @click="setImageVisibility(image, 'public')"
+                  >
+                    公开
+                  </button>
+                  <span v-else class="table-muted">私有</span>
+                </td>
+              </tr>
+              <tr v-if="!adminImages.length">
+                <td colspan="8">暂无作品</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-panel attempts-panel" aria-label="生图监控">
+        <div class="panel-header attempt-header">
+          <div>
+            <span>生图监控</span>
+            <strong>{{ imageAttemptOverview?.total ?? 0 }}</strong>
+          </div>
+          <div class="attempt-controls">
+            <select v-model="attemptStatusFilter" :disabled="attemptsLoading" @change="refreshAttempts">
+              <option value="">全部状态</option>
+              <option value="succeeded">成功</option>
+              <option value="failed">失败</option>
+            </select>
+            <button type="button" :disabled="attemptsLoading" @click="refreshAttempts">刷新</button>
+          </div>
+        </div>
+        <div class="attempt-metrics">
+          <div>
+            <span>24h 成功</span>
+            <strong>{{ imageAttemptOverview?.succeeded ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>24h 失败</span>
+            <strong>{{ imageAttemptOverview?.failed ?? 0 }}</strong>
+          </div>
+          <div>
+            <span>失败率</span>
+            <strong>{{ imageAttemptOverview?.failureRate ?? 0 }}%</strong>
+          </div>
+          <div>
+            <span>平均耗时</span>
+            <strong>{{ latencyLabel(imageAttemptOverview?.averageLatencyMs ?? null) }}</strong>
+          </div>
+        </div>
+        <div class="attempt-error-list">
+          <span
+            v-for="item in imageAttemptOverview?.byErrorType || []"
+            :key="item.errorType"
+          >
+            {{ item.errorType }} · {{ item.count }}
+          </span>
+          <span v-if="!(imageAttemptOverview?.byErrorType || []).length">暂无错误类型</span>
+        </div>
+        <div class="table-wrap attempt-table-wrap">
+          <table class="attempt-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户</th>
+                <th>状态</th>
+                <th>耗时</th>
+                <th>生成 ID</th>
+                <th>错误摘要</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="attempt in imageAttempts" :key="attempt.id">
+                <td>{{ dateTime(attempt.createdAt) }}</td>
+                <td>{{ attempt.email || (attempt.userId ? shortId(attempt.userId) : '-') }}</td>
+                <td :class="attempt.status === 'succeeded' ? 'positive' : 'negative'">{{ attemptStatusLabel(attempt.status) }}</td>
+                <td>{{ latencyLabel(attempt.latencyMs) }}</td>
+                <td>{{ attempt.generationId ? shortId(attempt.generationId) : '-' }}</td>
+                <td class="attempt-error-cell">{{ attemptErrorSummary(attempt) }}</td>
+              </tr>
+              <tr v-if="!imageAttempts.length">
+                <td colspan="6">暂无尝试记录</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section class="admin-grid">
         <div class="admin-panel users-panel">
@@ -523,6 +1243,15 @@ onMounted(async () => {
                   <td>{{ codeStatus(code) }}</td>
                   <td>{{ code.note || '-' }}</td>
                   <td>
+                    <div class="code-actions">
+                      <button
+                        type="button"
+                        class="table-action"
+                        :disabled="codeRedemptionsLoading && selectedCode?.id === code.id"
+                        @click="viewCodeRedemptions(code)"
+                      >
+                        明细
+                      </button>
                     <button
                       type="button"
                       class="table-action"
@@ -531,6 +1260,7 @@ onMounted(async () => {
                     >
                       {{ code.disabledAt ? '恢复' : '停用' }}
                     </button>
+                    </div>
                   </td>
                 </tr>
                 <tr v-if="!codes.length">
@@ -538,6 +1268,38 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="selectedCode" class="code-redemptions">
+            <div class="created-actions">
+              <strong>兑换明细</strong>
+              <span>{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
+              <button type="button" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode)">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table class="code-redemption-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>用户</th>
+                    <th>额度</th>
+                    <th>余额</th>
+                    <th>流水</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="redemption in codeRedemptions" :key="redemption.id">
+                    <td>{{ dateTime(redemption.redeemedAt) }}</td>
+                    <td>{{ redemption.email || shortId(redemption.userId) }}</td>
+                    <td>{{ redemption.credits }}</td>
+                    <td>{{ redemption.balanceAfter ?? '-' }}</td>
+                    <td>{{ redemption.transactionId ? shortId(redemption.transactionId) : '-' }}</td>
+                  </tr>
+                  <tr v-if="!codeRedemptions.length">
+                    <td colspan="5">{{ codeRedemptionsLoading ? '正在加载' : '暂无兑换记录' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -563,6 +1325,8 @@ onMounted(async () => {
 }
 
 .admin-eyebrow,
+.overview-header span,
+.overview-grid span,
 .panel-header span,
 .metric-grid span,
 .adjust-form span,
@@ -586,6 +1350,10 @@ onMounted(async () => {
 
 .admin-nav a,
 .admin-state a,
+.overview-header button,
+.ledger-controls button,
+.image-controls button,
+.attempt-controls button,
 .panel-header button,
 .search-row button,
 .adjust-form button,
@@ -606,6 +1374,10 @@ onMounted(async () => {
 
 .admin-nav a:hover,
 .admin-state a:hover,
+.overview-header button:hover:not(:disabled),
+.ledger-controls button:hover:not(:disabled),
+.image-controls button:hover:not(:disabled),
+.attempt-controls button:hover:not(:disabled),
 .panel-header button:hover:not(:disabled),
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
@@ -671,6 +1443,54 @@ button:disabled {
   color: var(--accent);
 }
 
+.overview-panel {
+  max-width: 1360px;
+  margin: 0 auto 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.overview-header strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.overview-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.overview-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -690,6 +1510,68 @@ button:disabled {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+}
+
+.ledger-panel,
+.images-panel,
+.system-panel,
+.attempts-panel {
+  max-width: 1360px;
+  margin: 0 auto 14px;
+}
+
+.ledger-header,
+.image-header,
+.system-header,
+.attempt-header {
+  align-items: flex-start;
+}
+
+.ledger-controls,
+.image-controls,
+.system-controls,
+.attempt-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.image-controls input {
+  width: 180px;
+  min-width: 140px;
+}
+
+.system-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.system-status-pill.ok {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent);
+}
+
+.system-status-pill.warning {
+  border-color: rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+}
+
+.system-status-pill.error {
+  border-color: rgba(239, 68, 68, 0.32);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
 }
 
 .panel-header,
@@ -715,6 +1597,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-height: 36px;
@@ -723,6 +1606,11 @@ textarea {
   background: var(--input-bg);
   color: var(--text-primary);
   padding: 7px 9px;
+}
+
+select {
+  min-width: 130px;
+  cursor: pointer;
 }
 
 textarea {
@@ -816,6 +1704,151 @@ textarea {
   border-radius: 8px;
 }
 
+.system-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.system-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.system-grid span,
+.system-warnings span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.system-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+}
+
+.system-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.system-warnings span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.system-table {
+  min-width: 620px;
+}
+
+.image-table-wrap {
+  max-height: 560px;
+}
+
+.image-table {
+  min-width: 1080px;
+}
+
+.image-thumb {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.image-thumb.empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.prompt-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-muted {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attempt-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.attempt-metrics div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.attempt-metrics span,
+.attempt-error-list span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attempt-metrics strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 18px;
+}
+
+.attempt-error-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.attempt-error-list span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.attempt-table {
+  min-width: 920px;
+}
+
+.attempt-error-cell {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -855,6 +1888,20 @@ tbody tr:last-child td {
   margin-top: 12px;
 }
 
+.code-redemptions {
+  margin-top: 12px;
+}
+
+.code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.code-redemption-table {
+  min-width: 620px;
+}
+
 .created-actions {
   justify-content: flex-start;
 }
@@ -865,7 +1912,19 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .overview-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .attempt-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -887,6 +1946,14 @@ tbody tr:last-child td {
   }
 
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .attempt-metrics {
     grid-template-columns: 1fr;
   }
 

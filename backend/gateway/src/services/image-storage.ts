@@ -6,6 +6,8 @@ const DATA_URL_RE = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i
 const IMAGE_FILE_SIZE_LIMIT = '32MB'
 const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 const IMAGE_CACHE_CONTROL = '31536000'
+const LOSSLESS_WEBP_MIME = 'image/webp'
+const LOSSLESS_WEBP_EXTENSION = 'webp'
 
 export interface StoredImage {
   publicUrl: string
@@ -39,6 +41,35 @@ function extensionForMime(mime: string) {
   if (mime.includes('webp')) return 'webp'
   if (mime.includes('gif')) return 'gif'
   return 'png'
+}
+
+function normalizedMime(mime: string) {
+  return mime.split(';')[0]?.trim().toLowerCase() || 'image/png'
+}
+
+async function originalStorageImage(buffer: Buffer, mime: string) {
+  const sourceMime = normalizedMime(mime)
+  if (sourceMime !== 'image/png') {
+    const metadata = await sharp(buffer).metadata().catch(() => null)
+    return {
+      buffer,
+      mime: sourceMime,
+      extension: extensionForMime(sourceMime),
+      metadata,
+    }
+  }
+
+  const webpBuffer = await sharp(buffer)
+    .rotate()
+    .webp({ lossless: true })
+    .toBuffer()
+  const metadata = await sharp(webpBuffer).metadata().catch(() => null)
+  return {
+    buffer: webpBuffer,
+    mime: LOSSLESS_WEBP_MIME,
+    extension: LOSSLESS_WEBP_EXTENSION,
+    metadata,
+  }
 }
 
 function parseDataUrl(dataUrl: string) {
@@ -101,6 +132,22 @@ export function imagePublicUrl(storagePath?: string | null) {
   return client.storage
     .from(SUPABASE_IMAGE_BUCKET)
     .getPublicUrl(storagePath).data.publicUrl
+}
+
+export async function downloadImageBuffer(storagePath: string) {
+  const client = getSupabaseAdminClient()
+  if (!client) return null
+
+  const { data, error } = await client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .download(storagePath)
+  if (error) throw error
+  if (!data) return null
+
+  return {
+    buffer: Buffer.from(await data.arrayBuffer()),
+    mime: data.type || 'image/png',
+  }
 }
 
 export function imageThumbnailPath(storagePath?: string | null) {
@@ -166,14 +213,13 @@ export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: s
   const client = await ensureImageBucket()
   if (!client) return null
 
-  const metadata = await sharp(buffer).metadata().catch(() => null)
-  const extension = extensionForMime(mime)
-  const storagePath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.${extension}`
+  const original = await originalStorageImage(buffer, mime)
+  const storagePath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.${original.extension}`
   const { error } = await client.storage
     .from(SUPABASE_IMAGE_BUCKET)
-    .upload(storagePath, buffer, {
+    .upload(storagePath, original.buffer, {
       cacheControl: IMAGE_CACHE_CONTROL,
-      contentType: mime,
+      contentType: original.mime,
       upsert: true,
     })
 
@@ -185,14 +231,14 @@ export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: s
 
   let preview: StoredPreview | null = null
   try {
-    preview = await storePreviewBuffer(buffer, pathHint)
+    preview = await storePreviewBuffer(original.buffer, pathHint)
   } catch (err) {
     console.warn('[image-storage] preview generation skipped:', err instanceof Error ? err.message : err)
   }
 
   let thumbnail: StoredThumbnail | null = null
   try {
-    thumbnail = await storeThumbnailBuffer(buffer, pathHint)
+    thumbnail = await storeThumbnailBuffer(original.buffer, pathHint)
   } catch (err) {
     console.warn('[image-storage] thumbnail generation skipped:', err instanceof Error ? err.message : err)
   }
@@ -204,10 +250,10 @@ export async function storeImageBuffer(buffer: Buffer, mime: string, pathHint: s
     previewPath: preview?.previewPath,
     thumbnailUrl: thumbnail?.thumbnailUrl,
     thumbnailPath: thumbnail?.thumbnailPath,
-    mime,
-    width: metadata?.width,
-    height: metadata?.height,
-    originalBytes: buffer.byteLength,
+    mime: original.mime,
+    width: original.metadata?.width,
+    height: original.metadata?.height,
+    originalBytes: original.buffer.byteLength,
     previewBytes: preview?.previewBytes,
     thumbnailBytes: thumbnail?.thumbnailBytes,
   }

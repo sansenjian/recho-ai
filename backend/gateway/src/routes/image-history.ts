@@ -22,6 +22,8 @@ function publicHistoryImage(image: ImageHistoryItem, options: { includeOriginal?
     textModel: _textModel,
     latencyMs: _latencyMs,
     creditTransactionId: _creditTransactionId,
+    sourceBuffer: _sourceBuffer,
+    sourceMime: _sourceMime,
     dataUrl,
     ...publicImage
   } = image
@@ -32,7 +34,7 @@ function publicHistoryImage(image: ImageHistoryItem, options: { includeOriginal?
 }
 
 function referenceImageCount(image: ImageHistoryItem) {
-  return image.references?.length ?? 0
+  return image.referenceImageCount ?? image.references?.length ?? 0
 }
 
 function publicGallerySummaryImage(image: ImageHistoryItem) {
@@ -55,7 +57,10 @@ function publicGalleryDetailImage(image: ImageHistoryItem, options: { includeOri
 
   return {
     ...publicGallerySummaryImage(publicImage),
+    storagePath: publicImage.storagePath,
     previewUrl: publicImage.previewUrl,
+    previewPath: publicImage.previewPath,
+    thumbnailPath: publicImage.thumbnailPath,
     ...(options.includeOriginal && publicImage.dataUrl ? { dataUrl: publicImage.dataUrl } : {}),
   }
 }

@@ -1,10 +1,16 @@
 import type { User } from '@supabase/supabase-js'
-import { ADMIN_USER_EMAILS, ADMIN_USER_IDS } from '../config.js'
+import { ADMIN_USER_EMAILS, ADMIN_USER_IDS, IMAGE_CREDIT_COST_PER_IMAGE } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { createRandomCreditCode, creditCodeHash, normalizeCreditCode } from './credit-code.js'
+import { redactSensitiveText } from './safe-error.js'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
+const CODE_FILTER_PAGE_SIZE = 500
+const OVERVIEW_PAGE_SIZE = 1000
+const RECENT_TRANSACTION_DAYS = 7
+const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
+const CREDIT_CODE_STATES = ['active', 'disabled', 'expired', 'exhausted'] as const
 
 export interface RequestUser {
   id: string
@@ -33,8 +39,81 @@ export interface AdminCreditCode {
   createdAt: string | null
 }
 
+export type AdminCreditCodeState = typeof CREDIT_CODE_STATES[number]
+
 export interface CreatedAdminCreditCode extends AdminCreditCode {
   code: string
+}
+
+export interface AdminCreditOverview {
+  users: {
+    withCreditRows: number
+    totalBalance: number
+    totalRedeemed: number
+    totalSpent: number
+  }
+  codes: {
+    total: number
+    active: number
+    disabled: number
+    expired: number
+    exhausted: number
+    totalIssuedCredits: number
+    totalRedeemedCredits: number
+  }
+  transactions: {
+    last7Days: {
+      totalCount: number
+      redeemedCredits: number
+      spentCredits: number
+      refundedCredits: number
+      adminAdjustedCredits: number
+    }
+    byReason: Array<{
+      reason: string
+      count: number
+      amount: number
+    }>
+  }
+  settings: {
+    imageCreditCostPerImage: number
+  }
+  generatedAt: string
+}
+
+export interface AdminCreditLedgerEntry {
+  id: string
+  userId: string
+  email: string | null
+  amount: number
+  balanceAfter: number
+  reason: string
+  note: string | null
+  generationId: string | null
+  redemptionId: string | null
+  relatedTransactionId: string | null
+  details: {
+    count: number | null
+    creditCostPerImage: number | null
+    creditCost: number | null
+    size: string | null
+    aspectRatio: string | null
+    resolution: string | null
+    quality: string | null
+    referenceCount: number | null
+    refundReason: string | null
+  }
+  createdAt: string | null
+}
+
+export interface AdminCreditCodeRedemption {
+  id: string
+  userId: string
+  email: string | null
+  credits: number
+  redeemedAt: string | null
+  transactionId: string | null
+  balanceAfter: number | null
 }
 
 export class AdminCreditError extends Error {
@@ -100,16 +179,48 @@ function normalizedSignedInteger(value: unknown) {
   return Number.isFinite(number) ? Math.round(number) : 0
 }
 
+function normalizedCodeUses(value: unknown) {
+  const number = normalizedInteger(value)
+  return number > 0 ? number : 1
+}
+
 function sanitizedLimit(value: unknown) {
   const number = Number(value)
   if (!Number.isFinite(number)) return DEFAULT_LIMIT
   return Math.min(MAX_LIMIT, Math.max(1, Math.round(number)))
 }
 
+function sanitizedReason(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const reason = value.trim()
+  return (CREDIT_TRANSACTION_REASONS as readonly string[]).includes(reason) ? reason : null
+}
+
+function sanitizedCodeState(value: unknown): AdminCreditCodeState | null {
+  return typeof value === 'string' && (CREDIT_CODE_STATES as readonly string[]).includes(value)
+    ? value as AdminCreditCodeState
+    : null
+}
+
 function sanitizeText(value: unknown, maxLength = 240) {
   if (typeof value !== 'string') return null
   const text = value.trim()
   return text ? text.slice(0, maxLength) : null
+}
+
+function sanitizeSearchText(value: unknown, maxLength = 80) {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/[%,()*_\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+  return text || null
+}
+
+function safeDisplayText(value: unknown, maxLength = 240) {
+  const text = sanitizeText(value, maxLength)
+  return text ? redactSensitiveText(text) : null
 }
 
 function parseDate(value: unknown) {
@@ -169,9 +280,214 @@ function toCreditCode(row: Record<string, unknown>): AdminCreditCode {
     redeemedCount: normalizedInteger(row.redeemed_count),
     expiresAt: typeof row.expires_at === 'string' ? row.expires_at : null,
     disabledAt: typeof row.disabled_at === 'string' ? row.disabled_at : null,
-    note: typeof row.note === 'string' ? row.note : null,
+    note: safeDisplayText(row.note, 240),
     createdAt: typeof row.created_at === 'string' ? row.created_at : null,
   }
+}
+
+function toCreditCodeRedemption(
+  row: Record<string, unknown>,
+  user?: ReturnType<typeof toUserSummary>,
+  transaction?: Record<string, unknown>,
+): AdminCreditCodeRedemption {
+  return {
+    id: String(row.id || ''),
+    userId: String(row.user_id || ''),
+    email: user?.email || null,
+    credits: normalizedInteger(row.credits),
+    redeemedAt: stringField(row, 'redeemed_at'),
+    transactionId: transaction ? String(transaction.id || '') || null : null,
+    balanceAfter: transaction ? normalizedInteger(transaction.balance_after) : null,
+  }
+}
+
+function creditCodeState(row: Record<string, unknown>, nowMs: number): AdminCreditCodeState {
+  if (row.disabled_at) return 'disabled'
+  if (typeof row.expires_at === 'string' && new Date(row.expires_at).getTime() <= nowMs) return 'expired'
+
+  const maxRedemptions = normalizedCodeUses(row.max_redemptions)
+  if (normalizedInteger(row.redeemed_count) >= maxRedemptions) return 'exhausted'
+
+  return 'active'
+}
+
+function stringField(row: Record<string, unknown>, key: string) {
+  const value = row[key]
+  return typeof value === 'string' && value ? value : null
+}
+
+function metadataRecord(value: unknown) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+async function usersById(client: ReturnType<typeof requireAdminClient>, userIds: string[]) {
+  const users = new Map<string, ReturnType<typeof toUserSummary>>()
+
+  await Promise.all(userIds.map(async userId => {
+    const { data: userData, error: userError } = await client.auth.admin.getUserById(userId)
+    if (!userError && userData.user) {
+      users.set(userId, toUserSummary(userData.user))
+    }
+  }))
+
+  return users
+}
+
+function toLedgerDetails(metadata: Record<string, unknown>) {
+  return {
+    count: Number.isFinite(Number(metadata.count)) ? normalizedInteger(metadata.count) : null,
+    creditCostPerImage: Number.isFinite(Number(metadata.creditCostPerImage)) ? normalizedInteger(metadata.creditCostPerImage) : null,
+    creditCost: Number.isFinite(Number(metadata.creditCost)) ? normalizedInteger(metadata.creditCost) : null,
+    size: safeDisplayText(metadata.size, 32),
+    aspectRatio: safeDisplayText(metadata.aspectRatio, 24),
+    resolution: safeDisplayText(metadata.resolution, 24),
+    quality: safeDisplayText(metadata.quality, 24),
+    referenceCount: Number.isFinite(Number(metadata.referenceCount)) ? normalizedInteger(metadata.referenceCount) : null,
+    refundReason: safeDisplayText(metadata.reason, 80),
+  }
+}
+
+export function toAdminCreditLedgerEntry(
+  row: Record<string, unknown>,
+  user?: ReturnType<typeof toUserSummary>,
+): AdminCreditLedgerEntry {
+  const metadata = metadataRecord(row.metadata)
+
+  return {
+    id: String(row.id || ''),
+    userId: String(row.user_id || ''),
+    email: user?.email || null,
+    amount: normalizedSignedInteger(row.amount),
+    balanceAfter: normalizedInteger(row.balance_after),
+    reason: typeof row.reason === 'string' && row.reason ? row.reason : 'unknown',
+    note: safeDisplayText(metadata.note, 240),
+    generationId: stringField(row, 'generation_id'),
+    redemptionId: stringField(row, 'redemption_id'),
+    relatedTransactionId: stringField(row, 'related_transaction_id'),
+    details: toLedgerDetails(metadata),
+    createdAt: stringField(row, 'created_at'),
+  }
+}
+
+export function summarizeAdminCreditOverview(input: {
+  balanceRows?: Array<Record<string, unknown>>
+  codeRows?: Array<Record<string, unknown>>
+  transactionRows?: Array<Record<string, unknown>>
+  now?: Date
+  imageCreditCostPerImage?: number
+}): Omit<AdminCreditOverview, 'generatedAt'> {
+  const now = input.now || new Date()
+  const nowMs = now.getTime()
+  const cutoffMs = nowMs - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000
+
+  const users = {
+    withCreditRows: 0,
+    totalBalance: 0,
+    totalRedeemed: 0,
+    totalSpent: 0,
+  }
+
+  for (const row of input.balanceRows || []) {
+    users.withCreditRows += 1
+    users.totalBalance += normalizedInteger(row.balance)
+    users.totalRedeemed += normalizedInteger(row.total_redeemed)
+    users.totalSpent += normalizedInteger(row.total_spent)
+  }
+
+  const codes = {
+    total: 0,
+    active: 0,
+    disabled: 0,
+    expired: 0,
+    exhausted: 0,
+    totalIssuedCredits: 0,
+    totalRedeemedCredits: 0,
+  }
+
+  for (const row of input.codeRows || []) {
+    const credits = normalizedInteger(row.credits)
+    const maxRedemptions = normalizedCodeUses(row.max_redemptions)
+    const redeemedCount = normalizedInteger(row.redeemed_count)
+    const state = creditCodeState(row, nowMs)
+
+    codes.total += 1
+    codes[state] += 1
+    codes.totalIssuedCredits += credits * maxRedemptions
+    codes.totalRedeemedCredits += credits * Math.min(redeemedCount, maxRedemptions)
+  }
+
+  const reasonTotals = new Map<string, { reason: string; count: number; amount: number }>()
+  const last7Days = {
+    totalCount: 0,
+    redeemedCredits: 0,
+    spentCredits: 0,
+    refundedCredits: 0,
+    adminAdjustedCredits: 0,
+  }
+
+  for (const reason of CREDIT_TRANSACTION_REASONS) {
+    reasonTotals.set(reason, { reason, count: 0, amount: 0 })
+  }
+
+  for (const row of input.transactionRows || []) {
+    const createdAt = typeof row.created_at === 'string' ? new Date(row.created_at).getTime() : Number.NaN
+    if (Number.isNaN(createdAt) || createdAt < cutoffMs || createdAt > nowMs) continue
+
+    const reason = typeof row.reason === 'string' && row.reason ? row.reason : 'unknown'
+    const amount = normalizedSignedInteger(row.amount)
+    const total = reasonTotals.get(reason) || { reason, count: 0, amount: 0 }
+
+    total.count += 1
+    total.amount += amount
+    reasonTotals.set(reason, total)
+
+    last7Days.totalCount += 1
+    if (reason === 'redemption') last7Days.redeemedCredits += Math.max(0, amount)
+    if (reason === 'image_generation') last7Days.spentCredits += Math.abs(Math.min(0, amount))
+    if (reason === 'refund') last7Days.refundedCredits += Math.max(0, amount)
+    if (reason === 'admin_adjustment') last7Days.adminAdjustedCredits += amount
+  }
+
+  return {
+    users,
+    codes,
+    transactions: {
+      last7Days,
+      byReason: Array.from(reasonTotals.values()).filter(item => item.count > 0),
+    },
+    settings: {
+      imageCreditCostPerImage: normalizedInteger(input.imageCreditCostPerImage ?? IMAGE_CREDIT_COST_PER_IMAGE),
+    },
+  }
+}
+
+async function selectAllAdminRows(
+  table: string,
+  columns: string,
+  apply?: (query: any) => any,
+) {
+  const client = requireAdminClient()
+  const rows: Array<Record<string, unknown>> = []
+
+  for (let from = 0; ; from += OVERVIEW_PAGE_SIZE) {
+    let query = client
+      .from(table)
+      .select(columns)
+      .range(from, from + OVERVIEW_PAGE_SIZE - 1)
+
+    if (apply) query = apply(query)
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const pageRows = (data || []) as unknown as Array<Record<string, unknown>>
+    rows.push(...pageRows)
+    if (pageRows.length < OVERVIEW_PAGE_SIZE) break
+  }
+
+  return rows
 }
 
 export function isConfiguredAdminUser(user: RequestUser | null) {
@@ -267,6 +583,31 @@ export async function listAdminCreditUsers(options: {
     })
 }
 
+export async function getAdminCreditOverview() {
+  const now = new Date()
+  const recentCutoff = new Date(now.getTime() - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const [balanceRows, codeRows, transactionRows] = await Promise.all([
+    selectAllAdminRows('user_credit_balances', 'balance,total_redeemed,total_spent'),
+    selectAllAdminRows('credit_redemption_codes', 'credits,max_redemptions,redeemed_count,expires_at,disabled_at'),
+    selectAllAdminRows(
+      'credit_transactions',
+      'amount,reason,created_at',
+      query => query.gte('created_at', recentCutoff),
+    ),
+  ])
+
+  return {
+    ...summarizeAdminCreditOverview({
+      balanceRows,
+      codeRows,
+      transactionRows,
+      now,
+      imageCreditCostPerImage: IMAGE_CREDIT_COST_PER_IMAGE,
+    }),
+    generatedAt: now.toISOString(),
+  }
+}
+
 export async function getAdminCreditUser(userId: string) {
   if (!isUuid(userId)) throw new AdminCreditError('invalid_user_id')
   const users = await listAdminCreditUsers({ query: userId, limit: 1 })
@@ -287,6 +628,36 @@ export async function listAdminCreditTransactions(userId: string, limitValue?: u
   return data || []
 }
 
+export async function listAdminCreditLedger(options: {
+  limit?: unknown
+  reason?: unknown
+} = {}) {
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(options.limit)
+  const reason = sanitizedReason(options.reason)
+
+  let query = client
+    .from('credit_transactions')
+    .select('id,user_id,amount,balance_after,reason,redemption_id,related_transaction_id,generation_id,metadata,created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (reason) query = query.eq('reason', reason)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  const rows = (data || []) as Array<Record<string, unknown>>
+  const userIds = Array.from(new Set(
+    rows
+      .map(row => String(row.user_id || ''))
+      .filter(Boolean),
+  ))
+  const users = await usersById(client, userIds)
+
+  return rows.map(row => toAdminCreditLedgerEntry(row, users.get(String(row.user_id || ''))))
+}
+
 export async function listAdminCreditCodes(options: { limit?: unknown } = {}) {
   const client = requireAdminClient()
   const limit = sanitizedLimit(options.limit)
@@ -297,6 +668,114 @@ export async function listAdminCreditCodes(options: { limit?: unknown } = {}) {
     .limit(limit)
   if (error) throw error
   return (data || []).map(row => toCreditCode(row as Record<string, unknown>))
+}
+
+export async function listAdminCreditCodesFiltered(options: {
+  limit?: unknown
+  status?: unknown
+  query?: unknown
+} = {}) {
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(options.limit)
+  const status = sanitizedCodeState(options.status)
+  const search = sanitizeSearchText(options.query)
+  const nowMs = Date.now()
+  const nowIso = new Date(nowMs).toISOString()
+  const searchLower = search?.toLowerCase() || ''
+  const matches: Array<Record<string, unknown>> = []
+
+  for (let offset = 0; matches.length < limit; offset += CODE_FILTER_PAGE_SIZE) {
+    let query = client
+      .from('credit_redemption_codes')
+      .select('id,credits,max_redemptions,redeemed_count,expires_at,disabled_at,note,created_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + CODE_FILTER_PAGE_SIZE - 1)
+
+    if (search) {
+      query = query.ilike('note', `%${search}%`)
+    }
+
+    if (status === 'disabled') {
+      query = query.not('disabled_at', 'is', null)
+    } else if (status === 'expired') {
+      query = query.is('disabled_at', null).lte('expires_at', nowIso)
+    } else if (status === 'active' || status === 'exhausted') {
+      query = query
+        .is('disabled_at', null)
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const rows = (data || []) as Array<Record<string, unknown>>
+    for (const row of rows) {
+      if (status && creditCodeState(row, nowMs) !== status) continue
+      if (searchLower) {
+        const note = safeDisplayText(row.note, 240)?.toLowerCase() || ''
+        if (!note.includes(searchLower)) continue
+      }
+      matches.push(row)
+      if (matches.length >= limit) break
+    }
+
+    if (rows.length < CODE_FILTER_PAGE_SIZE) break
+  }
+
+  return matches.map(row => toCreditCode(row))
+}
+
+export async function listAdminCreditCodeRedemptions(codeId: string, limitValue?: unknown) {
+  if (!isUuid(codeId)) throw new AdminCreditError('invalid_code_id')
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(limitValue)
+
+  const { data: code, error: codeError } = await client
+    .from('credit_redemption_codes')
+    .select('id')
+    .eq('id', codeId)
+    .maybeSingle()
+  if (codeError) throw codeError
+  if (!code) throw new AdminCreditError('invalid_code_id')
+
+  const { data, error } = await client
+    .from('credit_redemptions')
+    .select('id,code_id,user_id,credits,redeemed_at')
+    .eq('code_id', codeId)
+    .order('redeemed_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+
+  const rows = (data || []) as Array<Record<string, unknown>>
+  const redemptionIds = rows.map(row => String(row.id || '')).filter(Boolean)
+  const userIds = Array.from(new Set(rows.map(row => String(row.user_id || '')).filter(Boolean)))
+  const users = await usersById(client, userIds)
+  const transactions = new Map<string, Record<string, unknown>>()
+
+  if (redemptionIds.length) {
+    const { data: transactionRows, error: transactionError } = await client
+      .from('credit_transactions')
+      .select('id,redemption_id,balance_after')
+      .in('redemption_id', redemptionIds)
+      .eq('reason', 'redemption')
+    if (transactionError) throw transactionError
+
+    for (const row of transactionRows || []) {
+      const redemptionId = String((row as Record<string, unknown>).redemption_id || '')
+      if (redemptionId && !transactions.has(redemptionId)) {
+        transactions.set(redemptionId, row as Record<string, unknown>)
+      }
+    }
+  }
+
+  return rows.map(row => {
+    const redemptionId = String(row.id || '')
+    return toCreditCodeRedemption(
+      row,
+      users.get(String(row.user_id || '')),
+      transactions.get(redemptionId),
+    )
+  })
 }
 
 export async function createAdminCreditCodes(input: Record<string, unknown>) {
