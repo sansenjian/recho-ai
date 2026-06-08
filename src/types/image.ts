@@ -76,6 +76,7 @@ export interface ImageGenResponse {
 export interface GeneratedImage {
   id: string
   userId?: string | null
+  generationBatchId?: string | null
   dataUrl?: string
   storagePath?: string
   previewUrl?: string

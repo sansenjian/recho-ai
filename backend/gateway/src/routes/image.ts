@@ -1,8 +1,10 @@
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, raw } from 'express'
+import { randomUUID } from 'node:crypto'
 import { IMAGE_CREDIT_COST_PER_IMAGE, IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
 import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
+import { downloadImageBuffer, storeImageBuffer } from '../services/image-storage.js'
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
@@ -40,7 +42,12 @@ interface ImageGenRequest {
 interface ImageGenReference {
   id?: string
   title?: string
-  dataUrl: string
+  dataUrl?: string
+  storagePath?: string
+  previewUrl?: string
+  previewPath?: string
+  thumbnailUrl?: string
+  thumbnailPath?: string
   content?: string
   fileName?: string
 }
@@ -51,6 +58,9 @@ const qualities = new Set<ImageQuality>(['auto', 'low', 'medium', 'high'])
 const imageGenerationCounts = new Set<ImageGenerationCount>([1, 2, 4, 8])
 const IMAGE_RETRY_TIMES = 3
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
+const REFERENCE_UPLOAD_LIMIT = '12mb'
+const REFERENCE_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
+const REFERENCE_UPLOAD_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
 const IMAGE_MODEL = 'gpt-image-2'
 
 interface ImageProviderResponse {
@@ -63,6 +73,11 @@ interface ImageProviderResponse {
     revised_prompt?: string | null
   }>
   output?: unknown
+}
+
+interface ImageSource {
+  buffer: Buffer
+  mime: string
 }
 
 const sizeByResolution: Record<ImageResolution, Record<ImageAspectRatio, string>> = {
@@ -143,6 +158,8 @@ function publicHistoryImage(image: ImageHistoryItem) {
     textModel: _textModel,
     latencyMs: _latencyMs,
     creditTransactionId: _creditTransactionId,
+    sourceBuffer: _sourceBuffer,
+    sourceMime: _sourceMime,
     dataUrl,
     ...publicImage
   } = image
@@ -241,6 +258,31 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
   return publicErrorMessage(err, fallback)
 }
 
+function headerText(value: unknown, maxLength = 120) {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== 'string') return ''
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    decoded = raw
+  }
+
+  return decoded
+    .replace(/[\r\n]+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+}
+
+function requestContentType(req: Request) {
+  const mime = req.get('content-type')?.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream'
+  return mime === 'image/jpg' ? 'image/jpeg' : mime
+}
+
+function isAllowedReferenceMime(mime: string) {
+  return REFERENCE_UPLOAD_MIME_TYPES.has(mime)
+}
+
 function extensionForMime(mime: string) {
   if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg'
   if (mime.includes('webp')) return 'webp'
@@ -253,11 +295,26 @@ function safeUploadName(reference: ImageGenReference, index: number, mime: strin
   return `${stem || `image_${index + 1}`}.${extensionForMime(mime)}`
 }
 
+function safePathPart(value: string, fallback: string) {
+  const safe = value
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48)
+  return safe || fallback
+}
+
 function referencesForHistory(references: ImageGenReference[]) {
   return references.map((reference, index) => ({
     id: reference.id ? String(reference.id) : `reference_${index + 1}`,
     title: reference.title ? String(reference.title) : `参考图${index + 1}`,
-    dataUrl: String(reference.dataUrl),
+    ...(reference.dataUrl ? { dataUrl: String(reference.dataUrl) } : {}),
+    ...(reference.storagePath ? { storagePath: String(reference.storagePath) } : {}),
+    ...(reference.previewUrl ? { previewUrl: String(reference.previewUrl) } : {}),
+    ...(reference.previewPath ? { previewPath: String(reference.previewPath) } : {}),
+    ...(reference.thumbnailUrl ? { thumbnailUrl: String(reference.thumbnailUrl) } : {}),
+    ...(reference.thumbnailPath ? { thumbnailPath: String(reference.thumbnailPath) } : {}),
     content: reference.content ? String(reference.content) : undefined,
     fileName: reference.fileName ? String(reference.fileName) : undefined,
   }))
@@ -278,19 +335,30 @@ async function referenceToBlob(reference: ImageGenReference, index: number) {
   let mime = 'image/png'
   let buffer: Buffer
 
-  const parsed = parseDataUrl(reference.dataUrl)
-  if (parsed) {
-    mime = parsed.mime
-    buffer = parsed.buffer
-  } else if (/^https?:\/\//i.test(reference.dataUrl)) {
-    const response = await fetch(reference.dataUrl, { signal: AbortSignal.timeout(60_000) })
-    if (!response.ok) {
-      throw Object.assign(new Error(`参考图下载失败 ${response.status}: ${compactErrorText(await response.text())}`), { status: response.status })
+  if (reference.storagePath) {
+    const source = await downloadImageBuffer(reference.storagePath)
+    if (!source?.buffer.byteLength) {
+      throw Object.assign(new Error(`参考图 ${reference.title || index + 1} 读取失败`), { status: 400 })
     }
-    mime = response.headers.get('content-type')?.split(';')[0] || mime
-    buffer = Buffer.from(await response.arrayBuffer())
+    mime = source.mime
+    buffer = source.buffer
+  } else if (reference.dataUrl) {
+    const parsed = parseDataUrl(reference.dataUrl)
+    if (parsed) {
+      mime = parsed.mime
+      buffer = parsed.buffer
+    } else if (/^https?:\/\//i.test(reference.dataUrl)) {
+      const response = await fetch(reference.dataUrl, { signal: AbortSignal.timeout(60_000) })
+      if (!response.ok) {
+        throw Object.assign(new Error(`参考图下载失败 ${response.status}: ${compactErrorText(await response.text())}`), { status: response.status })
+      }
+      mime = response.headers.get('content-type')?.split(';')[0] || mime
+      buffer = Buffer.from(await response.arrayBuffer())
+    } else {
+      throw Object.assign(new Error(`参考图 ${reference.title || index + 1} 不是有效的图片引用`), { status: 400 })
+    }
   } else {
-    throw Object.assign(new Error(`参考图 ${reference.title || index + 1} 不是有效的 data URL 或图片 URL`), { status: 400 })
+    throw Object.assign(new Error(`参考图 ${reference.title || index + 1} 缺少图片引用`), { status: 400 })
   }
 
   return {
@@ -299,25 +367,60 @@ async function referenceToBlob(reference: ImageGenReference, index: number) {
   }
 }
 
-async function imageUrlToDataUrl(url: string) {
+function dataUrlToImageSource(dataUrl: string): ImageSource | null {
+  return parseDataUrl(dataUrl)
+}
+
+function b64JsonToImageSource(b64Json: string): ImageSource | null {
+  const cleanB64 = b64Json.trim()
+  if (!cleanB64) return null
+  if (/^data:image\//i.test(cleanB64)) return dataUrlToImageSource(cleanB64)
+
+  const buffer = Buffer.from(cleanB64.replace(/\s/g, ''), 'base64')
+  if (!buffer.byteLength) return null
+  return { buffer, mime: 'image/png' }
+}
+
+async function imageUrlToImageSource(url: string): Promise<ImageSource> {
   const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
   if (!response.ok) {
-    throw new Error(`生成图片下载失败 ${response.status}: ${compactErrorText(await response.text())}`)
+    throw Object.assign(new Error(`生成图片下载失败 ${response.status}`), { status: response.status })
   }
   const mime = response.headers.get('content-type')?.split(';')[0] || 'image/png'
   const buffer = Buffer.from(await response.arrayBuffer())
-  return `data:${mime};base64,${buffer.toString('base64')}`
+  return { buffer, mime }
 }
 
-async function normalizeGeneratedUrl(url: string) {
-  if (url.startsWith('data:image/')) return url
-  if (!/^https?:\/\//i.test(url)) return url
+async function normalizeGeneratedImageSource(value: string): Promise<ImageSource | null> {
+  const source = value.trim()
+  if (!source) return null
+  if (/^data:image\//i.test(source)) return dataUrlToImageSource(source)
+  if (!/^https?:\/\//i.test(source)) {
+    throw Object.assign(new Error('generated image source is not a valid image URL'), { status: 502 })
+  }
 
   try {
-    return await imageUrlToDataUrl(url)
+    return await imageUrlToImageSource(source)
   } catch (err: any) {
     console.warn('[image] generated image url download failed:', safeErrorDetail(err))
     throw Object.assign(new Error('generated image download failed'), { status: err?.status || 502 })
+  }
+}
+
+function imageSourceToDataUrl(source?: ImageSource | null) {
+  if (!source?.buffer?.byteLength) return null
+  return `data:${source.mime || 'image/png'};base64,${source.buffer.toString('base64')}`
+}
+
+function fallbackPublicGeneratedImage(image: ImageHistoryItem): ImageHistoryItem {
+  return {
+    ...image,
+    dataUrl: imageSourceToDataUrl(image.sourceBuffer
+      ? { buffer: image.sourceBuffer, mime: image.sourceMime || 'image/png' }
+      : null) || image.dataUrl,
+    references: [],
+    sourceBuffer: undefined,
+    sourceMime: undefined,
   }
 }
 
@@ -403,6 +506,66 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
   }
 }
 
+router.post('/image/references', raw({ type: 'image/*', limit: REFERENCE_UPLOAD_LIMIT }), async (req: Request, res: Response) => {
+  try {
+    const mime = requestContentType(req)
+    if (!isAllowedReferenceMime(mime)) {
+      res.status(415).json({ error: 'reference image type is not supported' })
+      return
+    }
+
+    const body = req.body
+    const buffer = Buffer.isBuffer(body)
+      ? body
+      : body instanceof Uint8Array
+        ? Buffer.from(body)
+        : Buffer.alloc(0)
+    if (!buffer.byteLength) {
+      res.status(400).json({ error: 'reference image is required' })
+      return
+    }
+    if (buffer.byteLength > REFERENCE_UPLOAD_MAX_BYTES) {
+      res.status(413).json({ error: 'reference image is too large' })
+      return
+    }
+
+    const userId = await getRequestUserId(req)
+    const referenceId = headerText(req.get('x-reference-id'), 80) || `ref_${randomUUID()}`
+    const title = headerText(req.get('x-reference-title'), 80) || '参考图'
+    const fileName = headerText(req.get('x-reference-filename'), 120) || `${referenceId}.${extensionForMime(mime)}`
+    const pathHint = [
+      'references',
+      'uploads',
+      userId || 'anon',
+      `${Date.now()}_${randomUUID()}_${safePathPart(fileName || referenceId, 'reference')}`,
+    ].join('/')
+    const stored = await storeImageBuffer(buffer, mime, pathHint)
+
+    if (!stored?.storagePath) {
+      res.status(503).json({ error: 'reference image storage is unavailable' })
+      return
+    }
+
+    res.json({
+      reference: {
+        id: referenceId,
+        title,
+        storagePath: stored.storagePath,
+        previewUrl: stored.previewUrl || stored.publicUrl,
+        previewPath: stored.previewPath,
+        thumbnailUrl: stored.thumbnailUrl,
+        thumbnailPath: stored.thumbnailPath,
+        fileName,
+      },
+    })
+  } catch (err: any) {
+    console.error('[image] reference upload failed:', safeErrorDetail(err))
+    res.status(err?.status || 500).json({
+      error: publicImageErrorMessage(err, '参考图上传失败，请稍后重试。'),
+    })
+  }
+})
+
 router.post('/image/generate', async (req: Request, res: Response) => {
   const {
     prompt,
@@ -424,7 +587,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   const count = normalizeImageGenerationCount(rawCount)
   const size = requestedSize || sizeByResolution[resolution][aspectRatio]
   const references = Array.isArray(rawReferences)
-    ? rawReferences.filter(item => typeof item?.dataUrl === 'string' && item.dataUrl.trim())
+    ? rawReferences.filter(item => (
+      typeof item?.storagePath === 'string' && item.storagePath.trim()
+    ) || (
+      typeof item?.dataUrl === 'string' && item.dataUrl.trim()
+    ))
     : []
   const sizeError = validateGptImage2Size(size)
   const requestStartedAt = Date.now()
@@ -541,8 +708,35 @@ router.post('/image/generate', async (req: Request, res: Response) => {
 
     if (!response) throw lastError || new Error('image generation failed')
     const latencyMs = Date.now() - requestStartedAt
+    const generationBatchId = `batch_${Date.now()}_${randomUUID()}`
 
     const images: ImageHistoryItem[] = []
+    const pushGeneratedImage = (source: ImageSource, revisedPrompt?: string | null) => {
+      const timestamp = new Date().toISOString()
+      images.push({
+        id: `img_${Date.now()}_${images.length}_${randomUUID()}`,
+        generationBatchId,
+        dataUrl: undefined,
+        sourceBuffer: source.buffer,
+        sourceMime: source.mime,
+        prompt: historyUserPrompt,
+        userPrompt: historyUserPrompt,
+        systemPrompt: historySystemPrompt,
+        modelPrompt: historyModelPrompt,
+        revisedPrompt: revisedPrompt ?? undefined,
+        requestIp: generationIp,
+        requestUserAgent: generationUserAgent,
+        provider: response!.provider,
+        imageModel: response!.imageModel,
+        textModel: response!.textModel,
+        latencyMs,
+        size,
+        aspectRatio,
+        resolution,
+        quality,
+        timestamp,
+      })
+    }
 
     const generatedData: Array<{
       b64_json?: string | null
@@ -555,52 +749,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     for (const item of generatedData) {
       const b64 = item.b64_json
       if (b64?.trim()) {
-        const cleanB64 = b64.trim()
-        const dataUrl = cleanB64.startsWith('data:image/')
-          ? cleanB64
-          : `data:image/png;base64,${cleanB64}`
-        images.push({
-          id: `img_${Date.now()}_${images.length}`,
-          dataUrl,
-          prompt: historyUserPrompt,
-          userPrompt: historyUserPrompt,
-          systemPrompt: historySystemPrompt,
-          modelPrompt: historyModelPrompt,
-          revisedPrompt: item.revised_prompt ?? undefined,
-          requestIp: generationIp,
-          requestUserAgent: generationUserAgent,
-          provider: response.provider,
-          imageModel: response.imageModel,
-          textModel: response.textModel,
-          latencyMs,
-          size,
-          aspectRatio,
-          resolution,
-          quality,
-          timestamp: new Date().toISOString(),
-        })
+        const source = b64JsonToImageSource(b64)
+        if (source) pushGeneratedImage(source, item.revised_prompt)
       } else if (item.url?.trim()) {
-        const dataUrl = await normalizeGeneratedUrl(item.url.trim())
-        images.push({
-          id: `img_${Date.now()}_${images.length}`,
-          dataUrl,
-          prompt: historyUserPrompt,
-          userPrompt: historyUserPrompt,
-          systemPrompt: historySystemPrompt,
-          modelPrompt: historyModelPrompt,
-          revisedPrompt: item.revised_prompt ?? undefined,
-          requestIp: generationIp,
-          requestUserAgent: generationUserAgent,
-          provider: response.provider,
-          imageModel: response.imageModel,
-          textModel: response.textModel,
-          latencyMs,
-          size,
-          aspectRatio,
-          resolution,
-          quality,
-          timestamp: new Date().toISOString(),
-        })
+        const source = await normalizeGeneratedImageSource(item.url)
+        if (source) pushGeneratedImage(source, item.revised_prompt)
       }
     }
 
@@ -636,6 +789,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           status: 503,
           publicMessage: '私有图片保存失败，已退回额度，请稍后重试。',
         })
+      } else {
+        responseImages = imagesWithReferences.map(fallbackPublicGeneratedImage)
       }
     } catch (historyErr: any) {
       console.warn('[image-history] save skipped:', safeErrorDetail(historyErr))
@@ -646,6 +801,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
           publicMessage: historyErr?.publicMessage || '私有图片保存失败，已退回额度，请稍后重试。',
         })
       }
+      responseImages = imagesWithReferences.map(fallbackPublicGeneratedImage)
     }
 
     if (!responseImages.length) {

@@ -6,7 +6,7 @@ import {
   createAdminCreditCodes,
   getAdminCreditOverview,
   getAdminCreditUser,
-  listAdminCreditCodes,
+  listAdminCreditCodesFiltered,
   listAdminCreditCodeRedemptions,
   listAdminCreditLedger,
   listAdminCreditTransactions,
@@ -131,7 +131,11 @@ router.post('/admin/credits/users/:userId/adjust', async (req: Request, res: Res
 router.get('/admin/credits/codes', async (req: Request, res: Response) => {
   try {
     await requireAdmin(req)
-    const codes = await listAdminCreditCodes({ limit: req.query.limit })
+    const codes = await listAdminCreditCodesFiltered({
+      limit: req.query.limit,
+      status: req.query.status,
+      query: req.query.query,
+    })
     res.json({ codes })
   } catch (err) {
     console.error('[admin-credits] list codes failed:', safeErrorDetail(err))

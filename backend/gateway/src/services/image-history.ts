@@ -1,14 +1,58 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import {
   imagePublicUrl,
+  storeImageBuffer,
   storeImageDataUrl,
-  storePreviewBuffer,
-  storeThumbnailBuffer,
 } from './image-storage.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
 const DEFAULT_HISTORY_LIMIT = 12
+
+function withoutColumn(columns: string, column: string) {
+  return columns
+    .split(',')
+    .filter(item => item !== column)
+    .join(',')
+}
+
+const IMAGE_HISTORY_BATCH_LIST_COLUMNS = [
+  'id',
+  'user_id',
+  'generation_batch_id',
+  'storage_path',
+  'preview_url',
+  'preview_path',
+  'thumbnail_url',
+  'thumbnail_path',
+  'provider',
+  'image_model',
+  'text_model',
+  'latency_ms',
+  'image_width',
+  'image_height',
+  'original_bytes',
+  'preview_bytes',
+  'thumbnail_bytes',
+  'visibility',
+  'funding_source',
+  'credit_cost',
+  'credit_transaction_id',
+  'prompt',
+  'user_prompt',
+  'revised_prompt',
+  'size',
+  'aspect_ratio',
+  'resolution',
+  'quality',
+  'reference_images',
+  'reference_count',
+  'generated_at',
+].join(',')
+const IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT = withoutColumn(
+  IMAGE_HISTORY_BATCH_LIST_COLUMNS,
+  'reference_count',
+)
 const IMAGE_HISTORY_LIST_COLUMNS = [
   'id',
   'user_id',
@@ -38,6 +82,27 @@ const IMAGE_HISTORY_LIST_COLUMNS = [
   'resolution',
   'quality',
   'reference_images',
+  'reference_count',
+  'generated_at',
+].join(',')
+const IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT = withoutColumn(
+  IMAGE_HISTORY_LIST_COLUMNS,
+  'reference_count',
+)
+const IMAGE_HISTORY_PUBLIC_SUMMARY_COLUMNS = [
+  'id',
+  'storage_path',
+  'preview_url',
+  'preview_path',
+  'thumbnail_url',
+  'thumbnail_path',
+  'prompt',
+  'user_prompt',
+  'size',
+  'aspect_ratio',
+  'resolution',
+  'quality',
+  'reference_count',
   'generated_at',
 ].join(',')
 const IMAGE_HISTORY_LEGACY_LIST_COLUMNS = [
@@ -67,17 +132,6 @@ const IMAGE_HISTORY_LEGACY_LIST_COLUMNS = [
   'reference_images',
   'generated_at',
 ].join(',')
-const IMAGE_HISTORY_BACKFILL_COLUMNS = [
-  'id',
-  'data_url',
-  'storage_path',
-  'preview_url',
-  'preview_path',
-  'thumbnail_url',
-  'thumbnail_path',
-  'reference_images',
-].join(',')
-
 export type ImageHistoryScope = 'public' | 'mine'
 export type ImageVisibility = 'public' | 'private'
 export type ImageFundingSource = 'free' | 'credit'
@@ -104,6 +158,9 @@ export interface ImageHistoryReference {
 export interface ImageHistoryItem {
   id: string
   userId?: string | null
+  generationBatchId?: string | null
+  sourceBuffer?: Buffer
+  sourceMime?: string
   dataUrl?: string
   storagePath?: string
   previewUrl?: string
@@ -115,6 +172,7 @@ export interface ImageHistoryItem {
   systemPrompt?: string
   modelPrompt?: string
   references?: ImageHistoryReference[]
+  referenceImageCount?: number
   revisedPrompt?: string
   requestIp?: string | null
   requestUserAgent?: string | null
@@ -141,7 +199,8 @@ export interface ImageHistoryItem {
 interface ImageHistoryRow {
   id: string
   user_id?: string | null
-  data_url?: string
+  generation_batch_id?: string | null
+  data_url?: string | null
   storage_path?: string | null
   preview_url?: string | null
   preview_path?: string | null
@@ -171,12 +230,22 @@ interface ImageHistoryRow {
   aspect_ratio: string | null
   resolution: string | null
   quality: string | null
-  reference_images: ImageHistoryReference[] | null
+  reference_images?: ImageHistoryReference[] | null
+  reference_count?: number | null
   generated_at: string
 }
 
 function plainReference(reference: ImageHistoryReference): ImageHistoryReference | null {
-  if (!reference?.dataUrl && !reference?.previewUrl && !reference?.thumbnailUrl) return null
+  if (
+    !reference?.dataUrl &&
+    !reference?.storagePath &&
+    !reference?.previewUrl &&
+    !reference?.previewPath &&
+    !reference?.thumbnailUrl &&
+    !reference?.thumbnailPath
+  ) {
+    return null
+  }
 
   return {
     id: reference.id ? String(reference.id) : undefined,
@@ -198,34 +267,93 @@ function plainReferences(references: ImageHistoryReference[] = []) {
     .filter((reference): reference is ImageHistoryReference => Boolean(reference))
 }
 
-async function storedReference(reference: ImageHistoryReference, imageId: string, index: number) {
+function referenceRecord(reference: ImageHistoryReference): ImageHistoryReference | null {
   const plain = plainReference(reference)
-  if (!plain?.dataUrl) return plain
-
-  const stored = await storeImageDataUrl(plain.dataUrl, `references/${imageId}/${plain.id || `ref_${index + 1}`}`)
-  return stored
-    ? {
-      ...plain,
-      dataUrl: stored.publicUrl,
-      storagePath: stored.storagePath,
-      previewUrl: stored.previewUrl,
-      previewPath: stored.previewPath,
-      thumbnailUrl: stored.thumbnailUrl,
-      thumbnailPath: stored.thumbnailPath,
-    }
-    : plain
-}
-
-async function storedImage(image: ImageHistoryItem) {
-  const id = String(image.id)
-  const stored = image.dataUrl
-    ? await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
-    : null
-  const references = await Promise.all(
-    plainReferences(image.references).map((reference, index) => storedReference(reference, id, index)),
-  )
+  if (!plain) return null
 
   return {
+    id: plain.id,
+    title: plain.title,
+    storagePath: plain.storagePath,
+    previewPath: plain.previewPath,
+    thumbnailPath: plain.thumbnailPath,
+    ...(!plain.storagePath && !plain.previewPath && !plain.thumbnailPath && plain.dataUrl ? { dataUrl: plain.dataUrl } : {}),
+    content: plain.content,
+    fileName: plain.fileName,
+  }
+}
+
+function referenceRecords(references: ImageHistoryReference[] = []) {
+  return references
+    .map(reference => referenceRecord(reference))
+    .filter((reference): reference is ImageHistoryReference => Boolean(reference))
+}
+
+interface StoreImageContext {
+  referenceCache: Map<string, Promise<ImageHistoryReference | null>>
+}
+
+function referencePathId(reference: ImageHistoryReference, index: number) {
+  return reference.id ? String(reference.id) : `ref_${index + 1}`
+}
+
+function withoutSourcePayload(image: ImageHistoryItem): ImageHistoryItem {
+  const {
+    sourceBuffer: _sourceBuffer,
+    sourceMime: _sourceMime,
+    ...publicImage
+  } = image
+  return publicImage
+}
+
+async function storedReference(
+  reference: ImageHistoryReference,
+  batchId: string,
+  index: number,
+  context: StoreImageContext,
+) {
+  const plain = plainReference(reference)
+  if (!plain?.dataUrl) return plain
+  if (!isInlineDataUrl(plain.dataUrl)) return plain
+
+  const pathId = referencePathId(plain, index)
+  const cacheKey = `${batchId}:${pathId}`
+  const cached = context.referenceCache.get(cacheKey)
+  if (cached) return await cached
+
+  const storedReferencePromise = storeImageDataUrl(plain.dataUrl, `references/${batchId}/${pathId}`)
+    .then(stored => stored
+      ? {
+        ...plain,
+        dataUrl: stored.previewUrl || stored.publicUrl,
+        storagePath: stored.storagePath,
+        previewUrl: stored.previewUrl,
+        previewPath: stored.previewPath,
+        thumbnailUrl: stored.thumbnailUrl,
+        thumbnailPath: stored.thumbnailPath,
+      }
+      : plain)
+
+  context.referenceCache.set(cacheKey, storedReferencePromise)
+  return await storedReferencePromise
+}
+
+async function storedImage(image: ImageHistoryItem, context: StoreImageContext) {
+  const id = String(image.id)
+  const stored = image.sourceBuffer
+    ? await storeImageBuffer(image.sourceBuffer, image.sourceMime || 'image/png', `generated/${id}`)
+    : image.dataUrl
+      ? await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
+      : null
+  const referenceBatchId = image.generationBatchId || id
+  const references: ImageHistoryReference[] = []
+
+  for (const [index, reference] of plainReferences(image.references).entries()) {
+    const stored = await storedReference(reference, referenceBatchId, index, context)
+    if (stored) references.push(stored)
+  }
+
+  return withoutSourcePayload({
     ...image,
     dataUrl: stored?.publicUrl || image.dataUrl,
     storagePath: stored?.storagePath || image.storagePath,
@@ -238,24 +366,28 @@ async function storedImage(image: ImageHistoryItem) {
     originalBytes: stored?.originalBytes || image.originalBytes,
     previewBytes: stored?.previewBytes || image.previewBytes,
     thumbnailBytes: stored?.thumbnailBytes || image.thumbnailBytes,
-    references: references.filter((reference): reference is ImageHistoryReference => Boolean(reference)),
-  }
+    references,
+  })
 }
 
 interface ImageRowOptions {
+  includeBatch?: boolean
+  includeNullableDataUrl?: boolean
   includeThumbnails?: boolean
   includeUserId?: boolean
   includePromptDetails?: boolean
   includeRequestMeta?: boolean
   includeMetrics?: boolean
   includeCredits?: boolean
+  includeReferenceCount?: boolean
 }
 
 function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
   const userPrompt = String(image.userPrompt || image.prompt || '')
+  const references = referenceRecords(image.references)
   const row: ImageHistoryRow = {
     id: String(image.id),
-    data_url: String(image.dataUrl || ''),
+    data_url: options.includeNullableDataUrl !== false && image.storagePath ? null : String(image.dataUrl || ''),
     storage_path: image.storagePath ? String(image.storagePath) : null,
     prompt: userPrompt,
     revised_prompt: image.revisedPrompt ? String(image.revisedPrompt) : null,
@@ -263,8 +395,18 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
     aspect_ratio: image.aspectRatio ? String(image.aspectRatio) : null,
     resolution: image.resolution ? String(image.resolution) : null,
     quality: image.quality ? String(image.quality) : null,
-    reference_images: plainReferences(image.references),
+    reference_images: references,
     generated_at: String(image.timestamp || new Date().toISOString()),
+  }
+
+  if (options.includeReferenceCount !== false) {
+    row.reference_count = typeof image.referenceImageCount === 'number'
+      ? Math.max(0, Math.round(image.referenceImageCount))
+      : references.length
+  }
+
+  if (options.includeBatch !== false && image.generationBatchId) {
+    row.generation_batch_id = String(image.generationBatchId)
   }
 
   if (options.includeCredits !== false) {
@@ -314,13 +456,20 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
 function missingOptionalColumn(error: { message?: string; code?: string }) {
   const message = error.message || ''
   if (error.code !== 'PGRST204') return null
+  if (/generation_batch_id/i.test(message)) return 'batch'
   if (/(preview|thumbnail)_(url|path)/i.test(message)) return 'thumbnail'
   if (/user_id/i.test(message)) return 'user_id'
   if (/(user_prompt|system_prompt|model_prompt)/i.test(message)) return 'prompt_detail'
   if (/(request_ip|request_user_agent)/i.test(message)) return 'request_meta'
   if (/(provider|image_model|text_model|latency_ms|image_width|image_height|original_bytes|preview_bytes|thumbnail_bytes)/i.test(message)) return 'metrics'
   if (/(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message)) return 'credits'
+  if (/reference_count/i.test(message)) return 'reference_count'
   return null
+}
+
+function missingBatchHistorySchema(error: { message?: string; code?: string }) {
+  return missingOptionalColumn(error) === 'batch' ||
+    (error.code === '42703' && /generation_batch_id/i.test(error.message || ''))
 }
 
 function missingCreditHistorySchema(error: { message?: string; code?: string }) {
@@ -329,93 +478,28 @@ function missingCreditHistorySchema(error: { message?: string; code?: string }) 
     (error.code === '42703' && /(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message))
 }
 
+function missingReferenceCountHistorySchema(error: { message?: string; code?: string }) {
+  return missingOptionalColumn(error) === 'reference_count' ||
+    (error.code === '42703' && /reference_count/i.test(error.message || ''))
+}
+
+function missingNullableDataUrlSchema(error: { message?: string; code?: string }) {
+  return error.code === '23502' && /data_url/i.test(error.message || '')
+}
+
 function imageFromRow(row: ImageHistoryRow, options: { includeOriginal?: boolean } = {}): ImageHistoryItem {
   const previewPath = row.preview_path || undefined
-  const thumbnailPath = row.thumbnail_path || undefined
-  const userPrompt = row.user_prompt || row.prompt || ''
   const originalUrl = row.data_url || imagePublicUrl(row.storage_path) || ''
-  return {
-    id: row.id,
-    userId: row.user_id || null,
-    ...(options.includeOriginal && originalUrl ? { dataUrl: originalUrl } : {}),
-    storagePath: row.storage_path || undefined,
-    previewUrl: row.preview_url || imagePublicUrl(previewPath),
-    previewPath,
-    thumbnailUrl: row.thumbnail_url || imagePublicUrl(thumbnailPath),
-    thumbnailPath,
-    prompt: userPrompt,
-    userPrompt,
-    systemPrompt: row.system_prompt || undefined,
-    modelPrompt: row.model_prompt || undefined,
-    provider: row.provider || undefined,
-    imageModel: row.image_model || undefined,
-    textModel: row.text_model || undefined,
-    latencyMs: row.latency_ms ?? undefined,
-    imageWidth: row.image_width ?? undefined,
-    imageHeight: row.image_height ?? undefined,
-    originalBytes: row.original_bytes ?? undefined,
-    previewBytes: row.preview_bytes ?? undefined,
-    thumbnailBytes: row.thumbnail_bytes ?? undefined,
-    visibility: row.visibility || 'public',
-    fundingSource: row.funding_source || 'free',
-    creditCost: row.credit_cost ?? undefined,
-    creditTransactionId: row.credit_transaction_id || undefined,
-    references: plainReferences(row.reference_images || []),
-    revisedPrompt: row.revised_prompt || undefined,
-    size: row.size || 'auto',
-    aspectRatio: row.aspect_ratio || undefined,
-    resolution: row.resolution || undefined,
-    quality: row.quality || undefined,
-    timestamp: row.generated_at,
-  }
-}
-
-function isInlineDataUrl(value?: string | null) {
-  return Boolean(value && /^data:/i.test(value))
-}
-
-function isHttpUrl(value?: string | null) {
-  return Boolean(value && /^https?:\/\//i.test(value))
-}
-
-async function fetchImageBuffer(url: string) {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`fetch failed: ${response.status} ${response.statusText}`)
-  const mime = response.headers.get('content-type')?.split(';')[0] || 'image/png'
-  return {
-    buffer: Buffer.from(await response.arrayBuffer()),
-    mime,
-  }
-}
-
-function referenceSummary(reference: ImageHistoryReference): ImageHistoryReference | null {
-  const plain = plainReference(reference)
-  if (!plain) return null
-  const displayUrl = plain.thumbnailUrl || plain.previewUrl || (!isInlineDataUrl(plain.dataUrl) ? plain.dataUrl : undefined)
-
-  return {
-    id: plain.id,
-    title: plain.title,
-    dataUrl: displayUrl,
-    storagePath: plain.storagePath,
-    previewUrl: plain.previewUrl,
-    previewPath: plain.previewPath,
-    thumbnailUrl: plain.thumbnailUrl,
-    thumbnailPath: plain.thumbnailPath,
-    content: plain.content,
-    fileName: plain.fileName,
-  }
-}
-
-function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
-  const previewPath = row.preview_path || undefined
-  const previewUrl = row.preview_url || imagePublicUrl(previewPath)
+  const previewUrl = row.preview_url || imagePublicUrl(previewPath) || originalUrl || undefined
   const thumbnailPath = row.thumbnail_path || undefined
-  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath)
+  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath) || previewUrl
   const userPrompt = row.user_prompt || row.prompt || ''
+  const references = referencesFromRow(row)
   return {
     id: row.id,
     userId: row.user_id || null,
+    generationBatchId: row.generation_batch_id || null,
+    ...(options.includeOriginal && originalUrl ? { dataUrl: originalUrl } : {}),
     storagePath: row.storage_path || undefined,
     previewUrl,
     previewPath,
@@ -438,9 +522,8 @@ function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
     fundingSource: row.funding_source || 'free',
     creditCost: row.credit_cost ?? undefined,
     creditTransactionId: row.credit_transaction_id || undefined,
-    references: plainReferences(row.reference_images || [])
-      .map(referenceSummary)
-      .filter((reference): reference is ImageHistoryReference => Boolean(reference)),
+    references,
+    referenceImageCount: typeof row.reference_count === 'number' ? row.reference_count : references.length,
     revisedPrompt: row.revised_prompt || undefined,
     size: row.size || 'auto',
     aspectRatio: row.aspect_ratio || undefined,
@@ -450,158 +533,80 @@ function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
   }
 }
 
-function referenceNeedsThumbnailBackfill(reference: ImageHistoryReference) {
-  return Boolean(
-    (isInlineDataUrl(reference.dataUrl) || isHttpUrl(reference.dataUrl) || reference.storagePath) &&
-    (
-      (!reference.previewUrl && !reference.previewPath) ||
-      (!reference.thumbnailUrl && !reference.thumbnailPath)
-    ),
-  )
+function isInlineDataUrl(value?: string | null) {
+  return Boolean(value && /^data:/i.test(value))
 }
 
-function rowNeedsThumbnailBackfill(row: ImageHistoryRow) {
-  return Boolean(
-    (isInlineDataUrl(row.data_url) || isHttpUrl(row.data_url) || row.storage_path) &&
-    (
-      (!row.preview_url && !row.preview_path) ||
-      (!row.thumbnail_url && !row.thumbnail_path)
-    ),
-  ) || Boolean(row.reference_images?.some(referenceNeedsThumbnailBackfill))
-}
+function referenceSummary(reference: ImageHistoryReference): ImageHistoryReference | null {
+  const plain = plainReference(reference)
+  if (!plain) return null
+  const previewUrl = plain.previewUrl || imagePublicUrl(plain.previewPath)
+  const thumbnailUrl = plain.thumbnailUrl || imagePublicUrl(plain.thumbnailPath)
+  const originalUrl = imagePublicUrl(plain.storagePath)
+  const displayUrl = thumbnailUrl || previewUrl || originalUrl || (!isInlineDataUrl(plain.dataUrl) ? plain.dataUrl : undefined)
 
-function rowMayNeedThumbnailBackfill(row: ImageHistoryRow) {
-  return Boolean(
-    (!row.preview_url && !row.preview_path) ||
-    (!row.thumbnail_url && !row.thumbnail_path) ||
-    row.reference_images?.some(referenceNeedsThumbnailBackfill),
-  )
-}
-
-async function backfillReferenceThumbnail(row: ImageHistoryRow, reference: ImageHistoryReference, index: number) {
-  const next = { ...reference }
-  const pathHint = `references/${row.id}/${reference.id || `ref_${index + 1}`}`
-
-  if (isInlineDataUrl(reference.dataUrl)) {
-    const stored = await storeImageDataUrl(reference.dataUrl!, pathHint)
-    if (stored) {
-      next.dataUrl = stored.publicUrl
-      next.storagePath = stored.storagePath
-      next.previewUrl = stored.previewUrl
-      next.previewPath = stored.previewPath
-      next.thumbnailUrl = stored.thumbnailUrl
-      next.thumbnailPath = stored.thumbnailPath
-    }
-    return next
+  return {
+    id: plain.id,
+    title: plain.title,
+    dataUrl: displayUrl,
+    storagePath: plain.storagePath,
+    previewUrl,
+    previewPath: plain.previewPath,
+    thumbnailUrl,
+    thumbnailPath: plain.thumbnailPath,
+    content: plain.content,
+    fileName: plain.fileName,
   }
-
-  if ((!reference.previewUrl && !reference.previewPath) || (!reference.thumbnailUrl && !reference.thumbnailPath)) {
-    const sourceUrl = isHttpUrl(reference.dataUrl)
-      ? reference.dataUrl
-      : imagePublicUrl(reference.storagePath)
-    if (sourceUrl) {
-      const { buffer } = await fetchImageBuffer(sourceUrl)
-      if (!reference.previewUrl && !reference.previewPath) {
-        const preview = await storePreviewBuffer(buffer, pathHint)
-        if (preview) {
-          next.previewUrl = preview.previewUrl
-          next.previewPath = preview.previewPath
-        }
-      }
-      if (!reference.thumbnailUrl && !reference.thumbnailPath) {
-        const thumbnail = await storeThumbnailBuffer(buffer, pathHint)
-        if (thumbnail) {
-          next.thumbnailUrl = thumbnail.thumbnailUrl
-          next.thumbnailPath = thumbnail.thumbnailPath
-        }
-      }
-    }
-  }
-
-  return next
 }
 
-async function backfillRowThumbnail(row: ImageHistoryRow) {
-  const updates: Partial<ImageHistoryRow> = {}
-
-  if (isInlineDataUrl(row.data_url)) {
-    const stored = await storeImageDataUrl(row.data_url!, `generated/${row.id}`)
-    if (stored) {
-      updates.data_url = stored.publicUrl
-      updates.storage_path = stored.storagePath
-      updates.preview_url = stored.previewUrl
-      updates.preview_path = stored.previewPath
-      updates.thumbnail_url = stored.thumbnailUrl
-      updates.thumbnail_path = stored.thumbnailPath
-    }
-  } else if ((!row.preview_url && !row.preview_path) || (!row.thumbnail_url && !row.thumbnail_path)) {
-    const sourceUrl = isHttpUrl(row.data_url) ? row.data_url : imagePublicUrl(row.storage_path)
-    if (sourceUrl) {
-      const { buffer } = await fetchImageBuffer(sourceUrl)
-      if (!row.preview_url && !row.preview_path) {
-        const preview = await storePreviewBuffer(buffer, `generated/${row.id}`)
-        if (preview) {
-          updates.preview_url = preview.previewUrl
-          updates.preview_path = preview.previewPath
-        }
-      }
-      if (!row.thumbnail_url && !row.thumbnail_path) {
-        const thumbnail = await storeThumbnailBuffer(buffer, `generated/${row.id}`)
-        if (thumbnail) {
-          updates.thumbnail_url = thumbnail.thumbnailUrl
-          updates.thumbnail_path = thumbnail.thumbnailPath
-        }
-      }
-    }
-  }
-
-  if (row.reference_images?.some(referenceNeedsThumbnailBackfill)) {
-    updates.reference_images = await Promise.all(
-      row.reference_images.map((reference, index) => backfillReferenceThumbnail(row, reference, index)),
-    )
-  }
-
-  return updates
+function referencesFromRow(row: ImageHistoryRow) {
+  return plainReferences(row.reference_images || [])
+    .map(referenceSummary)
+    .filter((reference): reference is ImageHistoryReference => Boolean(reference))
 }
 
-async function backfillMissingThumbnails(rows: ImageHistoryRow[]) {
-  const client = historyClient()
-  if (!client) return
-
-  const candidateIds = rows
-    .filter(rowMayNeedThumbnailBackfill)
-    .map(row => row.id)
-    .filter(Boolean)
-  if (!candidateIds.length) return
-
-  try {
-    const { data, error } = await client
-      .from(IMAGE_HISTORY_TABLE)
-      .select(IMAGE_HISTORY_BACKFILL_COLUMNS)
-      .in('id', candidateIds)
-
-    if (error) throw error
-
-    for (const row of (data || []) as unknown as ImageHistoryRow[]) {
-      if (!rowNeedsThumbnailBackfill(row)) continue
-
-      try {
-        const updates = await backfillRowThumbnail(row)
-        if (!Object.keys(updates).length) continue
-
-        const { error } = await client
-          .from(IMAGE_HISTORY_TABLE)
-          .update(updates)
-          .eq('id', row.id)
-
-        if (error) throw error
-        console.log(`[image-history] backfilled image renditions for ${row.id}`)
-      } catch (err) {
-        console.warn('[image-history] rendition backfill skipped:', err instanceof Error ? err.message : err)
-      }
-    }
-  } catch (err) {
-    console.warn('[image-history] rendition backfill lookup skipped:', err instanceof Error ? err.message : err)
+function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
+  const previewPath = row.preview_path || undefined
+  const originalUrl = imagePublicUrl(row.storage_path) || ''
+  const previewUrl = row.preview_url || imagePublicUrl(previewPath) || originalUrl || undefined
+  const thumbnailPath = row.thumbnail_path || undefined
+  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath) || previewUrl
+  const userPrompt = row.user_prompt || row.prompt || ''
+  const references = row.reference_images ? referencesFromRow(row) : []
+  return {
+    id: row.id,
+    userId: row.user_id || null,
+    generationBatchId: row.generation_batch_id || null,
+    storagePath: row.storage_path || undefined,
+    previewUrl,
+    previewPath,
+    thumbnailUrl,
+    thumbnailPath,
+    prompt: userPrompt,
+    userPrompt,
+    systemPrompt: row.system_prompt || undefined,
+    modelPrompt: row.model_prompt || undefined,
+    provider: row.provider || undefined,
+    imageModel: row.image_model || undefined,
+    textModel: row.text_model || undefined,
+    latencyMs: row.latency_ms ?? undefined,
+    imageWidth: row.image_width ?? undefined,
+    imageHeight: row.image_height ?? undefined,
+    originalBytes: row.original_bytes ?? undefined,
+    previewBytes: row.preview_bytes ?? undefined,
+    thumbnailBytes: row.thumbnail_bytes ?? undefined,
+    visibility: row.visibility || 'public',
+    fundingSource: row.funding_source || 'free',
+    creditCost: row.credit_cost ?? undefined,
+    creditTransactionId: row.credit_transaction_id || undefined,
+    references,
+    referenceImageCount: typeof row.reference_count === 'number' ? row.reference_count : references.length,
+    revisedPrompt: row.revised_prompt || undefined,
+    size: row.size || 'auto',
+    aspectRatio: row.aspect_ratio || undefined,
+    resolution: row.resolution || undefined,
+    quality: row.quality || undefined,
+    timestamp: row.generated_at,
   }
 }
 
@@ -635,7 +640,7 @@ export async function listImageHistory(
   const listWithColumns = async (columns: string, includeVisibilityFilter: boolean) => {
     let query = client
       .from(IMAGE_HISTORY_TABLE)
-      .select(columns, { count: 'exact' })
+      .select(columns)
       .order('generated_at', { ascending: false })
 
     if (options.scope === 'mine') {
@@ -644,30 +649,54 @@ export async function listImageHistory(
       query = query.eq('visibility', 'public')
     }
 
-    return await query.range(safeOffset, safeOffset + cappedLimit - 1)
+    return await query.range(safeOffset, safeOffset + cappedLimit)
   }
 
-  let result = await listWithColumns(IMAGE_HISTORY_LIST_COLUMNS, true)
+  const publicScope = options.scope !== 'mine'
+  let referenceCountColumnMissing = false
+  let result = await listWithColumns(
+    publicScope ? IMAGE_HISTORY_PUBLIC_SUMMARY_COLUMNS : IMAGE_HISTORY_BATCH_LIST_COLUMNS,
+    true,
+  )
+  if (result.error && missingReferenceCountHistorySchema(result.error)) {
+    referenceCountColumnMissing = true
+    console.warn('[image-history] reference count column missing; listing with full reference metadata')
+    result = await listWithColumns(IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT, true)
+  }
+  if (result.error && missingBatchHistorySchema(result.error)) {
+    console.warn('[image-history] generation batch column missing; listing without batch metadata')
+    result = await listWithColumns(
+      referenceCountColumnMissing
+        ? IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT
+        : IMAGE_HISTORY_LIST_COLUMNS,
+      true,
+    )
+  }
+  if (result.error && !referenceCountColumnMissing && missingReferenceCountHistorySchema(result.error)) {
+    referenceCountColumnMissing = true
+    console.warn('[image-history] reference count column missing; retrying list with full reference metadata')
+    result = await listWithColumns(IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT, true)
+  }
   if (result.error && missingCreditHistorySchema(result.error)) {
     console.warn('[image-history] credit visibility columns missing; listing legacy public history')
     result = await listWithColumns(IMAGE_HISTORY_LEGACY_LIST_COLUMNS, false)
   }
 
-  const { data, error, count } = result
+  const { data, error } = result
 
   if (error) throw error
   const rows = (data || []) as unknown as ImageHistoryRow[]
-  void backfillMissingThumbnails(rows)
-  const images = rows.map(row => imageSummaryFromRow(row))
-  const total = count ?? safeOffset + images.length
+  const hasMore = rows.length > cappedLimit
+  const visibleRows = hasMore ? rows.slice(0, cappedLimit) : rows
+  const images = visibleRows.map(row => imageSummaryFromRow(row))
   const nextOffset = safeOffset + images.length
   return {
     images,
-    total,
+    total: nextOffset + (hasMore ? 1 : 0),
     limit: cappedLimit,
     offset: safeOffset,
-    hasMore: nextOffset < total,
-    nextOffset: nextOffset < total ? nextOffset : null,
+    hasMore,
+    nextOffset: hasMore ? nextOffset : null,
   }
 }
 
@@ -701,41 +730,28 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   if (error) throw error
   if (!data) return null
 
-  let row = data as ImageHistoryRow
-  if (rowNeedsThumbnailBackfill(row)) {
-    try {
-      const updates = await backfillRowThumbnail(row)
-      if (Object.keys(updates).length) {
-        const { error } = await client
-          .from(IMAGE_HISTORY_TABLE)
-          .update(updates)
-          .eq('id', row.id)
-
-        if (error) throw error
-        row = { ...row, ...updates }
-      }
-    } catch (err) {
-      console.warn('[image-history] detail rendition backfill skipped:', err instanceof Error ? err.message : err)
-    }
-  }
-
-  return imageFromRow(row, { includeOriginal: options.includeOriginal })
+  return imageFromRow(data as ImageHistoryRow, { includeOriginal: options.includeOriginal })
 }
 
 export async function saveImageHistory(images: ImageHistoryItem[], options: { userId?: string | null } = {}) {
   const client = historyClient()
   if (!client || !images.length) return null
 
-  const storedImages = await Promise.all(
-    images
-      .filter(image => image?.id && image?.dataUrl)
-      .map(image => storedImage({
-        ...image,
-        ...(options.userId ? { userId: options.userId } : {}),
-      })),
-  )
+  const storeContext: StoreImageContext = {
+    referenceCache: new Map(),
+  }
+  const storedImages: ImageHistoryItem[] = []
+
+  for (const image of images) {
+    if (!image?.id || (!image.sourceBuffer && !image.dataUrl && !image.storagePath)) continue
+    storedImages.push(await storedImage({
+      ...image,
+      ...(options.userId ? { userId: options.userId } : {}),
+    }, storeContext))
+  }
+
   const validImages = storedImages
-    .filter(image => image?.id && image?.dataUrl)
+    .filter(image => image?.id && (image.dataUrl || image.storagePath || image.previewUrl || image.thumbnailUrl))
 
   if (!validImages.length) return null
   const canOmitCreditFields = validImages.every(image => (
@@ -746,12 +762,15 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
   ))
 
   const rowOptions: Required<ImageRowOptions> = {
+    includeBatch: true,
+    includeNullableDataUrl: true,
     includeThumbnails: true,
     includeUserId: true,
     includePromptDetails: true,
     includeRequestMeta: true,
     includeMetrics: true,
     includeCredits: true,
+    includeReferenceCount: true,
   }
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -763,6 +782,16 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     if (!error) return storedImages
 
     const missingColumn = missingOptionalColumn(error)
+    if (missingNullableDataUrlSchema(error) && rowOptions.includeNullableDataUrl) {
+      rowOptions.includeNullableDataUrl = false
+      console.warn('[image-history] data_url still requires a value; retrying save with legacy empty data_url')
+      continue
+    }
+    if (missingColumn === 'batch' && rowOptions.includeBatch) {
+      rowOptions.includeBatch = false
+      console.warn('[image-history] generation batch column missing; retrying save without batch field')
+      continue
+    }
     if (missingColumn === 'thumbnail' && rowOptions.includeThumbnails) {
       rowOptions.includeThumbnails = false
       console.warn('[image-history] thumbnail columns missing; retrying save without thumbnail fields')
@@ -792,6 +821,11 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
       if (!canOmitCreditFields) throw error
       rowOptions.includeCredits = false
       console.warn('[image-history] credit columns missing; retrying save without credit fields')
+      continue
+    }
+    if (missingColumn === 'reference_count' && rowOptions.includeReferenceCount) {
+      rowOptions.includeReferenceCount = false
+      console.warn('[image-history] reference count column missing; retrying save without reference count')
       continue
     }
 

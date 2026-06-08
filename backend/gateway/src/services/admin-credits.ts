@@ -6,9 +6,11 @@ import { redactSensitiveText } from './safe-error.js'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
+const CODE_FILTER_PAGE_SIZE = 500
 const OVERVIEW_PAGE_SIZE = 1000
 const RECENT_TRANSACTION_DAYS = 7
 const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
+const CREDIT_CODE_STATES = ['active', 'disabled', 'expired', 'exhausted'] as const
 
 export interface RequestUser {
   id: string
@@ -36,6 +38,8 @@ export interface AdminCreditCode {
   note: string | null
   createdAt: string | null
 }
+
+export type AdminCreditCodeState = typeof CREDIT_CODE_STATES[number]
 
 export interface CreatedAdminCreditCode extends AdminCreditCode {
   code: string
@@ -192,10 +196,26 @@ function sanitizedReason(value: unknown) {
   return (CREDIT_TRANSACTION_REASONS as readonly string[]).includes(reason) ? reason : null
 }
 
+function sanitizedCodeState(value: unknown): AdminCreditCodeState | null {
+  return typeof value === 'string' && (CREDIT_CODE_STATES as readonly string[]).includes(value)
+    ? value as AdminCreditCodeState
+    : null
+}
+
 function sanitizeText(value: unknown, maxLength = 240) {
   if (typeof value !== 'string') return null
   const text = value.trim()
   return text ? text.slice(0, maxLength) : null
+}
+
+function sanitizeSearchText(value: unknown, maxLength = 80) {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/[%,()*_\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+  return text || null
 }
 
 function safeDisplayText(value: unknown, maxLength = 240) {
@@ -260,7 +280,7 @@ function toCreditCode(row: Record<string, unknown>): AdminCreditCode {
     redeemedCount: normalizedInteger(row.redeemed_count),
     expiresAt: typeof row.expires_at === 'string' ? row.expires_at : null,
     disabledAt: typeof row.disabled_at === 'string' ? row.disabled_at : null,
-    note: typeof row.note === 'string' ? row.note : null,
+    note: safeDisplayText(row.note, 240),
     createdAt: typeof row.created_at === 'string' ? row.created_at : null,
   }
 }
@@ -281,7 +301,7 @@ function toCreditCodeRedemption(
   }
 }
 
-function creditCodeState(row: Record<string, unknown>, nowMs: number) {
+function creditCodeState(row: Record<string, unknown>, nowMs: number): AdminCreditCodeState {
   if (row.disabled_at) return 'disabled'
   if (typeof row.expires_at === 'string' && new Date(row.expires_at).getTime() <= nowMs) return 'expired'
 
@@ -648,6 +668,61 @@ export async function listAdminCreditCodes(options: { limit?: unknown } = {}) {
     .limit(limit)
   if (error) throw error
   return (data || []).map(row => toCreditCode(row as Record<string, unknown>))
+}
+
+export async function listAdminCreditCodesFiltered(options: {
+  limit?: unknown
+  status?: unknown
+  query?: unknown
+} = {}) {
+  const client = requireAdminClient()
+  const limit = sanitizedLimit(options.limit)
+  const status = sanitizedCodeState(options.status)
+  const search = sanitizeSearchText(options.query)
+  const nowMs = Date.now()
+  const nowIso = new Date(nowMs).toISOString()
+  const searchLower = search?.toLowerCase() || ''
+  const matches: Array<Record<string, unknown>> = []
+
+  for (let offset = 0; matches.length < limit; offset += CODE_FILTER_PAGE_SIZE) {
+    let query = client
+      .from('credit_redemption_codes')
+      .select('id,credits,max_redemptions,redeemed_count,expires_at,disabled_at,note,created_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + CODE_FILTER_PAGE_SIZE - 1)
+
+    if (search) {
+      query = query.ilike('note', `%${search}%`)
+    }
+
+    if (status === 'disabled') {
+      query = query.not('disabled_at', 'is', null)
+    } else if (status === 'expired') {
+      query = query.is('disabled_at', null).lte('expires_at', nowIso)
+    } else if (status === 'active' || status === 'exhausted') {
+      query = query
+        .is('disabled_at', null)
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const rows = (data || []) as Array<Record<string, unknown>>
+    for (const row of rows) {
+      if (status && creditCodeState(row, nowMs) !== status) continue
+      if (searchLower) {
+        const note = safeDisplayText(row.note, 240)?.toLowerCase() || ''
+        if (!note.includes(searchLower)) continue
+      }
+      matches.push(row)
+      if (matches.length >= limit) break
+    }
+
+    if (rows.length < CODE_FILTER_PAGE_SIZE) break
+  }
+
+  return matches.map(row => toCreditCode(row))
 }
 
 export async function listAdminCreditCodeRedemptions(codeId: string, limitValue?: unknown) {

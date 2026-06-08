@@ -29,11 +29,21 @@ interface ImageHistoryDetailResponse {
 
 interface ResolveImageDetailOptions {
   includeOriginal?: boolean
+  requireStoragePath?: boolean
 }
 
 function plainReference(reference: ImageGenReference): ImageGenReference | null {
   const raw = toRaw(reference) as ImageGenReference
-  if (!raw?.dataUrl && !raw?.previewUrl && !raw?.thumbnailUrl) return null
+  if (
+    !raw?.dataUrl &&
+    !raw?.storagePath &&
+    !raw?.previewUrl &&
+    !raw?.previewPath &&
+    !raw?.thumbnailUrl &&
+    !raw?.thumbnailPath
+  ) {
+    return null
+  }
 
   return {
     id: String(raw.id || ''),
@@ -51,7 +61,7 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
 
 function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   const raw = toRaw(image) as GeneratedImage
-  if (!raw?.id || (!raw?.dataUrl && !raw?.previewUrl && !raw?.thumbnailUrl)) return null
+  if (!raw?.id || (!raw?.dataUrl && !raw?.storagePath && !raw?.previewUrl && !raw?.thumbnailUrl)) return null
 
   const references = Array.isArray(raw.references)
     ? raw.references
@@ -97,6 +107,101 @@ async function readApiError(response: Response, fallback: string) {
   } catch {
     return publicClientErrorMessage(response.statusText, fallback)
   }
+}
+
+async function referenceDataToBlob(reference: ImageGenReference) {
+  if (!reference.dataUrl) return null
+  const response = await fetch(reference.dataUrl)
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return blob.size ? blob : null
+}
+
+function encodedHeader(value?: string) {
+  const trimmed = value?.trim()
+  return trimmed ? encodeURIComponent(trimmed.slice(0, 160)) : undefined
+}
+
+function compactReference(reference: ImageGenReference): ImageGenReference | null {
+  const plain = plainReference(reference)
+  if (!plain) return null
+  return {
+    id: plain.id,
+    title: plain.title,
+    ...(plain.storagePath ? { storagePath: plain.storagePath } : {}),
+    ...(plain.previewUrl ? { previewUrl: plain.previewUrl } : {}),
+    ...(plain.previewPath ? { previewPath: plain.previewPath } : {}),
+    ...(plain.thumbnailUrl ? { thumbnailUrl: plain.thumbnailUrl } : {}),
+    ...(plain.thumbnailPath ? { thumbnailPath: plain.thumbnailPath } : {}),
+    ...(plain.content ? { content: plain.content } : {}),
+    ...(plain.fileName ? { fileName: plain.fileName } : {}),
+    ...(!plain.storagePath && plain.dataUrl ? { dataUrl: plain.dataUrl } : {}),
+  }
+}
+
+async function uploadReference(
+  reference: ImageGenReference,
+  token: string | null,
+  signal: AbortSignal,
+) {
+  const compact = compactReference(reference)
+  if (!compact) return null
+  if (compact.storagePath) return compact
+
+  const blob = await referenceDataToBlob(reference)
+  if (!blob) {
+    throw new Error('参考图读取失败，请重新选择图片。')
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': blob.type || 'image/webp',
+  }
+  const id = encodedHeader(compact.id)
+  const title = encodedHeader(compact.title)
+  const fileName = encodedHeader(compact.fileName)
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (id) headers['x-reference-id'] = id
+  if (title) headers['x-reference-title'] = title
+  if (fileName) headers['x-reference-filename'] = fileName
+
+  const response = await fetch(apiUrl('/api/image/references'), {
+    method: 'POST',
+    headers,
+    body: blob,
+    signal,
+  })
+  if (!response.ok) {
+    throw new Error(await readApiError(response, '参考图上传失败，请稍后重试。'))
+  }
+
+  const data = await response.json() as { reference?: ImageGenReference }
+  const uploaded = data.reference ? plainReference(data.reference) : null
+  if (!uploaded?.storagePath) {
+    throw new Error('参考图上传失败，请稍后重试。')
+  }
+
+  return {
+    ...uploaded,
+    ...(compact.content ? { content: compact.content } : {}),
+    ...(compact.fileName && !uploaded.fileName ? { fileName: compact.fileName } : {}),
+  }
+}
+
+async function prepareGenerationReferences(
+  references: ImageGenReference[] | undefined,
+  token: string | null,
+  signal: AbortSignal,
+) {
+  const compactReferences = Array.isArray(references)
+    ? references
+      .map(reference => compactReference(reference))
+      .filter((reference): reference is ImageGenReference => Boolean(reference))
+    : []
+
+  if (!compactReferences.length) return []
+
+  const uploaded = await Promise.all(compactReferences.map(reference => uploadReference(reference, token, signal)))
+  return uploaded.filter((reference): reference is ImageGenReference => Boolean(reference))
 }
 
 function sortHistory(images: GeneratedImage[]) {
@@ -386,13 +491,18 @@ export function useImageGen() {
 
     try {
       const token = await getAuthAccessToken()
+      const requestReferences = await prepareGenerationReferences(options.references, token, controller.signal)
+      const requestOptions: ImageGenOptions = {
+        ...options,
+        references: requestReferences,
+      }
       const res = await fetch(apiUrl('/api/image/generate'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ prompt, ...options }),
+        body: JSON.stringify({ prompt, ...requestOptions }),
         signal: controller.signal,
       })
 
@@ -414,7 +524,7 @@ export function useImageGen() {
         ...image,
         references: image.references?.length
           ? image.references.map(reference => ({ ...reference }))
-          : options.references?.map(reference => ({ ...reference })) ?? [],
+          : requestReferences.map(reference => ({ ...reference })),
       }))
 
       generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
@@ -458,7 +568,8 @@ export function useImageGen() {
     scope: ImageHistoryScope = 'mine',
     options: ResolveImageDetailOptions = {},
   ) {
-    if (options.includeOriginal ? image.dataUrl : image.previewUrl) return image
+    const hasRequestedImage = options.includeOriginal ? Boolean(image.dataUrl) : Boolean(image.previewUrl)
+    if (hasRequestedImage && (!options.requireStoragePath || image.storagePath)) return image
 
     const detail = await loadRemoteImageDetail(image.id, scope, options)
     if (!detail) return image
