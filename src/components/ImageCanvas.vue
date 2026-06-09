@@ -2,47 +2,37 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
-import {
-  buildCanvasExportDocument as buildCanvasExportDocumentPayload,
-  isInputHandle,
-  isOutputHandle,
-  isValidCanvasConnection,
-  normalizeCanvasImport,
-  parseCanvasExportDocument,
-} from '../lib/canvas-document'
+import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
+import { useGalleryDetailPreview } from '../composables/useGalleryDetailPreview'
+import { useImageCanvasDocument } from '../composables/useImageCanvasDocument'
+import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
+import { useImageCanvasGraph } from '../composables/useImageCanvasGraph'
+import { useImageCanvasImages } from '../composables/useImageCanvasImages'
+import { useImageCanvasMentions } from '../composables/useImageCanvasMentions'
+import { useImageCanvasViewer } from '../composables/useImageCanvasViewer'
+import { useImageGalleryStage } from '../composables/useImageGalleryStage'
+import { useImageNodeReferences } from '../composables/useImageNodeReferences'
+import { type CanvasExportDocument } from '../lib/canvas-document'
 import { useImageDownload, type ImageDownloadNode, type ImageDownloadViewer } from '../composables/useImageDownload'
 import {
   CANVAS_EXPORT_VERSION,
   CANVAS_IMPORT_MAX_FILE_BYTES,
   CANVAS_TITLE,
-  GALLERY_AUTO_LOAD_PROGRESS,
-  GALLERY_PAGE_SIZE,
   MAX_NODE_SCALE,
   MAX_VIEWPORT_ZOOM,
   MENU_HEIGHT,
   MENU_WIDTH,
-  MINI_MAP_VIEW,
   MIN_NODE_SCALE,
   MIN_VIEWPORT_ZOOM,
-  NODE_SIZE,
   PLANE_SIZE,
-  type CanvasHandle,
   type CanvasNode,
   type CanvasNodeType,
-  type Connection,
   type ContextMenuState,
-  type DraftConnection,
   type DragState,
-  type GalleryFilter,
-  type ImageViewerState,
   type InputHandle,
-  type MentionField,
-  type MentionState,
   type NodeAspectRatio,
-  type NodeGenerationCount,
   type NodeQuality,
   type NodeResolution,
-  type OutputHandle,
   type PanState,
   type PendingMenuConnection,
   type ResizeCorner,
@@ -51,36 +41,18 @@ import {
 } from '../lib/image-canvas-model'
 import {
   clamp,
-  clipboardImageFile,
-  compressReferenceImageDataUrl,
-  fallbackImageFileName,
   getNodeScale,
-  imageDimensionsFromHistory,
   isGeneratedImageNode,
-  preloadImageUrl,
-  readImageDimensions,
-  readImageFileAsDataUrl,
   updateNodeImageDimensions,
 } from '../lib/image-canvas-utils'
 import {
-  displayImageUrl,
-  displayReferenceUrl,
-  formatGalleryDate,
   galleryFileName,
-  galleryOptionLabel,
   galleryParamItems as buildGalleryParamItems,
   galleryPrompt,
   galleryReferenceCount,
   galleryReferences,
   previewImageUrl,
 } from '../lib/image-gallery'
-import {
-  createMentionTokenElement,
-  createRichContentDirective,
-  serializeRichEditor,
-  setRichEditorSelection,
-  textBeforeCaret,
-} from '../lib/image-mention-editor'
 import {
   buildMiniMapLayout,
   canvasPlaneStyle,
@@ -92,9 +64,15 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
-import * as canvasPrompt from '../lib/image-canvas-prompt'
-import * as canvasGraph from '../lib/image-canvas-graph'
-import type { GeneratedImage, ImageGenReference } from '../types/image'
+import type { GeneratedImage } from '../types/image'
+import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
+import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
+import ImageCanvasNode from './ImageCanvasNode.vue'
+import ImageCanvasSidebar from './ImageCanvasSidebar.vue'
+import ImageCanvasStageActions from './ImageCanvasStageActions.vue'
+import ImageCanvasGalleryStage from './ImageCanvasGalleryStage.vue'
+import ImageGalleryDetailModal from './ImageGalleryDetailModal.vue'
+import ImageViewerModal from './ImageViewerModal.vue'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -126,65 +104,28 @@ const {
 } = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
-const galleryStageRef = ref<HTMLElement | null>(null)
-const canvasImportInputRef = ref<HTMLInputElement | null>(null)
-const pendingCanvasImportMode = ref<'append' | 'replace'>('append')
-const nodes = ref<CanvasNode[]>([
-  {
-    id: 'node_text_seed',
-    type: 'text',
-    x: 320,
-    y: 120,
-    title: '文本',
-    content: '',
-    size: '1024x1024',
-    aspectRatio: 'auto',
-    resolution: 'auto',
-    quality: 'auto',
-  },
-  {
-    id: 'node_generation_seed',
-    type: 'generation',
-    x: 820,
-    y: 104,
-    title: '图片生成',
-    content: '',
-    size: 'auto',
-    aspectRatio: 'auto',
-    resolution: 'auto',
-    quality: 'auto',
-    count: 1,
-  },
-])
-const connections = ref<Connection[]>([
-  {
-    id: 'conn_seed_text_generation',
-    fromNodeId: 'node_text_seed',
-    fromHandle: 'text-out',
-    toNodeId: 'node_generation_seed',
-    toHandle: 'prompt-in',
-  },
-])
-
-const selectedNodeId = ref<string | null>('node_generation_seed')
-const nodeClipboard = ref<CanvasNode | null>(null)
+const {
+  canvasId,
+  nodes,
+  connections,
+  selectedNodeId,
+  createId,
+  createNode,
+  nextImageTitle,
+  getNodeById,
+  insertNodeCopy,
+  copySelectedNode: copySelectedDocumentNode,
+  pasteNodeFromClipboard: pasteDocumentNodeFromClipboard,
+  removeNode: removeDocumentNode,
+  clearCanvas: clearCanvasDocument,
+  importDocument: importCanvasDocumentState,
+} = useImageCanvasDocument()
 const dragState = ref<DragState | null>(null)
 const panState = ref<PanState | null>(null)
 const resizeState = ref<ResizeState | null>(null)
-const mentionState = ref<MentionState | null>(null)
-const imageViewer = ref<ImageViewerState | null>(null)
-const galleryDetail = ref<GeneratedImage | null>(null)
-const galleryDetailScope = ref<ImageHistoryScope>('mine')
-const galleryDetailDisplayUrl = ref('')
-const isGalleryDetailLoadingPreview = ref(false)
-const draftConnection = ref<DraftConnection | null>(null)
 const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
 const activeWorkspace = ref<WorkspaceMode>('canvas')
-const isGalleryAutoLoading = ref(false)
-const galleryQuery = ref('')
-const galleryFilter = ref<GalleryFilter>('mine')
-const isPublicGalleryFilter = computed(() => galleryFilter.value !== 'mine')
 const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
@@ -195,12 +136,8 @@ const contextMenu = ref<ContextMenuState>({
   targetNodeId: null,
 })
 
-let idSeed = Date.now()
-const canvasId = `canvas_${idSeed}`
 let suppressNextWindowClick = false
 let suppressClickTimer: number | null = null
-let imageViewerLoadSeq = 0
-let galleryDetailLoadSeq = 0
 
 const {
   cleanupMeasuredNodeElement,
@@ -213,6 +150,54 @@ const {
   referenceCountForNode: node => referencedImageNodes(node).length,
 })
 
+const {
+  draftPath,
+  startConnection,
+  finishConnection,
+  connectPendingMenuConnection,
+  updateDraftCursor,
+  pendingConnectionForPointerUp,
+  clearDraftConnection,
+  incomingConnections,
+  imageNodeForRichToken,
+  referencedImageNodes,
+  syncMentionConnectionsForGeneration,
+  syncMentionConnectionsForTextNode,
+  nodeStyle,
+  handlePoint,
+  connectionPath,
+  hasPromptLink,
+  getGenerationPromptValue,
+  buildPromptParts,
+  buildCanvasContext,
+} = useImageCanvasGraph({
+  canvasId,
+  canvasVersion: CANVAS_EXPORT_VERSION,
+  nodes,
+  connections,
+  getNodeById,
+  createConnectionId: () => createId('conn'),
+  getBaseNodeSize,
+  getRenderedNodeSize,
+  canvasPointFromClient,
+  canStartPointerInteraction,
+  selectNode,
+})
+
+const {
+  mentionState,
+  mentionOptions,
+  updateRichEditorContent,
+  updateMentionStateFromEditor,
+  isMentionIndexOpen,
+  insertMention,
+  handleMentionKeydown,
+} = useImageCanvasMentions({
+  nodes,
+  syncMentionConnectionsForGeneration,
+  syncMentionConnectionsForTextNode,
+})
+
 watch(
   () => props.workspaceMode,
   (mode) => {
@@ -222,16 +207,6 @@ watch(
   },
   { immediate: true },
 )
-
-watch([galleryQuery, galleryFilter], () => {
-  galleryVisibleCount.value = GALLERY_PAGE_SIZE
-  if (isPublicGalleryFilter.value) {
-    void ensureGalleryLoaded()
-  }
-  void nextTick(() => {
-    galleryStageRef.value?.scrollTo({ top: 0 })
-  })
-})
 
 const planeStyle = computed(() => canvasPlaneStyle(viewport.value))
 
@@ -264,41 +239,30 @@ const miniMapLayout = computed(() => {
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
-const galleryActionScope = computed<ImageHistoryScope>(() => isPublicGalleryFilter.value ? 'public' : 'mine')
-const gallerySourceImages = computed(() => isPublicGalleryFilter.value ? publicGalleryImages.value : generatedImages.value)
-const galleryFilterOptions: Array<{ value: GalleryFilter; label: string }> = [
-  { value: 'mine', label: '我的' },
-  { value: 'references', label: '参考图' },
-  { value: 'latest', label: '最新' },
-]
-const galleryVisibleCount = ref(GALLERY_PAGE_SIZE)
-const galleryHasFilter = computed(() => galleryFilter.value !== 'mine' || Boolean(galleryQuery.value.trim()))
-const filteredGalleryImages = computed(() => {
-  const query = galleryQuery.value.trim().toLowerCase()
-  return gallerySourceImages.value.filter((image) => {
-    if (galleryFilter.value === 'references' && !galleryReferenceCount(image)) return false
-    if (!query) return true
-
-    const searchable = [
-      galleryPrompt(image),
-      image.size,
-      image.aspectRatio,
-      image.resolution,
-      image.quality,
-      ...galleryReferences(image).map(reference => `${reference.title} ${reference.fileName ?? ''}`),
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-
-    return searchable.includes(query)
-  })
+const {
+  query: galleryQuery,
+  filter: galleryFilter,
+  filterOptions: galleryFilterOptions,
+  isPublicFilter: isPublicGalleryFilter,
+  actionScope: galleryActionScope,
+  sourceImages: gallerySourceImages,
+  filteredImages: filteredGalleryImages,
+  visibleImages: visibleGalleryImages,
+  hasFilter: galleryHasFilter,
+  isLoading: isGalleryLoading,
+  isLoadingMore: isGalleryLoadingMore,
+  loadMore: handleLoadMoreGallery,
+} = useImageGalleryStage({
+  generatedImages,
+  publicGalleryImages,
+  isLoadingHistory,
+  hasMoreHistory,
+  isLoadingGallery,
+  hasMoreGallery,
+  ensureGalleryLoaded,
+  loadMoreHistory,
+  loadMoreGalleryHistory,
 })
-const visibleGalleryImages = computed(() => filteredGalleryImages.value.slice(0, galleryVisibleCount.value))
-const canLoadMoreGallery = computed(() => (
-  galleryVisibleCount.value < filteredGalleryImages.value.length ||
-  (isPublicGalleryFilter.value ? hasMoreGallery.value : hasMoreHistory.value)
-))
 const resolutionOptions: Array<{ value: NodeResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: '1k', label: '1K' },
@@ -319,24 +283,6 @@ const qualityOptions: Array<{ value: NodeQuality; label: string }> = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ]
-const generationCountOptions: Array<{ value: NodeGenerationCount; label: string }> = [
-  { value: 1, label: '1' },
-  { value: 2, label: '2' },
-  { value: 4, label: '4' },
-  { value: 8, label: '8' },
-]
-const generationCountValues = new Set<NodeGenerationCount>(generationCountOptions.map(option => option.value))
-const mentionOptions = computed(() => {
-  const query = mentionState.value?.query.trim().toLowerCase() ?? ''
-  return nodes.value
-    .filter(node => node.type === 'image' && node.imageUrl)
-    .filter(node => {
-      if (!query) return true
-      const label = `${node.title} ${node.content} ${node.fileName ?? ''}`.toLowerCase()
-      return label.includes(query)
-    })
-    .slice(0, 8)
-})
 const contextMenuNode = computed(() => (
   contextMenu.value.targetNodeId ? getNodeById(contextMenu.value.targetNodeId) ?? null : null
 ))
@@ -350,6 +296,32 @@ function historyImageForViewer(viewer: ImageDownloadViewer) {
     [...generatedImages.value, ...publicGalleryImages.value].find(image => image.id === viewer.sourceImageId) ??
     null
 }
+
+const {
+  galleryDetail,
+  galleryDetailScope,
+  isGalleryDetailLoadingPreview,
+  galleryDetailImageUrl,
+  closeGalleryDetail,
+  openGalleryDetail,
+  createViewerState: createGalleryDetailViewerState,
+  resolveViewerPreview: resolveGalleryDetailViewerPreview,
+} = useGalleryDetailPreview({
+  currentScope: () => galleryActionScope.value,
+  resolveImageDetail,
+  setError(message) {
+    error.value = message
+  },
+})
+
+const {
+  buildReferences,
+  resolveNodePreviewImageUrl,
+} = useImageNodeReferences({
+  historyImageForNode: node => historyImageForNode(node),
+  referencedImageNodes: node => referencedImageNodes(node),
+  resolveImageDetail,
+})
 
 const {
   imageDownloadKey,
@@ -371,55 +343,86 @@ const {
   },
 })
 
-function createId(prefix: string) {
-  idSeed += 1
-  return `${prefix}_${idSeed}`
+const {
+  imageViewer,
+  openGalleryDetailViewer,
+  openImageViewer,
+  closeImageViewer,
+  zoomImageViewer,
+  resetImageViewerZoom,
+} = useImageCanvasViewer({
+  historyImageForNode: node => historyImageForNode(node),
+  resolveNodePreviewImageUrl,
+  createGalleryDetailViewerState,
+  resolveGalleryDetailViewerPreview,
+})
+
+const {
+  chooseImage,
+  handleWindowPaste,
+  useHistoryImage,
+} = useImageCanvasImages({
+  getNodeById,
+  createImageNode: (x, y, data) => createNode('image', x, y, data),
+  nextImageTitle,
+  removeNode,
+  pasteNodeFromClipboard,
+  selectCanvasWorkspace: () => selectWorkspace('canvas'),
+  isImageViewerOpen: () => Boolean(imageViewer.value),
+  isEditableEventTarget,
+  imageNodePositionNearCenter: () => nodePositionNearVisibleCenter('image'),
+  historyImageDropPoint: () => {
+    const rect = viewportRef.value?.getBoundingClientRect()
+    return rect
+      ? canvasPointFromClient(rect.left + rect.width * 0.56, rect.top + rect.height * 0.58)
+      : { x: 720, y: 420 }
+  },
+  resolveImageDetail,
+  setError(message) {
+    error.value = message
+  },
+})
+
+const {
+  generationCountOptions,
+  generationCountForNode,
+  setGenerationCount,
+  generateFromNode,
+  createContinuation,
+} = useImageCanvasGeneration({
+  nodes,
+  connections,
+  isGenerating,
+  error,
+  canSelectGenerationCount: () => Boolean(props.canSelectGenerationCount),
+  canvasContextEnabled: () => CANVAS_CONTEXT_ENABLED,
+  createNode,
+  createConnectionId: () => createId('conn'),
+  getRenderedNodeSize,
+  buildReferences,
+  buildPromptParts,
+  buildCanvasContext,
+  generate,
+})
+
+function updateNodeContent(node: CanvasNode, value: string) {
+  node.content = value
 }
 
-function nextImageTitle(excludeNodeId?: string) {
-  const maxIndex = nodes.value.reduce((max, node) => {
-    if (node.type !== 'image' || node.id === excludeNodeId) return max
-    const match = /^图片(\d+)$/.exec(node.title.trim())
-    return match ? Math.max(max, Number(match[1])) : max
-  }, 0)
-  return `图片${maxIndex + 1}`
+function updateNodeResolution(node: CanvasNode, value: NodeResolution) {
+  node.resolution = value
 }
 
-function createNode(type: CanvasNodeType, x: number, y: number, data: Partial<CanvasNode> = {}) {
-  const labels: Record<CanvasNodeType, string> = {
-    text: '文本',
-    image: '图片',
-    generation: '图片生成',
-  }
-
-  const node: CanvasNode = {
-    id: createId(type),
-    type,
-    x,
-    y,
-    title: labels[type],
-    content: '',
-    size: 'auto',
-    aspectRatio: 'auto',
-    resolution: 'auto',
-    quality: 'auto',
-    ...(type === 'generation' ? { count: 1 as NodeGenerationCount } : {}),
-    scale: 1,
-    ...data,
-  }
-
-  nodes.value = [...nodes.value, node]
-  selectedNodeId.value = node.id
-  return node
+function updateNodeAspectRatio(node: CanvasNode, value: NodeAspectRatio) {
+  node.aspectRatio = value
 }
 
-function generationCountForNode(node: CanvasNode): NodeGenerationCount {
-  return generationCountValues.has(node.count as NodeGenerationCount) ? node.count as NodeGenerationCount : 1
+function updateNodeQuality(node: CanvasNode, value: NodeQuality) {
+  node.quality = value
 }
 
-function setGenerationCount(node: CanvasNode, count: NodeGenerationCount) {
-  if (!props.canSelectGenerationCount) return
-  node.count = count
+function resetNodeScale(node: CanvasNode) {
+  node.scale = 1
 }
 
 function canvasPointFromClient(clientX: number, clientY: number) {
@@ -525,154 +528,42 @@ function selectNode(nodeId: string) {
   closeContextMenu()
 }
 
-function duplicatedNodeTitle(node: CanvasNode) {
-  if (node.type === 'image' && /^图片\d+$/.test(node.title.trim())) {
-    return nextImageTitle()
-  }
-
-  const title = node.title.trim() || '节点'
-  return `${title} 副本`.slice(0, 48)
-}
-
-function cleanNodeCopy(node: CanvasNode): CanvasNode {
-  return {
-    ...node,
-    mentions: node.mentions ? [...node.mentions] : undefined,
-    loading: false,
-    status: null,
-    error: null,
-  }
-}
-
-function buildCanvasExportDocument() {
-  return buildCanvasExportDocumentPayload({
-    canvasId,
-    title: CANVAS_TITLE,
-    version: CANVAS_EXPORT_VERSION,
-    viewport: { ...viewport.value },
-    nodes: nodes.value,
-    connections: connections.value,
-  })
-}
-
-function buildCanvasContext(node: CanvasNode, userPrompt: string) {
-  return canvasPrompt.buildCanvasContext({
-    canvasId,
-    canvasVersion: CANVAS_EXPORT_VERSION,
-    nodes: nodes.value,
-    connections: connections.value,
-    node,
-    userPrompt,
-  })
-}
-
-function safeCanvasFileName() {
-  const date = new Date().toISOString().slice(0, 10)
-  return `recho-canvas-${date}.json`
-}
-
-function exportCanvasToFile() {
-  const json = JSON.stringify(buildCanvasExportDocument(), null, 2)
-  const objectUrl = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
-  triggerDownload(objectUrl, safeCanvasFileName())
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
-}
-
-function importCanvasDocument(document: ReturnType<typeof parseCanvasExportDocument>, mode: 'append' | 'replace' = 'append') {
-  const append = mode === 'append'
-  const imported = normalizeCanvasImport(document, {
-    mode,
-    existingNodeIds: nodes.value.map(node => node.id),
-    createNodeId: type => createId(type),
-    createConnectionId: () => createId('conn'),
-    minNodeScale: MIN_NODE_SCALE,
-    maxNodeScale: MAX_NODE_SCALE,
-    minViewportZoom: MIN_VIEWPORT_ZOOM,
-    maxViewportZoom: MAX_VIEWPORT_ZOOM,
-  })
-  const importedNodes = imported.nodes as CanvasNode[]
-  const importedConnections = imported.connections as Connection[]
-
-  if (append) {
-    nodes.value = [...nodes.value, ...importedNodes]
-    connections.value = [...connections.value, ...importedConnections]
-  } else {
-    nodes.value = importedNodes
-    connections.value = importedConnections
+function importCanvasDocument(document: CanvasExportDocument, mode: 'append' | 'replace' = 'append') {
+  const imported = importCanvasDocumentState(document, mode)
+  if (!imported.append) {
     viewport.value = imported.viewport
   }
 
-  selectedNodeId.value = importedNodes[0]?.id ?? null
   activeWorkspace.value = 'canvas'
   void nextTick(() => {
-    if (append) fitView()
+    if (imported.append) fitView()
   })
 }
 
-function importCanvasFromFile(event: Event, mode: 'append' | 'replace' = 'append') {
-  const input = event.currentTarget as HTMLInputElement | null
-  const file = input?.files?.[0]
-  if (!file) return
-  if (file.size > CANVAS_IMPORT_MAX_FILE_BYTES) {
-    error.value = '画布文件过大，请导入 5MB 以内的 JSON 文件。'
-    if (input) input.value = ''
-    return
-  }
-
-  const reader = new FileReader()
-  reader.onload = () => {
-    try {
-      const document = parseCanvasExportDocument(JSON.parse(String(reader.result || '')))
-      importCanvasDocument(document, mode)
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '画布导入失败'
-    } finally {
-      if (input) input.value = ''
-    }
-  }
-  reader.onerror = () => {
-    error.value = '画布文件读取失败'
-    if (input) input.value = ''
-  }
-  reader.readAsText(file)
-}
-
-function openCanvasImportPicker(event: MouseEvent) {
-  pendingCanvasImportMode.value = event.shiftKey ? 'replace' : 'append'
-  canvasImportInputRef.value?.click()
-}
-
-function insertNodeCopy(node: CanvasNode) {
-  const duplicate: CanvasNode = {
-    ...cleanNodeCopy(node),
-    id: createId(node.type),
-    x: node.x + 36,
-    y: node.y + 36,
-    title: duplicatedNodeTitle(node),
-  }
-  nodes.value = [...nodes.value, duplicate]
-  selectedNodeId.value = duplicate.id
-  return duplicate
-}
-
-function copyNodeToClipboard(node: CanvasNode) {
-  nodeClipboard.value = cleanNodeCopy(node)
-}
+const { exportCanvasToFile, importCanvasFromFile } = useCanvasDocumentFiles({
+  canvasId,
+  title: CANVAS_TITLE,
+  version: CANVAS_EXPORT_VERSION,
+  getViewport: () => ({ ...viewport.value }),
+  getNodes: () => nodes.value,
+  getConnections: () => connections.value,
+  importDocument: importCanvasDocument,
+  setError(message) {
+    error.value = message
+  },
+  maxFileBytes: CANVAS_IMPORT_MAX_FILE_BYTES,
+})
 
 function copySelectedNode() {
-  const node = selectedNodeId.value ? getNodeById(selectedNodeId.value) : null
-  if (!node) return false
-  copyNodeToClipboard(node)
-  closeContextMenu()
-  return true
+  const copied = copySelectedDocumentNode()
+  if (copied) closeContextMenu()
+  return copied
 }
 
 function pasteNodeFromClipboard() {
-  if (!nodeClipboard.value) return false
-  const duplicate = insertNodeCopy(nodeClipboard.value)
-  copyNodeToClipboard(duplicate)
-  closeContextMenu()
-  return true
+  const pasted = pasteDocumentNodeFromClipboard()
+  if (pasted) closeContextMenu()
+  return pasted
 }
 
 function renameContextNode() {
@@ -800,42 +691,27 @@ function handleWindowPointerMove(event: PointerEvent) {
     }
   }
 
-  if (draftConnection.value) {
-    const point = canvasPointFromClient(event.clientX, event.clientY)
-    draftConnection.value = {
-      ...draftConnection.value,
-      cursorX: point.x,
-      cursorY: point.y,
-    }
-  }
+  updateDraftCursor(event.clientX, event.clientY)
 }
 
 function handleWindowPointerUp(event: PointerEvent) {
-  const draft = draftConnection.value
-  if (draft) {
-    const deltaX = event.clientX - draft.startClientX
-    const deltaY = event.clientY - draft.startClientY
-    if (Math.hypot(deltaX, deltaY) >= 12) {
-      openContextMenuAtClient(event.clientX, event.clientY, {
-        nodeId: draft.nodeId,
-        handle: draft.handle,
-        role: draft.role,
-      })
-      suppressNextClickClose()
-    }
+  const pendingConnection = pendingConnectionForPointerUp(event)
+  if (pendingConnection) {
+    openContextMenuAtClient(event.clientX, event.clientY, pendingConnection)
+    suppressNextClickClose()
   }
 
   dragState.value = null
   panState.value = null
   resizeState.value = null
-  draftConnection.value = null
+  clearDraftConnection()
 }
 
 function handleWindowPointerCancel() {
   dragState.value = null
   panState.value = null
   resizeState.value = null
-  draftConnection.value = null
+  clearDraftConnection()
 }
 
 function shouldKeepNativeWheel(event: WheelEvent) {
@@ -881,177 +757,9 @@ function handleWheel(event: WheelEvent) {
   setViewportZoomAtClient(event.clientX, event.clientY, nextZoom)
 }
 
-function startConnection(event: PointerEvent, node: CanvasNode, handle: CanvasHandle) {
-  if (!canStartPointerInteraction(event)) return
-  event.preventDefault()
-  selectNode(node.id)
-  const point = canvasPointFromClient(event.clientX, event.clientY)
-  draftConnection.value = {
-    nodeId: node.id,
-    handle,
-    role: canvasGraph.handleRole(handle),
-    cursorX: point.x,
-    cursorY: point.y,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-  }
-}
-
-function addConnectionIfValid(fromNodeId: string, fromHandle: OutputHandle, toNodeId: string, toHandle: InputHandle) {
-  if (!isValidConnection(fromNodeId, fromHandle, toNodeId, toHandle)) return false
-
-  const isDuplicate = connections.value.some(conn => (
-    conn.fromNodeId === fromNodeId &&
-    conn.fromHandle === fromHandle &&
-    conn.toNodeId === toNodeId &&
-    conn.toHandle === toHandle
-  ))
-
-  if (isDuplicate) return true
-
-  connections.value = [
-    ...connections.value,
-    {
-      id: createId('conn'),
-      fromNodeId,
-      fromHandle,
-      toNodeId,
-      toHandle,
-    },
-  ]
-
-  const targetNode = getNodeById(toNodeId)
-  if (targetNode?.type === 'generation' && toHandle === 'prompt-in') {
-    syncMentionConnectionsForGeneration(targetNode)
-  }
-
-  return true
-}
-
-function finishConnection(event: PointerEvent, targetNode: CanvasNode, targetHandle: CanvasHandle) {
-  const draft = draftConnection.value
-  if (!draft) return
-  event.preventDefault()
-  event.stopPropagation()
-
-  if (draft.role === 'output' && isOutputHandle(draft.handle) && isInputHandle(targetHandle)) {
-    addConnectionIfValid(draft.nodeId, draft.handle, targetNode.id, targetHandle)
-  } else if (draft.role === 'input' && isInputHandle(draft.handle) && isOutputHandle(targetHandle)) {
-    addConnectionIfValid(targetNode.id, targetHandle, draft.nodeId, draft.handle)
-  }
-
-  draftConnection.value = null
-}
-
-function isValidConnection(fromNodeId: string, fromHandle: OutputHandle, toNodeId: string, toHandle: InputHandle) {
-  return isValidCanvasConnection(nodes.value, fromNodeId, fromHandle, toNodeId, toHandle)
-}
-
-function connectPendingMenuConnection(pending: PendingMenuConnection, node: CanvasNode) {
-  if (pending.role === 'output' && isOutputHandle(pending.handle)) {
-    for (const targetHandle of canvasGraph.inputHandlesForNode(node)) {
-      if (addConnectionIfValid(pending.nodeId, pending.handle, node.id, targetHandle)) return
-    }
-  }
-
-  if (pending.role === 'input' && isInputHandle(pending.handle)) {
-    for (const sourceHandle of canvasGraph.outputHandlesForNode(node)) {
-      if (addConnectionIfValid(node.id, sourceHandle, pending.nodeId, pending.handle)) return
-    }
-  }
-}
-
-function incomingConnections(nodeId: string, handle?: InputHandle) {
-  return canvasPrompt.incomingConnections(connections.value, nodeId, handle)
-}
-
-function getNodeById(nodeId: string) {
-  return canvasPrompt.getNodeById(nodes.value, nodeId)
-}
-
-function imageNodeForRichToken(id?: string, title?: string) {
-  return canvasPrompt.imageNodeForRichToken(nodes.value, id, title)
-}
-
-function promptMentionedImageNodesForGeneration(node: CanvasNode) {
-  return canvasPrompt.promptMentionedImageNodesForGeneration(nodes.value, connections.value, node)
-}
-
-function referencedImageNodes(node: CanvasNode) {
-  return canvasPrompt.referencedImageNodes(nodes.value, connections.value, node)
-}
-
-function syncMentionConnectionsForGeneration(node: CanvasNode) {
-  if (node.type !== 'generation') return
-  const mentionedIds = new Set(promptMentionedImageNodesForGeneration(node).map(item => item.id))
-
-  connections.value = connections.value.filter(conn => (
-    conn.toNodeId !== node.id ||
-    conn.toHandle !== 'reference-in' ||
-    !conn.managedByMention ||
-    mentionedIds.has(conn.fromNodeId)
-  ))
-
-  const nextConnections = [...connections.value]
-  for (const imageNodeId of mentionedIds) {
-    const exists = nextConnections.some(conn => (
-      conn.fromNodeId === imageNodeId &&
-      conn.fromHandle === 'image-out' &&
-      conn.toNodeId === node.id &&
-      conn.toHandle === 'reference-in'
-    ))
-    if (!exists) {
-      nextConnections.push({
-        id: createId('conn'),
-        fromNodeId: imageNodeId,
-        fromHandle: 'image-out',
-        toNodeId: node.id,
-        toHandle: 'reference-in',
-        managedByMention: true,
-      })
-    }
-  }
-  connections.value = nextConnections
-}
-
-function syncMentionConnectionsForTextNode(node: CanvasNode) {
-  if (node.type !== 'text') return
-  for (const conn of connections.value) {
-    if (conn.fromNodeId !== node.id || conn.toHandle !== 'prompt-in') continue
-    const target = getNodeById(conn.toNodeId)
-    if (target?.type === 'generation') {
-      syncMentionConnectionsForGeneration(target)
-    }
-  }
-}
-
-function nodeStyle(node: CanvasNode) {
-  return canvasGraph.nodeStyle(node, getBaseNodeSize(node))
-}
-
-function handlePoint(nodeId: string, handle: OutputHandle | InputHandle) {
-  const node = getNodeById(nodeId)
-  return canvasGraph.handlePoint(node, handle, node ? getRenderedNodeSize(node) : { width: 0, height: 0 })
-}
-
-function connectionPath(connection: Connection) {
-  const start = handlePoint(connection.fromNodeId, connection.fromHandle)
-  const end = handlePoint(connection.toNodeId, connection.toHandle)
-  return canvasGraph.curvePath(start.x, start.y, end.x, end.y)
-}
-
-const draftPath = computed(() => {
-  const draft = draftConnection.value
-  if (!draft) return ''
-  const start = handlePoint(draft.nodeId, draft.handle)
-  return canvasGraph.curvePath(start.x, start.y, draft.cursorX, draft.cursorY)
-})
-
 function removeNode(nodeId: string) {
   cleanupMeasuredNodeElement(nodeId)
-  nodes.value = nodes.value.filter(node => node.id !== nodeId)
-  connections.value = connections.value.filter(conn => conn.fromNodeId !== nodeId && conn.toNodeId !== nodeId)
-  if (selectedNodeId.value === nodeId) selectedNodeId.value = null
+  removeDocumentNode(nodeId)
 }
 
 function handleNodeImageLoad(node: CanvasNode, event: Event) {
@@ -1060,218 +768,12 @@ function handleNodeImageLoad(node: CanvasNode, event: Event) {
   }
 }
 
-async function applyImageFileToNode(nodeId: string, file: File) {
-  const dataUrl = await compressReferenceImageDataUrl(await readImageFileAsDataUrl(file))
-  const node = getNodeById(nodeId)
-  if (!node) return
-  node.imageUrl = dataUrl
-  Object.assign(node, await readImageDimensions(dataUrl).catch(() => ({})))
-  node.fileName = fallbackImageFileName(file)
-  if (!/^图片\d+$/.test(node.title.trim())) {
-    node.title = nextImageTitle(node.id)
-  }
-}
-
-function chooseImage(nodeId: string) {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = 'image/*'
-  input.onchange = () => {
-    const file = input.files?.[0]
-    if (!file) return
-    void applyImageFileToNode(nodeId, file).catch(() => {
-      error.value = '图片读取失败，请重新选择图片。'
-    })
-  }
-  input.click()
-}
-
-async function handleWindowPaste(event: ClipboardEvent) {
-  const file = clipboardImageFile(event)
-  if (imageViewer.value || isEditableEventTarget(event)) return
-
-  if (!file) {
-    if (pasteNodeFromClipboard()) {
-      event.preventDefault()
-    }
-    return
-  }
-
-  event.preventDefault()
-  selectWorkspace('canvas')
-  await nextTick()
-
-  const position = nodePositionNearVisibleCenter('image') ?? { x: 720, y: 420 }
-  const node = createNode('image', position.x, position.y, {
-    title: nextImageTitle(),
-    content: '',
-  })
-
-  try {
-    await applyImageFileToNode(node.id, file)
-  } catch {
-    removeNode(node.id)
-    error.value = '剪贴板图片读取失败，请重新复制图片后再试。'
-  }
-}
-
-async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
-  let detail = image
-  let previewUrl = detail.previewUrl || ''
-  if (!previewUrl || !detail.storagePath) {
-    detail = await resolveImageDetail(image, scope, { requireStoragePath: true })
-    previewUrl = previewImageUrl(detail)
-  }
-
-  if (!previewUrl) {
-    error.value = '图片加载失败，请稍后重试。'
-    return
-  }
-
-  selectWorkspace('canvas')
-  const rect = viewportRef.value?.getBoundingClientRect()
-  const point = rect
-    ? canvasPointFromClient(rect.left + rect.width * 0.56, rect.top + rect.height * 0.58)
-    : { x: 720, y: 420 }
-
-  createNode('image', point.x, point.y, {
-    title: nextImageTitle(),
-    content: '',
-    imageUrl: previewUrl,
-    storagePath: detail.storagePath,
-    sourceImageId: detail.id,
-    sourceHistoryScope: scope,
-    sourcePrompt: detail.prompt,
-    fileName: detail.size,
-    ...imageDimensionsFromHistory(detail),
-  })
-}
-
-function galleryDetailImageUrl(image: GeneratedImage) {
-  return galleryDetail.value?.id === image.id
-    ? galleryDetailDisplayUrl.value || previewImageUrl(image)
-    : previewImageUrl(image)
-}
-
 function galleryParamItems(image: GeneratedImage) {
   return buildGalleryParamItems(image, {
     aspectRatioOptions,
     resolutionOptions,
     qualityOptions,
   })
-}
-
-function immediateGalleryDetailImageUrl(image: GeneratedImage) {
-  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
-}
-
-function closeGalleryDetail() {
-  galleryDetailLoadSeq += 1
-  galleryDetail.value = null
-  galleryDetailScope.value = 'mine'
-  galleryDetailDisplayUrl.value = ''
-  isGalleryDetailLoadingPreview.value = false
-}
-
-async function loadGalleryDetailPreview(image: GeneratedImage, seq: number) {
-  const previewUrl = image.previewUrl || ''
-  const fallbackUrl = immediateGalleryDetailImageUrl(image)
-
-  if (!previewUrl) {
-    galleryDetailDisplayUrl.value = fallbackUrl
-    isGalleryDetailLoadingPreview.value = false
-    return
-  }
-
-  if (!galleryDetailDisplayUrl.value) {
-    galleryDetailDisplayUrl.value = fallbackUrl || previewUrl
-  }
-
-  if (galleryDetailDisplayUrl.value === previewUrl) {
-    isGalleryDetailLoadingPreview.value = false
-    return
-  }
-
-  isGalleryDetailLoadingPreview.value = true
-  try {
-    await preloadImageUrl(previewUrl)
-    if (seq !== galleryDetailLoadSeq) return
-    galleryDetailDisplayUrl.value = previewUrl
-  } catch {
-    if (seq === galleryDetailLoadSeq && fallbackUrl) {
-      galleryDetailDisplayUrl.value = fallbackUrl
-    }
-  } finally {
-    if (seq === galleryDetailLoadSeq) {
-      isGalleryDetailLoadingPreview.value = false
-    }
-  }
-}
-
-async function openGalleryDetail(image: GeneratedImage) {
-  const scope = galleryActionScope.value
-  const seq = ++galleryDetailLoadSeq
-  galleryDetailScope.value = scope
-
-  const immediateUrl = immediateGalleryDetailImageUrl(image)
-  if (immediateUrl) {
-    galleryDetail.value = image
-    galleryDetailDisplayUrl.value = immediateUrl
-    isGalleryDetailLoadingPreview.value = Boolean(!image.previewUrl)
-  }
-
-  const detail = image.previewUrl ? image : await resolveImageDetail(image, scope)
-  if (seq !== galleryDetailLoadSeq) return
-
-  if (!previewImageUrl(detail) && !immediateUrl) {
-    error.value = '图片加载失败，请稍后重试。'
-    return
-  }
-
-  galleryDetail.value = detail
-  await loadGalleryDetailPreview(detail, seq)
-}
-
-async function openGalleryDetailViewer() {
-  if (!galleryDetail.value) return
-  const immediateUrl = galleryDetailImageUrl(galleryDetail.value)
-  if (!immediateUrl) {
-    error.value = '预览图加载失败，请稍后重试。'
-    return
-  }
-
-  const seq = ++imageViewerLoadSeq
-  const sourceImage = galleryDetail.value
-  const sourceScope = galleryDetailScope.value
-  imageViewer.value = {
-    imageUrl: immediateUrl,
-    title: galleryFileName(sourceImage).replace(/\.[a-z0-9]{2,5}$/i, ''),
-    caption: galleryPrompt(sourceImage),
-    zoom: 1,
-    loadingPreview: !sourceImage.previewUrl,
-    sourceImageId: sourceImage.id,
-    sourceScope,
-  }
-
-  if (!sourceImage.previewUrl) {
-    void resolveImageDetail(sourceImage, sourceScope).then((image) => {
-      const imageUrl = previewImageUrl(image)
-      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
-
-      galleryDetail.value = image
-      imageViewer.value = {
-        ...imageViewer.value,
-        imageUrl,
-        title: galleryFileName(image).replace(/\.[a-z0-9]{2,5}$/i, ''),
-        caption: galleryPrompt(image),
-        loadingPreview: false,
-      }
-    }).catch(() => {
-      if (seq === imageViewerLoadSeq && imageViewer.value) {
-        imageViewer.value = { ...imageViewer.value, loadingPreview: false }
-      }
-    })
-  }
 }
 
 function downloadGalleryDetail() {
@@ -1293,57 +795,28 @@ function sendGalleryDetailToChat() {
   }
 }
 
-async function handleLoadMoreGallery() {
-  if (
-    !canLoadMoreGallery.value ||
-    isGalleryAutoLoading.value ||
-    (isPublicGalleryFilter.value ? isLoadingGallery.value : isLoadingHistory.value)
-  ) return
-
-  isGalleryAutoLoading.value = true
-  try {
-    if (isPublicGalleryFilter.value) {
-      await ensureGalleryLoaded()
-    }
-    const localCount = filteredGalleryImages.value.length
-    if (galleryVisibleCount.value < localCount) {
-      galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, localCount)
-      return
-    }
-
-    if (isPublicGalleryFilter.value) {
-      if (!hasMoreGallery.value) return
-
-      await loadMoreGalleryHistory()
-    } else {
-      if (!hasMoreHistory.value) return
-
-      await loadMoreHistory()
-    }
-    const updatedCount = filteredGalleryImages.value.length
-    if (updatedCount > galleryVisibleCount.value) {
-      galleryVisibleCount.value = Math.min(galleryVisibleCount.value + GALLERY_PAGE_SIZE, updatedCount)
-    }
-  } finally {
-    isGalleryAutoLoading.value = false
-  }
-}
-
-function handleGalleryScroll() {
-  const stage = galleryStageRef.value
-  if (!stage || activeWorkspace.value !== 'gallery') return
-
-  const scrollableHeight = stage.scrollHeight - stage.clientHeight
-  if (scrollableHeight <= 0) return
-
-  const scrollProgress = stage.scrollTop / scrollableHeight
-  if (scrollProgress >= GALLERY_AUTO_LOAD_PROGRESS) {
-    void handleLoadMoreGallery()
-  }
-}
-
 function viewerDownloadKey() {
   return imageViewerDownloadKey(imageViewer.value)
+}
+
+function isGalleryImageDownloading(image: GeneratedImage) {
+  return isDownloadingImage(imageDownloadKey(image, galleryActionScope.value))
+}
+
+function handleGalleryUseImage(image: GeneratedImage) {
+  void useHistoryImage(image, galleryActionScope.value)
+}
+
+function handleGalleryPreloadDownload(image: GeneratedImage) {
+  preloadGeneratedImageDownload(image, galleryActionScope.value)
+}
+
+function handleGalleryDownload(image: GeneratedImage) {
+  downloadGeneratedImage(image, galleryActionScope.value)
+}
+
+function handleGallerySendToChat(image: GeneratedImage) {
+  void sendHistoryImageToChat(image, galleryActionScope.value)
 }
 
 function preloadGeneratedImageDownload(image: GeneratedImage, scope: ImageHistoryScope = galleryActionScope.value) {
@@ -1383,143 +856,6 @@ function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } 
   }
 }
 
-function hasPromptLink(node: CanvasNode) {
-  return canvasPrompt.hasPromptLink(connections.value, node)
-}
-
-function getGenerationPromptValue(node: CanvasNode) {
-  return canvasPrompt.getGenerationPromptValue(nodes.value, connections.value, node)
-}
-
-const vRichContent = createRichContentDirective(imageNodeForRichToken)
-
-function updateRichEditorContent(event: Event, node: CanvasNode, field: MentionField) {
-  const el = event.currentTarget as HTMLElement
-  node.content = serializeRichEditor(el)
-  updateMentionStateFromEditor(el, node, field)
-  if (field === 'text') {
-    syncMentionConnectionsForTextNode(node)
-  } else {
-    syncMentionConnectionsForGeneration(node)
-  }
-}
-
-function updateMentionStateFromEditor(root: HTMLElement, node: CanvasNode, field: MentionField) {
-  const beforeCaret = textBeforeCaret(root)
-  const caret = beforeCaret.length
-  const atIndex = beforeCaret.lastIndexOf('@')
-
-  if (atIndex < 0) {
-    closeMentionIndex(node.id, field)
-    return
-  }
-
-  const query = beforeCaret.slice(atIndex + 1)
-  if (/[\s\n\r]/.test(query)) {
-    closeMentionIndex(node.id, field)
-    return
-  }
-
-  const previous = mentionState.value
-  const activeIndex = previous &&
-    previous.nodeId === node.id &&
-    previous.field === field &&
-    previous.query === query &&
-    previous.start === atIndex &&
-    previous.end === caret
-    ? previous.activeIndex
-    : 0
-
-  mentionState.value = {
-    nodeId: node.id,
-    field,
-    query,
-    start: atIndex,
-    end: caret,
-    activeIndex,
-  }
-}
-
-function closeMentionIndex(nodeId?: string, field?: MentionField) {
-  if (!mentionState.value) return
-  if (nodeId && mentionState.value.nodeId !== nodeId) return
-  if (field && mentionState.value.field !== field) return
-  mentionState.value = null
-}
-
-function isMentionIndexOpen(node: CanvasNode, field: MentionField) {
-  return mentionState.value?.nodeId === node.id &&
-    mentionState.value.field === field &&
-    mentionOptions.value.length > 0
-}
-
-function insertMention(node: CanvasNode, imageNode: CanvasNode) {
-  const state = mentionState.value
-  if (!state || state.nodeId !== node.id) return
-  const editor = document.activeElement instanceof HTMLElement &&
-    document.activeElement.classList.contains('rich-editor')
-    ? document.activeElement
-    : null
-
-  if (editor && setRichEditorSelection(editor, state.start, state.end)) {
-    const selection = window.getSelection()
-    const range = selection?.rangeCount ? selection.getRangeAt(0) : null
-    if (range) {
-      range.deleteContents()
-      const token = createMentionTokenElement(imageNode)
-      const spacer = document.createTextNode(' ')
-      range.insertNode(token)
-      range.setStartAfter(token)
-      range.collapse(true)
-      range.insertNode(spacer)
-      range.setStartAfter(spacer)
-      range.collapse(true)
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      node.content = serializeRichEditor(editor)
-    }
-  } else {
-    const value = node.content
-    const before = value.slice(0, state.start).replace(/[ \t]*$/, ' ')
-    const after = value.slice(state.end).replace(/^[ \t]*/, '')
-    node.content = `${before}{{image:${imageNode.id}}} ${after}`.trimStart()
-  }
-
-  mentionState.value = null
-
-  if (state.field === 'text') {
-    syncMentionConnectionsForTextNode(node)
-  } else {
-    syncMentionConnectionsForGeneration(node)
-  }
-}
-
-function handleMentionKeydown(event: KeyboardEvent, node: CanvasNode, field: MentionField) {
-  if (!isMentionIndexOpen(node, field)) return
-  const options = mentionOptions.value
-  const state = mentionState.value
-  if (!state) return
-
-  if (event.key === 'ArrowDown') {
-    event.preventDefault()
-    mentionState.value = { ...state, activeIndex: (state.activeIndex + 1) % options.length }
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault()
-    mentionState.value = { ...state, activeIndex: (state.activeIndex - 1 + options.length) % options.length }
-  } else if (event.key === 'Enter' || event.key === 'Tab') {
-    event.preventDefault()
-    insertMention(node, options[state.activeIndex] ?? options[0])
-  } else if (event.key === 'Escape') {
-    event.preventDefault()
-    mentionState.value = null
-  }
-}
-
-function buildPromptParts(node: CanvasNode) {
-  syncMentionConnectionsForGeneration(node)
-  return canvasPrompt.buildPromptParts(nodes.value, connections.value, node)
-}
-
 function imageAltText(node: CanvasNode) {
   return node.content.trim() || node.sourcePrompt || node.title
 }
@@ -1531,205 +867,14 @@ function imageOutputMeta(node: CanvasNode) {
 function historyImageForNode(node: ImageDownloadNode) {
   if (!node.sourceImageId) return null
   const sourceImages = node.sourceHistoryScope === 'public'
-    ? gallerySourceImages.value
+    ? publicGalleryImages.value
     : generatedImages.value
   return sourceImages.find(image => image.id === node.sourceImageId) ?? null
-}
-
-async function resolveNodePreviewImageUrl(node: CanvasNode) {
-  const historyImage = historyImageForNode(node)
-  if (historyImage) {
-    const detail = await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine')
-    const imageUrl = previewImageUrl(detail)
-    if (imageUrl) return imageUrl
-  }
-
-  return node.imageUrl || ''
-}
-
-async function resolveReferenceImageUrl(node: CanvasNode) {
-  return await compressReferenceImageDataUrl(await resolveNodePreviewImageUrl(node))
-}
-
-async function storageReferenceForNode(node: CanvasNode) {
-  if (node.storagePath) {
-    return {
-      storagePath: node.storagePath,
-      ...(node.imageUrl ? { previewUrl: node.imageUrl } : {}),
-    }
-  }
-
-  const historyImage = historyImageForNode(node)
-  if (!historyImage) return null
-  const detail = historyImage.storagePath
-    ? historyImage
-    : await resolveImageDetail(historyImage, node.sourceHistoryScope || 'mine', { requireStoragePath: true })
-  if (!detail.storagePath) return null
-
-  node.storagePath = detail.storagePath
-  if (detail.previewUrl) node.imageUrl = detail.previewUrl
-
-  return {
-    storagePath: detail.storagePath,
-    ...(detail.previewUrl ? { previewUrl: detail.previewUrl } : {}),
-    ...(detail.previewPath ? { previewPath: detail.previewPath } : {}),
-    ...(detail.thumbnailUrl ? { thumbnailUrl: detail.thumbnailUrl } : {}),
-    ...(detail.thumbnailPath ? { thumbnailPath: detail.thumbnailPath } : {}),
-  }
-}
-
-async function buildReferences(node: CanvasNode) {
-  const imageNodes = referencedImageNodes(node)
-    .filter((item): item is CanvasNode & { imageUrl: string } => Boolean(item.imageUrl))
-
-  const references = await Promise.all(imageNodes.map(async (item): Promise<ImageGenReference> => {
-    const storageReference = await storageReferenceForNode(item)
-    return {
-      id: item.id,
-      title: item.title,
-      ...(storageReference?.storagePath
-        ? storageReference
-        : { dataUrl: await resolveReferenceImageUrl(item) }),
-      content: item.content.trim() || undefined,
-      fileName: item.fileName,
-    }
-  }))
-
-  return references.filter(reference => Boolean(reference.storagePath || reference.dataUrl))
-}
-
-async function generateFromNode(node: CanvasNode) {
-  if (isGenerating.value || node.loading) return
-  const { userPrompt, systemPrompt, modelPrompt } = buildPromptParts(node)
-  if (!userPrompt.trim()) {
-    node.error = '请连接文本节点或填写提示词。'
-    return
-  }
-
-  node.loading = true
-  node.error = null
-  node.status = '正在准备生成...'
-  const references = await buildReferences(node)
-  const canvasContext = CANVAS_CONTEXT_ENABLED
-    ? buildCanvasContext(node, userPrompt)
-    : undefined
-  const generationCount = props.canSelectGenerationCount ? generationCountForNode(node) : 1
-  node.status = references.length
-    ? `正在上传 ${references.length} 张参考图并生成 ${generationCount} 张图片...`
-    : `正在生成 ${generationCount} 张图片...`
-  const results = await generate(modelPrompt, {
-    userPrompt,
-    systemPrompt,
-    modelPrompt,
-    aspectRatio: node.aspectRatio,
-    resolution: node.resolution,
-    quality: node.quality,
-    count: generationCount,
-    references,
-    ...(canvasContext ? { canvasContext } : {}),
-  })
-  node.loading = false
-  node.status = null
-
-  if (!results?.length) {
-    node.error = error.value || '生成失败'
-    return
-  }
-
-  const outputColumns = Math.min(2, results.length)
-  const outputX = node.x + NODE_SIZE.generation.width + 132
-  const outputY = node.y + 46
-  let nextTitleIndex = nodes.value.reduce((max, item) => {
-    if (item.type !== 'image') return max
-    const match = /^图片(\d+)$/.exec(item.title.trim())
-    return match ? Math.max(max, Number(match[1])) : max
-  }, 0)
-  const outputNodes = results.map((result, index) => {
-    nextTitleIndex += 1
-    return createNode(
-      'image',
-      outputX + (index % outputColumns) * (NODE_SIZE.image.width + 28),
-      outputY + Math.floor(index / outputColumns) * (NODE_SIZE.image.height + 28),
-      {
-        title: `图片${nextTitleIndex}`,
-        content: '',
-        imageUrl: previewImageUrl(result),
-        storagePath: result.storagePath,
-        sourceImageId: result.id,
-        sourceHistoryScope: 'mine',
-        sourcePrompt: result.prompt,
-        fileName: result.size,
-        ...imageDimensionsFromHistory(result),
-      },
-    )
-  })
-
-  connections.value = [
-    ...connections.value,
-    ...outputNodes.map((outputNode): Connection => ({
-      id: createId('conn'),
-      fromNodeId: node.id,
-      fromHandle: 'generation-out',
-      toNodeId: outputNode.id,
-      toHandle: 'image-in',
-    })),
-  ]
-}
-
-function createContinuation(node: CanvasNode) {
-  const imageSize = getRenderedNodeSize(node)
-  const generationNode = createNode('generation', node.x + imageSize.width + 132, node.y - 18, {
-    title: '继续生成',
-  })
-
-  connections.value = [
-    ...connections.value,
-    {
-      id: createId('conn'),
-      fromNodeId: node.id,
-      fromHandle: 'image-out',
-      toNodeId: generationNode.id,
-      toHandle: 'reference-in',
-    },
-  ]
 }
 
 function handleDownload(node: CanvasNode) {
   if (!node.imageUrl) return
   void downloadTarget(nodeTarget(node))
-}
-
-async function openImageViewer(node: CanvasNode) {
-  if (!node.imageUrl) return
-  const seq = ++imageViewerLoadSeq
-  const sourceNode = { ...node }
-  const historyImage = historyImageForNode(sourceNode)
-  const immediateUrl = historyImage ? previewImageUrl(historyImage) || node.imageUrl : node.imageUrl
-  imageViewer.value = {
-    imageUrl: immediateUrl,
-    title: node.title,
-    caption: imageAltText(node),
-    zoom: 1,
-    loadingPreview: Boolean(node.sourceImageId && !historyImage?.previewUrl),
-    sourceImageId: node.sourceImageId,
-    sourceScope: node.sourceHistoryScope,
-  }
-
-  if (node.sourceImageId && !historyImage?.previewUrl) {
-    void resolveNodePreviewImageUrl(sourceNode).then((imageUrl) => {
-      if (!imageUrl || seq !== imageViewerLoadSeq || !imageViewer.value) return
-
-      imageViewer.value = {
-        ...imageViewer.value,
-        imageUrl,
-        loadingPreview: false,
-      }
-    }).catch(() => {
-      if (seq === imageViewerLoadSeq && imageViewer.value) {
-        imageViewer.value = { ...imageViewer.value, loadingPreview: false }
-      }
-    })
-  }
 }
 
 async function sendNodeImageToChat(node: CanvasNode) {
@@ -1742,38 +887,8 @@ async function sendNodeImageToChat(node: CanvasNode) {
   emit('sendToChat', imageUrl)
 }
 
-function closeImageViewer() {
-  imageViewerLoadSeq += 1
-  imageViewer.value = null
-}
-
-function triggerDownload(href: string, fileName: string) {
-  const a = document.createElement('a')
-  a.href = href
-  a.download = fileName
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-}
-
 function downloadImageViewerImage() {
   void downloadTarget(viewerTarget(imageViewer.value))
-}
-
-function zoomImageViewer(step: number) {
-  if (!imageViewer.value) return
-  imageViewer.value.zoom = clamp(imageViewer.value.zoom + step, 0.35, 4)
-}
-
-function resetImageViewerZoom() {
-  if (!imageViewer.value) return
-  imageViewer.value.zoom = 1
-}
-
-function handleImageViewerWheel(event: WheelEvent) {
-  if (!imageViewer.value) return
-  event.preventDefault()
-  zoomImageViewer(event.deltaY > 0 ? -0.12 : 0.12)
 }
 
 function isEditableEventTarget(event: Event) {
@@ -1841,13 +956,19 @@ function fitView() {
 
 function clearCanvas() {
   nodes.value.forEach(node => cleanupMeasuredNodeElement(node.id))
-  nodes.value = []
-  connections.value = []
-  selectedNodeId.value = null
+  clearCanvasDocument()
 }
 
 function hasIncoming(node: CanvasNode, handle: InputHandle) {
   return incomingConnections(node.id, handle).length > 0
+}
+
+function connectedHandlesForNode(node: CanvasNode) {
+  return {
+    'image-in': hasIncoming(node, 'image-in'),
+    'prompt-in': hasIncoming(node, 'prompt-in'),
+    'reference-in': hasIncoming(node, 'reference-in'),
+  }
 }
 
 onMounted(() => {
@@ -1882,177 +1003,26 @@ onUnmounted(() => {
 
 <template>
   <div class="image-canvas">
-    <aside class="canvas-sidebar">
-      <div class="workspace-switch">
-        <button
-          class="workspace-tab"
-          type="button"
-          :class="{ active: activeWorkspace === 'canvas' }"
-          @click="selectWorkspace('canvas')"
-        >
-          工作台
-        </button>
-        <button
-          class="workspace-tab"
-          type="button"
-          :class="{ active: activeWorkspace === 'gallery' }"
-          @click="selectWorkspace('gallery')"
-        >
-          作品广场
-        </button>
-      </div>
-
-      <div class="mode-switch">
-        <span>Imagio</span>
-        <button type="button">画布</button>
-      </div>
-
-      <div class="mini-map" aria-hidden="true">
-        <div class="mini-map-frame">
-          <svg
-            class="mini-map-svg"
-            :viewBox="`0 0 ${MINI_MAP_VIEW.width} ${MINI_MAP_VIEW.height}`"
-            preserveAspectRatio="none"
-          >
-            <path
-              v-for="connection in miniMapLayout.connections"
-              :key="connection.id"
-              class="mini-connection"
-              :d="connection.d"
-            />
-            <rect
-              v-for="node in miniMapLayout.nodes"
-              :key="node.id"
-              class="mini-node"
-              :class="[`mini-node-${node.type}`, { selected: node.selected }]"
-              :x="node.x"
-              :y="node.y"
-              :width="node.width"
-              :height="node.height"
-              rx="1.6"
-            />
-            <rect
-              v-if="miniMapLayout.viewport"
-              class="mini-viewport"
-              :x="miniMapLayout.viewport.x"
-              :y="miniMapLayout.viewport.y"
-              :width="miniMapLayout.viewport.width"
-              :height="miniMapLayout.viewport.height"
-              rx="2"
-            />
-          </svg>
-        </div>
-      </div>
-
-      <div class="quick-create">
-        <button class="create-button" type="button" title="创建文本节点" @click="createNodeNearCenter('text')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
-            <path d="M4 6h16" />
-            <path d="M10 6v12" />
-            <path d="M14 6v12" />
-          </svg>
-        </button>
-        <button class="create-button" type="button" title="创建图片节点" @click="createNodeNearCenter('image')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="m21 15-5-5L5 21" />
-          </svg>
-        </button>
-        <button class="create-button primary" type="button" title="创建生图节点" @click="createNodeNearCenter('generation')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-            <path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
-          </svg>
-        </button>
-      </div>
-
-      <div class="history-panel">
-        <div class="side-title">
-          <span>生成记录</span>
-          <button v-if="generatedImages.length" type="button" disabled @click="clearHistory">清空</button>
-        </div>
-        <button
-          v-for="img in historyImages"
-          :key="img.id"
-          class="history-item"
-          type="button"
-          @click="useHistoryImage(img)"
-        >
-          <img :src="displayImageUrl(img)" :alt="img.prompt" loading="lazy">
-          <span>{{ img.prompt || img.size }}</span>
-        </button>
-        <div v-if="!historyImages.length" class="history-empty">暂无记录</div>
-      </div>
-    </aside>
+    <ImageCanvasSidebar
+      :active-workspace="activeWorkspace"
+      :mini-map-layout="miniMapLayout"
+      :history-images="historyImages"
+      :has-generated-images="Boolean(generatedImages.length)"
+      @select-workspace="selectWorkspace"
+      @create-node="createNodeNearCenter"
+      @use-history-image="useHistoryImage"
+      @clear-history="clearHistory"
+    />
 
     <section v-if="activeWorkspace === 'canvas'" class="canvas-stage">
-      <div class="stage-actions">
-        <div class="mobile-create-bar" aria-label="创建节点">
-          <button type="button" @click="createNodeNearCenter('text')">
-            <span class="mobile-create-icon">T</span>
-            <span>文本</span>
-          </button>
-          <button type="button" @click="createNodeNearCenter('image')">
-            <span class="mobile-create-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="m21 15-5-5L5 21" />
-              </svg>
-            </span>
-            <span>图片</span>
-          </button>
-          <button class="primary" type="button" @click="createNodeNearCenter('generation')">
-            <span class="mobile-create-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-              </svg>
-            </span>
-            <span>生图</span>
-          </button>
-        </div>
-        <button class="tool-button" type="button" title="复位视图" @click="fitView">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M3 12a9 9 0 1 0 3-6.7" />
-            <path d="M3 4v6h6" />
-          </svg>
-        </button>
-        <input
-          ref="canvasImportInputRef"
-          class="canvas-file-input"
-          type="file"
-          accept="application/json,.json"
-          @change="importCanvasFromFile($event, pendingCanvasImportMode)"
-        >
-        <button
-          class="tool-button"
-          type="button"
-          title="导入画布 JSON，默认追加；按住 Shift 替换"
-          @click="openCanvasImportPicker"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M12 3v12" />
-            <path d="m7 8 5-5 5 5" />
-            <path d="M5 15v4h14v-4" />
-          </svg>
-        </button>
-        <button class="tool-button" type="button" title="导出画布 JSON" @click="exportCanvasToFile">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M12 21V9" />
-            <path d="m7 16 5 5 5-5" />
-            <path d="M5 5h14v4" />
-          </svg>
-        </button>
-        <button class="tool-button danger" type="button" title="清空画布" @click="clearCanvas">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M3 6h18" />
-            <path d="M8 6V4h8v2" />
-            <path d="m6 6 1 15h10l1-15" />
-          </svg>
-        </button>
-        <span class="zoom-pill">{{ viewportZoomLabel }}</span>
-      </div>
+      <ImageCanvasStageActions
+        :zoom-label="viewportZoomLabel"
+        @create-node="createNodeNearCenter"
+        @fit-view="fitView"
+        @import-canvas="importCanvasFromFile"
+        @export-canvas="exportCanvasToFile"
+        @clear-canvas="clearCanvas"
+      />
 
       <div
         ref="viewportRef"
@@ -2072,750 +1042,138 @@ onUnmounted(() => {
             <path v-if="draftPath" class="connection-path draft" :d="draftPath" />
           </svg>
 
-          <article
+          <ImageCanvasNode
             v-for="node in nodes"
             :key="node.id"
             :ref="measuredNodeRef(node.id)"
-            class="canvas-node"
-            :class="[`node-${node.type}`, { selected: selectedNodeId === node.id }]"
-            :style="nodeStyle(node)"
-            @pointerdown.stop="selectNode(node.id)"
-            @contextmenu.stop.prevent="openNodeContextMenu($event, node)"
-          >
-            <header class="node-header" @pointerdown.stop="startNodeDrag($event, node)">
-              <span class="node-icon" aria-hidden="true">
-                <svg v-if="node.type === 'text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15">
-                  <path d="M4 6h16" />
-                  <path d="M10 6v12" />
-                  <path d="M14 6v12" />
-                </svg>
-                <svg v-else-if="node.type === 'image'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-                </svg>
-              </span>
-              <span class="node-title">{{ node.title }}</span>
-              <button class="node-remove" type="button" title="删除节点" @click.stop="removeNode(node.id)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </header>
-
-            <template v-if="node.type === 'text'">
-              <div
-                v-rich-content="node.content"
-                class="node-textarea rich-editor"
-                contenteditable="true"
-                data-placeholder="输入文本内容，可用 @ 引用图片..."
-                @input="updateRichEditorContent($event, node, 'text')"
-                @keydown="handleMentionKeydown($event, node, 'text')"
-                @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'text')"
-                @pointerdown.stop
-              />
-              <div
-                v-if="isMentionIndexOpen(node, 'text')"
-                class="mention-index text-mention-index"
-                @pointerdown.stop.prevent
-              >
-                <button
-                  v-for="(imageNode, index) in mentionOptions"
-                  :key="imageNode.id"
-                  type="button"
-                  :class="{ active: mentionState?.activeIndex === index }"
-                  @pointerdown.prevent="insertMention(node, imageNode)"
-                >
-                  <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
-                  <span>{{ imageNode.title }}</span>
-                  <small>{{ imageNode.content || imageNode.fileName || '图片参考' }}</small>
-                </button>
-              </div>
-              <span
-                class="node-handle output"
-                title="连接到生图节点"
-                @pointerdown.stop.prevent="startConnection($event, node, 'text-out')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'text-out')"
-              />
-            </template>
-
-            <template v-else-if="node.type === 'image'">
-              <span
-                class="node-handle input"
-                title="接收生成结果"
-                :class="{ connected: hasIncoming(node, 'image-in') }"
-                @pointerdown.stop.prevent="startConnection($event, node, 'image-in')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'image-in')"
-              />
-              <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode(node) }">
-                <img
-                  v-if="node.imageUrl"
-                  :src="node.imageUrl"
-                  :alt="imageAltText(node)"
-                  loading="lazy"
-                  @load="handleNodeImageLoad(node, $event)"
-                  @dblclick.stop="openImageViewer(node)"
-                >
-                <button v-else class="pick-image" type="button" @click.stop="chooseImage(node.id)">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="26" height="26">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <path d="M12 8v8" />
-                    <path d="M8 12h8" />
-                  </svg>
-                </button>
-                <button
-                  v-if="node.imageUrl"
-                  class="zoom-image"
-                  type="button"
-                  title="放大查看"
-                  @click.stop="openImageViewer(node)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-                    <circle cx="11" cy="11" r="6.5" />
-                    <path d="m16.2 16.2 4.3 4.3" />
-                    <path d="M11 8.8v4.4" />
-                    <path d="M8.8 11h4.4" />
-                  </svg>
-                </button>
-                <button v-if="node.imageUrl" class="replace-image" type="button" title="替换图片" @click.stop="chooseImage(node.id)">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-                    <path d="M21 12a9 9 0 1 1-3-6.7" />
-                    <path d="M21 4v6h-6" />
-                  </svg>
-                </button>
-              </div>
-              <div v-if="isGeneratedImageNode(node)" class="image-output-panel">
-                <div class="image-output-meta">
-                  <span class="image-output-badge">生成结果</span>
-                  <span>{{ imageOutputMeta(node) }}</span>
-                </div>
-                <input
-                  v-model="node.content"
-                  class="image-output-note"
-                  type="text"
-                  placeholder="添加参考说明..."
-                  @pointerdown.stop
-                >
-              </div>
-              <textarea
-                v-else
-                v-model="node.content"
-                class="image-caption"
-                placeholder="图片参考说明..."
-                @pointerdown.stop
-              />
-              <div class="image-node-actions">
-                <button type="button" :disabled="!node.imageUrl" @click.stop="createContinuation(node)">继续</button>
-                <button
-                  type="button"
-                  :disabled="!node.imageUrl || isDownloadingImage(nodeDownloadKey(node))"
-                  @pointerenter="preloadNodeImageDownload(node)"
-                  @focus="preloadNodeImageDownload(node)"
-                  @click.stop="handleDownload(node)"
-                >
-                  {{ isDownloadingImage(nodeDownloadKey(node)) ? '下载中' : '下载' }}
-                </button>
-                <button type="button" :disabled="!node.imageUrl" @click.stop="sendNodeImageToChat(node)">对话</button>
-              </div>
-              <span
-                class="node-handle output"
-                title="作为参考图连接"
-                @pointerdown.stop.prevent="startConnection($event, node, 'image-out')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'image-out')"
-              />
-            </template>
-
-            <template v-else>
-              <span
-                class="node-handle input prompt"
-                title="连接文本"
-                :class="{ connected: hasIncoming(node, 'prompt-in') }"
-                @pointerdown.stop.prevent="startConnection($event, node, 'prompt-in')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'prompt-in')"
-              />
-              <span
-                class="node-handle input reference"
-                title="连接参考图"
-                :class="{ connected: hasIncoming(node, 'reference-in') }"
-                @pointerdown.stop.prevent="startConnection($event, node, 'reference-in')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'reference-in')"
-              />
-              <span
-                class="node-handle output generation"
-                title="输出图片"
-                @pointerdown.stop.prevent="startConnection($event, node, 'generation-out')"
-                @pointerup.stop.prevent="finishConnection($event, node, 'generation-out')"
-              />
-
-              <div class="generation-body">
-                <div class="generation-scroll">
-                  <div
-                    v-if="hasPromptLink(node)"
-                    v-rich-content="getGenerationPromptValue(node)"
-                    class="generation-prompt rich-editor readonly"
-                  />
-                  <div
-                    v-else
-                    v-rich-content="node.content"
-                    class="generation-prompt rich-editor"
-                    contenteditable="true"
-                    data-placeholder="输入文本内容，可用 @ 引用图片。"
-                    @input="updateRichEditorContent($event, node, 'generation')"
-                    @keydown="handleMentionKeydown($event, node, 'generation')"
-                    @keyup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @pointerup="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @focus="updateMentionStateFromEditor($event.currentTarget as HTMLElement, node, 'generation')"
-                    @pointerdown.stop
-                  />
-                  <div
-                    v-if="isMentionIndexOpen(node, 'generation')"
-                    class="mention-index generation-mention-index"
-                    @pointerdown.stop.prevent
-                  >
-                    <button
-                      v-for="(imageNode, index) in mentionOptions"
-                      :key="imageNode.id"
-                      type="button"
-                      :class="{ active: mentionState?.activeIndex === index }"
-                      @pointerdown.prevent="insertMention(node, imageNode)"
-                    >
-                      <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
-                      <span>{{ imageNode.title }}</span>
-                      <small>{{ imageNode.content || imageNode.fileName || '图片参考' }}</small>
-                    </button>
-                  </div>
-
-                  <div class="linked-block reference-block">
-                    <div class="linked-row">
-                      <span class="linked-label">参考图</span>
-                      <span class="linked-count">{{ referencedImageNodes(node).length }} 张</span>
-                    </div>
-                    <div class="reference-list">
-                      <div v-for="imageNode in referencedImageNodes(node)" :key="imageNode.id" class="reference-chip">
-                        <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.content || imageNode.title">
-                        <span>{{ imageNode.title }} · {{ imageNode.content || imageNode.fileName || '参考图' }}</span>
-                      </div>
-                      <p v-if="!referencedImageNodes(node).length">暂无参考图，可输入 @图片1 引用</p>
-                    </div>
-                  </div>
-
-                  <div v-if="props.canSelectGenerationCount" class="control-group count-control">
-                    <div class="linked-row">
-                      <span class="control-label">数量</span>
-                      <span class="linked-count">图片</span>
-                    </div>
-                    <div class="segmented count-segmented">
-                      <button
-                        v-for="option in generationCountOptions"
-                        :key="option.value"
-                        type="button"
-                        :class="{ active: generationCountForNode(node) === option.value }"
-                        @click.stop="setGenerationCount(node, option.value)"
-                      >
-                        {{ option.label }}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="control-group">
-                    <span class="control-label">分辨率</span>
-                    <div class="segmented four-option-segmented">
-                      <button
-                        v-for="option in resolutionOptions"
-                        :key="option.value"
-                        type="button"
-                        :class="{ active: node.resolution === option.value }"
-                        @click.stop="node.resolution = option.value"
-                      >
-                        {{ option.label }}
-                      </button>
-                    </div>
-                    <span class="control-hint">Auto 会交给模型选择；1K/2K/4K 会按比例映射输出尺寸。</span>
-                  </div>
-
-                  <div class="control-group">
-                    <span class="control-label">尺寸 / 比例</span>
-                    <div class="segmented aspect-grid">
-                      <button
-                        v-for="option in aspectRatioOptions"
-                        :key="option.value"
-                        type="button"
-                        :class="{ active: node.aspectRatio === option.value }"
-                        @click.stop="node.aspectRatio = option.value"
-                      >
-                        {{ option.label }}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="control-group">
-                    <span class="control-label">质量</span>
-                    <div class="segmented four-option-segmented">
-                      <button
-                        v-for="option in qualityOptions"
-                        :key="option.value"
-                        type="button"
-                        :class="{ active: node.quality === option.value }"
-                        @click.stop="node.quality = option.value"
-                      >
-                        {{ option.label }}
-                      </button>
-                    </div>
-                    <span class="control-hint">Low 适合快速草图，Medium/High 适合最终资产。</span>
-                  </div>
-                </div>
-
-                <div class="generation-footer">
-                  <p v-if="node.loading" class="node-status">{{ node.status || '生成中...' }}</p>
-                  <p v-else-if="isGenerating" class="node-status">已有图片正在生成，请稍等...</p>
-                  <p v-if="node.error" class="node-error">{{ node.error }}</p>
-
-                  <button
-                    class="generate-button"
-                    type="button"
-                    :disabled="isGenerating || node.loading"
-                    @click.stop="generateFromNode(node)"
-                  >
-                    <span v-if="node.loading || isGenerating" class="spinner" />
-                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                      <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-                    </svg>
-                    {{ node.loading || isGenerating ? '生成中...' : '生成' }}
-                  </button>
-                </div>
-              </div>
-            </template>
-
-            <span
-              class="resize-corner top-left"
-              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-left')"
-              @dblclick.stop.prevent="node.scale = 1"
-            />
-            <span
-              class="resize-corner top-right"
-              @pointerdown.stop.prevent="startNodeResize($event, node, 'top-right')"
-              @dblclick.stop.prevent="node.scale = 1"
-            />
-            <span
-              class="resize-corner bottom-left"
-              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-left')"
-              @dblclick.stop.prevent="node.scale = 1"
-            />
-            <span
-              class="resize-corner bottom-right"
-              @pointerdown.stop.prevent="startNodeResize($event, node, 'bottom-right')"
-              @dblclick.stop.prevent="node.scale = 1"
-            />
-          </article>
+            :node="node"
+            :selected="selectedNodeId === node.id"
+            :node-style="nodeStyle(node)"
+            :mention-state="mentionState"
+            :mention-options="mentionOptions"
+            :text-mention-open="isMentionIndexOpen(node, 'text')"
+            :generation-mention-open="isMentionIndexOpen(node, 'generation')"
+            :connected-handles="connectedHandlesForNode(node)"
+            :is-generated-image-node="isGeneratedImageNode(node)"
+            :image-alt="imageAltText(node)"
+            :image-output-meta="imageOutputMeta(node)"
+            :is-downloading="isDownloadingImage(nodeDownloadKey(node))"
+            :has-prompt-link="hasPromptLink(node)"
+            :generation-prompt-value="getGenerationPromptValue(node)"
+            :referenced-image-nodes="referencedImageNodes(node)"
+            :can-select-generation-count="Boolean(props.canSelectGenerationCount)"
+            :generation-count="generationCountForNode(node)"
+            :generation-count-options="generationCountOptions"
+            :resolution-options="resolutionOptions"
+            :aspect-ratio-options="aspectRatioOptions"
+            :quality-options="qualityOptions"
+            :is-generating="isGenerating"
+            :resolve-mention-token="imageNodeForRichToken"
+            @select="selectNode"
+            @open-context-menu="openNodeContextMenu"
+            @start-drag="startNodeDrag"
+            @remove="removeNode"
+            @rich-input="updateRichEditorContent"
+            @mention-keydown="handleMentionKeydown"
+            @mention-caret="updateMentionStateFromEditor"
+            @insert-mention="insertMention"
+            @start-connection="startConnection"
+            @finish-connection="finishConnection"
+            @choose-image="chooseImage"
+            @image-load="handleNodeImageLoad"
+            @open-image-viewer="openImageViewer"
+            @update-content="updateNodeContent"
+            @create-continuation="createContinuation"
+            @preload-download="preloadNodeImageDownload"
+            @download="handleDownload"
+            @send-to-chat="sendNodeImageToChat"
+            @update-resolution="updateNodeResolution"
+            @update-aspect-ratio="updateNodeAspectRatio"
+            @update-quality="updateNodeQuality"
+            @update-generation-count="setGenerationCount"
+            @generate="generateFromNode"
+            @start-resize="startNodeResize"
+            @reset-scale="resetNodeScale"
+          />
         </div>
 
-        <div
+        <ImageCanvasContextMenu
           v-if="contextMenu.visible"
-          class="context-menu"
-          :style="{ transform: `translate(${contextMenu.x}px, ${contextMenu.y}px)` }"
-          @click.stop
-        >
-          <template v-if="contextMenuNode">
-            <button type="button" @click="renameContextNode">
-              <span class="menu-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <path d="M12 20h9" />
-                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                </svg>
-              </span>
-              <span>重命名</span>
-            </button>
-            <button type="button" @click="duplicateContextNode">
-              <span class="menu-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <rect x="8" y="8" width="11" height="11" rx="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
-                </svg>
-              </span>
-              <span>复制节点</span>
-            </button>
-            <button type="button" class="danger" @click="deleteContextNode">
-              <span class="menu-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4h8v2" />
-                  <path d="m6 6 1 15h10l1-15" />
-                </svg>
-              </span>
-              <span>删除</span>
-            </button>
-          </template>
-          <template v-else>
-            <button type="button" @click="createNodeAtMenu('text')">
-              <span class="menu-icon">T</span>
-              <span>文本节点</span>
-            </button>
-            <button type="button" @click="createNodeAtMenu('image')">
-              <span class="menu-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-              </span>
-              <span>图片节点</span>
-            </button>
-            <button type="button" @click="createNodeAtMenu('generation')">
-              <span class="menu-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                  <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-                </svg>
-              </span>
-              <span>生图节点</span>
-            </button>
-          </template>
-        </div>
+          :x="contextMenu.x"
+          :y="contextMenu.y"
+          :has-node="Boolean(contextMenuNode)"
+          @rename="renameContextNode"
+          @duplicate="duplicateContextNode"
+          @delete="deleteContextNode"
+          @create-node="createNodeAtMenu"
+        />
       </div>
 
-      <div class="bottom-toolbar">
-        <button class="tool-button active" type="button" title="选择">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="m5 3 14 8-6 2-3 6L5 3Z" />
-          </svg>
-        </button>
-        <button class="tool-button" type="button" title="移动画布">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M18 11V7a2 2 0 0 0-4 0v4" />
-            <path d="M14 10V6a2 2 0 0 0-4 0v8" />
-            <path d="M10 12.5 8.5 11A2.1 2.1 0 0 0 5 12.5l4.1 5.4A5 5 0 0 0 13.1 20H16a4 4 0 0 0 4-4v-5a2 2 0 0 0-4 0v1" />
-          </svg>
-        </button>
-        <span class="toolbar-divider" />
-        <button class="tool-button" type="button" title="缩小" @click="viewport.zoom = Math.max(MIN_VIEWPORT_ZOOM, viewport.zoom - 0.08)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M8 11h6" />
-            <path d="m16 16 4 4" />
-          </svg>
-        </button>
-        <input v-model.number="viewport.zoom" class="zoom-range" type="range" :min="MIN_VIEWPORT_ZOOM" :max="MAX_VIEWPORT_ZOOM" step="0.02" aria-label="缩放">
-        <button class="tool-button" type="button" title="放大" @click="viewport.zoom = Math.min(MAX_VIEWPORT_ZOOM, viewport.zoom + 0.08)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M8 11h6" />
-            <path d="M11 8v6" />
-            <path d="m16 16 4 4" />
-          </svg>
-        </button>
-        <span class="zoom-pill">{{ viewportZoomLabel }}</span>
-      </div>
+      <ImageCanvasBottomToolbar
+        :zoom="viewport.zoom"
+        :min-zoom="MIN_VIEWPORT_ZOOM"
+        :max-zoom="MAX_VIEWPORT_ZOOM"
+        :zoom-label="viewportZoomLabel"
+        @update:zoom="viewport.zoom = $event"
+      />
 
       <div v-if="error" class="global-error">{{ error }}</div>
     </section>
 
-    <section
+    <ImageCanvasGalleryStage
       v-else
-      ref="galleryStageRef"
-      class="gallery-stage"
-      @scroll.passive="handleGalleryScroll"
-    >
-      <div class="gallery-header">
-        <div class="gallery-heading">
-          <span class="gallery-eyebrow">作品广场</span>
-          <h2>生成作品</h2>
-          <p>{{ filteredGalleryImages.length }} / {{ gallerySourceImages.length }}</p>
-        </div>
-        <div class="gallery-toolbar">
-          <div class="gallery-filter-group" role="tablist" aria-label="作品筛选">
-            <button
-              v-for="option in galleryFilterOptions"
-              :key="option.value"
-              type="button"
-            :class="{ active: galleryFilter === option.value }"
-            @click="galleryFilter = option.value"
-            >
-              {{ option.label }}
-            </button>
-          </div>
-          <label class="gallery-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m16 16 4 4" />
-            </svg>
-            <input v-model="galleryQuery" type="search" placeholder="搜索提示词、尺寸、参考图">
-          </label>
-          <button
-            type="button"
-            class="gallery-reset"
-            :disabled="!galleryHasFilter"
-            @click="galleryQuery = ''; galleryFilter = 'mine'"
-          >
-            重置
-          </button>
-        </div>
-      </div>
+      v-model:query="galleryQuery"
+      v-model:filter="galleryFilter"
+      :images="visibleGalleryImages"
+      :filtered-count="filteredGalleryImages.length"
+      :source-count="gallerySourceImages.length"
+      :filter-options="galleryFilterOptions"
+      :has-filter="galleryHasFilter"
+      :is-public-filter="isPublicGalleryFilter"
+      :gallery-loaded="galleryLoaded"
+      :is-loading="isGalleryLoading"
+      :is-loading-more="isGalleryLoadingMore"
+      :error="error"
+      :resolution-options="resolutionOptions"
+      :quality-options="qualityOptions"
+      :is-image-downloading="isGalleryImageDownloading"
+      @load-more="handleLoadMoreGallery"
+      @view="openGalleryDetail"
+      @use-image="handleGalleryUseImage"
+      @preload-download="handleGalleryPreloadDownload"
+      @download="handleGalleryDownload"
+      @send-to-chat="handleGallerySendToChat"
+    />
 
-      <div v-if="visibleGalleryImages.length" class="gallery-grid" aria-live="polite">
-        <article v-for="image in visibleGalleryImages" :key="image.id" class="gallery-card">
-          <button type="button" class="gallery-image-wrap" title="查看作品" @click="openGalleryDetail(image)">
-            <span class="gallery-card-date">{{ formatGalleryDate(image.timestamp) }}</span>
-            <span v-if="galleryReferenceCount(image)" class="gallery-card-reference-count">
-              {{ galleryReferenceCount(image) }} 张参考
-            </span>
-            <span class="gallery-image-button">
-              <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
-            </span>
-          </button>
-          <div class="gallery-card-body">
-            <p class="gallery-card-prompt">{{ galleryPrompt(image) }}</p>
-            <div class="gallery-card-meta">
-              <span>{{ image.size || 'auto' }}</span>
-              <span>{{ galleryOptionLabel(image.resolution, resolutionOptions) }}</span>
-              <span>{{ galleryOptionLabel(image.quality, qualityOptions) }}</span>
-            </div>
-            <div class="gallery-card-footer">
-              <div class="gallery-reference-strip" aria-label="参考图">
-                <img
-                  v-for="reference in galleryReferences(image).slice(0, 3)"
-                  :key="reference.id || reference.title"
-                  :src="displayReferenceUrl(reference)"
-                  :alt="reference.title || '参考图'"
-                  loading="lazy"
-                >
-              </div>
-              <div class="gallery-actions">
-                <button type="button" title="查看作品" @click="openGalleryDetail(image)">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                    <path d="M15 3h6v6" />
-                    <path d="M10 14 21 3" />
-                    <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
-                  </svg>
-                </button>
-                <button type="button" title="放入画布" @click="useHistoryImage(image, galleryActionScope)">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                    <path d="M12 5v14" />
-                    <path d="M5 12h14" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  title="下载原图"
-                  :disabled="isDownloadingImage(imageDownloadKey(image, galleryActionScope))"
-                  @pointerenter="preloadGeneratedImageDownload(image, galleryActionScope)"
-                  @focus="preloadGeneratedImageDownload(image, galleryActionScope)"
-                  @click="downloadGeneratedImage(image, galleryActionScope)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                    <path d="M12 3v12" />
-                    <path d="m7 10 5 5 5-5" />
-                    <path d="M5 19h14" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  title="发送到对话"
-                  @click="sendHistoryImageToChat(image, galleryActionScope)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </article>
-      </div>
+    <ImageGalleryDetailModal
+      v-if="galleryDetail"
+      :image-url="galleryDetailImageUrl(galleryDetail)"
+      :image-alt="galleryPrompt(galleryDetail)"
+      :image-title="galleryFileName(galleryDetail).replace(/\.[a-z0-9]{2,5}$/i, '')"
+      :prompt="galleryPrompt(galleryDetail)"
+      :reference-count="galleryReferenceCount(galleryDetail)"
+      :references="galleryReferences(galleryDetail)"
+      :params="galleryParamItems(galleryDetail)"
+      :is-loading-preview="isGalleryDetailLoadingPreview"
+      :is-downloading="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
+      @close="closeGalleryDetail"
+      @open-viewer="openGalleryDetailViewer"
+      @use-image="useGalleryDetailImage"
+      @preload-download="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
+      @download="downloadGalleryDetail"
+      @send-to-chat="sendGalleryDetailToChat"
+    />
 
-      <div v-else class="gallery-empty">
-        <strong>{{ (isPublicGalleryFilter ? (!galleryLoaded && isLoadingGallery) : isLoadingHistory) ? '正在加载作品' : (gallerySourceImages.length ? '没有匹配作品' : '暂无作品') }}</strong>
-        <span v-if="galleryHasFilter && (!isPublicGalleryFilter || galleryLoaded)">换一个筛选或搜索词</span>
-      </div>
-
-      <div v-if="visibleGalleryImages.length && (isGalleryAutoLoading || (isPublicGalleryFilter ? isLoadingGallery : isLoadingHistory))" class="gallery-scroll-status">
-        加载中...
-      </div>
-
-      <div v-if="error" class="global-error">{{ error }}</div>
-    </section>
-
-    <Teleport to="body">
-      <div
-        v-if="galleryDetail"
-        class="gallery-detail-overlay"
-        @pointerdown.self="closeGalleryDetail"
-      >
-        <article class="gallery-detail-shell" @pointerdown.stop>
-          <section class="gallery-detail-preview">
-            <img
-              :src="galleryDetailImageUrl(galleryDetail)"
-              :alt="galleryPrompt(galleryDetail)"
-              :class="{ 'loading-preview': isGalleryDetailLoadingPreview }"
-              draggable="false"
-            >
-            <span v-if="isGalleryDetailLoadingPreview" class="gallery-detail-loading">
-              正在加载预览图...
-            </span>
-            <button type="button" class="gallery-detail-zoom" title="放大查看" @click="openGalleryDetailViewer">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M8 11h6" />
-                <path d="M11 8v6" />
-                <path d="m16 16 4 4" />
-              </svg>
-            </button>
-          </section>
-          <aside class="gallery-detail-panel">
-            <header class="gallery-detail-header">
-              <div>
-                <span>作品详情</span>
-                <strong>{{ galleryFileName(galleryDetail).replace(/\.[a-z0-9]{2,5}$/i, '') }}</strong>
-              </div>
-              <button type="button" title="关闭" @click="closeGalleryDetail">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18">
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </header>
-
-            <section class="gallery-detail-section">
-              <h3>用户提示词</h3>
-              <p>{{ galleryPrompt(galleryDetail) }}</p>
-            </section>
-
-            <section class="gallery-detail-section">
-              <div class="gallery-detail-section-title">
-                <h3>参考图</h3>
-                <span>{{ galleryReferenceCount(galleryDetail) }} 张</span>
-              </div>
-              <div v-if="galleryReferences(galleryDetail).length" class="gallery-detail-references">
-                <figure
-                  v-for="reference in galleryReferences(galleryDetail)"
-                  :key="reference.id || reference.title"
-                >
-                  <img :src="displayReferenceUrl(reference)" :alt="reference.title || '参考图'" loading="lazy">
-                  <figcaption>{{ reference.title || reference.fileName || '参考图' }}</figcaption>
-                </figure>
-              </div>
-              <p v-else class="gallery-detail-muted">
-                {{ galleryReferenceCount(galleryDetail) ? '参考图未公开展示' : '没有参考图' }}
-              </p>
-            </section>
-
-            <section class="gallery-detail-section">
-              <h3>生成参数</h3>
-              <dl class="gallery-param-grid">
-                <template v-for="item in galleryParamItems(galleryDetail)" :key="item.label">
-                  <dt>{{ item.label }}</dt>
-                  <dd>{{ item.value }}</dd>
-                </template>
-              </dl>
-            </section>
-
-            <div class="gallery-detail-actions">
-              <button type="button" @click="useGalleryDetailImage">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                  <path d="M12 5v14" />
-                  <path d="M5 12h14" />
-                </svg>
-                放入画布
-              </button>
-              <button
-                type="button"
-                :disabled="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
-                @pointerenter="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
-                @focus="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
-                @click="downloadGalleryDetail"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                  <path d="M12 3v12" />
-                  <path d="m7 10 5 5 5-5" />
-                  <path d="M5 19h14" />
-                </svg>
-                {{ isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope)) ? '下载中' : '下载' }}
-              </button>
-              <button type="button" @click="sendGalleryDetailToChat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-                </svg>
-                对话
-              </button>
-            </div>
-          </aside>
-        </article>
-      </div>
-    </Teleport>
-
-    <Teleport to="body">
-      <div
-        v-if="imageViewer"
-        class="image-viewer-overlay"
-        @pointerdown.self="closeImageViewer"
-      >
-        <div class="image-viewer-shell" @pointerdown.stop>
-          <header class="image-viewer-header">
-            <div class="image-viewer-meta">
-              <strong>{{ imageViewer.title }}</strong>
-              <span>
-                {{ imageViewer.caption }}
-                <small v-if="imageViewer.loadingPreview">正在加载预览图...</small>
-              </span>
-            </div>
-            <div class="image-viewer-controls">
-              <button type="button" title="缩小" @click="zoomImageViewer(-0.12)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M8 11h6" />
-                  <path d="m16 16 4 4" />
-                </svg>
-              </button>
-              <button type="button" title="复位" @click="resetImageViewerZoom">1:1</button>
-              <span class="image-viewer-zoom">{{ Math.round((imageViewer.zoom || 1) * 100) }}%</span>
-              <button type="button" title="放大" @click="zoomImageViewer(0.12)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M8 11h6" />
-                  <path d="M11 8v6" />
-                  <path d="m16 16 4 4" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                title="下载"
-                :disabled="isDownloadingImage(viewerDownloadKey())"
-                @pointerenter="preloadViewerImageDownload"
-                @focus="preloadViewerImageDownload"
-                @click="downloadImageViewerImage"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                  <path d="M12 3v12" />
-                  <path d="m7 10 5 5 5-5" />
-                  <path d="M5 19h14" />
-                </svg>
-              </button>
-              <button type="button" class="image-viewer-close" title="关闭" @click="closeImageViewer">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </div>
-          </header>
-          <div class="image-viewer-stage" @wheel.prevent="handleImageViewerWheel">
-            <img
-              :src="imageViewer.imageUrl"
-              :alt="imageViewer.caption"
-              :style="{
-                width: `${Math.round(imageViewer.zoom * 100)}%`,
-                height: `${Math.round(imageViewer.zoom * 100)}%`,
-              }"
-              draggable="false"
-            >
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <ImageViewerModal
+      v-if="imageViewer"
+      :viewer="imageViewer"
+      :is-downloading="isDownloadingImage(viewerDownloadKey())"
+      @close="closeImageViewer"
+      @zoom="zoomImageViewer"
+      @reset-zoom="resetImageViewerZoom"
+      @preload-download="preloadViewerImageDownload"
+      @download="downloadImageViewerImage"
+    />
   </div>
 </template>
 
@@ -2828,581 +1186,11 @@ onUnmounted(() => {
   background: #f6f8fb;
 }
 
-.canvas-sidebar {
-  width: 286px;
-  flex-shrink: 0;
-  padding: 14px 12px;
-  border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, #f9fafb 0%, #ffffff 100%);
-  overflow-y: auto;
-}
-
-.workspace-switch {
-  display: inline-flex;
-  gap: 6px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  box-shadow: var(--shadow-sm);
-}
-
-.workspace-tab {
-  min-height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.workspace-tab.active {
-  background: #0b0f14;
-  color: #fff;
-}
-
-.mode-switch {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 16px 4px 42px;
-  padding: 5px;
-  border-radius: 12px;
-  background: #f1f3f5;
-  color: #73777f;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.mode-switch span,
-.mode-switch button {
-  flex: 1;
-  min-height: 34px;
-  border: 0;
-  border-radius: 9px;
-  text-align: center;
-}
-
-.mode-switch span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mode-switch button {
-  background: #fff;
-  color: #0f172a;
-  font-weight: 800;
-  box-shadow: var(--shadow-sm);
-}
-
-.mini-map {
-  height: 156px;
-  padding: 10px;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  background:
-    linear-gradient(#edf2f7 1px, transparent 1px),
-    linear-gradient(90deg, #edf2f7 1px, transparent 1px),
-    #fff;
-  background-size: 18px 18px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
-}
-
-.mini-map-frame {
-  position: relative;
-  height: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.mini-map-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.mini-connection {
-  fill: none;
-  stroke: #94a3b8;
-  stroke-width: 0.7;
-  stroke-linecap: round;
-}
-
-.mini-node {
-  fill: #fff;
-  stroke: #cbd5e1;
-  stroke-width: 0.55;
-}
-
-.mini-node-text {
-  fill: #f8fafc;
-}
-
-.mini-node-image {
-  fill: #eef6ff;
-}
-
-.mini-node-generation {
-  fill: #fff7ed;
-}
-
-.mini-node.selected {
-  stroke: #111827;
-  stroke-width: 0.9;
-}
-
-.mini-viewport {
-  fill: rgba(37, 99, 235, 0.08);
-  stroke: #111827;
-  stroke-width: 0.9;
-  stroke-dasharray: 3 2;
-  pointer-events: none;
-}
-
-.quick-create {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin: 34px 0 28px;
-}
-
-.create-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.create-button:hover {
-  border-color: var(--border);
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-.create-button.primary {
-  background: #111827;
-  color: #fff;
-}
-
-.history-panel {
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-}
-
-.side-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.side-title button {
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.side-title button:disabled,
-.gallery-header button:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.history-item {
-  display: grid;
-  grid-template-columns: 38px 1fr;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-secondary);
-  cursor: pointer;
-  text-align: left;
-}
-
-.history-item:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
-}
-
-.history-item img {
-  width: 38px;
-  height: 38px;
-  border-radius: 6px;
-  object-fit: cover;
-}
-
-.history-item span {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-empty {
-  padding: 18px 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-align: center;
-}
-
 .canvas-stage {
   position: relative;
   flex: 1;
   min-width: 0;
   overflow: hidden;
-}
-
-.gallery-stage {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  padding: 26px clamp(18px, 3vw, 42px);
-  overflow-y: auto;
-  background: #f4f6f8;
-}
-
-.gallery-header {
-  display: grid;
-  align-items: start;
-  gap: 14px;
-  margin: 0 auto 20px;
-  max-width: 1540px;
-}
-
-.gallery-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 10px;
-  min-width: 0;
-}
-
-.gallery-eyebrow {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.gallery-header h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 28px;
-  letter-spacing: 0;
-}
-
-.gallery-header p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.gallery-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  gap: 10px;
-  min-width: 0;
-}
-
-.gallery-filter-group {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.gallery-filter-group button,
-.gallery-reset,
-.gallery-actions button {
-  min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.gallery-filter-group button {
-  padding: 0 12px;
-  color: var(--text-secondary);
-}
-
-.gallery-filter-group button.active {
-  background: #111827;
-  color: #fff;
-}
-
-.gallery-search {
-  display: flex;
-  align-items: center;
-  min-width: 220px;
-  height: 42px;
-  flex: 1 1 360px;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-muted);
-}
-
-.gallery-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-}
-
-.gallery-search input::placeholder {
-  color: #a8b1bf;
-}
-
-.gallery-reset {
-  padding: 0 12px;
-  border-color: var(--border);
-}
-
-.gallery-reset:disabled {
-  opacity: 0.42;
-  pointer-events: none;
-}
-
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  align-items: start;
-  gap: 16px;
-  max-width: 1540px;
-  margin: 0 auto;
-}
-
-.gallery-card {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
-}
-
-.gallery-image-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    #f8fafc;
-  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
-  background-size: 18px 18px;
-  cursor: zoom-in;
-  overflow: hidden;
-}
-
-.gallery-image-wrap img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-}
-
-.gallery-image-button {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.gallery-image-wrap:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.gallery-card-date,
-.gallery-card-reference-count {
-  position: absolute;
-  z-index: 1;
-  top: 10px;
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 900;
-  backdrop-filter: blur(8px);
-}
-
-.gallery-card-date {
-  left: 10px;
-}
-
-.gallery-card-reference-count {
-  right: 10px;
-}
-
-.gallery-card-body {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-}
-
-.gallery-card-prompt {
-  display: -webkit-box;
-  min-height: 38px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.46;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.gallery-card-meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.gallery-card-meta span {
-  max-width: 100%;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: #f1f5f9;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gallery-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.gallery-reference-strip {
-  display: flex;
-  min-width: 0;
-  height: 30px;
-}
-
-.gallery-reference-strip img {
-  width: 30px;
-  height: 30px;
-  margin-right: -7px;
-  border: 2px solid #fff;
-  border-radius: 8px;
-  background: #fff;
-  object-fit: cover;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
-}
-
-.gallery-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-}
-
-.gallery-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
-  border-color: var(--border);
-  color: var(--text-secondary);
-}
-
-.gallery-actions button:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
-  color: var(--text-primary);
-}
-
-.gallery-scroll-status {
-  padding: 20px 0 4px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 900;
-  text-align: center;
-}
-
-.gallery-empty {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  min-height: 320px;
-  max-width: 720px;
-  margin: 0 auto;
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.gallery-empty strong {
-  color: var(--text-primary);
-  font-size: 18px;
-}
-
-.gallery-empty span {
-  font-size: 13px;
 }
 
 .canvas-viewport {
@@ -3445,1250 +1233,8 @@ onUnmounted(() => {
   stroke-dasharray: 8 7;
 }
 
-.canvas-node {
-  position: absolute;
-  display: flex;
-  box-sizing: border-box;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.09);
-  color: var(--text-primary);
-}
-
-.canvas-node.selected {
-  border-color: #111827;
-  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08), 0 22px 56px rgba(15, 23, 42, 0.12);
-}
-
-.node-image,
-.node-generation {
-  overflow: visible;
-}
-
-.node-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  border-radius: 8px 8px 0 0;
-  background: #fff;
-  cursor: grab;
-  user-select: none;
-}
-
-.node-header:active {
-  cursor: grabbing;
-}
-
-.node-icon {
-  display: inline-flex;
-  color: var(--text-primary);
-}
-
-.node-title {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0;
-}
-
-.canvas-node:hover .node-remove {
-  opacity: 1;
-}
-
-.node-remove:hover {
-  background: var(--hover-bg);
-  color: var(--danger);
-}
-
-.node-textarea,
-.generation-prompt,
-.image-caption {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font-family: inherit;
-  resize: none;
-  outline: none;
-}
-
-.node-textarea {
-  flex: 0 0 auto;
-  min-height: 118px;
-  padding: 12px;
-  color: var(--text-primary);
-  font-size: calc(13px * var(--node-text-content-scale, 1));
-  line-height: 1.55;
-  overflow: visible;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.rich-editor:empty::before {
-  content: attr(data-placeholder);
-  color: #a8b1bf;
-  pointer-events: none;
-}
-
-.rich-editor.readonly {
-  cursor: default;
-}
-
-.mention-token {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 132px;
-  min-height: 26px;
-  margin: 0 2px;
-  padding: 2px 6px 2px 3px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 900;
-  vertical-align: middle;
-  white-space: nowrap;
-}
-
-.mention-token img {
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.mention-token span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.node-textarea::placeholder,
-.generation-prompt::placeholder,
-.image-caption::placeholder {
-  color: #a8b1bf;
-}
-
-.image-preview {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  height: var(--image-preview-height, 136px);
-  min-height: 0;
-  margin: 10px 10px 0;
-  border-radius: 7px;
-  background: transparent;
-  overflow: hidden;
-}
-
-.image-preview.empty {
-  height: var(--image-preview-height, 136px);
-  min-height: 0;
-  border: 1px dashed var(--border-strong);
-  background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    #f8fafc;
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-  background-size: 16px 16px;
-}
-
-.image-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  border-radius: 7px;
-  background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    #f8fafc;
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-  background-size: 16px 16px;
-  object-fit: cover;
-}
-
-.image-preview.generated {
-  max-height: none;
-}
-
-.pick-image,
-.replace-image {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.pick-image {
-  width: 46px;
-  height: 46px;
-}
-
-.replace-image {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 30px;
-  height: 30px;
-}
-
-.zoom-image {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.zoom-image:hover {
-  border-color: var(--border-strong);
-  background: #fff;
-  color: var(--text-primary);
-}
-
-.image-caption {
-  flex: 0 0 auto;
-  min-height: 48px;
-  padding: 8px 10px 2px;
-  font-size: 12px;
-  line-height: 1.35;
-  overflow: hidden;
-}
-
-.image-output-panel {
-  flex: 0 0 auto;
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px 4px;
-}
-
-.image-output-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.image-output-meta span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.image-output-badge {
-  flex: 0 0 auto;
-  padding: 3px 6px;
-  border-radius: 6px;
-  background: rgba(14, 165, 233, 0.1);
-  color: #0369a1;
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.image-output-note {
-  width: 100%;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0 8px;
-  background: #fff;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  outline: none;
-}
-
-.image-output-note:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12);
-}
-
-.image-output-note::placeholder {
-  color: #a8b1bf;
-}
-
-.image-node-actions {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  padding: 6px 10px 10px;
-}
-
-.image-node-actions button {
-  min-height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.image-node-actions button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
-.image-node-actions button:disabled {
-  opacity: 0.46;
-  cursor: not-allowed;
-}
-
-.gallery-detail-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 110;
-  display: grid;
-  place-items: center;
-  padding: 18px;
-  background: rgba(10, 15, 25, 0.62);
-  backdrop-filter: blur(8px);
-}
-
-.gallery-detail-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 410px);
-  width: min(1480px, calc(100vw - 36px));
-  height: min(860px, calc(100dvh - 36px));
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.32);
-}
-
-.gallery-detail-preview {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-  padding: 14px;
-  background: #f8fafc;
-}
-
-.gallery-detail-preview img {
-  display: block;
-  width: 100%;
-  height: auto;
-  max-height: 100%;
-  border-radius: 8px;
-  background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.16) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.16) 75%),
-    #f8fafc;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
-  background-size: 20px 20px;
-  object-fit: contain;
-  box-shadow: 0 18px 52px rgba(15, 23, 42, 0.16);
-  -webkit-user-drag: none;
-}
-
-.gallery-detail-preview img.loading-preview {
-  filter: saturate(0.92);
-}
-
-.gallery-detail-loading {
-  position: absolute;
-  left: 24px;
-  bottom: 22px;
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.46);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  backdrop-filter: blur(8px);
-}
-
-.gallery-detail-zoom {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.52);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  cursor: zoom-in;
-  backdrop-filter: blur(8px);
-}
-
-.gallery-detail-panel {
-  display: grid;
-  align-content: start;
-  grid-auto-rows: max-content;
-  gap: 18px;
-  min-width: 0;
-  min-height: 0;
-  padding: 18px;
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-}
-
-.gallery-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.gallery-detail-header div {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.gallery-detail-header span,
-.gallery-detail-section-title span,
-.gallery-detail-muted {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.gallery-detail-header strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 17px;
-  font-weight: 900;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gallery-detail-header button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.gallery-detail-section {
-  display: grid;
-  gap: 9px;
-  min-width: 0;
-}
-
-.gallery-detail-section h3 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.gallery-detail-section p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.58;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.gallery-detail-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.gallery-detail-references {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 9px;
-}
-
-.gallery-detail-references figure {
-  min-width: 0;
-  margin: 0;
-}
-
-.gallery-detail-references img {
-  width: 100%;
-  aspect-ratio: 1;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  object-fit: cover;
-}
-
-.gallery-detail-references figcaption {
-  margin-top: 5px;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gallery-param-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.gallery-param-grid dt,
-.gallery-param-grid dd {
-  min-width: 0;
-  margin: 0;
-}
-
-.gallery-param-grid dt {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.gallery-param-grid dd {
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-soft);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.gallery-detail-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
-}
-
-.gallery-detail-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.gallery-detail-actions button:first-child {
-  background: #111827;
-  color: #fff;
-}
-
-.gallery-detail-actions button:hover,
-.gallery-detail-header button:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
-  color: var(--text-primary);
-}
-
-.gallery-detail-actions button:first-child:hover {
-  background: #020617;
-  color: #fff;
-}
-
-.image-viewer-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(10, 15, 25, 0.78);
-  backdrop-filter: blur(10px);
-}
-
-.image-viewer-shell {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  width: min(1120px, calc(100vw - 48px));
-  max-width: 100%;
-  height: min(88vh, 920px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
-  background: rgba(10, 15, 25, 0.96);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
-  overflow: hidden;
-}
-
-.image-viewer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 0 14px 0 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-.image-viewer-meta {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.image-viewer-meta strong {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.image-viewer-meta span {
-  overflow: hidden;
-  color: rgba(226, 232, 240, 0.78);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.image-viewer-meta small {
-  margin-left: 8px;
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.image-viewer-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.image-viewer-controls button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  cursor: pointer;
-}
-
-.image-viewer-controls button:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.image-viewer-close {
-  color: #fff;
-}
-
-.image-viewer-zoom {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 62px;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.image-viewer-stage {
-  display: grid;
-  place-items: center;
-  min-height: 0;
-  overflow: auto;
-  padding: 24px;
-}
-
-.image-viewer-stage img {
-  min-width: 0;
-  min-height: 0;
-  object-fit: contain;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.resize-corner {
-  position: absolute;
-  z-index: 8;
-  width: 18px;
-  height: 18px;
-  background: transparent;
-}
-
-.resize-corner.top-left {
-  left: -6px;
-  top: -6px;
-  cursor: nwse-resize;
-}
-
-.resize-corner.top-right {
-  right: -6px;
-  top: -6px;
-  cursor: nesw-resize;
-}
-
-.resize-corner.bottom-left {
-  left: -6px;
-  bottom: -6px;
-  cursor: nesw-resize;
-}
-
-.resize-corner.bottom-right {
-  right: -6px;
-  bottom: -6px;
-  cursor: nwse-resize;
-}
-
-.node-handle {
-  position: absolute;
-  z-index: 5;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #111827;
-  border-radius: 999px;
-  background: #111827;
-  cursor: crosshair;
-}
-
-.node-handle.input {
-  left: -7px;
-  top: 122px;
-  background: #fff;
-}
-
-.node-handle.output {
-  right: -7px;
-  top: 72px;
-}
-
-.node-image .node-handle.output {
-  top: calc(50% - 6px);
-}
-
-.node-image .node-handle.input {
-  top: calc(50% - 6px);
-}
-
-.node-handle.prompt {
-  top: 84px;
-}
-
-.node-handle.reference {
-  top: 168px;
-}
-
-.node-handle.generation {
-  top: 182px;
-}
-
-.node-handle.connected {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.generation-body {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  min-height: 0;
-  overflow: visible;
-  padding: 10px 12px 12px;
-}
-
-.generation-scroll {
-  display: flex;
-  min-height: 0;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 9px;
-  overflow: visible;
-}
-
-.generation-footer {
-  display: grid;
-  position: relative;
-  z-index: 1;
-  flex: 0 0 auto;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.98);
-}
-
-.mention-index {
-  position: absolute;
-  z-index: 24;
-  display: grid;
-  gap: 3px;
-  max-height: 184px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
-  overflow-y: auto;
-}
-
-.text-mention-index {
-  left: 12px;
-  right: 12px;
-  top: 92px;
-}
-
-.generation-mention-index {
-  left: 12px;
-  right: 12px;
-  top: 86px;
-}
-
-.mention-index button {
-  display: grid;
-  grid-template-columns: 28px 56px 1fr;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  text-align: left;
-}
-
-.mention-index button.active,
-.mention-index button:hover {
-  background: var(--hover-bg);
-}
-
-.mention-index img {
-  width: 28px;
-  height: 28px;
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.mention-index span {
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.mention-index small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.linked-block {
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fbfcfe;
-  padding: 8px;
-}
-
-.linked-block p {
-  display: -webkit-box;
-  min-height: 39px;
-  max-height: 58px;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.linked-label,
-.control-label {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.generation-prompt {
-  flex: 0 0 auto;
-  min-height: 116px;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow: visible;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.linked-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.linked-count {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.reference-block {
-  flex: 0 0 auto;
-  min-height: 76px;
-}
-
-.reference-list {
-  display: grid;
-  gap: 6px;
-  max-height: none;
-  overflow: hidden;
-}
-
-.reference-list p {
-  min-height: auto;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.reference-chip {
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.reference-chip img {
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.reference-chip span {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.control-group {
-  display: grid;
-  gap: 6px;
-}
-
-.control-hint {
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-}
-
-.segmented.aspect-grid {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.segmented.count-segmented,
-.segmented.four-option-segmented {
-  grid-template-columns: repeat(4, 1fr);
-}
-
-.segmented button {
-  min-height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.segmented button.active {
-  border-color: #111827;
-  color: #111827;
-  box-shadow: inset 0 0 0 1px #111827;
-}
-
-.node-status,
-.node-error {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.node-status {
-  color: var(--text-muted);
-}
-
-.node-error {
-  color: var(--danger);
-}
-
-.generate-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 38px;
-  border: 0;
-  border-radius: 7px;
-  background: #050505;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.generate-button:disabled {
-  opacity: 0.58;
-  cursor: not-allowed;
-}
-
-.spinner {
-  width: 15px;
-  height: 15px;
-  border: 2px solid rgba(255, 255, 255, 0.34);
-  border-top-color: #fff;
-  border-radius: 999px;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.context-menu {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 30;
-  width: 176px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(10px);
-}
-
-.context-menu button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 800;
-  cursor: pointer;
-  text-align: left;
-}
-
-.context-menu button:hover {
-  background: var(--hover-bg);
-}
-
-.context-menu button.danger {
-  color: var(--danger);
-}
-
-.context-menu button.danger .menu-icon {
-  color: var(--danger);
-}
-
-.menu-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.mobile-create-bar {
-  display: none;
-}
-
-.stage-actions,
-.bottom-toolbar {
-  position: absolute;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--shadow-md);
-  backdrop-filter: blur(12px);
-}
-
-.stage-actions {
-  right: 18px;
-  top: 18px;
-}
-
-.bottom-toolbar {
-  left: 22px;
-  bottom: 18px;
-}
-
-.tool-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.tool-button:hover {
-  border-color: var(--border);
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-.tool-button.active {
-  background: #050505;
-  color: #fff;
-}
-
-.tool-button.danger:hover {
-  color: var(--danger);
-}
-
-.canvas-file-input {
-  display: none;
-}
-
 .canvas-viewport {
   touch-action: none;
-}
-
-.node-header,
-.node-handle,
-.resize-corner {
-  touch-action: none;
-}
-
-.toolbar-divider {
-  width: 1px;
-  height: 22px;
-  background: var(--border);
-}
-
-.zoom-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 36px;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: #111827;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.zoom-range {
-  width: 92px;
-  accent-color: #111827;
 }
 
 .global-error {
@@ -4708,294 +1254,13 @@ onUnmounted(() => {
   transform: translateX(-50%);
 }
 
-@media (max-width: 980px) {
-  .canvas-sidebar {
-    width: 220px;
-  }
-}
-
 @media (max-width: 760px) {
   .image-canvas {
     flex-direction: column;
   }
 
-  .canvas-sidebar {
-    display: none;
-  }
-
   .canvas-stage {
     min-height: 0;
-  }
-
-  .mobile-create-bar {
-    display: inline-flex;
-    flex: 0 0 auto;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .mobile-create-bar button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    flex: 0 0 auto;
-    min-width: 68px;
-    min-height: 40px;
-    padding: 0 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #fff;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 900;
-    white-space: nowrap;
-  }
-
-  .mobile-create-bar button.primary {
-    min-width: 76px;
-    border-color: #111827;
-    background: #111827;
-    color: #fff;
-  }
-
-  .mobile-create-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    flex: 0 0 auto;
-    font-weight: 900;
-  }
-
-  .stage-actions {
-    left: 10px;
-    right: auto;
-    top: 10px;
-    width: max-content;
-    max-width: calc(100% - 20px);
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-    padding: 6px;
-    scrollbar-width: thin;
-  }
-
-  .bottom-toolbar {
-    left: 10px;
-    right: 10px;
-    bottom: 10px;
-    display: grid;
-    grid-template-columns: 44px 44px 1px 44px minmax(0, 1fr) 44px minmax(42px, auto);
-    justify-content: stretch;
-    padding: 8px;
-  }
-
-  .tool-button {
-    width: 44px;
-    height: 44px;
-  }
-
-  .zoom-pill {
-    min-width: 44px;
-    height: 44px;
-    padding: 0 8px;
-  }
-
-  .zoom-range {
-    width: 100%;
-    min-width: 0;
-    height: 34px;
-  }
-
-  .toolbar-divider {
-    align-self: center;
-  }
-
-  .node-header {
-    min-height: 56px;
-    padding: 0 8px 0 12px;
-  }
-
-  .node-remove {
-    width: 48px;
-    height: 48px;
-    opacity: 1;
-  }
-
-  .node-handle {
-    width: 30px;
-    height: 30px;
-    border-width: 3px;
-  }
-
-  .node-handle.input {
-    left: -16px;
-  }
-
-  .node-handle.output {
-    right: -16px;
-  }
-
-  .resize-corner {
-    width: 44px;
-    height: 44px;
-  }
-
-  .resize-corner.top-left {
-    left: -12px;
-    top: -12px;
-  }
-
-  .resize-corner.top-right {
-    right: -12px;
-    top: -12px;
-  }
-
-  .resize-corner.bottom-left {
-    left: -12px;
-    bottom: -12px;
-  }
-
-  .resize-corner.bottom-right {
-    right: -12px;
-    bottom: -12px;
-  }
-
-  .pick-image {
-    width: 64px;
-    height: 64px;
-  }
-
-  .replace-image,
-  .zoom-image {
-    width: 52px;
-    height: 52px;
-  }
-
-  .image-node-actions button,
-  .gallery-actions button,
-  .segmented button,
-  .generate-button,
-  .mention-index button {
-    min-height: 58px;
-  }
-
-  .gallery-stage {
-    padding: 16px;
-  }
-
-  .gallery-header {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .gallery-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .gallery-filter-group {
-    width: 100%;
-  }
-
-  .gallery-filter-group button {
-    flex: 1;
-    min-height: 42px;
-  }
-
-  .gallery-search {
-    width: 100%;
-    min-width: 0;
-    height: 42px;
-    flex: 0 0 auto;
-  }
-
-  .gallery-reset {
-    min-height: 42px;
-  }
-
-  .gallery-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .gallery-actions {
-    gap: 8px;
-  }
-
-  .gallery-detail-overlay,
-  .image-viewer-overlay {
-    padding: 10px;
-  }
-
-  .gallery-detail-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(260px, 48vh) minmax(0, 1fr);
-    width: calc(100vw - 20px);
-    height: calc(100dvh - 20px);
-  }
-
-  .gallery-detail-preview {
-    padding: 12px;
-  }
-
-  .gallery-detail-panel {
-    border-top: 1px solid var(--border);
-    border-left: 0;
-  }
-
-  .gallery-detail-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .gallery-detail-actions button {
-    min-height: 48px;
-  }
-
-  .image-viewer-shell {
-    width: calc(100vw - 20px);
-    height: min(88vh, calc(100dvh - 20px));
-  }
-
-  .image-viewer-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 0;
-    padding: 12px;
-  }
-
-  .image-viewer-controls {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .image-viewer-controls button {
-    min-width: 44px;
-    height: 44px;
-  }
-
-  .image-viewer-stage {
-    padding: 12px;
-  }
-}
-
-@media (max-width: 380px) {
-  .bottom-toolbar {
-    grid-template-columns: 38px 38px 1px 38px minmax(58px, 1fr) 38px minmax(42px, auto);
-    gap: 5px;
-  }
-
-  .bottom-toolbar .tool-button {
-    width: 38px;
-    height: 38px;
-  }
-
-  .bottom-toolbar .zoom-pill {
-    height: 38px;
   }
 }
 </style>
