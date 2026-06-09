@@ -52,4 +52,20 @@ describe('markdown rendering cache', () => {
     expect(svg).toContain('hljs-tag')
     expect(vue).toContain('hljs-tag')
   })
+
+  it('renders code fences with unknown languages sensibly', () => {
+    const html = getRenderedText('```unknownlang\nconst x = 42;\nconsole.log(x);\n```')
+    const root = document.createElement('div')
+    root.innerHTML = html
+
+    expect(html).toContain('const x = 42;')
+    expect(html).toContain('console.log(x);')
+    expect(html).not.toContain('language-unknownlang')
+
+    const codeEl = root.querySelector('pre code')
+    expect(codeEl).toBeTruthy()
+
+    const languageClasses = Array.from(codeEl?.classList ?? []).filter((className) => className.startsWith('language-'))
+    expect(languageClasses).toHaveLength(0)
+  })
 })
