@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '../src/types'
-import { clearRenderCache, getRendered, stripThinking } from '../src/utils/markdown'
+import { clearRenderCache, getRendered, getRenderedText, stripThinking } from '../src/utils/markdown'
 
 function makeAssistant(content: string): Message {
   return {
@@ -38,5 +38,18 @@ describe('markdown rendering cache', () => {
     expect(visible).not.toContain('Final Extract')
     expect(visible).not.toContain('Grundlegend')
     expect(visible).toContain('请问您的预算')
+  })
+
+  it('uses the registered HTML-like grammar for html, svg, and vue fences', () => {
+    const html = getRenderedText('```html\n<div class="note">Hello</div>\n```')
+    const svg = getRenderedText('```svg\n<svg viewBox="0 0 1 1"></svg>\n```')
+    const vue = getRenderedText('```vue\n<template><div>{{ message }}</div></template>\n```')
+
+    expect(html).toContain('language-html')
+    expect(svg).toContain('language-svg')
+    expect(vue).toContain('language-vue')
+    expect(html).toContain('hljs-tag')
+    expect(svg).toContain('hljs-tag')
+    expect(vue).toContain('hljs-tag')
   })
 })
