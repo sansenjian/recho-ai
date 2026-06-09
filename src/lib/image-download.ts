@@ -244,10 +244,15 @@ function convertImageBlobInWorker(blob: Blob, timeoutMs: number) {
     const worker = getConversionWorker()
     const requestId = crypto.randomUUID()
     const timeoutId = window.setTimeout(() => {
+      const pending = pendingWorkerRequests.get(requestId)
+      if (!pending) return
+
+      window.clearTimeout(pending.timeoutId)
       pendingWorkerRequests.delete(requestId)
-      rejectPendingWorkerRequests(timeoutError('PNG conversion', timeoutMs))
-      terminateConversionWorker()
-      reject(timeoutError('PNG conversion', timeoutMs))
+      pending.reject(timeoutError('PNG conversion', timeoutMs))
+      if (!pendingWorkerRequests.size) {
+        terminateConversionWorker()
+      }
     }, timeoutMs)
 
     pendingWorkerRequests.set(requestId, { resolve, reject, timeoutId })
