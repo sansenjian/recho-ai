@@ -72,6 +72,7 @@ describe('admin image helpers', () => {
       prompt: 'fallback prompt',
       user_prompt: 'make image with api_key=sk-secret-value-that-should-not-leak-123456',
       thumbnail_path: 'thumbs/img_1.webp',
+      thumbnail_url: 'https://old.example.test/broken-thumb.webp',
       preview_url: 'https://preview.example.test/img_1.webp',
       visibility: 'public',
       funding_source: 'free',

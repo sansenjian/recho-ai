@@ -487,12 +487,21 @@ function missingNullableDataUrlSchema(error: { message?: string; code?: string }
   return error.code === '23502' && /data_url/i.test(error.message || '')
 }
 
+function publicUrlField(value?: string | null) {
+  if (!value) return undefined
+  return /^https?:\/\//i.test(value) || isInlineDataUrl(value) ? value : undefined
+}
+
+function storagePublicUrl(storagePath?: string | null, fallbackUrl?: string | null) {
+  return imagePublicUrl(storagePath) || publicUrlField(fallbackUrl)
+}
+
 function imageFromRow(row: ImageHistoryRow, options: { includeOriginal?: boolean } = {}): ImageHistoryItem {
   const previewPath = row.preview_path || undefined
-  const originalUrl = row.data_url || imagePublicUrl(row.storage_path) || ''
-  const previewUrl = row.preview_url || imagePublicUrl(previewPath) || originalUrl || undefined
+  const originalUrl = storagePublicUrl(row.storage_path, row.data_url) || ''
+  const previewUrl = storagePublicUrl(previewPath, row.preview_url) || originalUrl || undefined
   const thumbnailPath = row.thumbnail_path || undefined
-  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath) || previewUrl
+  const thumbnailUrl = storagePublicUrl(thumbnailPath, row.thumbnail_url) || previewUrl
   const userPrompt = row.user_prompt || row.prompt || ''
   const references = referencesFromRow(row)
   return {
@@ -540,10 +549,10 @@ function isInlineDataUrl(value?: string | null) {
 function referenceSummary(reference: ImageHistoryReference): ImageHistoryReference | null {
   const plain = plainReference(reference)
   if (!plain) return null
-  const previewUrl = plain.previewUrl || imagePublicUrl(plain.previewPath)
-  const thumbnailUrl = plain.thumbnailUrl || imagePublicUrl(plain.thumbnailPath)
+  const previewUrl = storagePublicUrl(plain.previewPath, plain.previewUrl)
+  const thumbnailUrl = storagePublicUrl(plain.thumbnailPath, plain.thumbnailUrl)
   const originalUrl = imagePublicUrl(plain.storagePath)
-  const displayUrl = thumbnailUrl || previewUrl || originalUrl || (!isInlineDataUrl(plain.dataUrl) ? plain.dataUrl : undefined)
+  const displayUrl = thumbnailUrl || previewUrl || originalUrl || publicUrlField(plain.dataUrl)
 
   return {
     id: plain.id,
@@ -568,9 +577,9 @@ function referencesFromRow(row: ImageHistoryRow) {
 function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
   const previewPath = row.preview_path || undefined
   const originalUrl = imagePublicUrl(row.storage_path) || ''
-  const previewUrl = row.preview_url || imagePublicUrl(previewPath) || originalUrl || undefined
+  const previewUrl = storagePublicUrl(previewPath, row.preview_url) || originalUrl || undefined
   const thumbnailPath = row.thumbnail_path || undefined
-  const thumbnailUrl = row.thumbnail_url || imagePublicUrl(thumbnailPath) || previewUrl
+  const thumbnailUrl = storagePublicUrl(thumbnailPath, row.thumbnail_url) || previewUrl
   const userPrompt = row.user_prompt || row.prompt || ''
   const references = row.reference_images ? referencesFromRow(row) : []
   return {

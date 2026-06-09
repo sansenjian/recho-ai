@@ -114,6 +114,11 @@ function stringField(row: Record<string, unknown>, key: string) {
   return typeof value === 'string' && value ? value : null
 }
 
+function publicUrlField(row: Record<string, unknown>, key: string) {
+  const value = stringField(row, key)
+  return value && /^https?:\/\//i.test(value) ? value : null
+}
+
 function normalizedInteger(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
@@ -140,8 +145,8 @@ export function toAdminImageItem(
     userId: stringField(row, 'user_id'),
     email: user?.email || null,
     prompt,
-    previewUrl: stringField(row, 'preview_url') || imagePublicUrl(previewPath) || null,
-    thumbnailUrl: stringField(row, 'thumbnail_url') || imagePublicUrl(thumbnailPath) || null,
+    previewUrl: imagePublicUrl(previewPath) || publicUrlField(row, 'preview_url') || null,
+    thumbnailUrl: imagePublicUrl(thumbnailPath) || publicUrlField(row, 'thumbnail_url') || null,
     visibility,
     fundingSource: stringField(row, 'funding_source'),
     creditCost: normalizedInteger(row.credit_cost),
