@@ -1,9 +1,11 @@
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
 import type { Message } from '../types'
+import { configureHighlightJs } from './configureHighlightJs'
 import { stripThinking } from './messageText'
 
 export { extractThinking, sanitizeVisibleAssistantText, stripThinking } from './messageText'
+
+const hljs = configureHighlightJs()
 
 const md: MarkdownIt = new MarkdownIt({
   breaks: true,
