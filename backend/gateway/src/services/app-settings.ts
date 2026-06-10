@@ -156,6 +156,21 @@ function isUuid(value: unknown) {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
+function lastAdminRuleError(error: unknown) {
+  const text = [
+    (error as any)?.message,
+    (error as any)?.details,
+    (error as any)?.hint,
+  ].filter(Boolean).join(' ')
+  return text.includes('last_admin_rule')
+}
+
+function lastAdminRuleAppError() {
+  return new AppSettingsError('last_admin_rule', {
+    publicMessage: '至少保留一个可用的后台管理员。',
+  })
+}
+
 function sanitizeNote(value: unknown) {
   if (typeof value !== 'string') return null
   const note = value.trim()
@@ -343,9 +358,7 @@ async function assertCanDisableAdminUserRule(ruleId: string) {
   if (!rule || !rule.enabled) return
 
   if (!hasRemainingEnabledAdminRule(database.databaseRules, ruleId)) {
-    throw new AppSettingsError('last_admin_rule', {
-      publicMessage: '至少保留一个可用的后台管理员。',
-    })
+    throw lastAdminRuleAppError()
   }
 }
 
@@ -380,7 +393,7 @@ export async function updateAppSettings(input: Record<string, unknown>, adminUse
 export async function createAdminUserRule(input: Record<string, unknown>, adminUser: RequestUser) {
   const rawUserId = typeof input.userId === 'string' ? input.userId.trim() : ''
   const rawEmail = typeof input.email === 'string' ? input.email.trim() : ''
-  const userId = rawUserId ? isUuid(rawUserId) ? rawUserId : null : null
+  const userId = rawUserId && isUuid(rawUserId) ? rawUserId : null
   const email = rawEmail ? normalizeEmail(rawEmail) : null
   if (rawUserId && !userId) throw new AppSettingsError('invalid_admin_identity', {
     publicMessage: '请输入有效的用户 ID 或邮箱。',
@@ -412,7 +425,10 @@ export async function createAdminUserRule(input: Record<string, unknown>, adminU
     .select('id,user_id,email,enabled,note,created_at,updated_at')
     .maybeSingle()
 
-  if (error) throw error
+  if (error) {
+    if (lastAdminRuleError(error)) throw lastAdminRuleAppError()
+    throw error
+  }
   adminUsersCache = null
   return toAdminUserRule(data as Record<string, unknown>)
 }
@@ -444,7 +460,10 @@ export async function updateAdminUserRule(ruleId: string, input: Record<string, 
     .select('id,user_id,email,enabled,note,created_at,updated_at')
     .maybeSingle()
 
-  if (error) throw error
+  if (error) {
+    if (lastAdminRuleError(error)) throw lastAdminRuleAppError()
+    throw error
+  }
   if (!data) throw new AppSettingsError('invalid_admin_rule_id')
 
   adminUsersCache = null

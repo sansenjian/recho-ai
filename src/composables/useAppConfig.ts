@@ -47,7 +47,7 @@ export async function ensureAppConfig(options: { refresh?: boolean } = {}) {
       })
       .catch((error) => {
         console.warn('[app-config] using fallback config', error)
-        loaded.value = true
+        configPromise = null
         return config.value
       })
     : configPromise

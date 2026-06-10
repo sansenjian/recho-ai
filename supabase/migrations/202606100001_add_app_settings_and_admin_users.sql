@@ -34,11 +34,48 @@ create unique index if not exists admin_users_user_id_unique
   where user_id is not null;
 
 create unique index if not exists admin_users_email_unique
-  on public.admin_users (lower(email))
+  on public.admin_users (email)
   where email is not null;
 
 create index if not exists admin_users_enabled_idx
   on public.admin_users (enabled, updated_at desc);
+
+create or replace function public.prevent_disabling_last_admin_user()
+returns trigger
+language plpgsql
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('public.admin_users.enabled_admin_guard'));
+
+  if not exists (
+    select 1
+    from public.admin_users
+    where enabled = true
+  ) then
+    raise exception 'last_admin_rule'
+      using errcode = 'P0001';
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+revoke all on function public.prevent_disabling_last_admin_user() from public, anon, authenticated;
+grant execute on function public.prevent_disabling_last_admin_user() to service_role;
+
+drop trigger if exists admin_users_prevent_last_enabled_update on public.admin_users;
+create trigger admin_users_prevent_last_enabled_update
+  after update of enabled on public.admin_users
+  for each row
+  when (old.enabled = true and new.enabled = false)
+  execute function public.prevent_disabling_last_admin_user();
+
+drop trigger if exists admin_users_prevent_last_enabled_delete on public.admin_users;
+create trigger admin_users_prevent_last_enabled_delete
+  after delete on public.admin_users
+  for each row
+  when (old.enabled = true)
+  execute function public.prevent_disabling_last_admin_user();
 
 alter table public.app_settings enable row level security;
 alter table public.admin_users enable row level security;

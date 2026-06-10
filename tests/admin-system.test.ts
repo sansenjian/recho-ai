@@ -15,6 +15,16 @@ vi.mock('../backend/gateway/src/config', () => ({
   IMAGE_EVENTS_ENABLED: true,
   CANVAS_CONTEXT_ENABLED: true,
   IMAGE_GEN_API_KEY: 'sk-secret-image-key-that-must-not-leak',
+  IMAGE_GEN_BASE_URL: '',
+  OPENAI_API_KEY: '',
+  OPENAI_BASE_URL: '',
+  KIMI_API_KEY: '',
+  KIMI_BASE_URL: '',
+  NVIDIA_API_KEY: '',
+  NVIDIA_BASE_URL: '',
+  SUPABASE_URL: '',
+  SUPABASE_SERVICE_ROLE_KEY: '',
+  SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_IMAGE_BUCKET: 'secret-bucket-name',
 }))
 
@@ -168,6 +178,45 @@ describe('admin system status helpers', () => {
     expect(status.warnings).toContain('2 个后台数据表不可读')
     expect(JSON.stringify(status)).not.toContain('secret-project.supabase.co')
     expect(JSON.stringify(status)).not.toContain('service_role=secret')
+  })
+
+  it('keeps table diagnostics when settings and admin access summaries fail', async () => {
+    const { getAdminSystemStatus } = await import('../backend/gateway/src/services/admin-system')
+    tableErrors = {
+      app_settings: {
+        code: '42501',
+        message: 'permission denied for app settings with secret token',
+      },
+      admin_users: {
+        code: '42501',
+        message: 'permission denied for admin users with secret token',
+      },
+    }
+
+    const status = await getAdminSystemStatus()
+
+    expect(status.data.tables.find(table => table.key === 'appSettings')).toMatchObject({
+      status: 'restricted',
+      message: '权限不足',
+      count: null,
+    })
+    expect(status.data.tables.find(table => table.key === 'adminUsers')).toMatchObject({
+      status: 'restricted',
+      message: '权限不足',
+      count: null,
+    })
+    expect(status.config.imageGeneration).toMatchObject({
+      creditCostPerImage: 3,
+      analyticsEnabled: true,
+    })
+    expect(status.config.adminUsers).toMatchObject({
+      configured: true,
+      databaseCount: 0,
+      envUserIdCount: 1,
+      envEmailCount: 1,
+      tableAvailable: false,
+    })
+    expect(JSON.stringify(status)).not.toContain('secret token')
   })
 
   it('marks blocking config gaps as errors', async () => {

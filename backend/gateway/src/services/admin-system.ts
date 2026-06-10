@@ -7,7 +7,8 @@ import {
   hasSupabaseAdminConfig,
   hasSupabaseConfig,
 } from '../clients/supabase.js'
-import { getAdminAccessSummary, getAppSettings } from './app-settings.js'
+import { DEFAULT_APP_SETTINGS, getAdminAccessSummary, getAppSettings, type AdminAccessSummary } from './app-settings.js'
+import { safeErrorDetail } from './safe-error.js'
 
 type SystemStatus = 'ok' | 'warning' | 'error'
 type TableStatus = 'ok' | 'missing' | 'restricted' | 'error' | 'unavailable'
@@ -197,11 +198,29 @@ async function checkAdminTable(definition: AdminTableDefinition): Promise<AdminS
 }
 
 export async function getAdminSystemStatus() {
-  const [tables, settings, adminAccess] = await Promise.all([
-    Promise.all(ADMIN_TABLES.map(checkAdminTable)),
-    getAppSettings(),
-    getAdminAccessSummary(),
-  ])
+  const tables = await Promise.all(ADMIN_TABLES.map(checkAdminTable))
+  let settings = DEFAULT_APP_SETTINGS
+  let adminAccess: AdminAccessSummary = {
+    configured: false,
+    userIdCount: 0,
+    emailCount: 0,
+    databaseCount: 0,
+    envUserIdCount: 0,
+    envEmailCount: 0,
+    tableAvailable: false,
+  }
+
+  try {
+    settings = await getAppSettings()
+  } catch (err) {
+    console.warn('[admin-system] settings diagnostics fallback:', safeErrorDetail(err))
+  }
+
+  try {
+    adminAccess = await getAdminAccessSummary()
+  } catch (err) {
+    console.warn('[admin-system] admin access diagnostics fallback:', safeErrorDetail(err))
+  }
 
   return summarizeAdminSystemStatus({
     tables,

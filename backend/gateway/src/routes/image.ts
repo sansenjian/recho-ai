@@ -606,12 +606,12 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       typeof item?.dataUrl === 'string' && item.dataUrl.trim()
     ))
     : []
-  const sizeError = validateGptImage2Size(size)
   const requestStartedAt = Date.now()
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
   const appSettings = await getAppSettings()
   const imageModel = appSettings.imageResponsesImageModel
+  const sizeError = imageModel === 'gpt-image-2' ? validateGptImage2Size(size) : null
   const creditCostPerImage = appSettings.imageCreditCostPerImage
   const requestedCreditCost = imageCreditCost(count, creditCostPerImage)
   let userId: string | null = null

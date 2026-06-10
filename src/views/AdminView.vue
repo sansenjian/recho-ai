@@ -462,7 +462,8 @@ function syncSettingsForm(settings: AdminAppSettings) {
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
-  return rule.email || (rule.userId ? shortId(rule.userId) : '-')
+  const userId = rule.userId ? `id: ${shortId(rule.userId)}` : ''
+  return [rule.email, userId].filter(Boolean).join(' / ') || '-'
 }
 
 function adminRuleSource(rule: AdminUserRule) {

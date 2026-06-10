@@ -389,7 +389,7 @@ const {
   generationCountOptions,
   generationCountForNode,
   setGenerationCount,
-  generateFromNode,
+  generateFromNode: generateFromNodeWithConfig,
   createContinuation,
 } = useImageCanvasGeneration({
   nodes,
@@ -406,6 +406,11 @@ const {
   buildCanvasContext,
   generate,
 })
+
+async function generateFromNode(node: CanvasNode) {
+  await ensureAppConfig()
+  await generateFromNodeWithConfig(node)
+}
 
 function updateNodeContent(node: CanvasNode, value: string) {
   node.content = value

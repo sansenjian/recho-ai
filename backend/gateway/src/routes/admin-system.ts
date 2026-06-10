@@ -15,7 +15,7 @@ import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
 
-function adminSystemErrorResponse(err: unknown) {
+function adminSystemErrorResponse(err: unknown, fallback = '系统状态加载失败，请稍后重试。') {
   if (err instanceof AdminCreditError) {
     return {
       status: err.status,
@@ -32,7 +32,7 @@ function adminSystemErrorResponse(err: unknown) {
 
   return {
     status: typeof (err as any)?.status === 'number' ? (err as any).status : 500,
-    error: publicErrorMessage(err, '系统状态加载失败，请稍后重试。'),
+    error: publicErrorMessage(err, fallback),
   }
 }
 
@@ -52,7 +52,7 @@ router.get('/admin/system', async (req: Request, res: Response) => {
     res.json({ system })
   } catch (err) {
     console.error('[admin-system] status failed:', safeErrorDetail(err))
-    const response = adminSystemErrorResponse(err)
+    const response = adminSystemErrorResponse(err, '系统状态加载失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })
@@ -68,7 +68,7 @@ router.get('/admin/settings', async (req: Request, res: Response) => {
     res.json({ settings, adminUsers, adminAccess })
   } catch (err) {
     console.error('[admin-settings] load failed:', safeErrorDetail(err))
-    const response = adminSystemErrorResponse(err)
+    const response = adminSystemErrorResponse(err, '配置加载失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })
@@ -80,7 +80,7 @@ router.patch('/admin/settings', async (req: Request, res: Response) => {
     res.json({ settings })
   } catch (err) {
     console.error('[admin-settings] update failed:', safeErrorDetail(err))
-    const response = adminSystemErrorResponse(err)
+    const response = adminSystemErrorResponse(err, '配置保存失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })
@@ -96,7 +96,7 @@ router.post('/admin/settings/admin-users', async (req: Request, res: Response) =
     res.json({ rule, adminUsers, adminAccess })
   } catch (err) {
     console.error('[admin-settings] admin user create failed:', safeErrorDetail(err))
-    const response = adminSystemErrorResponse(err)
+    const response = adminSystemErrorResponse(err, '管理员规则创建失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })
@@ -112,7 +112,7 @@ router.patch('/admin/settings/admin-users/:ruleId', async (req: Request, res: Re
     res.json({ rule, adminUsers, adminAccess })
   } catch (err) {
     console.error('[admin-settings] admin user update failed:', safeErrorDetail(err))
-    const response = adminSystemErrorResponse(err)
+    const response = adminSystemErrorResponse(err, '管理员规则更新失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })

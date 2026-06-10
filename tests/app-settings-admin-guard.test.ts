@@ -76,4 +76,44 @@ describe('app settings admin guardrails', () => {
     })
     expect(updateMock).not.toHaveBeenCalled()
   })
+
+  it('maps database last-admin trigger failures to a safe app error', async () => {
+    const { updateAdminUserRule } = await import('../backend/gateway/src/services/app-settings')
+    adminUserRows = [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        user_id: '22222222-2222-4222-8222-222222222222',
+        email: null,
+        enabled: true,
+        note: null,
+      },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        user_id: '44444444-4444-4444-8444-444444444444',
+        email: null,
+        enabled: true,
+        note: null,
+      },
+    ]
+    updateMock.mockReturnValue({
+      eq: vi.fn(() => ({
+        select: vi.fn(() => ({
+          maybeSingle: vi.fn(async () => ({
+            data: null,
+            error: { code: 'P0001', message: 'last_admin_rule' },
+          })),
+        })),
+      })),
+    })
+
+    await expect(updateAdminUserRule(
+      '11111111-1111-4111-8111-111111111111',
+      { enabled: false },
+      { id: '22222222-2222-4222-8222-222222222222', email: null },
+    )).rejects.toMatchObject({
+      message: 'last_admin_rule',
+      publicMessage: '至少保留一个可用的后台管理员。',
+    })
+    expect(updateMock).toHaveBeenCalled()
+  })
 })

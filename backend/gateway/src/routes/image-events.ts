@@ -24,10 +24,8 @@ function safeKeyPart(value: unknown, maxLength = 120) {
 function eventRateLimitKey(req: Request, userId?: string | null) {
   if (userId) return `user:${userId}`
 
-  const sessionId = safeKeyPart(req.body?.sessionId)
-  if (sessionId) return `session:${sessionId}`
-
-  return `ip:${safeKeyPart(req.ip || req.socket.remoteAddress || 'unknown', 80) || 'unknown'}`
+  const ip = safeKeyPart(req.ip || req.socket.remoteAddress || 'unknown', 80) || 'unknown'
+  return `ip:${ip}`
 }
 
 function pruneEventRateBuckets(now = Date.now()) {

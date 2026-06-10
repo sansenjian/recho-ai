@@ -29,8 +29,6 @@ function toAdminUserSummary(user: User): AdminUserSummary {
 }
 
 function pruneUserCache(now = Date.now()) {
-  if (userCache.size <= ADMIN_USER_CACHE_MAX) return
-
   for (const [userId, cached] of userCache) {
     if (cached.expiresAt <= now) userCache.delete(userId)
     if (userCache.size <= ADMIN_USER_CACHE_MAX) return
@@ -40,6 +38,25 @@ function pruneUserCache(now = Date.now()) {
     userCache.delete(userId)
     if (userCache.size <= ADMIN_USER_CACHE_MAX) return
   }
+}
+
+function getCachedUser(userId: string, now = Date.now()) {
+  const cached = userCache.get(userId)
+  if (!cached) return null
+  if (cached.expiresAt <= now) {
+    userCache.delete(userId)
+    return null
+  }
+
+  userCache.delete(userId)
+  userCache.set(userId, cached)
+  return cached
+}
+
+function setCachedUser(userId: string, cached: { user: AdminUserSummary | null; expiresAt: number }, now = Date.now()) {
+  userCache.delete(userId)
+  userCache.set(userId, cached)
+  pruneUserCache(now)
 }
 
 export function clearAdminUserCache() {
@@ -53,8 +70,8 @@ export async function cachedAdminUsersById(client: AdminUserClient, userIds: str
   const misses: string[] = []
 
   for (const userId of uniqueUserIds) {
-    const cached = userCache.get(userId)
-    if (cached && cached.expiresAt > now) {
+    const cached = getCachedUser(userId, now)
+    if (cached) {
       if (cached.user) users.set(userId, cached.user)
       continue
     }
@@ -64,10 +81,8 @@ export async function cachedAdminUsersById(client: AdminUserClient, userIds: str
   await Promise.all(misses.map(async userId => {
     const { data, error } = await client.auth.admin.getUserById(userId)
     const user = !error && data.user ? toAdminUserSummary(data.user) : null
-    userCache.set(userId, { user, expiresAt: now + ADMIN_USER_CACHE_TTL_MS })
+    setCachedUser(userId, { user, expiresAt: now + ADMIN_USER_CACHE_TTL_MS }, now)
     if (user) users.set(userId, user)
   }))
-
-  pruneUserCache(now)
   return users
 }
