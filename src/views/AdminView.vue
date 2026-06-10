@@ -141,6 +141,10 @@ interface AdminSystemStatus {
       configured: boolean
       userIdCount: number
       emailCount: number
+      databaseCount: number
+      envUserIdCount: number
+      envEmailCount: number
+      tableAvailable: boolean
     }
   }
   data: {
@@ -185,6 +189,36 @@ interface AdminOverview {
   generatedAt: string
 }
 
+interface AdminAppSettings {
+  imageCreditCostPerImage: number
+  imageAnalyticsEnabled: boolean
+  imageResponsesModel: string
+  imageResponsesImageModel: string
+  imageEventsEnabled: boolean
+  canvasContextEnabled: boolean
+}
+
+interface AdminUserRule {
+  id: string
+  userId: string | null
+  email: string | null
+  enabled: boolean
+  note: string | null
+  source: 'database' | 'env'
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+interface AdminAccessSummary {
+  configured: boolean
+  userIdCount: number
+  emailCount: number
+  databaseCount: number
+  envUserIdCount: number
+  envEmailCount: number
+  tableAvailable: boolean
+}
+
 const {
   user,
   userEmail,
@@ -197,6 +231,8 @@ const isAdmin = ref(false)
 const loading = ref(false)
 const overviewLoading = ref(false)
 const systemLoading = ref(false)
+const settingsLoading = ref(false)
+const settingsSaving = ref(false)
 const ledgerLoading = ref(false)
 const actionLoading = ref(false)
 const errorMessage = ref('')
@@ -213,6 +249,9 @@ const codes = ref<AdminCode[]>([])
 const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
 const systemStatus = ref<AdminSystemStatus | null>(null)
+const appSettings = ref<AdminAppSettings | null>(null)
+const adminUserRules = ref<AdminUserRule[]>([])
+const adminAccess = ref<AdminAccessSummary | null>(null)
 const selectedCode = ref<AdminCode | null>(null)
 const codeRedemptions = ref<AdminCodeRedemption[]>([])
 
@@ -227,8 +266,24 @@ const imageActionId = ref<string | null>(null)
 const attemptStatusFilter = ref('')
 const attemptsLoading = ref(false)
 const codeRedemptionsLoading = ref(false)
+const adminRuleActionId = ref<string | null>(null)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
+
+const settingsForm = ref<AdminAppSettings>({
+  imageCreditCostPerImage: 1,
+  imageAnalyticsEnabled: false,
+  imageResponsesModel: 'gpt-image-2',
+  imageResponsesImageModel: 'gpt-image-2',
+  imageEventsEnabled: false,
+  canvasContextEnabled: false,
+})
+
+const adminUserForm = ref({
+  userId: '',
+  email: '',
+  note: '',
+})
 
 const codeForm = ref({
   prefix: 'RECHO',
@@ -271,6 +326,10 @@ const systemStatusLabel = computed(() => {
   if (systemStatus.value.status === 'warning') return '有告警'
   return '需处理'
 })
+
+const adminRuleTotal = computed(() => adminAccess.value
+  ? adminAccess.value.databaseCount + adminAccess.value.envUserIdCount + adminAccess.value.envEmailCount
+  : adminUserRules.value.length)
 
 const createdCsv = computed(() => {
   const rows = [
@@ -397,6 +456,19 @@ function tableStatusLabel(status: AdminSystemTableStatus['status']) {
   return '异常'
 }
 
+function syncSettingsForm(settings: AdminAppSettings) {
+  appSettings.value = settings
+  settingsForm.value = { ...settings }
+}
+
+function adminRuleIdentity(rule: AdminUserRule) {
+  return rule.email || (rule.userId ? shortId(rule.userId) : '-')
+}
+
+function adminRuleSource(rule: AdminUserRule) {
+  return rule.source === 'env' ? '环境变量' : '数据库'
+}
+
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAuthAccessToken()
   if (!token) throw new Error('请先登录。')
@@ -498,6 +570,51 @@ async function refreshSystem() {
     setError(error)
   } finally {
     systemLoading.value = false
+  }
+}
+
+async function refreshSettings() {
+  settingsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{
+      settings: AdminAppSettings
+      adminUsers: AdminUserRule[]
+      adminAccess: AdminAccessSummary
+    }>('/api/admin/settings')
+    syncSettingsForm(data.settings)
+    adminUserRules.value = data.adminUsers
+    adminAccess.value = data.adminAccess
+  } catch (error) {
+    setError(error)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+async function saveSettings() {
+  settingsSaving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ settings: AdminAppSettings }>('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        imageCreditCostPerImage: Number(settingsForm.value.imageCreditCostPerImage),
+        imageAnalyticsEnabled: Boolean(settingsForm.value.imageAnalyticsEnabled),
+        imageResponsesModel: settingsForm.value.imageResponsesModel,
+        imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
+        imageEventsEnabled: Boolean(settingsForm.value.imageEventsEnabled),
+        canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
+      }),
+    })
+    syncSettingsForm(data.settings)
+    noticeMessage.value = '配置已保存'
+    await Promise.all([refreshOverview(), refreshSystem()])
+  } catch (error) {
+    setError(error)
+  } finally {
+    settingsSaving.value = false
   }
 }
 
@@ -688,6 +805,65 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
   }
 }
 
+async function createAdminRule() {
+  if (!adminUserForm.value.userId.trim() && !adminUserForm.value.email.trim()) {
+    errorMessage.value = '请输入用户 ID 或邮箱。'
+    return
+  }
+
+  actionLoading.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{
+      adminUsers: AdminUserRule[]
+      adminAccess: AdminAccessSummary
+    }>('/api/admin/settings/admin-users', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: adminUserForm.value.userId.trim(),
+        email: adminUserForm.value.email.trim(),
+        note: adminUserForm.value.note,
+      }),
+    })
+    adminUserRules.value = data.adminUsers
+    adminAccess.value = data.adminAccess
+    adminUserForm.value = { userId: '', email: '', note: '' }
+    noticeMessage.value = '管理员规则已添加'
+    await refreshSystem()
+  } catch (error) {
+    setError(error)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
+  if (rule.source !== 'database') return
+  if (!enabled && !window.confirm('确认停用这个后台管理员规则？')) return
+
+  adminRuleActionId.value = rule.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{
+      adminUsers: AdminUserRule[]
+      adminAccess: AdminAccessSummary
+    }>(`/api/admin/settings/admin-users/${encodeURIComponent(rule.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    })
+    adminUserRules.value = data.adminUsers
+    adminAccess.value = data.adminAccess
+    noticeMessage.value = enabled ? '管理员规则已启用' : '管理员规则已停用'
+    await refreshSystem()
+  } catch (error) {
+    setError(error)
+  } finally {
+    adminRuleActionId.value = null
+  }
+}
+
 async function copyCreatedCsv() {
   if (!createdCodes.value.length) return
   try {
@@ -716,6 +892,7 @@ onMounted(async () => {
     await Promise.all([
       refreshOverview(),
       refreshSystem(),
+      refreshSettings(),
       refreshLedger(),
       refreshImages(),
       refreshAttempts(),
@@ -834,7 +1011,7 @@ onMounted(async () => {
           </div>
           <div>
             <span>管理员规则</span>
-            <strong>{{ systemStatus ? systemStatus.config.adminUsers.userIdCount + systemStatus.config.adminUsers.emailCount : '-' }}</strong>
+            <strong>{{ systemStatus ? systemStatus.config.adminUsers.databaseCount + systemStatus.config.adminUsers.envUserIdCount + systemStatus.config.adminUsers.envEmailCount : '-' }}</strong>
           </div>
           <div>
             <span>生图监控</span>
@@ -872,6 +1049,107 @@ onMounted(async () => {
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section class="admin-grid settings-grid" aria-label="运行时配置">
+        <div class="admin-panel settings-panel">
+          <div class="panel-header">
+            <div>
+              <span>运行时配置</span>
+              <strong>{{ appSettings ? '已加载' : '等待加载' }}</strong>
+            </div>
+            <button type="button" :disabled="settingsLoading" @click="refreshSettings">刷新</button>
+          </div>
+
+          <form class="settings-form" @submit.prevent="saveSettings">
+            <label>
+              <span>单图额度</span>
+              <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="1" step="1">
+            </label>
+            <label>
+              <span>响应模型</span>
+              <input v-model.trim="settingsForm.imageResponsesModel" type="text">
+            </label>
+            <label>
+              <span>生图模型</span>
+              <input v-model.trim="settingsForm.imageResponsesImageModel" type="text">
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.imageAnalyticsEnabled" type="checkbox">
+              <span>分析记录</span>
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.imageEventsEnabled" type="checkbox">
+              <span>前端事件</span>
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.canvasContextEnabled" type="checkbox">
+              <span>画布上下文</span>
+            </label>
+            <button type="submit" :disabled="settingsSaving">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
+          </form>
+        </div>
+
+        <div class="admin-panel admin-users-panel">
+          <div class="panel-header">
+            <div>
+              <span>后台管理员</span>
+              <strong>{{ adminRuleTotal }}</strong>
+            </div>
+            <button type="button" :disabled="settingsLoading" @click="refreshSettings">刷新</button>
+          </div>
+
+          <form class="admin-user-form" @submit.prevent="createAdminRule">
+            <label>
+              <span>用户 ID</span>
+              <input v-model.trim="adminUserForm.userId" type="text">
+            </label>
+            <label>
+              <span>邮箱</span>
+              <input v-model.trim="adminUserForm.email" type="email">
+            </label>
+            <label class="wide">
+              <span>备注</span>
+              <input v-model.trim="adminUserForm.note" type="text">
+            </label>
+            <button type="submit" :disabled="actionLoading">添加</button>
+          </form>
+
+          <div class="table-wrap">
+            <table class="admin-rule-table">
+              <thead>
+                <tr>
+                  <th>账号</th>
+                  <th>来源</th>
+                  <th>状态</th>
+                  <th>更新</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="rule in adminUserRules" :key="rule.id">
+                  <td>{{ adminRuleIdentity(rule) }}</td>
+                  <td>{{ adminRuleSource(rule) }}</td>
+                  <td :class="rule.enabled ? 'positive' : 'negative'">{{ rule.enabled ? '启用' : '停用' }}</td>
+                  <td>{{ dateTime(rule.updatedAt) }}</td>
+                  <td>
+                    <button
+                      type="button"
+                      class="table-action"
+                      :disabled="rule.source !== 'database' || adminRuleActionId === rule.id"
+                      @click="setAdminRuleEnabled(rule, !rule.enabled)"
+                    >
+                      {{ rule.enabled ? '停用' : '启用' }}
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="!adminUserRules.length">
+                  <td colspan="5">暂无管理员规则</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1330,7 +1608,9 @@ onMounted(async () => {
 .panel-header span,
 .metric-grid span,
 .adjust-form span,
-.code-form span {
+.code-form span,
+.settings-form span,
+.admin-user-form span {
   display: block;
   color: var(--text-secondary);
   font-size: 12px;
@@ -1358,6 +1638,8 @@ onMounted(async () => {
 .search-row button,
 .adjust-form button,
 .code-form button,
+.settings-form button,
+.admin-user-form button,
 .created-actions button,
 .table-action {
   min-height: 34px;
@@ -1382,6 +1664,8 @@ onMounted(async () => {
 .search-row button:hover:not(:disabled),
 .adjust-form button:hover:not(:disabled),
 .code-form button:hover:not(:disabled),
+.settings-form button:hover:not(:disabled),
+.admin-user-form button:hover:not(:disabled),
 .created-actions button:hover,
 .table-action:hover:not(:disabled) {
   border-color: var(--border-strong);
@@ -1501,6 +1785,10 @@ button:disabled {
 
 .codes-grid {
   grid-template-columns: minmax(360px, 0.8fr) minmax(0, 1.2fr);
+}
+
+.settings-grid {
+  grid-template-columns: minmax(360px, 0.95fr) minmax(0, 1.05fr);
 }
 
 .admin-panel {
@@ -1677,7 +1965,9 @@ textarea {
 }
 
 .adjust-form,
-.code-form {
+.code-form,
+.settings-form,
+.admin-user-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   align-items: end;
@@ -1689,12 +1979,43 @@ textarea {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.code-form .wide {
+.settings-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-user-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.code-form .wide,
+.admin-user-form .wide {
   grid-column: span 2;
 }
 
-.code-form button {
+.code-form button,
+.settings-form button,
+.admin-user-form button {
   align-self: end;
+}
+
+.settings-form .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.settings-form .check-row input {
+  width: auto;
+  min-height: auto;
+}
+
+.settings-form .check-row span {
+  color: var(--text-primary);
 }
 
 .table-wrap {
@@ -1753,6 +2074,10 @@ textarea {
 
 .system-table {
   min-width: 620px;
+}
+
+.admin-rule-table {
+  min-width: 680px;
 }
 
 .image-table-wrap {
@@ -1908,7 +2233,8 @@ tbody tr:last-child td {
 
 @media (max-width: 980px) {
   .admin-grid,
-  .codes-grid {
+  .codes-grid,
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1936,7 +2262,9 @@ tbody tr:last-child td {
 
   .admin-header,
   .adjust-form,
-  .code-form {
+  .code-form,
+  .settings-form,
+  .admin-user-form {
     grid-template-columns: 1fr;
   }
 
@@ -1957,7 +2285,8 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
-  .code-form .wide {
+  .code-form .wide,
+  .admin-user-form .wide {
     grid-column: auto;
   }
 }

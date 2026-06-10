@@ -1,5 +1,5 @@
-import type { User } from '@supabase/supabase-js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { cachedAdminUsersById, type AdminUserSummary } from './admin-user-cache.js'
 import { imagePublicUrl } from './image-storage.js'
 import { redactSensitiveText } from './safe-error.js'
 
@@ -124,16 +124,9 @@ function normalizedInteger(value: unknown) {
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
 }
 
-function toUserSummary(user: User) {
-  return {
-    id: user.id,
-    email: user.email || null,
-  }
-}
-
 export function toAdminImageItem(
   row: Record<string, unknown>,
-  user?: ReturnType<typeof toUserSummary>,
+  user?: AdminUserSummary,
 ): AdminImageItem {
   const previewPath = stringField(row, 'preview_path')
   const thumbnailPath = stringField(row, 'thumbnail_path')
@@ -160,16 +153,7 @@ export function toAdminImageItem(
 
 async function usersById(userIds: string[]) {
   const client = requireAdminImageClient()
-  const users = new Map<string, ReturnType<typeof toUserSummary>>()
-
-  await Promise.all(userIds.map(async userId => {
-    const { data, error } = await client.auth.admin.getUserById(userId)
-    if (!error && data.user) {
-      users.set(userId, toUserSummary(data.user))
-    }
-  }))
-
-  return users
+  return await cachedAdminUsersById(client, userIds)
 }
 
 export async function listAdminImages(options: {
@@ -244,6 +228,6 @@ export async function setAdminImageVisibility(id: string, visibilityValue: unkno
 
   const updatedRow = data as unknown as Record<string, unknown>
   const userId = stringField(updatedRow, 'user_id')
-  const users = userId ? await usersById([userId]) : new Map<string, ReturnType<typeof toUserSummary>>()
+  const users = userId ? await usersById([userId]) : new Map<string, AdminUserSummary>()
   return toAdminImageItem(updatedRow, userId ? users.get(userId) : undefined)
 }

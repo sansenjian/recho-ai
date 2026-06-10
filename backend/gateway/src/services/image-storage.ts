@@ -8,6 +8,8 @@ const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 const IMAGE_CACHE_CONTROL = '31536000'
 const LOSSLESS_WEBP_MIME = 'image/webp'
 const LOSSLESS_WEBP_EXTENSION = 'webp'
+const PUBLIC_URL_CACHE_MS = 10 * 60 * 1000
+const PUBLIC_URL_CACHE_MAX = 10_000
 
 export interface StoredImage {
   publicUrl: string
@@ -94,6 +96,7 @@ function safePathPart(value: string) {
 }
 
 let bucketReady = false
+const publicUrlCache = new Map<string, { publicUrl: string; expiresAt: number }>()
 
 async function ensureImageBucket() {
   const client = getSupabaseAdminClient()
@@ -127,11 +130,57 @@ export function isStorageUrl(value: string) {
 
 export function imagePublicUrl(storagePath?: string | null) {
   if (!storagePath) return undefined
+  const now = Date.now()
+  const cached = publicUrlCache.get(storagePath)
+  if (cached && cached.expiresAt > now) return cached.publicUrl
+
   const client = getSupabaseAdminClient()
   if (!client) return undefined
-  return client.storage
+
+  const publicUrl = client.storage
     .from(SUPABASE_IMAGE_BUCKET)
     .getPublicUrl(storagePath).data.publicUrl
+  publicUrlCache.set(storagePath, { publicUrl, expiresAt: now + PUBLIC_URL_CACHE_MS })
+  prunePublicUrlCache(now)
+  return publicUrl
+}
+
+function prunePublicUrlCache(now = Date.now()) {
+  if (publicUrlCache.size <= PUBLIC_URL_CACHE_MAX) return
+
+  for (const [path, cached] of publicUrlCache) {
+    if (cached.expiresAt <= now) publicUrlCache.delete(path)
+    if (publicUrlCache.size <= PUBLIC_URL_CACHE_MAX) return
+  }
+
+  for (const path of publicUrlCache.keys()) {
+    publicUrlCache.delete(path)
+    if (publicUrlCache.size <= PUBLIC_URL_CACHE_MAX) return
+  }
+}
+
+export function clearImagePublicUrlCache(paths?: string[]) {
+  if (!paths) {
+    publicUrlCache.clear()
+    return
+  }
+  for (const path of paths) publicUrlCache.delete(path)
+}
+
+export async function removeImageStoragePaths(paths: Array<string | null | undefined>) {
+  const uniquePaths = Array.from(new Set(paths.filter((path): path is string => Boolean(path))))
+  if (!uniquePaths.length) return false
+
+  const client = getSupabaseAdminClient()
+  if (!client) return false
+
+  const { error } = await client.storage
+    .from(SUPABASE_IMAGE_BUCKET)
+    .remove(uniquePaths)
+  if (error) throw error
+
+  clearImagePublicUrlCache(uniquePaths)
+  return true
 }
 
 export async function downloadImageBuffer(storagePath: string) {

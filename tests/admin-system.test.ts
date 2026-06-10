@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let tableCounts: Record<string, number> = {}
 let tableErrors: Record<string, unknown> = {}
+let appSettingRows: Array<Record<string, unknown>> = []
+let adminUserRows: Array<Record<string, unknown>> = []
 
 vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['admin@example.test'],
   ADMIN_USER_IDS: ['admin-user-id'],
   IMAGE_ANALYTICS_ENABLED: true,
   IMAGE_CREDIT_COST_PER_IMAGE: 3,
+  IMAGE_RESPONSES_MODEL: 'gpt-image-2',
+  IMAGE_RESPONSES_IMAGE_MODEL: 'gpt-image-2',
+  IMAGE_EVENTS_ENABLED: true,
+  CANVAS_CONTEXT_ENABLED: true,
   IMAGE_GEN_API_KEY: 'sk-secret-image-key-that-must-not-leak',
   SUPABASE_IMAGE_BUCKET: 'secret-bucket-name',
 }))
@@ -16,12 +22,50 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
   hasSupabaseAdminConfig: () => true,
   hasSupabaseConfig: () => true,
   getSupabaseAdminClient: () => ({
-    from: (table: string) => ({
-      select: vi.fn(async () => ({
-        count: tableCounts[table] ?? 0,
-        error: tableErrors[table] ?? null,
-      })),
-    }),
+    from: (table: string) => {
+      if (table === 'app_settings') {
+        return {
+          select: vi.fn(async (_columns: string, options?: { head?: boolean }) => {
+            if (options?.head) {
+              return {
+                count: tableCounts[table] ?? appSettingRows.length,
+                error: tableErrors[table] ?? null,
+              }
+            }
+            return {
+              data: appSettingRows,
+              error: tableErrors[table] ?? null,
+            }
+          }),
+        }
+      }
+
+      if (table === 'admin_users') {
+        return {
+          select: vi.fn((_columns: string, options?: { head?: boolean }) => {
+            if (options?.head) {
+              return Promise.resolve({
+                count: tableCounts[table] ?? adminUserRows.length,
+                error: tableErrors[table] ?? null,
+              })
+            }
+            return {
+              order: vi.fn(async () => ({
+                data: adminUserRows,
+                error: tableErrors[table] ?? null,
+              })),
+            }
+          }),
+        }
+      }
+
+      return {
+        select: vi.fn(async () => ({
+          count: tableCounts[table] ?? 0,
+          error: tableErrors[table] ?? null,
+        })),
+      }
+    },
   }),
 }))
 
@@ -29,6 +73,8 @@ describe('admin system status helpers', () => {
   beforeEach(() => {
     tableCounts = {}
     tableErrors = {}
+    appSettingRows = []
+    adminUserRows = []
     vi.resetModules()
   })
 
@@ -42,7 +88,21 @@ describe('admin system status helpers', () => {
       image_generation_attempts: 6,
       image_generation_contexts: 7,
       image_events: 8,
+      app_settings: 6,
+      admin_users: 1,
     }
+    appSettingRows = [
+      { key: 'image_credit_cost_per_image', value: 3 },
+      { key: 'image_analytics_enabled', value: true },
+    ]
+    adminUserRows = [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        user_id: 'admin-user-id',
+        email: null,
+        enabled: true,
+      },
+    ]
 
     const status = await getAdminSystemStatus()
 
@@ -62,9 +122,13 @@ describe('admin system status helpers', () => {
         configured: true,
         userIdCount: 1,
         emailCount: 1,
+        databaseCount: 1,
+        envUserIdCount: 1,
+        envEmailCount: 1,
+        tableAvailable: true,
       },
     })
-    expect(status.data.tables).toHaveLength(7)
+    expect(status.data.tables).toHaveLength(9)
     expect(status.data.tables.every(table => table.status === 'ok')).toBe(true)
     expect(status.warnings).toEqual([])
 

@@ -1,6 +1,7 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import {
   imagePublicUrl,
+  removeImageStoragePaths,
   storeImageBuffer,
   storeImageDataUrl,
 } from './image-storage.js'
@@ -8,12 +9,44 @@ import {
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
 const DEFAULT_HISTORY_LIMIT = 12
+const IMAGE_HISTORY_UPSERT_CHUNK_SIZE = 50
 
 function withoutColumn(columns: string, column: string) {
   return columns
     .split(',')
     .filter(item => item !== column)
     .join(',')
+}
+
+function chunkArray<T>(items: T[], chunkSize: number) {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize))
+  }
+  return chunks
+}
+
+function imageHistoryDetailColumns(options: {
+  includeOriginal?: boolean
+  includeBatch?: boolean
+  includeCredits?: boolean
+  includeReferenceCount?: boolean
+} = {}) {
+  const columns = IMAGE_HISTORY_DETAIL_BASE_COLUMNS.filter(column => {
+    if (IMAGE_HISTORY_DETAIL_COLD_COLUMNS.has(column)) return false
+    if (column === 'generation_batch_id' && options.includeBatch === false) return false
+    if (column === 'reference_count' && options.includeReferenceCount === false) return false
+    if (
+      options.includeCredits === false &&
+      ['visibility', 'funding_source', 'credit_cost', 'credit_transaction_id'].includes(column)
+    ) {
+      return false
+    }
+    return true
+  })
+  return options.includeOriginal
+    ? ['data_url', ...columns].join(',')
+    : columns.join(',')
 }
 
 const IMAGE_HISTORY_BATCH_LIST_COLUMNS = [
@@ -132,6 +165,52 @@ const IMAGE_HISTORY_LEGACY_LIST_COLUMNS = [
   'reference_images',
   'generated_at',
 ].join(',')
+const IMAGE_HISTORY_DETAIL_BASE_COLUMNS = [
+  'id',
+  'user_id',
+  'generation_batch_id',
+  'storage_path',
+  'preview_url',
+  'preview_path',
+  'thumbnail_url',
+  'thumbnail_path',
+  'provider',
+  'image_model',
+  'text_model',
+  'latency_ms',
+  'image_width',
+  'image_height',
+  'original_bytes',
+  'preview_bytes',
+  'thumbnail_bytes',
+  'visibility',
+  'funding_source',
+  'credit_cost',
+  'credit_transaction_id',
+  'prompt',
+  'user_prompt',
+  'revised_prompt',
+  'size',
+  'aspect_ratio',
+  'resolution',
+  'quality',
+  'reference_images',
+  'reference_count',
+  'generated_at',
+] as const
+const IMAGE_HISTORY_DETAIL_COLD_COLUMNS = new Set([
+  'request_ip',
+  'request_user_agent',
+  'system_prompt',
+  'model_prompt',
+])
+const IMAGE_HISTORY_STORAGE_COLUMNS = [
+  'id',
+  'storage_path',
+  'preview_path',
+  'thumbnail_path',
+  'reference_images',
+].join(',')
 export type ImageHistoryScope = 'public' | 'mine'
 export type ImageVisibility = 'public' | 'private'
 export type ImageFundingSource = 'free' | 'credit'
@@ -233,6 +312,14 @@ interface ImageHistoryRow {
   reference_images?: ImageHistoryReference[] | null
   reference_count?: number | null
   generated_at: string
+}
+
+interface ImageHistoryStorageRow {
+  id: string
+  storage_path?: string | null
+  preview_path?: string | null
+  thumbnail_path?: string | null
+  reference_images?: unknown
 }
 
 function plainReference(reference: ImageHistoryReference): ImageHistoryReference | null {
@@ -487,6 +574,66 @@ function missingNullableDataUrlSchema(error: { message?: string; code?: string }
   return error.code === '23502' && /data_url/i.test(error.message || '')
 }
 
+type ImageRowOptionKey = keyof Required<ImageRowOptions>
+
+interface SaveDowngradeRule {
+  option: ImageRowOptionKey
+  matches: (error: { message?: string; code?: string }) => boolean
+  message: string
+  canDisable?: () => boolean
+}
+
+function saveDowngradeRules(canOmitCreditFields: boolean): SaveDowngradeRule[] {
+  return [
+    {
+      option: 'includeNullableDataUrl',
+      matches: missingNullableDataUrlSchema,
+      message: '[image-history] data_url still requires a value; retrying save with legacy empty data_url',
+    },
+    {
+      option: 'includeBatch',
+      matches: missingBatchHistorySchema,
+      message: '[image-history] generation batch column missing; retrying save without batch field',
+    },
+    {
+      option: 'includeThumbnails',
+      matches: error => missingOptionalColumn(error) === 'thumbnail',
+      message: '[image-history] thumbnail columns missing; retrying save without thumbnail fields',
+    },
+    {
+      option: 'includeUserId',
+      matches: error => missingOptionalColumn(error) === 'user_id',
+      message: '[image-history] user_id column missing; retrying save without user id',
+    },
+    {
+      option: 'includePromptDetails',
+      matches: error => missingOptionalColumn(error) === 'prompt_detail',
+      message: '[image-history] prompt detail columns missing; retrying save without split prompt fields',
+    },
+    {
+      option: 'includeRequestMeta',
+      matches: error => missingOptionalColumn(error) === 'request_meta',
+      message: '[image-history] request metadata columns missing; retrying save without request metadata',
+    },
+    {
+      option: 'includeMetrics',
+      matches: error => missingOptionalColumn(error) === 'metrics',
+      message: '[image-history] metric columns missing; retrying save without generation metrics',
+    },
+    {
+      option: 'includeCredits',
+      matches: missingCreditHistorySchema,
+      message: '[image-history] credit columns missing; retrying save without credit fields',
+      canDisable: () => canOmitCreditFields,
+    },
+    {
+      option: 'includeReferenceCount',
+      matches: missingReferenceCountHistorySchema,
+      message: '[image-history] reference count column missing; retrying save without reference count',
+    },
+  ]
+}
+
 function publicUrlField(value?: string | null) {
   if (!value) return undefined
   return /^https?:\/\//i.test(value) || isInlineDataUrl(value) ? value : undefined
@@ -572,6 +719,56 @@ function referencesFromRow(row: ImageHistoryRow) {
   return plainReferences(row.reference_images || [])
     .map(referenceSummary)
     .filter((reference): reference is ImageHistoryReference => Boolean(reference))
+}
+
+function storagePathField(value: unknown) {
+  if (typeof value !== 'string') return null
+  const path = value.trim()
+  if (!path || /^https?:\/\//i.test(path) || /^data:/i.test(path)) return null
+  return path
+}
+
+function storagePathsFromReferences(value: unknown) {
+  if (!Array.isArray(value)) return []
+  const paths: string[] = []
+  for (const reference of value) {
+    if (!reference || typeof reference !== 'object') continue
+    const record = reference as Record<string, unknown>
+    paths.push(
+      ...[
+        storagePathField(record.storagePath),
+        storagePathField(record.previewPath),
+        storagePathField(record.thumbnailPath),
+      ].filter((path): path is string => Boolean(path)),
+    )
+  }
+  return paths
+}
+
+function storagePathsFromRows(
+  rows: ImageHistoryStorageRow[],
+  options: { includeReferenceImages?: boolean } = {},
+) {
+  return rows.flatMap(row => [
+    storagePathField(row.storage_path),
+    storagePathField(row.preview_path),
+    storagePathField(row.thumbnail_path),
+    ...(options.includeReferenceImages ? storagePathsFromReferences(row.reference_images) : []),
+  ].filter((path): path is string => Boolean(path)))
+}
+
+async function removeStoredImageFiles(
+  rows: ImageHistoryStorageRow[],
+  options: { includeReferenceImages?: boolean } = {},
+) {
+  const paths = storagePathsFromRows(rows, options)
+  if (!paths.length) return
+
+  try {
+    await removeImageStoragePaths(paths)
+  } catch (err: any) {
+    console.warn('[image-history] storage cleanup failed:', err?.message || err)
+  }
 }
 
 function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
@@ -713,25 +910,55 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   const client = historyClient()
   if (!client || (options.scope === 'mine' && !options.userId)) return null
 
-  const getRow = async (includeVisibilityFilter: boolean) => {
+  const detailOptions = {
+    includeVisibilityFilter: true,
+    includeBatch: true,
+    includeCredits: true,
+    includeReferenceCount: true,
+  }
+
+  const getRow = async () => {
     let query = client
       .from(IMAGE_HISTORY_TABLE)
-      .select('*')
+      .select(imageHistoryDetailColumns({
+        includeOriginal: options.includeOriginal,
+        includeBatch: detailOptions.includeBatch,
+        includeCredits: detailOptions.includeCredits,
+        includeReferenceCount: detailOptions.includeReferenceCount,
+      }))
       .eq('id', id)
 
     if (options.scope === 'mine') {
       query = query.eq('user_id', options.userId!)
-    } else if (includeVisibilityFilter) {
+    } else if (detailOptions.includeVisibilityFilter) {
       query = query.eq('visibility', 'public')
     }
 
     return await query.maybeSingle()
   }
 
-  let result = await getRow(true)
-  if (result.error && missingCreditHistorySchema(result.error)) {
-    console.warn('[image-history] credit visibility columns missing; reading legacy public history detail')
-    result = await getRow(false)
+  let result = await getRow()
+  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+    if (detailOptions.includeReferenceCount && missingReferenceCountHistorySchema(result.error)) {
+      detailOptions.includeReferenceCount = false
+      console.warn('[image-history] reference count column missing; retrying detail without reference count')
+      result = await getRow()
+      continue
+    }
+    if (detailOptions.includeBatch && missingBatchHistorySchema(result.error)) {
+      detailOptions.includeBatch = false
+      console.warn('[image-history] generation batch column missing; retrying detail without batch metadata')
+      result = await getRow()
+      continue
+    }
+    if (detailOptions.includeCredits && missingCreditHistorySchema(result.error)) {
+      detailOptions.includeCredits = false
+      detailOptions.includeVisibilityFilter = false
+      console.warn('[image-history] credit visibility columns missing; reading legacy public history detail')
+      result = await getRow()
+      continue
+    }
+    break
   }
 
   const { data, error } = result
@@ -739,7 +966,7 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   if (error) throw error
   if (!data) return null
 
-  return imageFromRow(data as ImageHistoryRow, { includeOriginal: options.includeOriginal })
+  return imageFromRow(data as unknown as ImageHistoryRow, { includeOriginal: options.includeOriginal })
 }
 
 export async function saveImageHistory(images: ImageHistoryItem[], options: { userId?: string | null } = {}) {
@@ -782,71 +1009,58 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: { us
     includeReferenceCount: true,
   }
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const downgradeRules = saveDowngradeRules(canOmitCreditFields)
+  let lastError: { message?: string; code?: string } | null = null
+
+  for (let attempt = 0; attempt <= downgradeRules.length; attempt += 1) {
     const rows = validImages.map(image => rowFromImage(image, rowOptions))
-    const { error } = await client
-      .from(IMAGE_HISTORY_TABLE)
-      .upsert(rows, { onConflict: 'id' })
+    let error: { message?: string; code?: string } | null = null
+
+    for (const chunk of chunkArray(rows, IMAGE_HISTORY_UPSERT_CHUNK_SIZE)) {
+      const result = await client
+        .from(IMAGE_HISTORY_TABLE)
+        .upsert(chunk, { onConflict: 'id' })
+      if (result.error) {
+        error = result.error
+        break
+      }
+    }
 
     if (!error) return storedImages
+    lastError = error
 
-    const missingColumn = missingOptionalColumn(error)
-    if (missingNullableDataUrlSchema(error) && rowOptions.includeNullableDataUrl) {
-      rowOptions.includeNullableDataUrl = false
-      console.warn('[image-history] data_url still requires a value; retrying save with legacy empty data_url')
-      continue
-    }
-    if (missingColumn === 'batch' && rowOptions.includeBatch) {
-      rowOptions.includeBatch = false
-      console.warn('[image-history] generation batch column missing; retrying save without batch field')
-      continue
-    }
-    if (missingColumn === 'thumbnail' && rowOptions.includeThumbnails) {
-      rowOptions.includeThumbnails = false
-      console.warn('[image-history] thumbnail columns missing; retrying save without thumbnail fields')
-      continue
-    }
-    if (missingColumn === 'user_id' && rowOptions.includeUserId) {
-      rowOptions.includeUserId = false
-      console.warn('[image-history] user_id column missing; retrying save without user id')
-      continue
-    }
-    if (missingColumn === 'prompt_detail' && rowOptions.includePromptDetails) {
-      rowOptions.includePromptDetails = false
-      console.warn('[image-history] prompt detail columns missing; retrying save without split prompt fields')
-      continue
-    }
-    if (missingColumn === 'request_meta' && rowOptions.includeRequestMeta) {
-      rowOptions.includeRequestMeta = false
-      console.warn('[image-history] request metadata columns missing; retrying save without request metadata')
-      continue
-    }
-    if (missingColumn === 'metrics' && rowOptions.includeMetrics) {
-      rowOptions.includeMetrics = false
-      console.warn('[image-history] metric columns missing; retrying save without generation metrics')
-      continue
-    }
-    if (missingColumn === 'credits' && rowOptions.includeCredits) {
-      if (!canOmitCreditFields) throw error
-      rowOptions.includeCredits = false
-      console.warn('[image-history] credit columns missing; retrying save without credit fields')
-      continue
-    }
-    if (missingColumn === 'reference_count' && rowOptions.includeReferenceCount) {
-      rowOptions.includeReferenceCount = false
-      console.warn('[image-history] reference count column missing; retrying save without reference count')
+    const downgradeRule = downgradeRules.find(rule => (
+      rowOptions[rule.option] &&
+      rule.matches(error!) &&
+      (!rule.canDisable || rule.canDisable())
+    ))
+
+    if (downgradeRule) {
+      rowOptions[downgradeRule.option] = false
+      console.warn(downgradeRule.message)
       continue
     }
 
     throw error
   }
 
+  if (lastError) throw lastError
   return storedImages
 }
 
 export async function deleteImageHistory(id: string, options: { userId?: string | null } = {}) {
   const client = historyClient()
   if (!client || !options.userId) return false
+
+  const { data: existing, error: lookupError } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select(IMAGE_HISTORY_STORAGE_COLUMNS)
+    .eq('id', id)
+    .eq('user_id', options.userId)
+    .maybeSingle()
+
+  if (lookupError) throw lookupError
+  if (!existing) return false
 
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
@@ -856,12 +1070,23 @@ export async function deleteImageHistory(id: string, options: { userId?: string 
     .select('id')
 
   if (error) throw error
-  return Boolean(data?.length)
+  const deleted = Boolean(data?.length)
+  if (deleted) await removeStoredImageFiles([existing as unknown as ImageHistoryStorageRow])
+  return deleted
 }
 
 export async function clearImageHistory(options: { userId?: string | null } = {}) {
   const client = historyClient()
   if (!client || !options.userId) return false
+
+  const { data: existing, error: lookupError } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select(IMAGE_HISTORY_STORAGE_COLUMNS)
+    .eq('user_id', options.userId)
+
+  if (lookupError) throw lookupError
+  const existingRows = (existing || []) as unknown as ImageHistoryStorageRow[]
+  if (!existingRows.length) return false
 
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
@@ -870,5 +1095,7 @@ export async function clearImageHistory(options: { userId?: string | null } = {}
     .select('id')
 
   if (error) throw error
-  return Boolean(data?.length)
+  const deleted = Boolean(data?.length)
+  if (deleted) await removeStoredImageFiles(existingRows)
+  return deleted
 }

@@ -12,6 +12,7 @@ import { useImageCanvasMentions } from '../composables/useImageCanvasMentions'
 import { useImageCanvasViewer } from '../composables/useImageCanvasViewer'
 import { useImageGalleryStage } from '../composables/useImageGalleryStage'
 import { useImageNodeReferences } from '../composables/useImageNodeReferences'
+import { useAppConfig } from '../composables/useAppConfig'
 import { type CanvasExportDocument } from '../lib/canvas-document'
 import { useImageDownload, type ImageDownloadNode, type ImageDownloadViewer } from '../composables/useImageDownload'
 import {
@@ -83,7 +84,8 @@ const emit = defineEmits<{
   sendToChat: [dataUrl: string]
   workspaceChange: [mode: WorkspaceMode]
 }>()
-const CANVAS_CONTEXT_ENABLED = import.meta.env.VITE_CANVAS_CONTEXT_ENABLED === 'true'
+
+const { config: appConfig, ensureAppConfig } = useAppConfig()
 
 const {
   isGenerating,
@@ -395,7 +397,7 @@ const {
   isGenerating,
   error,
   canSelectGenerationCount: () => Boolean(props.canSelectGenerationCount),
-  canvasContextEnabled: () => CANVAS_CONTEXT_ENABLED,
+  canvasContextEnabled: () => appConfig.value.canvasContextEnabled,
   createNode,
   createConnectionId: () => createId('conn'),
   getRenderedNodeSize,
@@ -972,6 +974,8 @@ function connectedHandlesForNode(node: CanvasNode) {
 }
 
 onMounted(() => {
+  void ensureAppConfig()
+
   window.addEventListener('pointermove', handleWindowPointerMove)
   window.addEventListener('pointerup', handleWindowPointerUp)
   window.addEventListener('pointercancel', handleWindowPointerCancel)

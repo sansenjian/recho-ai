@@ -1,7 +1,8 @@
+import { computed } from 'vue'
 import { getAuthAccessToken } from './useAuthSession'
+import { ensureAppConfig, useAppConfig } from './useAppConfig'
 import { apiUrl } from '../lib/api-base'
 
-const IMAGE_EVENTS_ENABLED = import.meta.env.VITE_IMAGE_EVENTS_ENABLED === 'true'
 const IMAGE_EVENT_DEDUPE_MS = 2_000
 const HIGH_FREQUENCY_IMAGE_EVENT_DEDUPE_MS = 5_000
 
@@ -71,8 +72,11 @@ function shouldSkipRecentEvent(payload: ImageEventPayload) {
 }
 
 export function useImageEvents() {
+  const { imageEventsEnabled } = useAppConfig()
+
   async function recordImageEvent(payload: ImageEventPayload) {
-    if (!IMAGE_EVENTS_ENABLED) return false
+    const appConfig = await ensureAppConfig()
+    if (!appConfig.imageEventsEnabled) return false
     if (shouldSkipRecentEvent(payload)) return false
 
     try {
@@ -97,7 +101,7 @@ export function useImageEvents() {
   }
 
   return {
-    enabled: IMAGE_EVENTS_ENABLED,
+    enabled: computed(() => imageEventsEnabled.value),
     recordImageEvent,
   }
 }
