@@ -33,9 +33,14 @@ create unique index if not exists admin_users_user_id_unique
   on public.admin_users (user_id)
   where user_id is not null;
 
-create unique index if not exists admin_users_email_unique
-  on public.admin_users (email)
+-- Build the replacement first so duplicate-data failures keep the existing index in place.
+drop index if exists public.admin_users_email_unique_lower;
+create unique index admin_users_email_unique_lower
+  on public.admin_users (lower(email))
   where email is not null;
+
+drop index if exists public.admin_users_email_unique;
+alter index public.admin_users_email_unique_lower rename to admin_users_email_unique;
 
 create index if not exists admin_users_enabled_idx
   on public.admin_users (enabled, updated_at desc);
