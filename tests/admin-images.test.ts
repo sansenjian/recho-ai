@@ -4,11 +4,13 @@ let rows: Array<Record<string, unknown>> = []
 let updatedVisibility: string | null = null
 let orFilter: string | null = null
 let removedStoragePaths: Array<string | null | undefined> = []
+let storageRemoveError: Error | null = null
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
   removeImageStoragePaths: vi.fn(async (paths: Array<string | null | undefined>) => {
     removedStoragePaths = paths
+    if (storageRemoveError) throw storageRemoveError
   }),
 }))
 
@@ -96,6 +98,7 @@ describe('admin image helpers', () => {
     updatedVisibility = null
     orFilter = null
     removedStoragePaths = []
+    storageRemoveError = null
     vi.resetModules()
   })
 
@@ -282,6 +285,28 @@ describe('admin image helpers', () => {
       'cos://generated/img_2.preview.webp',
       'cos://generated/img_2.thumb.webp',
     ])
+    expect(rows).toEqual([])
+  })
+
+  it('returns success when storage cleanup fails after deleting images', async () => {
+    const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      storage_path: 'generated/img_1.webp',
+      visibility: 'private',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+    storageRemoveError = new Error('storage unavailable')
+
+    await expect(bulkDeleteAdminImages(['img_1'])).resolves.toEqual({
+      deletedIds: ['img_1'],
+      deletedCount: 1,
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(removedStoragePaths).toEqual(['generated/img_1.webp', null, null])
     expect(rows).toEqual([])
   })
 })

@@ -232,11 +232,12 @@ begin
     end if;
   end if;
 
-  insert into public.user_credit_balances (user_id, balance, updated_at)
-  values (p_user_id, v_refund_amount, now())
+  insert into public.user_credit_balances (user_id, balance, total_redeemed, updated_at)
+  values (p_user_id, v_refund_amount, 0, now())
   on conflict (user_id) do update
      set balance = public.user_credit_balances.balance + excluded.balance,
          total_spent = greatest(public.user_credit_balances.total_spent - excluded.balance, 0),
+         total_redeemed = public.user_credit_balances.total_redeemed + excluded.total_redeemed,
          updated_at = now()
   returning public.user_credit_balances.balance into v_balance;
 

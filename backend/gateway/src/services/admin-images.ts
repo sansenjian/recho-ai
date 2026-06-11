@@ -146,6 +146,13 @@ function storagePathsFromRows(rows: Array<Record<string, unknown>>) {
   ])
 }
 
+function cleanupDeletedImageStorage(rows: Array<Record<string, unknown>>) {
+  const paths = storagePathsFromRows(rows)
+  void removeImageStoragePaths(paths).catch((error) => {
+    console.warn('[admin-images] failed to remove deleted image storage paths', error)
+  })
+}
+
 function normalizedInteger(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
@@ -320,7 +327,7 @@ export async function bulkDeleteAdminImages(idsValue: unknown) {
   const deletedRows = (data || []) as unknown as Array<Record<string, unknown>>
   if (!deletedRows.length) throw new AdminImageError('image_not_found')
 
-  await removeImageStoragePaths(storagePathsFromRows(deletedRows))
+  cleanupDeletedImageStorage(deletedRows)
 
   return {
     deletedIds: deletedRows.map(row => String(row.id || '')).filter(Boolean),

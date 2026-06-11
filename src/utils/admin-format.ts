@@ -29,7 +29,7 @@ export function imageFundingLabel(image: AdminImageItem) {
 }
 
 export function imagePreviewSrc(image: AdminImageItem) {
-  return image.thumbnailUrl || image.previewUrl || ''
+  return image.thumbnailUrl || image.previewUrl || undefined
 }
 
 export function imageDetails(image: AdminImageItem) {

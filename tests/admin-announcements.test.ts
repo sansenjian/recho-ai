@@ -168,6 +168,22 @@ describe('admin announcements service', () => {
     expect(insertPayloads[0].published_at).toEqual(expect.any(String))
   })
 
+  it('rejects invalid announcement statuses on create', async () => {
+    const { createAdminAnnouncement } = await import('../backend/gateway/src/services/admin-announcements')
+
+    await expect(createAdminAnnouncement(
+      {
+        title: '系统维护',
+        body: '今晚 23:00 开始维护',
+        status: 'invalid_status',
+      },
+      { id: '99999999-9999-4999-8999-999999999999', email: 'admin@example.test' },
+    )).rejects.toMatchObject({
+      message: 'invalid_announcement_status',
+    })
+    expect(insertPayloads).toEqual([])
+  })
+
   it('updates announcement status without exposing unpublished items publicly', async () => {
     announcementRows = [{
       id: '11111111-1111-4111-8111-111111111111',

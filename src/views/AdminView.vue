@@ -293,7 +293,7 @@ async function checkAdmin() {
   try {
     const data = await apiJson<{ admin: boolean; currentAdminRole?: AdminRole | null }>('/api/admin/credits/me')
     currentAdminRole.value = data.currentAdminRole || 'operator'
-    isAdmin.value = true
+    isAdmin.value = !!data.admin
   } catch (error) {
     isAdmin.value = false
     setError(error, '当前账号没有后台权限。')

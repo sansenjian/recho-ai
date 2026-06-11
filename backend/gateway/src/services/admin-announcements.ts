@@ -122,7 +122,10 @@ export async function listPublishedAnnouncements(options: { limit?: unknown } = 
 export async function createAdminAnnouncement(input: Record<string, unknown>, adminUser: RequestUser) {
   const title = sanitizeTitle(input.title)
   const body = sanitizeBody(input.body)
-  const status = sanitizedStatus(input.status) || 'published'
+  const status = input.status === undefined ? 'published' : sanitizedStatus(input.status)
+  if (!status) throw new AdminAnnouncementError('invalid_announcement_status', {
+    publicMessage: '公告状态无效。',
+  })
   if (!title || !body) throw new AdminAnnouncementError('invalid_announcement', {
     publicMessage: '请输入公告标题和内容。',
   })
