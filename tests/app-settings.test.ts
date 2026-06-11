@@ -25,6 +25,9 @@ vi.mock('../backend/gateway/src/config', () => ({
   SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_SERVICE_ROLE_KEY: '',
   SUPABASE_URL: '',
+  TENCENT_COS_PUBLIC_BASE_URL: '',
+  TENCENT_COS_SECRET_ID: '',
+  TENCENT_COS_SECRET_KEY: '',
 }))
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({
@@ -82,7 +85,7 @@ describe('app settings service', () => {
 
   it('loads image settings from Supabase rows and exposes only public switches', async () => {
     appSettingRows = [
-      { key: 'image_credit_cost_per_image', value: 4 },
+      { key: 'image_credit_cost_per_image', value: 0.25 },
       { key: 'image_analytics_enabled', value: true },
       { key: 'image_responses_model', value: 'gpt-image-2' },
       { key: 'image_responses_image_model', value: 'custom-image-model' },
@@ -92,7 +95,7 @@ describe('app settings service', () => {
     const { getAppSettings, publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
 
     await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
-      imageCreditCostPerImage: 4,
+      imageCreditCostPerImage: 0.25,
       imageAnalyticsEnabled: true,
       imageResponsesModel: 'gpt-image-2',
       imageResponsesImageModel: 'custom-image-model',
@@ -142,7 +145,10 @@ describe('app settings service', () => {
       },
     ]
     const {
+      assertSeniorAdminUser,
       getAdminAccessSummary,
+      getAdminUserRole,
+      getAdminUserRules,
       isConfiguredAdminUser,
     } = await import('../backend/gateway/src/services/app-settings')
 
@@ -158,6 +164,32 @@ describe('app settings service', () => {
       id: '33333333-3333-4333-8333-333333333333',
       email: 'disabled-admin@example.test',
     })).resolves.toBe(false)
+    await expect(getAdminUserRole({
+      id: 'user-with-env-email',
+      email: 'ENV-ADMIN@example.test',
+    })).resolves.toBe('senior')
+    await expect(getAdminUserRole({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: null,
+    })).resolves.toBe('operator')
+    await expect(assertSeniorAdminUser({
+      id: 'env-admin-id',
+      email: null,
+    })).resolves.toMatchObject({ id: 'env-admin-id' })
+    await expect(assertSeniorAdminUser({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: null,
+    })).rejects.toMatchObject({
+      message: 'senior_admin_required',
+    })
+
+    const rules = await getAdminUserRules({ refresh: true })
+    expect(rules.find(rule => rule.source === 'env' && rule.email === 'env-admin@example.test')).toMatchObject({
+      role: 'senior',
+    })
+    expect(rules.find(rule => rule.source === 'database' && rule.userId === '22222222-2222-4222-8222-222222222222')).toMatchObject({
+      role: 'operator',
+    })
 
     await expect(getAdminAccessSummary({ refresh: true })).resolves.toMatchObject({
       configured: true,

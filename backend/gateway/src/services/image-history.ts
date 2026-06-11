@@ -4,7 +4,9 @@ import {
   removeImageStoragePaths,
   storeImageBuffer,
   storeImageDataUrl,
+  type StoreImageOptions,
 } from './image-storage.js'
+import { roundCreditAmount } from './image-credit-cost.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
@@ -378,6 +380,7 @@ function referenceRecords(references: ImageHistoryReference[] = []) {
 
 interface StoreImageContext {
   referenceCache: Map<string, Promise<ImageHistoryReference | null>>
+  allowCreditStorage: boolean
 }
 
 function referencePathId(reference: ImageHistoryReference, index: number) {
@@ -391,6 +394,32 @@ function withoutSourcePayload(image: ImageHistoryItem): ImageHistoryItem {
     ...publicImage
   } = image
   return publicImage
+}
+
+function storageOptionsForImage(image: ImageHistoryItem, context: StoreImageContext): StoreImageOptions {
+  return context.allowCreditStorage && image.fundingSource === 'credit'
+    ? { provider: 'tencent-cos' }
+    : {}
+}
+
+function trustedCreditImage(image: ImageHistoryItem, allowCreditMetadata: boolean): ImageHistoryItem {
+  if (allowCreditMetadata) return image
+  if (
+    image.visibility !== 'private' &&
+    image.fundingSource !== 'credit' &&
+    !image.creditCost &&
+    !image.creditTransactionId
+  ) {
+    return image
+  }
+
+  return {
+    ...image,
+    visibility: 'public',
+    fundingSource: 'free',
+    creditCost: 0,
+    creditTransactionId: null,
+  }
 }
 
 async function storedReference(
@@ -427,10 +456,11 @@ async function storedReference(
 
 async function storedImage(image: ImageHistoryItem, context: StoreImageContext) {
   const id = String(image.id)
+  const storageOptions = storageOptionsForImage(image, context)
   const stored = image.sourceBuffer
-    ? await storeImageBuffer(image.sourceBuffer, image.sourceMime || 'image/png', `generated/${id}`)
+    ? await storeImageBuffer(image.sourceBuffer, image.sourceMime || 'image/png', `generated/${id}`, storageOptions)
     : image.dataUrl
-      ? await storeImageDataUrl(String(image.dataUrl), `generated/${id}`)
+      ? await storeImageDataUrl(String(image.dataUrl), `generated/${id}`, storageOptions)
       : null
   const referenceBatchId = image.generationBatchId || id
   const references: ImageHistoryReference[] = []
@@ -499,7 +529,7 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
   if (options.includeCredits !== false) {
     row.visibility = image.visibility === 'private' ? 'private' : 'public'
     row.funding_source = image.fundingSource === 'credit' ? 'credit' : 'free'
-    row.credit_cost = typeof image.creditCost === 'number' ? Math.max(0, Math.round(image.creditCost)) : 0
+    row.credit_cost = typeof image.creditCost === 'number' ? Math.max(0, roundCreditAmount(image.creditCost)) : 0
     row.credit_transaction_id = image.creditTransactionId ? String(image.creditTransactionId) : null
   }
 
@@ -969,21 +999,29 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   return imageFromRow(data as unknown as ImageHistoryRow, { includeOriginal: options.includeOriginal })
 }
 
-export async function saveImageHistory(images: ImageHistoryItem[], options: { userId?: string | null } = {}) {
+interface SaveImageHistoryOptions {
+  userId?: string | null
+  allowCreditStorage?: boolean
+  allowCreditMetadata?: boolean
+}
+
+export async function saveImageHistory(images: ImageHistoryItem[], options: SaveImageHistoryOptions = {}) {
   const client = historyClient()
   if (!client || !images.length) return null
 
   const storeContext: StoreImageContext = {
     referenceCache: new Map(),
+    allowCreditStorage: options.allowCreditStorage === true,
   }
   const storedImages: ImageHistoryItem[] = []
 
   for (const image of images) {
     if (!image?.id || (!image.sourceBuffer && !image.dataUrl && !image.storagePath)) continue
-    storedImages.push(await storedImage({
+    const imageToStore = trustedCreditImage({
       ...image,
       ...(options.userId ? { userId: options.userId } : {}),
-    }, storeContext))
+    }, options.allowCreditMetadata === true)
+    storedImages.push(await storedImage(imageToStore, storeContext))
   }
 
   const validImages = storedImages

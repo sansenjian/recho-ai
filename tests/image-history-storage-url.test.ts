@@ -4,11 +4,47 @@ let rows: Array<Record<string, unknown>> = []
 let selectArgs: string[] = []
 let upsertBatches: Array<Array<Record<string, unknown>>> = []
 let removeStoragePathBatches: string[][] = []
+let storeImageBufferCalls: Array<{
+  mime: string
+  pathHint: string
+  options: Record<string, unknown>
+}> = []
+let storeImageDataUrlCalls: Array<{
+  pathHint: string
+  options: Record<string, unknown>
+}> = []
+
+function mockStoredImage(pathHint: string, options: Record<string, unknown> = {}) {
+  const path = `${pathHint.replace(/\.[a-z0-9]+$/i, '')}.webp`
+  const storagePath = options.provider === 'tencent-cos' ? `cos://${path}` : path
+  const previewPath = storagePath.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+  const thumbnailPath = storagePath.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+  return {
+    publicUrl: `https://cdn.example.test/${storagePath}`,
+    storagePath,
+    previewUrl: `https://cdn.example.test/${previewPath}`,
+    previewPath,
+    thumbnailUrl: `https://cdn.example.test/${thumbnailPath}`,
+    thumbnailPath,
+    mime: 'image/webp',
+    width: 1024,
+    height: 1024,
+    originalBytes: 100,
+    previewBytes: 40,
+    thumbnailBytes: 10,
+  }
+}
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
-  storeImageBuffer: vi.fn(),
-  storeImageDataUrl: vi.fn(),
+  storeImageBuffer: vi.fn(async (_buffer: Buffer, mime: string, pathHint: string, options: Record<string, unknown> = {}) => {
+    storeImageBufferCalls.push({ mime, pathHint, options })
+    return mockStoredImage(pathHint, options)
+  }),
+  storeImageDataUrl: vi.fn(async (_dataUrl: string, pathHint: string, options: Record<string, unknown> = {}) => {
+    storeImageDataUrlCalls.push({ pathHint, options })
+    return mockStoredImage(pathHint, options)
+  }),
   removeImageStoragePaths: vi.fn(async (paths: string[]) => {
     removeStoragePathBatches.push(paths)
     return true
@@ -58,6 +94,8 @@ describe('image history storage urls', () => {
     selectArgs = []
     upsertBatches = []
     removeStoragePathBatches = []
+    storeImageBufferCalls = []
+    storeImageDataUrlCalls = []
     vi.resetModules()
   })
 
@@ -283,6 +321,90 @@ describe('image history storage urls', () => {
     expect(upsertBatches).toHaveLength(2)
     expect(upsertBatches[0]).toHaveLength(50)
     expect(upsertBatches[1]).toHaveLength(5)
+  })
+
+  it('stores credit-funded generated images in Tencent COS while free images stay on Supabase storage', async () => {
+    const { saveImageHistory } = await import('../backend/gateway/src/services/image-history')
+
+    await saveImageHistory([
+      {
+        id: 'img_free_1',
+        dataUrl: 'data:image/png;base64,AAAA',
+        prompt: 'free prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'free',
+        visibility: 'public',
+      },
+      {
+        id: 'img_credit_1',
+        dataUrl: 'data:image/png;base64,BBBB',
+        prompt: 'credit prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'credit',
+        visibility: 'private',
+        creditCost: 0.25,
+      },
+    ], {
+      allowCreditMetadata: true,
+      allowCreditStorage: true,
+    })
+
+    expect(storeImageDataUrlCalls).toHaveLength(2)
+    expect(storeImageDataUrlCalls[0]).toMatchObject({
+      pathHint: 'generated/img_free_1',
+      options: {},
+    })
+    expect(storeImageDataUrlCalls[1]).toMatchObject({
+      pathHint: 'generated/img_credit_1',
+      options: { provider: 'tencent-cos' },
+    })
+
+    const storedRows = upsertBatches.flat()
+    expect(storedRows.find(row => row.id === 'img_free_1')).toMatchObject({
+      storage_path: 'generated/img_free_1.webp',
+      funding_source: 'free',
+      visibility: 'public',
+    })
+    expect(storedRows.find(row => row.id === 'img_credit_1')).toMatchObject({
+      storage_path: 'cos://generated/img_credit_1.webp',
+      funding_source: 'credit',
+      visibility: 'private',
+      credit_cost: 0.25,
+    })
+  })
+
+  it('does not trust client-supplied credit fields without a server opt-in', async () => {
+    const { saveImageHistory } = await import('../backend/gateway/src/services/image-history')
+
+    await saveImageHistory([
+      {
+        id: 'img_untrusted_credit_1',
+        dataUrl: 'data:image/png;base64,CCCC',
+        prompt: 'untrusted credit prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'credit',
+        visibility: 'private',
+        creditCost: 99,
+        creditTransactionId: 'client-controlled-transaction',
+      },
+    ])
+
+    expect(storeImageDataUrlCalls).toHaveLength(1)
+    expect(storeImageDataUrlCalls[0]).toMatchObject({
+      pathHint: 'generated/img_untrusted_credit_1',
+      options: {},
+    })
+
+    expect(upsertBatches.flat()[0]).toMatchObject({
+      storage_path: 'generated/img_untrusted_credit_1.webp',
+      funding_source: 'free',
+      visibility: 'public',
+      credit_cost: 0,
+      credit_transaction_id: null,
+    })
   })
 
   it('removes only generated storage files after deleting one history row', async () => {

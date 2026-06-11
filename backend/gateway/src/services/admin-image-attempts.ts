@@ -5,7 +5,8 @@ import { redactSensitiveText } from './safe-error.js'
 const IMAGE_ATTEMPTS_TABLE = 'image_generation_attempts'
 const DEFAULT_LIMIT = 40
 const MAX_LIMIT = 100
-const RECENT_HOURS = 24
+const DEFAULT_RECENT_HOURS = 24
+const MAX_RECENT_HOURS = 24 * 30
 const ADMIN_ATTEMPT_COLUMNS = [
   'id',
   'generation_id',
@@ -79,9 +80,27 @@ function sanitizedStatus(value: unknown): AttemptStatus | null {
   return value === 'succeeded' || value === 'failed' ? value : null
 }
 
-function normalizedInteger(value: unknown) {
+function sanitizedHours(value: unknown) {
   const number = Number(value)
-  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
+  if (!Number.isFinite(number)) return DEFAULT_RECENT_HOURS
+  return Math.min(MAX_RECENT_HOURS, Math.max(1, Math.round(number)))
+}
+
+function sanitizedFilterText(value: unknown, maxLength = 80) {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/[%,()*\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+  return text || null
+}
+
+function sanitizedHttpStatus(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  const status = Math.round(number)
+  return status >= 100 && status <= 599 ? status : null
 }
 
 function nullableInteger(value: unknown) {
@@ -170,11 +189,19 @@ async function usersById(userIds: string[]) {
 export async function listAdminImageAttempts(options: {
   limit?: unknown
   status?: unknown
+  userId?: unknown
+  errorType?: unknown
+  httpStatus?: unknown
+  hours?: unknown
 } = {}) {
   const client = requireAttemptClient()
   const limit = sanitizedLimit(options.limit)
   const status = sanitizedStatus(options.status)
-  const cutoff = new Date(Date.now() - RECENT_HOURS * 60 * 60 * 1000).toISOString()
+  const userId = sanitizedFilterText(options.userId, 80)
+  const errorType = sanitizedFilterText(options.errorType, 80)
+  const httpStatus = sanitizedHttpStatus(options.httpStatus)
+  const hours = sanitizedHours(options.hours)
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
 
   let recentQuery = client
     .from(IMAGE_ATTEMPTS_TABLE)
@@ -183,6 +210,9 @@ export async function listAdminImageAttempts(options: {
     .order('created_at', { ascending: false })
 
   if (status) recentQuery = recentQuery.eq('status', status)
+  if (userId) recentQuery = recentQuery.eq('user_id', userId)
+  if (errorType) recentQuery = recentQuery.eq('error_type', errorType)
+  if (httpStatus !== null) recentQuery = recentQuery.eq('http_status', httpStatus)
 
   recentQuery = recentQuery.limit(500)
 

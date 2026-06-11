@@ -27,6 +27,8 @@ type AppSettingKey =
   | 'image_events_enabled'
   | 'canvas_context_enabled'
 
+export type AdminRole = 'senior' | 'operator'
+
 export interface AppSettings {
   imageCreditCostPerImage: number
   imageAnalyticsEnabled: boolean
@@ -43,6 +45,7 @@ export interface AdminUserRule {
   enabled: boolean
   note: string | null
   source: 'database' | 'env'
+  role: AdminRole
   createdAt: string | null
   updatedAt: string | null
 }
@@ -105,6 +108,7 @@ function envAdminRules(): AdminUserRule[] {
     enabled: true,
     note: null,
     source: 'env',
+    role: 'senior',
     createdAt: null,
     updatedAt: null,
   }))
@@ -116,6 +120,7 @@ function envAdminRules(): AdminUserRule[] {
     enabled: true,
     note: null,
     source: 'env',
+    role: 'senior',
     createdAt: null,
     updatedAt: null,
   }))
@@ -235,6 +240,7 @@ function toAdminUserRule(row: Record<string, unknown>): AdminUserRule {
     enabled: row.enabled !== false,
     note: typeof row.note === 'string' && row.note ? row.note : null,
     source: 'database',
+    role: 'operator',
     createdAt: typeof row.created_at === 'string' ? row.created_at : null,
     updatedAt: typeof row.updated_at === 'string' ? row.updated_at : null,
   }
@@ -344,6 +350,28 @@ export async function isConfiguredAdminUser(user: RequestUser | null): Promise<b
   ))
 }
 
+export function envAdminRole(user: RequestUser | null): AdminRole | null {
+  if (!user) return null
+  const email = user.email?.toLowerCase() || null
+  if (ADMIN_USER_IDS.includes(user.id)) return 'senior'
+  if (email && ADMIN_USER_EMAILS.includes(email)) return 'senior'
+  return null
+}
+
+export async function getAdminUserRole(user: RequestUser | null): Promise<AdminRole | null> {
+  const envRole = envAdminRole(user)
+  if (envRole) return envRole
+  return await isConfiguredAdminUser(user) ? 'operator' : null
+}
+
+export async function assertSeniorAdminUser(user: RequestUser | null) {
+  if (await getAdminUserRole(user) === 'senior') return user
+  throw new AppSettingsError('senior_admin_required', {
+    status: 403,
+    publicMessage: '只有高级管理员可以设置后台管理员。',
+  })
+}
+
 function hasRemainingEnabledAdminRule(rules: AdminUserRule[], disabledRuleId: string) {
   const remainingRules = [
     ...rules.filter(rule => rule.enabled && rule.id !== disabledRuleId),
@@ -417,12 +445,13 @@ export async function createAdminUserRule(input: Record<string, unknown>, adminU
     .insert({
       user_id: userId,
       email,
+      role: 'operator',
       enabled: true,
       note: sanitizeNote(input.note),
       updated_at: now,
       updated_by: adminUser.id,
     })
-    .select('id,user_id,email,enabled,note,created_at,updated_at')
+    .select('id,user_id,email,enabled,note,role,created_at,updated_at')
     .maybeSingle()
 
   if (error) {
@@ -457,7 +486,7 @@ export async function updateAdminUserRule(ruleId: string, input: Record<string, 
     .from(ADMIN_USERS_TABLE)
     .update(patch)
     .eq('id', ruleId)
-    .select('id,user_id,email,enabled,note,created_at,updated_at')
+    .select('id,user_id,email,enabled,note,role,created_at,updated_at')
     .maybeSingle()
 
   if (error) {

@@ -10,6 +10,9 @@ import {
   SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_SERVICE_ROLE_KEY,
   SUPABASE_URL,
+  TENCENT_COS_PUBLIC_BASE_URL,
+  TENCENT_COS_SECRET_ID,
+  TENCENT_COS_SECRET_KEY,
 } from '../config.js'
 
 const REDACTED_SECRET = '[redacted-secret]'
@@ -24,6 +27,8 @@ function configuredSecrets() {
     NVIDIA_API_KEY,
     SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_PUBLISHABLE_KEY,
+    TENCENT_COS_SECRET_ID,
+    TENCENT_COS_SECRET_KEY,
   ].filter((value): value is string => Boolean(value && value.length >= 6))
 }
 
@@ -34,6 +39,7 @@ function configuredHosts() {
     KIMI_BASE_URL,
     NVIDIA_BASE_URL,
     SUPABASE_URL,
+    TENCENT_COS_PUBLIC_BASE_URL,
   ]
     .map((value) => {
       try {

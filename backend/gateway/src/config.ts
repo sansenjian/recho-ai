@@ -34,6 +34,12 @@ export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
 export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 export const SUPABASE_IMAGE_BUCKET = process.env.SUPABASE_IMAGE_BUCKET || 'recho-images'
 
+export const TENCENT_COS_SECRET_ID = process.env.TENCENT_COS_SECRET_ID || ''
+export const TENCENT_COS_SECRET_KEY = process.env.TENCENT_COS_SECRET_KEY || ''
+export const TENCENT_COS_BUCKET = process.env.TENCENT_COS_BUCKET || ''
+export const TENCENT_COS_REGION = process.env.TENCENT_COS_REGION || ''
+export const TENCENT_COS_PUBLIC_BASE_URL = process.env.TENCENT_COS_PUBLIC_BASE_URL || ''
+
 export const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
   .split(',')
   .map(value => value.trim())

@@ -13,6 +13,7 @@ import {
   listAdminCreditUsers,
   setAdminCreditCodeDisabled,
 } from '../services/admin-credits.js'
+import { getAdminUserRole } from '../services/app-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
@@ -44,7 +45,8 @@ function routeParam(value: string | string[] | undefined) {
 router.get('/admin/credits/me', async (req: Request, res: Response) => {
   try {
     const user = await requireAdmin(req)
-    res.json({ admin: true, user })
+    const currentAdminRole = await getAdminUserRole(user)
+    res.json({ admin: true, user, currentAdminRole })
   } catch (err) {
     console.warn('[admin-credits] auth failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)

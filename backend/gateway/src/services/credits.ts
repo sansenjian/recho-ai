@@ -1,5 +1,6 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { creditCodeHash } from './credit-code.js'
+import { roundCreditAmount } from './image-credit-cost.js'
 
 const CREDIT_BALANCES_TABLE = 'user_credit_balances'
 
@@ -86,6 +87,10 @@ function normalizedInteger(value: unknown) {
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
 }
 
+function normalizedCreditAmount(value: unknown) {
+  return Math.max(0, roundCreditAmount(value))
+}
+
 function rpcRow<T>(data: T[] | T | null) {
   return Array.isArray(data) ? data[0] : data
 }
@@ -101,7 +106,7 @@ export async function getUserCreditBalance(userId: string): Promise<CreditBalanc
     .maybeSingle()
 
   if (error) throw error
-  return { balance: normalizedInteger((data as { balance?: unknown } | null)?.balance) }
+  return { balance: normalizedCreditAmount((data as { balance?: unknown } | null)?.balance) }
 }
 
 export async function redeemCreditCode(userId: string, rawCode: unknown): Promise<CreditRedemptionResult> {
@@ -118,7 +123,7 @@ export async function redeemCreditCode(userId: string, rawCode: unknown): Promis
   if (error) throw new CreditOperationError(creditErrorCode(error))
   const row = rpcRow(data as Array<{ balance?: unknown; credits?: unknown }> | null)
   return {
-    balance: normalizedInteger(row?.balance),
+    balance: normalizedCreditAmount(row?.balance),
     redeemedCredits: normalizedInteger(row?.credits),
   }
 }
@@ -129,9 +134,9 @@ export async function reserveUserCredits(
   metadata: Record<string, unknown> = {},
 ): Promise<CreditReservation> {
   if (!userId) throw new CreditOperationError('auth_required')
-  if (!Number.isFinite(amount) || amount <= 0) throw new CreditOperationError('invalid_credit_amount')
+  const creditAmount = roundCreditAmount(amount)
+  if (creditAmount <= 0) throw new CreditOperationError('invalid_credit_amount')
 
-  const creditAmount = Math.round(amount)
   const client = requireCreditClient()
   const { data, error } = await client.rpc('reserve_user_credits', {
     p_user_id: userId,
@@ -146,7 +151,7 @@ export async function reserveUserCredits(
 
   return {
     amount: creditAmount,
-    balance: normalizedInteger(row?.balance),
+    balance: normalizedCreditAmount(row?.balance),
     transactionId,
   }
 }
@@ -158,9 +163,9 @@ export async function refundUserCredits(
   metadata: Record<string, unknown> = {},
 ): Promise<CreditRefund> {
   if (!userId) throw new CreditOperationError('auth_required')
-  if (!Number.isFinite(amount) || amount <= 0) throw new CreditOperationError('invalid_credit_amount')
+  const creditAmount = roundCreditAmount(amount)
+  if (creditAmount <= 0) throw new CreditOperationError('invalid_credit_amount')
 
-  const creditAmount = Math.round(amount)
   const client = requireCreditClient()
   const { data, error } = await client.rpc('refund_user_credits', {
     p_user_id: userId,
@@ -173,6 +178,6 @@ export async function refundUserCredits(
   const row = rpcRow(data as Array<{ balance?: unknown }> | null)
   return {
     amount: creditAmount,
-    balance: normalizedInteger(row?.balance),
+    balance: normalizedCreditAmount(row?.balance),
   }
 }
