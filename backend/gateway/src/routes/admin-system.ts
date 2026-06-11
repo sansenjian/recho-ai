@@ -3,8 +3,10 @@ import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
 import { getAdminSystemStatus } from '../services/admin-system.js'
 import {
   AppSettingsError,
+  assertSeniorAdminUser,
   createAdminUserRule,
   getAdminAccessSummary,
+  getAdminUserRole,
   getAdminUserRules,
   getAppSettings,
   updateAdminUserRule,
@@ -59,13 +61,14 @@ router.get('/admin/system', async (req: Request, res: Response) => {
 
 router.get('/admin/settings', async (req: Request, res: Response) => {
   try {
-    await requireAdmin(req)
+    const adminUser = await requireAdmin(req)
     const [settings, adminUsers, adminAccess] = await Promise.all([
       getAppSettings({ refresh: true }),
       getAdminUserRules({ refresh: true }),
       getAdminAccessSummary({ refresh: true }),
     ])
-    res.json({ settings, adminUsers, adminAccess })
+    const currentAdminRole = await getAdminUserRole(adminUser)
+    res.json({ settings, adminUsers, adminAccess, currentAdminRole })
   } catch (err) {
     console.error('[admin-settings] load failed:', safeErrorDetail(err))
     const response = adminSystemErrorResponse(err, '配置加载失败，请稍后重试。')
@@ -88,6 +91,7 @@ router.patch('/admin/settings', async (req: Request, res: Response) => {
 router.post('/admin/settings/admin-users', async (req: Request, res: Response) => {
   try {
     const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
     const rule = await createAdminUserRule(req.body || {}, adminUser)
     const [adminUsers, adminAccess] = await Promise.all([
       getAdminUserRules({ refresh: true }),
@@ -104,6 +108,7 @@ router.post('/admin/settings/admin-users', async (req: Request, res: Response) =
 router.patch('/admin/settings/admin-users/:ruleId', async (req: Request, res: Response) => {
   try {
     const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
     const rule = await updateAdminUserRule(routeParam(req.params.ruleId), req.body || {}, adminUser)
     const [adminUsers, adminAccess] = await Promise.all([
       getAdminUserRules({ refresh: true }),

@@ -18,7 +18,9 @@ import ChatSidebar from '../components/ChatSidebar.vue'
 import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
+import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import { useAuthSession } from '../composables/useAuthSession'
+import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
 import { useCredits } from '../composables/useCredits'
 import { apiUrl } from '../lib/api-base'
 import type { RouteWorkspace } from '../router'
@@ -52,6 +54,12 @@ const {
   creditNotice,
   redeemCredits,
 } = useCredits()
+const {
+  announcement,
+  shouldShowAnnouncement,
+  fetchLatestAnnouncement,
+  markAnnouncementRead,
+} = useAnnouncementPopup()
 // Memory system initialized for future use
 useMemory()
 
@@ -392,6 +400,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('paste', onPaste)
   fetchSkills()
+  void fetchLatestAnnouncement()
   void initAuth()
 })
 
@@ -545,6 +554,12 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
       :completed-tool-calls="completedToolCalls"
       @change-mode="currentAgentMode = $event"
       @select-skill="selectSkill"
+    />
+
+    <AnnouncementPopup
+      v-if="shouldShowAnnouncement && announcement"
+      :announcement="announcement"
+      @close="markAnnouncementRead()"
     />
 
     <div v-if="showAuthDialog" class="auth-overlay" @click.self="closeAuthDialog">

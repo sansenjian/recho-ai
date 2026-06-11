@@ -13,12 +13,32 @@ export function encodedStoragePath(storagePath: string) {
     .join('/')
 }
 
+function cosStorageKey(storagePath: string) {
+  return storagePath.startsWith('cos://')
+    ? storagePath.slice('cos://'.length).replace(/^\/+/, '')
+    : ''
+}
+
 export function originalStorageImageUrl(storagePath?: string, ...sourceUrls: Array<string | undefined>) {
   if (!storagePath) return ''
+  const cosKey = cosStorageKey(storagePath)
   for (const sourceUrl of sourceUrls) {
     if (!sourceUrl || /^data:/i.test(sourceUrl)) continue
     try {
       const url = new URL(sourceUrl, window.location.href)
+      if (cosKey) {
+        const previewKey = cosKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+        const thumbnailKey = cosKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+        const decodedPath = decodeURIComponent(url.pathname)
+        const matchedKey = [previewKey, thumbnailKey, cosKey].find(key => decodedPath.endsWith(`/${key}`))
+        const encodedMatchedKey = matchedKey ? encodedStoragePath(matchedKey) : ''
+        url.pathname = matchedKey
+          ? `${url.pathname.slice(0, Math.max(1, url.pathname.length - encodedMatchedKey.length))}${encodedStoragePath(cosKey)}`
+          : `/${encodedStoragePath(cosKey)}`
+        url.search = ''
+        return url.toString()
+      }
+
       const marker = '/storage/v1/object/public/'
       const markerIndex = url.pathname.indexOf(marker)
       if (markerIndex < 0) continue

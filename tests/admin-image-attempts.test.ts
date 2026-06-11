@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let rows: Array<Record<string, unknown>> = []
 let statusFilter: unknown = null
+let userIdFilter: unknown = null
+let errorTypeFilter: unknown = null
+let httpStatusFilter: unknown = null
+let cutoffFilter: unknown = null
 let limitValue: unknown = null
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({
@@ -17,15 +21,21 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
     from: () => {
       const query = {
         select: vi.fn(() => query),
-        gte: vi.fn(() => query),
+        gte: vi.fn((_key: string, value: unknown) => {
+          cutoffFilter = value
+          return query
+        }),
         order: vi.fn(() => query),
         limit: vi.fn((value: unknown) => {
           limitValue = value
           return Promise.resolve({ data: rows, error: null })
         }),
-        eq: vi.fn((_key: string, value: unknown) => {
-          statusFilter = value
-          rows = rows.filter(row => row.status === value)
+        eq: vi.fn((key: string, value: unknown) => {
+          if (key === 'status') statusFilter = value
+          if (key === 'user_id') userIdFilter = value
+          if (key === 'error_type') errorTypeFilter = value
+          if (key === 'http_status') httpStatusFilter = value
+          rows = rows.filter(row => row[key] === value)
           return query
         }),
       }
@@ -38,6 +48,10 @@ describe('admin image attempt helpers', () => {
   beforeEach(() => {
     rows = []
     statusFilter = null
+    userIdFilter = null
+    errorTypeFilter = null
+    httpStatusFilter = null
+    cutoffFilter = null
     limitValue = null
     vi.resetModules()
   })
@@ -130,5 +144,40 @@ describe('admin image attempt helpers', () => {
 
     expect(statusFilter).toBeNull()
     expect(result.overview.total).toBe(1)
+  })
+
+  it('applies audit filters for user, error type, HTTP status, and time window', async () => {
+    const { listAdminImageAttempts } = await import('../backend/gateway/src/services/admin-image-attempts')
+    rows = [
+      {
+        id: 'attempt_keep',
+        user_id: 'user_keep',
+        status: 'failed',
+        error_type: 'provider',
+        http_status: 502,
+        created_at: '2026-06-08T12:00:00.000Z',
+      },
+      {
+        id: 'attempt_wrong_user',
+        user_id: 'user_other',
+        status: 'failed',
+        error_type: 'provider',
+        http_status: 502,
+        created_at: '2026-06-08T12:01:00.000Z',
+      },
+    ]
+
+    const result = await listAdminImageAttempts({
+      userId: 'user_keep',
+      errorType: 'provider,%()',
+      httpStatus: '502',
+      hours: '168',
+    })
+
+    expect(userIdFilter).toBe('user_keep')
+    expect(errorTypeFilter).toBe('provider')
+    expect(httpStatusFilter).toBe(502)
+    expect(cutoffFilter).toEqual(expect.any(String))
+    expect(result.attempts.map(attempt => attempt.id)).toEqual(['attempt_keep'])
   })
 })

@@ -7,6 +7,10 @@ import {
   isConfiguredAdminUser as isConfiguredAdminUserFromSettings,
 } from './app-settings.js'
 import { createRandomCreditCode, creditCodeHash, normalizeCreditCode } from './credit-code.js'
+import {
+  normalizeImageCreditCostPerImage,
+  roundCreditAmount,
+} from './image-credit-cost.js'
 import { redactSensitiveText } from './safe-error.js'
 import type { RequestUser } from './request-auth.js'
 
@@ -17,6 +21,7 @@ const OVERVIEW_PAGE_SIZE = 1000
 const RECENT_TRANSACTION_DAYS = 7
 const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
 const CREDIT_CODE_STATES = ['active', 'disabled', 'expired', 'exhausted'] as const
+const BYTES_PER_MIB = 1024 * 1024
 
 export type { RequestUser } from './request-auth.js'
 
@@ -81,7 +86,21 @@ export interface AdminCreditOverview {
   settings: {
     imageCreditCostPerImage: number
   }
+  imageCost: AdminImageCostOverview
   generatedAt: string
+}
+
+export interface AdminImageCostOverview {
+  sampleDays: number
+  imageSampleSize: number
+  attemptSampleSize: number
+  averageTrafficMb: number
+  averageStoredMb: number
+  averageLatencyMs: number | null
+  gatewayMemoryMb: number
+  estimatedMemoryMbSeconds: number | null
+  estimatedCostScore: number | null
+  confidence: 'none' | 'low' | 'medium' | 'high'
 }
 
 export interface AdminCreditLedgerEntry {
@@ -182,6 +201,29 @@ function normalizedSignedInteger(value: unknown) {
   return Number.isFinite(number) ? Math.round(number) : 0
 }
 
+function normalizedCreditAmount(value: unknown) {
+  return Math.max(0, roundCreditAmount(value))
+}
+
+function normalizedSignedCreditAmount(value: unknown) {
+  return roundCreditAmount(value)
+}
+
+function normalizedBytes(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
+}
+
+function roundedMetric(value: number, digits = 2) {
+  if (!Number.isFinite(value)) return 0
+  const factor = 10 ** digits
+  return Math.round(value * factor) / factor
+}
+
+function memorySnapshotMb() {
+  return roundedMetric(process.memoryUsage().rss / BYTES_PER_MIB, 1)
+}
+
 function normalizedCodeUses(value: unknown) {
   const number = normalizedInteger(value)
   return number > 0 ? number : 1
@@ -266,9 +308,9 @@ function toCreditUser(
   return {
     userId,
     email: user?.email || null,
-    balance: normalizedInteger(balance?.balance),
-    totalRedeemed: normalizedInteger(balance?.total_redeemed),
-    totalSpent: normalizedInteger(balance?.total_spent),
+    balance: normalizedCreditAmount(balance?.balance),
+    totalRedeemed: normalizedCreditAmount(balance?.total_redeemed),
+    totalSpent: normalizedCreditAmount(balance?.total_spent),
     createdAt: typeof balance?.created_at === 'string' ? balance.created_at : user?.createdAt || null,
     updatedAt: typeof balance?.updated_at === 'string' ? balance.updated_at : null,
     lastSignInAt: user?.lastSignInAt || null,
@@ -300,7 +342,7 @@ function toCreditCodeRedemption(
     credits: normalizedInteger(row.credits),
     redeemedAt: stringField(row, 'redeemed_at'),
     transactionId: transaction ? String(transaction.id || '') || null : null,
-    balanceAfter: transaction ? normalizedInteger(transaction.balance_after) : null,
+    balanceAfter: transaction ? normalizedCreditAmount(transaction.balance_after) : null,
   }
 }
 
@@ -341,8 +383,8 @@ async function usersById(client: ReturnType<typeof requireAdminClient>, userIds:
 function toLedgerDetails(metadata: Record<string, unknown>) {
   return {
     count: Number.isFinite(Number(metadata.count)) ? normalizedInteger(metadata.count) : null,
-    creditCostPerImage: Number.isFinite(Number(metadata.creditCostPerImage)) ? normalizedInteger(metadata.creditCostPerImage) : null,
-    creditCost: Number.isFinite(Number(metadata.creditCost)) ? normalizedInteger(metadata.creditCost) : null,
+    creditCostPerImage: Number.isFinite(Number(metadata.creditCostPerImage)) ? normalizedCreditAmount(metadata.creditCostPerImage) : null,
+    creditCost: Number.isFinite(Number(metadata.creditCost)) ? normalizedCreditAmount(metadata.creditCost) : null,
     size: safeDisplayText(metadata.size, 32),
     aspectRatio: safeDisplayText(metadata.aspectRatio, 24),
     resolution: safeDisplayText(metadata.resolution, 24),
@@ -362,8 +404,8 @@ export function toAdminCreditLedgerEntry(
     id: String(row.id || ''),
     userId: String(row.user_id || ''),
     email: user?.email || null,
-    amount: normalizedSignedInteger(row.amount),
-    balanceAfter: normalizedInteger(row.balance_after),
+    amount: normalizedSignedCreditAmount(row.amount),
+    balanceAfter: normalizedCreditAmount(row.balance_after),
     reason: typeof row.reason === 'string' && row.reason ? row.reason : 'unknown',
     note: safeDisplayText(metadata.note, 240),
     generationId: stringField(row, 'generation_id'),
@@ -378,6 +420,9 @@ export function summarizeAdminCreditOverview(input: {
   balanceRows?: Array<Record<string, unknown>>
   codeRows?: Array<Record<string, unknown>>
   transactionRows?: Array<Record<string, unknown>>
+  imageRows?: Array<Record<string, unknown>>
+  attemptRows?: Array<Record<string, unknown>>
+  gatewayMemoryMb?: number
   now?: Date
   imageCreditCostPerImage?: number
 }): Omit<AdminCreditOverview, 'generatedAt'> {
@@ -394,9 +439,9 @@ export function summarizeAdminCreditOverview(input: {
 
   for (const row of input.balanceRows || []) {
     users.withCreditRows += 1
-    users.totalBalance += normalizedInteger(row.balance)
-    users.totalRedeemed += normalizedInteger(row.total_redeemed)
-    users.totalSpent += normalizedInteger(row.total_spent)
+    users.totalBalance += normalizedCreditAmount(row.balance)
+    users.totalRedeemed += normalizedCreditAmount(row.total_redeemed)
+    users.totalSpent += normalizedCreditAmount(row.total_spent)
   }
 
   const codes = {
@@ -439,7 +484,7 @@ export function summarizeAdminCreditOverview(input: {
     if (Number.isNaN(createdAt) || createdAt < cutoffMs || createdAt > nowMs) continue
 
     const reason = typeof row.reason === 'string' && row.reason ? row.reason : 'unknown'
-    const amount = normalizedSignedInteger(row.amount)
+    const amount = normalizedSignedCreditAmount(row.amount)
     const total = reasonTotals.get(reason) || { reason, count: 0, amount: 0 }
 
     total.count += 1
@@ -453,6 +498,47 @@ export function summarizeAdminCreditOverview(input: {
     if (reason === 'admin_adjustment') last7Days.adminAdjustedCredits += amount
   }
 
+  const imageRows = input.imageRows || []
+  let storedBytesTotal = 0
+  let trafficBytesTotal = 0
+  for (const row of imageRows) {
+    const originalBytes = normalizedBytes(row.original_bytes)
+    const previewBytes = normalizedBytes(row.preview_bytes)
+    const thumbnailBytes = normalizedBytes(row.thumbnail_bytes)
+    storedBytesTotal += originalBytes + previewBytes + thumbnailBytes
+    trafficBytesTotal += previewBytes || thumbnailBytes || originalBytes
+  }
+
+  const attemptRows = input.attemptRows || []
+  let latencyTotal = 0
+  let latencyCount = 0
+  for (const row of attemptRows) {
+    const latencyMs = normalizedInteger(row.latency_ms)
+    if (latencyMs > 0) {
+      latencyTotal += latencyMs
+      latencyCount += 1
+    }
+  }
+
+  const imageSampleSize = imageRows.length
+  const attemptSampleSize = attemptRows.length
+  const averageTrafficMb = imageSampleSize ? roundedMetric((trafficBytesTotal / imageSampleSize) / BYTES_PER_MIB) : 0
+  const averageStoredMb = imageSampleSize ? roundedMetric((storedBytesTotal / imageSampleSize) / BYTES_PER_MIB) : 0
+  const averageLatencyMs = latencyCount ? Math.round(latencyTotal / latencyCount) : null
+  const gatewayMemoryMb = Math.max(0, roundedMetric(Number(input.gatewayMemoryMb) || 0, 1))
+  const averageLatencySeconds = averageLatencyMs === null ? null : averageLatencyMs / 1000
+  const estimatedCostScore = averageLatencySeconds === null
+    ? null
+    : roundedMetric(averageTrafficMb + averageStoredMb * 0.1 + averageLatencySeconds * 0.02)
+  const estimatedMemoryMbSeconds = null
+  const confidence: AdminImageCostOverview['confidence'] = imageSampleSize >= 50 && attemptSampleSize >= 50
+    ? 'high'
+    : imageSampleSize >= 10 && attemptSampleSize >= 10
+      ? 'medium'
+      : imageSampleSize > 0 || attemptSampleSize > 0
+        ? 'low'
+        : 'none'
+
   return {
     users,
     codes,
@@ -461,7 +547,19 @@ export function summarizeAdminCreditOverview(input: {
       byReason: Array.from(reasonTotals.values()).filter(item => item.count > 0),
     },
     settings: {
-      imageCreditCostPerImage: normalizedInteger(input.imageCreditCostPerImage ?? DEFAULT_APP_SETTINGS.imageCreditCostPerImage),
+      imageCreditCostPerImage: normalizeImageCreditCostPerImage(input.imageCreditCostPerImage ?? DEFAULT_APP_SETTINGS.imageCreditCostPerImage),
+    },
+    imageCost: {
+      sampleDays: RECENT_TRANSACTION_DAYS,
+      imageSampleSize,
+      attemptSampleSize,
+      averageTrafficMb,
+      averageStoredMb,
+      averageLatencyMs,
+      gatewayMemoryMb,
+      estimatedMemoryMbSeconds,
+      estimatedCostScore,
+      confidence,
     },
   }
 }
@@ -587,7 +685,7 @@ export async function listAdminCreditUsers(options: {
 export async function getAdminCreditOverview() {
   const now = new Date()
   const recentCutoff = new Date(now.getTime() - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  const [settings, balanceRows, codeRows, transactionRows] = await Promise.all([
+  const [settings, balanceRows, codeRows, transactionRows, imageRows, attemptRows] = await Promise.all([
     getAppSettings(),
     selectAllAdminRows('user_credit_balances', 'balance,total_redeemed,total_spent'),
     selectAllAdminRows('credit_redemption_codes', 'credits,max_redemptions,redeemed_count,expires_at,disabled_at'),
@@ -596,6 +694,16 @@ export async function getAdminCreditOverview() {
       'amount,reason,created_at',
       query => query.gte('created_at', recentCutoff),
     ),
+    selectAllAdminRows(
+      'image_generations',
+      'original_bytes,preview_bytes,thumbnail_bytes,generated_at',
+      query => query.gte('generated_at', recentCutoff),
+    ),
+    selectAllAdminRows(
+      'image_generation_attempts',
+      'latency_ms,status,created_at',
+      query => query.gte('created_at', recentCutoff).eq('status', 'succeeded'),
+    ),
   ])
 
   return {
@@ -603,6 +711,9 @@ export async function getAdminCreditOverview() {
       balanceRows,
       codeRows,
       transactionRows,
+      imageRows,
+      attemptRows,
+      gatewayMemoryMb: memorySnapshotMb(),
       now,
       imageCreditCostPerImage: settings.imageCreditCostPerImage,
     }),
@@ -861,7 +972,7 @@ export async function adjustAdminUserCredits(
   const row = Array.isArray(data) ? data[0] : data
   return {
     amount,
-    balance: normalizedInteger((row as any)?.balance),
+    balance: normalizedCreditAmount((row as any)?.balance),
     transactionId: String((row as any)?.transaction_id || ''),
   }
 }

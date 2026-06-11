@@ -1,14 +1,17 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { cachedAdminUsersById, type AdminUserSummary } from './admin-user-cache.js'
-import { imagePublicUrl } from './image-storage.js'
+import { roundCreditAmount } from './image-credit-cost.js'
+import { imagePublicUrl, removeImageStoragePaths } from './image-storage.js'
 import { redactSensitiveText } from './safe-error.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
 const DEFAULT_LIMIT = 24
 const MAX_LIMIT = 60
+const MAX_BULK_IDS = 60
 const ADMIN_IMAGE_COLUMNS = [
   'id',
   'user_id',
+  'storage_path',
   'preview_url',
   'preview_path',
   'thumbnail_url',
@@ -64,6 +67,7 @@ function statusForAdminImageError(code: string) {
 
 function publicMessageForAdminImageError(code: string) {
   if (code === 'invalid_image_id') return '图片 ID 无效。'
+  if (code === 'invalid_image_ids') return '请选择有效的图片。'
   if (code === 'invalid_visibility') return '图片可见性无效。'
   if (code === 'credit_image_must_stay_private') return '额度生成的图片不能公开到作品广场。'
   if (code === 'image_not_found') return '图片不存在。'
@@ -89,6 +93,21 @@ function sanitizedVisibility(value: unknown): AdminImageVisibility | null {
 
 function sanitizedFundingSource(value: unknown): AdminImageFundingSource | null {
   return value === 'free' || value === 'credit' ? value : null
+}
+
+function sanitizedImageId(value: unknown) {
+  if (typeof value !== 'string') return null
+  const id = value.trim()
+  return id && id.length <= 160 ? id : null
+}
+
+function sanitizedImageIds(value: unknown) {
+  if (!Array.isArray(value)) throw new AdminImageError('invalid_image_ids')
+  const ids = Array.from(new Set(value.map(sanitizedImageId)))
+  if (!ids.length || ids.length > MAX_BULK_IDS || ids.some(id => !id)) {
+    throw new AdminImageError('invalid_image_ids')
+  }
+  return ids as string[]
 }
 
 function sanitizedFilterText(value: unknown, maxLength = 80) {
@@ -119,9 +138,28 @@ function publicUrlField(row: Record<string, unknown>, key: string) {
   return value && /^https?:\/\//i.test(value) ? value : null
 }
 
+function storagePathsFromRows(rows: Array<Record<string, unknown>>) {
+  return rows.flatMap(row => [
+    stringField(row, 'storage_path'),
+    stringField(row, 'preview_path'),
+    stringField(row, 'thumbnail_path'),
+  ])
+}
+
+function cleanupDeletedImageStorage(rows: Array<Record<string, unknown>>) {
+  const paths = storagePathsFromRows(rows)
+  void removeImageStoragePaths(paths).catch((error) => {
+    console.warn('[admin-images] failed to remove deleted image storage paths', error)
+  })
+}
+
 function normalizedInteger(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0
+}
+
+function normalizedCreditAmount(value: unknown) {
+  return Math.max(0, roundCreditAmount(value))
 }
 
 export function toAdminImageItem(
@@ -142,7 +180,7 @@ export function toAdminImageItem(
     thumbnailUrl: imagePublicUrl(thumbnailPath) || publicUrlField(row, 'thumbnail_url') || null,
     visibility,
     fundingSource: stringField(row, 'funding_source'),
-    creditCost: normalizedInteger(row.credit_cost),
+    creditCost: normalizedCreditAmount(row.credit_cost),
     size: stringField(row, 'size'),
     aspectRatio: stringField(row, 'aspect_ratio'),
     resolution: stringField(row, 'resolution'),
@@ -198,7 +236,8 @@ export async function listAdminImages(options: {
 }
 
 export async function setAdminImageVisibility(id: string, visibilityValue: unknown) {
-  if (!id || id.length > 160) throw new AdminImageError('invalid_image_id')
+  const imageId = sanitizedImageId(id)
+  if (!imageId) throw new AdminImageError('invalid_image_id')
   const visibility = sanitizedVisibility(visibilityValue)
   if (!visibility) throw new AdminImageError('invalid_visibility')
 
@@ -206,7 +245,7 @@ export async function setAdminImageVisibility(id: string, visibilityValue: unkno
   const { data: existing, error: lookupError } = await client
     .from(IMAGE_HISTORY_TABLE)
     .select(ADMIN_IMAGE_COLUMNS)
-    .eq('id', id)
+    .eq('id', imageId)
     .maybeSingle()
 
   if (lookupError) throw lookupError
@@ -219,7 +258,7 @@ export async function setAdminImageVisibility(id: string, visibilityValue: unkno
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .update({ visibility })
-    .eq('id', id)
+    .eq('id', imageId)
     .select(ADMIN_IMAGE_COLUMNS)
     .maybeSingle()
 
@@ -230,4 +269,68 @@ export async function setAdminImageVisibility(id: string, visibilityValue: unkno
   const userId = stringField(updatedRow, 'user_id')
   const users = userId ? await usersById([userId]) : new Map<string, AdminUserSummary>()
   return toAdminImageItem(updatedRow, userId ? users.get(userId) : undefined)
+}
+
+export async function bulkSetAdminImageVisibility(idsValue: unknown, visibilityValue: unknown) {
+  const ids = sanitizedImageIds(idsValue)
+  const visibility = sanitizedVisibility(visibilityValue)
+  if (!visibility) throw new AdminImageError('invalid_visibility')
+
+  const client = requireAdminImageClient()
+  const { data: existing, error: lookupError } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select(ADMIN_IMAGE_COLUMNS)
+    .in('id', ids)
+
+  if (lookupError) throw lookupError
+  const existingRows = (existing || []) as unknown as Array<Record<string, unknown>>
+  if (!existingRows.length) throw new AdminImageError('image_not_found')
+
+  if (visibility === 'public' && existingRows.some(row => stringField(row, 'funding_source') === 'credit')) {
+    throw new AdminImageError('credit_image_must_stay_private')
+  }
+
+  const targetIds = existingRows.map(row => String(row.id || '')).filter(Boolean)
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .update({ visibility })
+    .in('id', targetIds)
+    .select(ADMIN_IMAGE_COLUMNS)
+
+  if (error) throw error
+  const updatedRows = (data || []) as unknown as Array<Record<string, unknown>>
+  const userIds = Array.from(new Set(
+    updatedRows
+      .map(row => stringField(row, 'user_id'))
+      .filter((userId): userId is string => Boolean(userId)),
+  ))
+  const users = await usersById(userIds)
+
+  return updatedRows.map(row => toAdminImageItem(row, users.get(String(row.user_id || ''))))
+}
+
+export async function bulkArchiveAdminImages(idsValue: unknown) {
+  return await bulkSetAdminImageVisibility(idsValue, 'private')
+}
+
+export async function bulkDeleteAdminImages(idsValue: unknown) {
+  const ids = sanitizedImageIds(idsValue)
+  const client = requireAdminImageClient()
+
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .delete()
+    .in('id', ids)
+    .select(ADMIN_IMAGE_COLUMNS)
+
+  if (error) throw error
+  const deletedRows = (data || []) as unknown as Array<Record<string, unknown>>
+  if (!deletedRows.length) throw new AdminImageError('image_not_found')
+
+  cleanupDeletedImageStorage(deletedRows)
+
+  return {
+    deletedIds: deletedRows.map(row => String(row.id || '')).filter(Boolean),
+    deletedCount: deletedRows.length,
+  }
 }

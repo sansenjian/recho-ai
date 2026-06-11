@@ -794,7 +794,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     let responseImages = imagesWithReferences
 
     try {
-      const savedImages = await saveImageHistory(imagesWithReferences, { userId })
+      const savedImages = await saveImageHistory(imagesWithReferences, {
+        userId,
+        allowCreditMetadata: usesCredits,
+        allowCreditStorage: usesCredits,
+      })
       if (savedImages) {
         responseImages = savedImages
         console.log(`[image-history] saved ${savedImages.length} image(s) to Supabase`)

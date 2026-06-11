@@ -26,6 +26,15 @@ describe('admin credit overview helpers', () => {
         { amount: -5, reason: 'admin_adjustment', created_at: '2026-06-07T15:00:00.000Z' },
         { amount: 30, reason: 'redemption', created_at: '2026-05-01T00:00:00.000Z' },
       ],
+      imageRows: [
+        { original_bytes: 2_097_152, preview_bytes: 524_288, thumbnail_bytes: 131_072 },
+        { original_bytes: 1_048_576, preview_bytes: 262_144, thumbnail_bytes: 65_536 },
+      ],
+      attemptRows: [
+        { latency_ms: 2000 },
+        { latency_ms: 4000 },
+      ],
+      gatewayMemoryMb: 256,
       imageCreditCostPerImage: 3,
     })
 
@@ -60,6 +69,39 @@ describe('admin credit overview helpers', () => {
     expect(overview.settings).toEqual({
       imageCreditCostPerImage: 3,
     })
+    expect(overview.imageCost).toMatchObject({
+      sampleDays: 7,
+      imageSampleSize: 2,
+      attemptSampleSize: 2,
+      averageTrafficMb: 0.38,
+      averageStoredMb: 1.97,
+      averageLatencyMs: 3000,
+      gatewayMemoryMb: 256,
+      estimatedMemoryMbSeconds: null,
+      estimatedCostScore: 0.64,
+      confidence: 'low',
+    })
+  })
+
+  it('does not count baseline gateway RSS as per-image generation cost', () => {
+    const overview = summarizeAdminCreditOverview({
+      imageRows: [
+        { preview_bytes: 1_048_576 },
+      ],
+      attemptRows: [
+        { latency_ms: 30_000 },
+      ],
+      gatewayMemoryMb: 2_048,
+    })
+
+    expect(overview.imageCost).toMatchObject({
+      averageTrafficMb: 1,
+      averageStoredMb: 1,
+      averageLatencyMs: 30_000,
+      gatewayMemoryMb: 2_048,
+      estimatedMemoryMbSeconds: null,
+      estimatedCostScore: 1.7,
+    })
   })
 
   it('treats empty or malformed rows as zero-safe data', () => {
@@ -74,6 +116,54 @@ describe('admin credit overview helpers', () => {
     expect(overview.codes.totalIssuedCredits).toBe(0)
     expect(overview.codes.exhausted).toBe(1)
     expect(overview.transactions.last7Days.totalCount).toBe(0)
+    expect(overview.imageCost).toMatchObject({
+      imageSampleSize: 0,
+      attemptSampleSize: 0,
+      averageTrafficMb: 0,
+      averageStoredMb: 0,
+      averageLatencyMs: null,
+      estimatedMemoryMbSeconds: null,
+      estimatedCostScore: null,
+      confidence: 'none',
+    })
+  })
+
+  it('preserves decimal credit balances, costs, and ledger amounts', () => {
+    const overview = summarizeAdminCreditOverview({
+      now: new Date('2026-06-08T12:00:00.000Z'),
+      balanceRows: [
+        { balance: 12.25, total_redeemed: 40.5, total_spent: 28.25 },
+      ],
+      transactionRows: [
+        { amount: -0.25, reason: 'image_generation', created_at: '2026-06-08T11:00:00.000Z' },
+      ],
+      imageCreditCostPerImage: 0.25,
+    })
+
+    expect(overview.users).toMatchObject({
+      totalBalance: 12.25,
+      totalRedeemed: 40.5,
+      totalSpent: 28.25,
+    })
+    expect(overview.transactions.last7Days.spentCredits).toBe(0.25)
+    expect(overview.settings.imageCreditCostPerImage).toBe(0.25)
+
+    const entry = toAdminCreditLedgerEntry({
+      id: 'tx_decimal',
+      user_id: 'user_1',
+      amount: -0.25,
+      balance_after: 12.25,
+      reason: 'image_generation',
+      metadata: {
+        creditCostPerImage: 0.25,
+        creditCost: 0.5,
+      },
+    })
+
+    expect(entry.amount).toBe(-0.25)
+    expect(entry.balanceAfter).toBe(12.25)
+    expect(entry.details.creditCostPerImage).toBe(0.25)
+    expect(entry.details.creditCost).toBe(0.5)
   })
 
   it('returns a redacted whitelist view for ledger metadata', () => {

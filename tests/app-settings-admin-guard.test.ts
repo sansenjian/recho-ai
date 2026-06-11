@@ -23,6 +23,9 @@ vi.mock('../backend/gateway/src/config', () => ({
   SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_SERVICE_ROLE_KEY: '',
   SUPABASE_URL: '',
+  TENCENT_COS_PUBLIC_BASE_URL: '',
+  TENCENT_COS_SECRET_ID: '',
+  TENCENT_COS_SECRET_KEY: '',
 }))
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({

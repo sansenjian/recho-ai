@@ -8,6 +8,7 @@ import {
   hasSupabaseConfig,
 } from '../clients/supabase.js'
 import { DEFAULT_APP_SETTINGS, getAdminAccessSummary, getAppSettings, type AdminAccessSummary } from './app-settings.js'
+import { normalizeImageCreditCostPerImage } from './image-credit-cost.js'
 import { safeErrorDetail } from './safe-error.js'
 
 type SystemStatus = 'ok' | 'warning' | 'error'
@@ -67,6 +68,7 @@ const ADMIN_TABLES: AdminTableDefinition[] = [
   { key: 'imageEvents', label: '图片事件', table: 'image_events' },
   { key: 'appSettings', label: '运行时配置', table: 'app_settings' },
   { key: 'adminUsers', label: '后台管理员', table: 'admin_users' },
+  { key: 'announcements', label: '公告', table: 'announcements' },
 ]
 
 function normalizedCount(value: unknown) {
@@ -141,7 +143,7 @@ export function summarizeAdminSystemStatus(input: {
       },
       imageGeneration: {
         apiKeyConfigured: Boolean(input.imageApiKeyConfigured),
-        creditCostPerImage: Math.max(1, Math.round(Number(input.imageCreditCostPerImage) || 1)),
+        creditCostPerImage: normalizeImageCreditCostPerImage(input.imageCreditCostPerImage),
         analyticsEnabled: Boolean(input.imageAnalyticsEnabled),
       },
       adminUsers: {
