@@ -2,13 +2,18 @@ import type { Request } from 'express'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { safeErrorDetail } from './safe-error.js'
 
+export interface RequestUser {
+  id: string
+  email: string | null
+}
+
 function bearerToken(req: Request) {
   const authorization = req.get('authorization') || ''
   const match = /^Bearer\s+(.+)$/i.exec(authorization.trim())
   return match?.[1]?.trim() || null
 }
 
-export async function getRequestUser(req: Request) {
+export async function getRequestUser(req: Request): Promise<RequestUser | null> {
   const token = bearerToken(req)
   if (!token) return null
 

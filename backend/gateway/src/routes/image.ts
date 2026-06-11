@@ -1,7 +1,8 @@
 import { Router, Request, Response, raw } from 'express'
 import { randomUUID } from 'node:crypto'
-import { IMAGE_CREDIT_COST_PER_IMAGE, IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
+import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
 import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
+import { getAppSettings } from '../services/app-settings.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
 import { saveImageHistory, type ImageHistoryItem } from '../services/image-history.js'
 import { downloadImageBuffer, storeImageBuffer } from '../services/image-storage.js'
@@ -61,7 +62,6 @@ const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const REFERENCE_UPLOAD_LIMIT = '12mb'
 const REFERENCE_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
 const REFERENCE_UPLOAD_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
-const IMAGE_MODEL = 'gpt-image-2'
 
 interface ImageProviderResponse {
   provider: string
@@ -221,9 +221,15 @@ function validateGptImage2Size(size: string) {
   return null
 }
 
-function imageRequestFields(prompt: string, size: string, quality: ImageQuality, count: ImageGenerationCount) {
+function imageRequestFields(
+  prompt: string,
+  size: string,
+  quality: ImageQuality,
+  count: ImageGenerationCount,
+  imageModel: string,
+) {
   return {
-    model: IMAGE_MODEL,
+    model: imageModel,
     prompt,
     n: count,
     ...(size === 'auto' ? {} : { size }),
@@ -459,11 +465,18 @@ async function parseImagesApiResponse(response: globalThis.Response, prefix: str
   }
 }
 
-async function generateWithImagesApi(prompt: string, references: ImageGenReference[], size: string, quality: ImageQuality, count: ImageGenerationCount): Promise<ImageProviderResponse> {
-  const fields = imageRequestFields(prompt, size, quality, count)
+async function generateWithImagesApi(
+  prompt: string,
+  references: ImageGenReference[],
+  size: string,
+  quality: ImageQuality,
+  count: ImageGenerationCount,
+  imageModel: string,
+): Promise<ImageProviderResponse> {
+  const fields = imageRequestFields(prompt, size, quality, count, imageModel)
 
   if (!references.length) {
-    console.log(`[image] forwarding to /images/generations refs=0, model=${IMAGE_MODEL}, size=${size}, count=${count}`)
+    console.log(`[image] forwarding to /images/generations refs=0, model=${imageModel}, size=${size}, count=${count}`)
     const response = await fetch(apiUrl(IMAGE_GEN_BASE_URL, '/images/generations'), {
       method: 'POST',
       headers: {
@@ -476,11 +489,11 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
     return {
       ...await parseImagesApiResponse(response, 'Images API 错误'),
       provider: providerName(),
-      imageModel: IMAGE_MODEL,
+      imageModel,
     }
   }
 
-  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=${IMAGE_MODEL}, size=${size}, count=${count}`)
+  console.log(`[image] forwarding to /images/edits refs=${references.length}, model=${imageModel}, size=${size}, count=${count}`)
   const form = new FormData()
   for (const [key, value] of Object.entries(fields)) {
     form.append(key, String(value))
@@ -502,7 +515,7 @@ async function generateWithImagesApi(prompt: string, references: ImageGenReferen
   return {
     ...await parseImagesApiResponse(response, 'Images API 错误'),
     provider: providerName(),
-    imageModel: IMAGE_MODEL,
+    imageModel,
   }
 }
 
@@ -593,11 +606,13 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       typeof item?.dataUrl === 'string' && item.dataUrl.trim()
     ))
     : []
-  const sizeError = validateGptImage2Size(size)
   const requestStartedAt = Date.now()
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
-  const creditCostPerImage = IMAGE_CREDIT_COST_PER_IMAGE
+  const appSettings = await getAppSettings()
+  const imageModel = appSettings.imageResponsesImageModel
+  const sizeError = imageModel === 'gpt-image-2' ? validateGptImage2Size(size) : null
+  const creditCostPerImage = appSettings.imageCreditCostPerImage
   const requestedCreditCost = imageCreditCost(count, creditCostPerImage)
   let userId: string | null = null
   let creditReservation: CreditReservation | null = null
@@ -605,7 +620,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   let creditBalance: number | null = null
   let responseMeta: Pick<ImageProviderResponse, 'provider' | 'imageModel' | 'textModel'> = {
     provider: providerName(),
-    imageModel: IMAGE_MODEL,
+    imageModel,
   }
 
   async function refundReservedCredits(amount?: number, reason = 'image_generation_failed') {
@@ -687,7 +702,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     for (let attempt = 1; attempt <= IMAGE_RETRY_TIMES; attempt += 1) {
       try {
         console.log(`[image] attempt ${attempt}/${IMAGE_RETRY_TIMES}`)
-        response = await generateWithImagesApi(trimmedPrompt, references, size, quality, count)
+        response = await generateWithImagesApi(trimmedPrompt, references, size, quality, count, imageModel)
         responseMeta = {
           provider: response.provider,
           imageModel: response.imageModel,

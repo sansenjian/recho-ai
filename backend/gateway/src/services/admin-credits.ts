@@ -1,8 +1,14 @@
 import type { User } from '@supabase/supabase-js'
-import { ADMIN_USER_EMAILS, ADMIN_USER_IDS, IMAGE_CREDIT_COST_PER_IMAGE } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import {
+  DEFAULT_APP_SETTINGS,
+  getAdminAccessSummary,
+  getAppSettings,
+  isConfiguredAdminUser as isConfiguredAdminUserFromSettings,
+} from './app-settings.js'
 import { createRandomCreditCode, creditCodeHash, normalizeCreditCode } from './credit-code.js'
 import { redactSensitiveText } from './safe-error.js'
+import type { RequestUser } from './request-auth.js'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
@@ -12,10 +18,7 @@ const RECENT_TRANSACTION_DAYS = 7
 const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
 const CREDIT_CODE_STATES = ['active', 'disabled', 'expired', 'exhausted'] as const
 
-export interface RequestUser {
-  id: string
-  email: string | null
-}
+export type { RequestUser } from './request-auth.js'
 
 export interface AdminCreditUser {
   userId: string
@@ -458,7 +461,7 @@ export function summarizeAdminCreditOverview(input: {
       byReason: Array.from(reasonTotals.values()).filter(item => item.count > 0),
     },
     settings: {
-      imageCreditCostPerImage: normalizedInteger(input.imageCreditCostPerImage ?? IMAGE_CREDIT_COST_PER_IMAGE),
+      imageCreditCostPerImage: normalizedInteger(input.imageCreditCostPerImage ?? DEFAULT_APP_SETTINGS.imageCreditCostPerImage),
     },
   }
 }
@@ -490,19 +493,17 @@ async function selectAllAdminRows(
   return rows
 }
 
-export function isConfiguredAdminUser(user: RequestUser | null) {
-  if (!user) return false
-  if (!ADMIN_USER_IDS.length && !ADMIN_USER_EMAILS.length) return false
-  if (ADMIN_USER_IDS.includes(user.id)) return true
-  return Boolean(user.email && ADMIN_USER_EMAILS.includes(user.email.toLowerCase()))
+export async function isConfiguredAdminUser(user: RequestUser | null) {
+  return await isConfiguredAdminUserFromSettings(user)
 }
 
-export function assertAdminUser(user: RequestUser | null) {
+export async function assertAdminUser(user: RequestUser | null) {
   if (!user) throw new AdminCreditError('auth_required')
-  if (!ADMIN_USER_IDS.length && !ADMIN_USER_EMAILS.length) {
+  const adminAccess = await getAdminAccessSummary()
+  if (!adminAccess.configured) {
     throw new AdminCreditError('admin_not_configured')
   }
-  if (!isConfiguredAdminUser(user)) throw new AdminCreditError('admin_forbidden')
+  if (!await isConfiguredAdminUser(user)) throw new AdminCreditError('admin_forbidden')
   return user
 }
 
@@ -586,7 +587,8 @@ export async function listAdminCreditUsers(options: {
 export async function getAdminCreditOverview() {
   const now = new Date()
   const recentCutoff = new Date(now.getTime() - RECENT_TRANSACTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  const [balanceRows, codeRows, transactionRows] = await Promise.all([
+  const [settings, balanceRows, codeRows, transactionRows] = await Promise.all([
+    getAppSettings(),
     selectAllAdminRows('user_credit_balances', 'balance,total_redeemed,total_spent'),
     selectAllAdminRows('credit_redemption_codes', 'credits,max_redemptions,redeemed_count,expires_at,disabled_at'),
     selectAllAdminRows(
@@ -602,7 +604,7 @@ export async function getAdminCreditOverview() {
       codeRows,
       transactionRows,
       now,
-      imageCreditCostPerImage: IMAGE_CREDIT_COST_PER_IMAGE,
+      imageCreditCostPerImage: settings.imageCreditCostPerImage,
     }),
     generatedAt: now.toISOString(),
   }

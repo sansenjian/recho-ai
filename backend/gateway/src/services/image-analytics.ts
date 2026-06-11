@@ -1,5 +1,5 @@
-import { IMAGE_ANALYTICS_ENABLED } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { getAppSettings } from './app-settings.js'
 
 const IMAGE_EVENTS_TABLE = 'image_events'
 const IMAGE_CONTEXTS_TABLE = 'image_generation_contexts'
@@ -53,8 +53,10 @@ export interface ImageEventInput {
 const recentEventTimes = new Map<string, number>()
 const highFrequencyEventTypes = new Set(['zoom'])
 
-export function isImageAnalyticsEnabled(options: { enabled?: boolean } = {}) {
-  return options.enabled ?? IMAGE_ANALYTICS_ENABLED
+export async function isImageAnalyticsEnabled(options: { enabled?: boolean } = {}) {
+  if (typeof options.enabled === 'boolean') return options.enabled
+  const settings = await getAppSettings()
+  return settings.imageAnalyticsEnabled
 }
 
 function normalizedCount(value: unknown, max = 100_000) {
@@ -150,7 +152,7 @@ export function sanitizeImageEventMetadata(value: unknown) {
 }
 
 export async function recordImageEvent(event: ImageEventInput, options: { enabled?: boolean } = {}) {
-  if (!isImageAnalyticsEnabled(options)) return false
+  if (!await isImageAnalyticsEnabled(options)) return false
   const client = getSupabaseAdminClient()
   if (!client) return false
   if (!imageEventTypes.has(event.eventType) || !imageEventSources.has(event.source)) return false
@@ -180,7 +182,7 @@ export async function recordImageGenerationContext(
   rawContext: unknown,
   options: { enabled?: boolean } = {},
 ) {
-  if (!isImageAnalyticsEnabled(options)) return false
+  if (!await isImageAnalyticsEnabled(options)) return false
   const context = normalizedCanvasContext(rawContext)
   if (!context) return false
   const client = getSupabaseAdminClient()

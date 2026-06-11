@@ -1,8 +1,4 @@
 import {
-  ADMIN_USER_EMAILS,
-  ADMIN_USER_IDS,
-  IMAGE_ANALYTICS_ENABLED,
-  IMAGE_CREDIT_COST_PER_IMAGE,
   IMAGE_GEN_API_KEY,
   SUPABASE_IMAGE_BUCKET,
 } from '../config.js'
@@ -11,6 +7,8 @@ import {
   hasSupabaseAdminConfig,
   hasSupabaseConfig,
 } from '../clients/supabase.js'
+import { DEFAULT_APP_SETTINGS, getAdminAccessSummary, getAppSettings, type AdminAccessSummary } from './app-settings.js'
+import { safeErrorDetail } from './safe-error.js'
 
 type SystemStatus = 'ok' | 'warning' | 'error'
 type TableStatus = 'ok' | 'missing' | 'restricted' | 'error' | 'unavailable'
@@ -47,6 +45,10 @@ export interface AdminSystemStatus {
       configured: boolean
       userIdCount: number
       emailCount: number
+      databaseCount: number
+      envUserIdCount: number
+      envEmailCount: number
+      tableAvailable: boolean
     }
   }
   data: {
@@ -63,6 +65,8 @@ const ADMIN_TABLES: AdminTableDefinition[] = [
   { key: 'imageAttempts', label: '生图尝试', table: 'image_generation_attempts' },
   { key: 'imageContexts', label: '画布上下文', table: 'image_generation_contexts' },
   { key: 'imageEvents', label: '图片事件', table: 'image_events' },
+  { key: 'appSettings', label: '运行时配置', table: 'app_settings' },
+  { key: 'adminUsers', label: '后台管理员', table: 'admin_users' },
 ]
 
 function normalizedCount(value: unknown) {
@@ -96,9 +100,16 @@ export function summarizeAdminSystemStatus(input: {
   imageAnalyticsEnabled?: boolean
   adminUserIdCount?: number
   adminEmailCount?: number
+  adminDatabaseCount?: number
+  adminEnvUserIdCount?: number
+  adminEnvEmailCount?: number
+  adminUsersTableAvailable?: boolean
 }): AdminSystemStatus {
   const adminUserIdCount = normalizedCount(input.adminUserIdCount) ?? 0
   const adminEmailCount = normalizedCount(input.adminEmailCount) ?? 0
+  const adminDatabaseCount = normalizedCount(input.adminDatabaseCount) ?? 0
+  const adminEnvUserIdCount = normalizedCount(input.adminEnvUserIdCount) ?? 0
+  const adminEnvEmailCount = normalizedCount(input.adminEnvEmailCount) ?? 0
   const adminConfigured = adminUserIdCount + adminEmailCount > 0
   const tables = input.tables
   const unreadableTables = tables.filter(table => table.status !== 'ok')
@@ -137,6 +148,10 @@ export function summarizeAdminSystemStatus(input: {
         configured: adminConfigured,
         userIdCount: adminUserIdCount,
         emailCount: adminEmailCount,
+        databaseCount: adminDatabaseCount,
+        envUserIdCount: adminEnvUserIdCount,
+        envEmailCount: adminEnvEmailCount,
+        tableAvailable: input.adminUsersTableAvailable !== false,
       },
     },
     data: {
@@ -184,6 +199,28 @@ async function checkAdminTable(definition: AdminTableDefinition): Promise<AdminS
 
 export async function getAdminSystemStatus() {
   const tables = await Promise.all(ADMIN_TABLES.map(checkAdminTable))
+  let settings = DEFAULT_APP_SETTINGS
+  let adminAccess: AdminAccessSummary = {
+    configured: false,
+    userIdCount: 0,
+    emailCount: 0,
+    databaseCount: 0,
+    envUserIdCount: 0,
+    envEmailCount: 0,
+    tableAvailable: false,
+  }
+
+  try {
+    settings = await getAppSettings()
+  } catch (err) {
+    console.warn('[admin-system] settings diagnostics fallback:', safeErrorDetail(err))
+  }
+
+  try {
+    adminAccess = await getAdminAccessSummary()
+  } catch (err) {
+    console.warn('[admin-system] admin access diagnostics fallback:', safeErrorDetail(err))
+  }
 
   return summarizeAdminSystemStatus({
     tables,
@@ -191,9 +228,13 @@ export async function getAdminSystemStatus() {
     supabaseAdminConfigured: hasSupabaseAdminConfig(),
     supabaseImageBucketConfigured: Boolean(SUPABASE_IMAGE_BUCKET.trim()),
     imageApiKeyConfigured: Boolean(IMAGE_GEN_API_KEY),
-    imageCreditCostPerImage: IMAGE_CREDIT_COST_PER_IMAGE,
-    imageAnalyticsEnabled: IMAGE_ANALYTICS_ENABLED,
-    adminUserIdCount: ADMIN_USER_IDS.length,
-    adminEmailCount: ADMIN_USER_EMAILS.length,
+    imageCreditCostPerImage: settings.imageCreditCostPerImage,
+    imageAnalyticsEnabled: settings.imageAnalyticsEnabled,
+    adminUserIdCount: adminAccess.userIdCount,
+    adminEmailCount: adminAccess.emailCount,
+    adminDatabaseCount: adminAccess.databaseCount,
+    adminEnvUserIdCount: adminAccess.envUserIdCount,
+    adminEnvEmailCount: adminAccess.envEmailCount,
+    adminUsersTableAvailable: adminAccess.tableAvailable,
   })
 }

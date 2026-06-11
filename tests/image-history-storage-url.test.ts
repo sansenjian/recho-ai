@@ -1,22 +1,51 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let rows: Array<Record<string, unknown>> = []
+let selectArgs: string[] = []
+let upsertBatches: Array<Array<Record<string, unknown>>> = []
+let removeStoragePathBatches: string[][] = []
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
   storeImageBuffer: vi.fn(),
   storeImageDataUrl: vi.fn(),
+  removeImageStoragePaths: vi.fn(async (paths: string[]) => {
+    removeStoragePathBatches.push(paths)
+    return true
+  }),
 }))
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({
   getSupabaseAdminClient: () => ({
     from: () => {
+      let deleteMode = false
+      const currentResult = () => Promise.resolve({ data: rows, error: null })
       const query = {
-        select: vi.fn(() => query),
+        select: vi.fn((columns?: string) => {
+          selectArgs.push(String(columns || ''))
+          return deleteMode
+            ? Promise.resolve({ data: rows.map(row => ({ id: row.id })), error: null })
+            : query
+        }),
         order: vi.fn(() => query),
         range: vi.fn(() => Promise.resolve({ data: rows, error: null })),
-        eq: vi.fn(() => query),
+        eq: vi.fn((key: string, value: unknown) => {
+          rows = rows.filter(row => row[key] === value)
+          return query
+        }),
         maybeSingle: vi.fn(() => Promise.resolve({ data: rows[0] || null, error: null })),
+        upsert: vi.fn((batch: Array<Record<string, unknown>>) => {
+          upsertBatches.push(batch)
+          return Promise.resolve({ error: null })
+        }),
+        delete: vi.fn(() => {
+          deleteMode = true
+          return query
+        }),
+        then: (
+          resolve: (value: { data: Array<Record<string, unknown>>; error: null }) => unknown,
+          reject?: (reason: unknown) => unknown,
+        ) => currentResult().then(resolve, reject),
       }
       return query
     },
@@ -26,6 +55,9 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
 describe('image history storage urls', () => {
   beforeEach(() => {
     rows = []
+    selectArgs = []
+    upsertBatches = []
+    removeStoragePathBatches = []
     vi.resetModules()
   })
 
@@ -76,6 +108,51 @@ describe('image history storage urls', () => {
       thumbnailUrl: 'https://cdn.example.test/generated/img_2.webp',
     })
     expect(JSON.stringify(image)).not.toContain('img_1780573040016_0.thumb.webp')
+  })
+
+  it('uses explicit lightweight columns for detail reads', async () => {
+    const { getImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [{
+      id: 'img_detail_1',
+      data_url: 'data:image/png;base64,large-original',
+      storage_path: 'generated/img_detail_1.webp',
+      prompt: 'prompt',
+      size: '1024x1024',
+      visibility: 'public',
+      funding_source: 'free',
+      system_prompt: 'do-not-read',
+      model_prompt: 'do-not-read',
+      request_ip: '127.0.0.1',
+      request_user_agent: 'secret-agent',
+      generated_at: '2026-06-09T00:00:00.000Z',
+    }]
+
+    await getImageHistory('img_detail_1', { scope: 'public' })
+    const columns = selectArgs[0]
+
+    expect(columns).not.toBe('*')
+    expect(columns.split(',')).not.toContain('data_url')
+    expect(columns.split(',')).not.toContain('system_prompt')
+    expect(columns.split(',')).not.toContain('model_prompt')
+    expect(columns.split(',')).not.toContain('request_ip')
+    expect(columns.split(',')).not.toContain('request_user_agent')
+  })
+
+  it('includes the original payload column only when requested', async () => {
+    const { getImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [{
+      id: 'img_detail_2',
+      data_url: 'data:image/png;base64,large-original',
+      prompt: 'prompt',
+      size: '1024x1024',
+      visibility: 'public',
+      funding_source: 'free',
+      generated_at: '2026-06-09T00:00:00.000Z',
+    }]
+
+    await getImageHistory('img_detail_2', { scope: 'public', includeOriginal: true })
+
+    expect(selectArgs[0].split(',')).toContain('data_url')
   })
 
   it('prefers storage paths for reference images and filters bare filenames', async () => {
@@ -189,5 +266,69 @@ describe('image history storage urls', () => {
       thumbnailUrl: undefined,
     })
     expect(JSON.stringify(history.images[0])).not.toContain('bare-reference-thumb.webp')
+  })
+
+  it('upserts stored history rows in bounded chunks', async () => {
+    const { saveImageHistory } = await import('../backend/gateway/src/services/image-history')
+    const images = Array.from({ length: 55 }, (_, index) => ({
+      id: `img_chunk_${index}`,
+      dataUrl: 'data:image/png;base64,AAAA',
+      prompt: 'prompt',
+      size: '1024x1024',
+      timestamp: '2026-06-09T00:00:00.000Z',
+    }))
+
+    await saveImageHistory(images)
+
+    expect(upsertBatches).toHaveLength(2)
+    expect(upsertBatches[0]).toHaveLength(50)
+    expect(upsertBatches[1]).toHaveLength(5)
+  })
+
+  it('removes only generated storage files after deleting one history row', async () => {
+    const { deleteImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [{
+      id: 'img_delete_1',
+      user_id: 'user_1',
+      storage_path: 'generated/img_delete_1.webp',
+      preview_path: 'generated/img_delete_1.preview.webp',
+      thumbnail_path: 'generated/img_delete_1.thumb.webp',
+      reference_images: [{
+        storagePath: 'references/ref_1.webp',
+        previewPath: 'references/ref_1.preview.webp',
+        thumbnailPath: 'references/ref_1.thumb.webp',
+      }],
+    }]
+
+    await expect(deleteImageHistory('img_delete_1', { userId: 'user_1' })).resolves.toBe(true)
+
+    expect(removeStoragePathBatches[0]).toEqual([
+      'generated/img_delete_1.webp',
+      'generated/img_delete_1.preview.webp',
+      'generated/img_delete_1.thumb.webp',
+    ])
+  })
+
+  it('removes storage files after clearing a user history', async () => {
+    const { clearImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [
+      {
+        id: 'img_clear_1',
+        user_id: 'user_1',
+        storage_path: 'generated/img_clear_1.webp',
+      },
+      {
+        id: 'img_clear_2',
+        user_id: 'user_1',
+        thumbnail_path: 'generated/img_clear_2.thumb.webp',
+      },
+    ]
+
+    await expect(clearImageHistory({ userId: 'user_1' })).resolves.toBe(true)
+
+    expect(removeStoragePathBatches[0]).toEqual([
+      'generated/img_clear_1.webp',
+      'generated/img_clear_2.thumb.webp',
+    ])
   })
 })

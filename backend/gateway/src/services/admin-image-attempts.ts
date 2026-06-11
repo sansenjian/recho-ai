@@ -1,5 +1,5 @@
-import type { User } from '@supabase/supabase-js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { cachedAdminUsersById, type AdminUserSummary } from './admin-user-cache.js'
 import { redactSensitiveText } from './safe-error.js'
 
 const IMAGE_ATTEMPTS_TABLE = 'image_generation_attempts'
@@ -103,16 +103,9 @@ function safeDisplayText(value: unknown, maxLength = 240) {
     .slice(0, maxLength) || null
 }
 
-function toUserSummary(user: User) {
-  return {
-    id: user.id,
-    email: user.email || null,
-  }
-}
-
 export function toAdminImageAttemptItem(
   row: Record<string, unknown>,
-  user?: ReturnType<typeof toUserSummary>,
+  user?: AdminUserSummary,
 ): AdminImageAttemptItem {
   const status = sanitizedStatus(row.status) || 'failed'
 
@@ -171,16 +164,7 @@ export function summarizeAdminImageAttempts(rows: Array<Record<string, unknown>>
 
 async function usersById(userIds: string[]) {
   const client = requireAttemptClient()
-  const users = new Map<string, ReturnType<typeof toUserSummary>>()
-
-  await Promise.all(userIds.map(async userId => {
-    const { data, error } = await client.auth.admin.getUserById(userId)
-    if (!error && data.user) {
-      users.set(userId, toUserSummary(data.user))
-    }
-  }))
-
-  return users
+  return await cachedAdminUsersById(client, userIds)
 }
 
 export async function listAdminImageAttempts(options: {
