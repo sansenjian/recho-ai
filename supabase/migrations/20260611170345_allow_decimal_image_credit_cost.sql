@@ -158,6 +158,10 @@ begin
    where user_id = p_user_id
   returning public.user_credit_balances.balance into v_balance;
 
+  if not found or v_balance is null then
+    raise exception 'credit_balance_not_found' using errcode = 'P0001';
+  end if;
+
   insert into public.credit_transactions (
     user_id,
     amount,

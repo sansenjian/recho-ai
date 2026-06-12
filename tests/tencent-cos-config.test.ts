@@ -13,4 +13,12 @@ describe('Tencent COS config', () => {
   it('allows legacy full-bucket configuration without app id', () => {
     expect(resolveTencentCosBucket('recho-images-1363083511', '')).toBe('recho-images-1363083511')
   })
+
+  it('returns an empty string when the bucket base name is empty', () => {
+    expect(resolveTencentCosBucket('', '1363083511')).toBe('')
+  })
+
+  it('trims bucket and app id inputs before combining', () => {
+    expect(resolveTencentCosBucket('  recho-images  ', '  1363083511  ')).toBe('recho-images-1363083511')
+  })
 })

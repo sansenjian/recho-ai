@@ -68,6 +68,10 @@ const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const REFERENCE_UPLOAD_LIMIT = '12mb'
 const REFERENCE_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
 const REFERENCE_UPLOAD_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
+const IMAGE_PROXY_THUMBNAIL_ESTIMATE_BYTES = 512 * 1024
+const IMAGE_PROXY_PREVIEW_ESTIMATE_BYTES = 2 * 1024 * 1024
+const IMAGE_PROXY_ORIGINAL_ESTIMATE_BYTES = 8 * 1024 * 1024
+// Per-process fallback limiter for single-instance gateway deployments. Use a shared store if Render scales to multiple instances.
 const imageProxyIpBuckets = new Map<string, { resetAt: number; requests: number; bytes: number }>()
 
 interface ImageProviderResponse {
@@ -349,11 +353,33 @@ function reserveImageProxyRequest(req: Request) {
   return bucket.requests <= IMAGE_PROXY_RATE_LIMIT_MAX_REQUESTS
 }
 
-function consumeImageProxyBytes(req: Request, bytes: number) {
+function reserveImageProxyBytes(req: Request, bytes: number) {
   const bucket = imageProxyBucket(req)
-  bucket.bytes += Math.max(0, bytes)
+  const reservedBytes = Math.max(0, bytes)
+  if (bucket.bytes + reservedBytes > IMAGE_PROXY_RATE_LIMIT_MAX_BYTES) return false
+  bucket.bytes += reservedBytes
+  return true
+}
 
-  return bucket.bytes <= IMAGE_PROXY_RATE_LIMIT_MAX_BYTES
+function releaseImageProxyBytes(req: Request, bytes: number) {
+  const bucket = imageProxyBucket(req)
+  bucket.bytes = Math.max(0, bucket.bytes - Math.max(0, bytes))
+}
+
+function estimateImageProxyBytes(storagePath: string) {
+  if (/\.thumb\.webp$/i.test(storagePath)) return IMAGE_PROXY_THUMBNAIL_ESTIMATE_BYTES
+  if (/\.preview\.webp$/i.test(storagePath)) return IMAGE_PROXY_PREVIEW_ESTIMATE_BYTES
+  return Math.min(IMAGE_PROXY_ORIGINAL_ESTIMATE_BYTES, IMAGE_PROXY_RATE_LIMIT_MAX_BYTES)
+}
+
+function settleImageProxyBytes(req: Request, reservedBytes: number, actualBytes: number) {
+  const reserved = Math.max(0, reservedBytes)
+  const actual = Math.max(0, actualBytes)
+  if (actual <= reserved) {
+    releaseImageProxyBytes(req, reserved - actual)
+    return true
+  }
+  return reserveImageProxyBytes(req, actual - reserved)
 }
 
 function pruneImageProxyBuckets(now = Date.now()) {
@@ -690,13 +716,27 @@ router.get('/image/storage/:encodedPath', async (req: Request, res: Response) =>
       res.status(429).json({ error: '图片访问过于频繁，请稍后重试。' })
       return
     }
+    const reservedBytes = estimateImageProxyBytes(storagePath)
+    if (!reserveImageProxyBytes(req, reservedBytes)) {
+      res.status(429).json({ error: '图片访问过于频繁，请稍后重试。' })
+      return
+    }
 
-    const image = await downloadImageBuffer(storagePath)
+    let image: ImageSource | null
+    try {
+      image = await downloadImageBuffer(storagePath)
+    } catch (err) {
+      releaseImageProxyBytes(req, reservedBytes)
+      throw err
+    }
+
     if (!image?.buffer.byteLength) {
+      releaseImageProxyBytes(req, reservedBytes)
       res.status(404).json({ error: 'image not found' })
       return
     }
-    if (!consumeImageProxyBytes(req, image.buffer.byteLength)) {
+
+    if (!settleImageProxyBytes(req, reservedBytes, image.buffer.byteLength)) {
       res.status(429).json({ error: '图片访问过于频繁，请稍后重试。' })
       return
     }

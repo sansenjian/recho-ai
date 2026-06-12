@@ -77,4 +77,47 @@ describe('useAnnouncementPopup', () => {
     await second.fetchLatestAnnouncement()
     expect(second.shouldShowAnnouncement.value).toBe(false)
   })
+
+  it('shows a revised announcement with the same id when updatedAt changes', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        announcements: [{
+          id: 'notice-1',
+          title: 'Notice',
+          body: 'Body',
+          status: 'published',
+          publishedAt: '2026-06-11T00:00:00.000Z',
+          createdAt: '2026-06-11T00:00:00.000Z',
+          updatedAt: '2026-06-11T00:00:00.000Z',
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        announcements: [{
+          id: 'notice-1',
+          title: 'Notice',
+          body: 'Revised body',
+          status: 'published',
+          publishedAt: '2026-06-11T00:00:00.000Z',
+          createdAt: '2026-06-11T00:00:00.000Z',
+          updatedAt: '2026-06-12T00:00:00.000Z',
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    const { useAnnouncementPopup } = await import('../src/composables/useAnnouncementPopup')
+
+    const first = useAnnouncementPopup()
+    await first.fetchLatestAnnouncement()
+    first.markAnnouncementRead()
+    await nextTick()
+
+    const second = useAnnouncementPopup()
+    await second.fetchLatestAnnouncement()
+
+    expect(second.shouldShowAnnouncement.value).toBe(true)
+  })
 })

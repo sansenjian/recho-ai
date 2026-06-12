@@ -30,6 +30,9 @@ create table if not exists public.announcements (
 create index if not exists announcements_status_updated_at_idx
   on public.announcements (status, updated_at desc);
 
+create index if not exists announcements_status_published_at_idx
+  on public.announcements (status, published_at desc);
+
 alter table public.announcements enable row level security;
 
 revoke all on table public.announcements from anon, authenticated, public;

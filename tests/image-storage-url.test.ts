@@ -24,6 +24,13 @@ describe('image storage url helpers', () => {
     )).toBe('https://images.example.test/generated/img_1.webp')
   })
 
+  it('infers the original proxy url from a COS thumbnail proxy url', () => {
+    expect(originalStorageImageUrl(
+      'cos://generated/img_1.webp',
+      'http://localhost:5173/api/image/storage/cos%3A%2F%2Fgenerated%2Fimg_1.thumb.webp',
+    )).toBe('http://localhost:5173/api/image/storage/cos%3A%2F%2Fgenerated%2Fimg_1.webp')
+  })
+
   it('falls back to the embedded image data when no storage url can be inferred', () => {
     expect(originalImageDownloadUrl({
       dataUrl: 'data:image/webp;base64,abc',

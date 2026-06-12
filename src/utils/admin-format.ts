@@ -25,7 +25,9 @@ export function imageVisibilityLabel(visibility: AdminImageItem['visibility']) {
 }
 
 export function imageFundingLabel(image: AdminImageItem) {
-  return image.fundingSource === 'credit' ? '额度' : '免费'
+  if (image.fundingSource === 'credit') return '额度'
+  if (image.fundingSource === 'free') return '免费'
+  return '-'
 }
 
 export function imagePreviewSrc(image: AdminImageItem) {

@@ -591,6 +591,14 @@ export function useImageGen() {
           error.value = null
           return imagesWithReferences
         }
+        console.debug('[image] generation recovery found no matching history', {
+          userId: identity.userId || null,
+          scope,
+          expectedPrompt,
+          expectedCount,
+          requestStartedAt,
+          error: err instanceof Error ? err.message : String(err || ''),
+        })
       }
       error.value = err?.name === 'AbortError'
         ? '图片生成请求超时，请减少参考图数量或稍后重试。'

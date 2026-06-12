@@ -13,7 +13,7 @@ export function normalizeImageCreditCostPerImage(value: unknown) {
   if (!Number.isFinite(number) || number < MIN_IMAGE_CREDIT_COST_PER_IMAGE) {
     return DEFAULT_IMAGE_CREDIT_COST_PER_IMAGE
   }
-  return Math.max(MIN_IMAGE_CREDIT_COST_PER_IMAGE, roundCreditAmount(number))
+  return roundCreditAmount(number)
 }
 
 export function imageCreditCost(imageCount: unknown, costPerImage: unknown) {
