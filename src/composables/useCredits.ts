@@ -19,9 +19,9 @@ interface CreditRedeemResponse extends CreditBalanceResponse {
   redeemedCredits?: number
 }
 
-function numericBalance(value: unknown) {
+export function numericBalance(value: unknown) {
   const number = Number(value)
-  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null
+  return Number.isFinite(number) ? Math.max(0, Math.round(number * 100) / 100) : null
 }
 
 async function readCreditError(response: Response, fallback: string) {
