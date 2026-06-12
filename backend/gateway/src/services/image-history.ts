@@ -12,6 +12,7 @@ const IMAGE_HISTORY_TABLE = 'image_generations'
 const MAX_HISTORY_LIMIT = 50
 const DEFAULT_HISTORY_LIMIT = 12
 const IMAGE_HISTORY_UPSERT_CHUNK_SIZE = 50
+const CREDIT_IMAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 function withoutColumn(columns: string, column: string) {
   return columns
@@ -32,15 +33,17 @@ function imageHistoryDetailColumns(options: {
   includeOriginal?: boolean
   includeBatch?: boolean
   includeCredits?: boolean
+  includeExpiry?: boolean
   includeReferenceCount?: boolean
 } = {}) {
   const columns = IMAGE_HISTORY_DETAIL_BASE_COLUMNS.filter(column => {
     if (IMAGE_HISTORY_DETAIL_COLD_COLUMNS.has(column)) return false
     if (column === 'generation_batch_id' && options.includeBatch === false) return false
+    if (column === 'expires_at' && options.includeExpiry === false) return false
     if (column === 'reference_count' && options.includeReferenceCount === false) return false
     if (
       options.includeCredits === false &&
-      ['visibility', 'funding_source', 'credit_cost', 'credit_transaction_id'].includes(column)
+      ['visibility', 'funding_source', 'credit_cost', 'credit_transaction_id', 'expires_at'].includes(column)
     ) {
       return false
     }
@@ -73,6 +76,7 @@ const IMAGE_HISTORY_BATCH_LIST_COLUMNS = [
   'funding_source',
   'credit_cost',
   'credit_transaction_id',
+  'expires_at',
   'prompt',
   'user_prompt',
   'revised_prompt',
@@ -87,6 +91,14 @@ const IMAGE_HISTORY_BATCH_LIST_COLUMNS = [
 const IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT = withoutColumn(
   IMAGE_HISTORY_BATCH_LIST_COLUMNS,
   'reference_count',
+)
+const IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_EXPIRES = withoutColumn(
+  IMAGE_HISTORY_BATCH_LIST_COLUMNS,
+  'expires_at',
+)
+const IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT_AND_EXPIRES = withoutColumn(
+  IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT,
+  'expires_at',
 )
 const IMAGE_HISTORY_LIST_COLUMNS = [
   'id',
@@ -109,6 +121,7 @@ const IMAGE_HISTORY_LIST_COLUMNS = [
   'funding_source',
   'credit_cost',
   'credit_transaction_id',
+  'expires_at',
   'prompt',
   'user_prompt',
   'revised_prompt',
@@ -123,6 +136,14 @@ const IMAGE_HISTORY_LIST_COLUMNS = [
 const IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT = withoutColumn(
   IMAGE_HISTORY_LIST_COLUMNS,
   'reference_count',
+)
+const IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_EXPIRES = withoutColumn(
+  IMAGE_HISTORY_LIST_COLUMNS,
+  'expires_at',
+)
+const IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT_AND_EXPIRES = withoutColumn(
+  IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT,
+  'expires_at',
 )
 const IMAGE_HISTORY_PUBLIC_SUMMARY_COLUMNS = [
   'id',
@@ -189,6 +210,7 @@ const IMAGE_HISTORY_DETAIL_BASE_COLUMNS = [
   'funding_source',
   'credit_cost',
   'credit_transaction_id',
+  'expires_at',
   'prompt',
   'user_prompt',
   'revised_prompt',
@@ -270,6 +292,7 @@ export interface ImageHistoryItem {
   fundingSource?: ImageFundingSource
   creditCost?: number
   creditTransactionId?: string | null
+  expiresAt?: string | null
   size: string
   aspectRatio?: string
   resolution?: string
@@ -307,6 +330,7 @@ interface ImageHistoryRow {
   funding_source?: ImageFundingSource | null
   credit_cost?: number | null
   credit_transaction_id?: string | null
+  expires_at?: string | null
   size: string
   aspect_ratio: string | null
   resolution: string | null
@@ -496,12 +520,14 @@ interface ImageRowOptions {
   includeRequestMeta?: boolean
   includeMetrics?: boolean
   includeCredits?: boolean
+  includeExpiry?: boolean
   includeReferenceCount?: boolean
 }
 
 function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): ImageHistoryRow {
   const userPrompt = String(image.userPrompt || image.prompt || '')
   const references = referenceRecords(image.references)
+  const generatedAt = String(image.timestamp || new Date().toISOString())
   const row: ImageHistoryRow = {
     id: String(image.id),
     data_url: options.includeNullableDataUrl !== false && image.storagePath ? null : String(image.dataUrl || ''),
@@ -513,7 +539,7 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
     resolution: image.resolution ? String(image.resolution) : null,
     quality: image.quality ? String(image.quality) : null,
     reference_images: references,
-    generated_at: String(image.timestamp || new Date().toISOString()),
+    generated_at: generatedAt,
   }
 
   if (options.includeReferenceCount !== false) {
@@ -531,6 +557,9 @@ function rowFromImage(image: ImageHistoryItem, options: ImageRowOptions = {}): I
     row.funding_source = image.fundingSource === 'credit' ? 'credit' : 'free'
     row.credit_cost = typeof image.creditCost === 'number' ? Math.max(0, roundCreditAmount(image.creditCost)) : 0
     row.credit_transaction_id = image.creditTransactionId ? String(image.creditTransactionId) : null
+    if (options.includeExpiry !== false) {
+      row.expires_at = image.fundingSource === 'credit' ? creditImageExpiresAt(generatedAt) : null
+    }
   }
 
   if (options.includeThumbnails !== false) {
@@ -579,6 +608,7 @@ function missingOptionalColumn(error: { message?: string; code?: string }) {
   if (/(user_prompt|system_prompt|model_prompt)/i.test(message)) return 'prompt_detail'
   if (/(request_ip|request_user_agent)/i.test(message)) return 'request_meta'
   if (/(provider|image_model|text_model|latency_ms|image_width|image_height|original_bytes|preview_bytes|thumbnail_bytes)/i.test(message)) return 'metrics'
+  if (/expires_at/i.test(message)) return 'expiry'
   if (/(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message)) return 'credits'
   if (/reference_count/i.test(message)) return 'reference_count'
   return null
@@ -593,6 +623,11 @@ function missingCreditHistorySchema(error: { message?: string; code?: string }) 
   const message = error.message || ''
   return missingOptionalColumn(error) === 'credits' ||
     (error.code === '42703' && /(visibility|funding_source|credit_cost|credit_transaction_id)/i.test(message))
+}
+
+function missingExpiryHistorySchema(error: { message?: string; code?: string }) {
+  return missingOptionalColumn(error) === 'expiry' ||
+    (error.code === '42703' && /expires_at/i.test(error.message || ''))
 }
 
 function missingReferenceCountHistorySchema(error: { message?: string; code?: string }) {
@@ -657,6 +692,11 @@ function saveDowngradeRules(canOmitCreditFields: boolean): SaveDowngradeRule[] {
       canDisable: () => canOmitCreditFields,
     },
     {
+      option: 'includeExpiry',
+      matches: missingExpiryHistorySchema,
+      message: '[image-history] expiry column missing; retrying save without expiry field',
+    },
+    {
       option: 'includeReferenceCount',
       matches: missingReferenceCountHistorySchema,
       message: '[image-history] reference count column missing; retrying save without reference count',
@@ -708,6 +748,7 @@ function imageFromRow(row: ImageHistoryRow, options: { includeOriginal?: boolean
     fundingSource: row.funding_source || 'free',
     creditCost: row.credit_cost ?? undefined,
     creditTransactionId: row.credit_transaction_id || undefined,
+    expiresAt: row.expires_at || undefined,
     references,
     referenceImageCount: typeof row.reference_count === 'number' ? row.reference_count : references.length,
     revisedPrompt: row.revised_prompt || undefined,
@@ -835,6 +876,7 @@ function imageSummaryFromRow(row: ImageHistoryRow): ImageHistoryItem {
     fundingSource: row.funding_source || 'free',
     creditCost: row.credit_cost ?? undefined,
     creditTransactionId: row.credit_transaction_id || undefined,
+    expiresAt: row.expires_at || undefined,
     references,
     referenceImageCount: typeof row.reference_count === 'number' ? row.reference_count : references.length,
     revisedPrompt: row.revised_prompt || undefined,
@@ -852,6 +894,44 @@ function historyClient() {
 
 export function hasImageHistoryStore() {
   return Boolean(historyClient())
+}
+
+function creditImageExpiresAt(generatedAt: string) {
+  const timestamp = Date.parse(generatedAt)
+  const start = Number.isFinite(timestamp) ? timestamp : Date.now()
+  return new Date(start + CREDIT_IMAGE_RETENTION_MS).toISOString()
+}
+
+function isExpiredImageRow(row: ImageHistoryRow, now = Date.now()) {
+  if (!row.expires_at) return false
+  const timestamp = Date.parse(row.expires_at)
+  return Number.isFinite(timestamp) && timestamp <= now
+}
+
+function activeExpiryFilter(now = new Date().toISOString()) {
+  return `expires_at.is.null,expires_at.gt.${now}`
+}
+
+function imageHistoryListColumns(options: {
+  includeBatch?: boolean
+  includeReferenceCount?: boolean
+  includeExpiry?: boolean
+} = {}) {
+  if (options.includeBatch === false) {
+    if (options.includeReferenceCount === false && options.includeExpiry === false) {
+      return IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT_AND_EXPIRES
+    }
+    if (options.includeReferenceCount === false) return IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT
+    if (options.includeExpiry === false) return IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_EXPIRES
+    return IMAGE_HISTORY_LIST_COLUMNS
+  }
+
+  if (options.includeReferenceCount === false && options.includeExpiry === false) {
+    return IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT_AND_EXPIRES
+  }
+  if (options.includeReferenceCount === false) return IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT
+  if (options.includeExpiry === false) return IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_EXPIRES
+  return IMAGE_HISTORY_BATCH_LIST_COLUMNS
 }
 
 export async function listImageHistory(
@@ -873,7 +953,11 @@ export async function listImageHistory(
     }
   }
 
-  const listWithColumns = async (columns: string, includeVisibilityFilter: boolean) => {
+  const listWithColumns = async (
+    columns: string,
+    includeVisibilityFilter: boolean,
+    includeExpiryFilter = true,
+  ) => {
     let query = client
       .from(IMAGE_HISTORY_TABLE)
       .select(columns)
@@ -884,46 +968,77 @@ export async function listImageHistory(
     } else if (includeVisibilityFilter) {
       query = query.eq('visibility', 'public')
     }
+    if (includeExpiryFilter) {
+      query = query.or(activeExpiryFilter())
+    }
 
     return await query.range(safeOffset, safeOffset + cappedLimit)
   }
 
   const publicScope = options.scope !== 'mine'
   let referenceCountColumnMissing = false
+  let expiryColumnMissing = false
   let result = await listWithColumns(
     publicScope ? IMAGE_HISTORY_PUBLIC_SUMMARY_COLUMNS : IMAGE_HISTORY_BATCH_LIST_COLUMNS,
     true,
   )
+  if (result.error && missingExpiryHistorySchema(result.error)) {
+    expiryColumnMissing = true
+    console.warn('[image-history] expiry column missing; listing without expiry metadata')
+    result = await listWithColumns(
+      publicScope
+        ? IMAGE_HISTORY_PUBLIC_SUMMARY_COLUMNS
+        : IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_EXPIRES,
+      true,
+      false,
+    )
+  }
   if (result.error && missingReferenceCountHistorySchema(result.error)) {
     referenceCountColumnMissing = true
     console.warn('[image-history] reference count column missing; listing with full reference metadata')
-    result = await listWithColumns(IMAGE_HISTORY_BATCH_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT, true)
+    result = await listWithColumns(imageHistoryListColumns({
+      includeReferenceCount: false,
+      includeExpiry: !expiryColumnMissing,
+    }), true, !expiryColumnMissing)
   }
   if (result.error && missingBatchHistorySchema(result.error)) {
     console.warn('[image-history] generation batch column missing; listing without batch metadata')
-    result = await listWithColumns(
-      referenceCountColumnMissing
-        ? IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT
-        : IMAGE_HISTORY_LIST_COLUMNS,
-      true,
-    )
+    result = await listWithColumns(imageHistoryListColumns({
+      includeBatch: false,
+      includeReferenceCount: !referenceCountColumnMissing,
+      includeExpiry: !expiryColumnMissing,
+    }), true, !expiryColumnMissing)
+  }
+  if (result.error && !expiryColumnMissing && missingExpiryHistorySchema(result.error)) {
+    expiryColumnMissing = true
+    console.warn('[image-history] expiry column missing; retrying list without expiry metadata')
+    result = await listWithColumns(imageHistoryListColumns({
+      includeBatch: false,
+      includeReferenceCount: !referenceCountColumnMissing,
+      includeExpiry: false,
+    }), true, false)
   }
   if (result.error && !referenceCountColumnMissing && missingReferenceCountHistorySchema(result.error)) {
     referenceCountColumnMissing = true
     console.warn('[image-history] reference count column missing; retrying list with full reference metadata')
-    result = await listWithColumns(IMAGE_HISTORY_LIST_COLUMNS_WITHOUT_REFERENCE_COUNT, true)
+    result = await listWithColumns(imageHistoryListColumns({
+      includeBatch: false,
+      includeReferenceCount: false,
+      includeExpiry: !expiryColumnMissing,
+    }), true, !expiryColumnMissing)
   }
   if (result.error && missingCreditHistorySchema(result.error)) {
     console.warn('[image-history] credit visibility columns missing; listing legacy public history')
-    result = await listWithColumns(IMAGE_HISTORY_LEGACY_LIST_COLUMNS, false)
+    result = await listWithColumns(IMAGE_HISTORY_LEGACY_LIST_COLUMNS, false, false)
   }
 
   const { data, error } = result
 
   if (error) throw error
   const rows = (data || []) as unknown as ImageHistoryRow[]
-  const hasMore = rows.length > cappedLimit
-  const visibleRows = hasMore ? rows.slice(0, cappedLimit) : rows
+  const activeRows = rows.filter(row => !isExpiredImageRow(row))
+  const hasMore = activeRows.length > cappedLimit
+  const visibleRows = hasMore ? activeRows.slice(0, cappedLimit) : activeRows
   const images = visibleRows.map(row => imageSummaryFromRow(row))
   const nextOffset = safeOffset + images.length
   return {
@@ -944,6 +1059,7 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
     includeVisibilityFilter: true,
     includeBatch: true,
     includeCredits: true,
+    includeExpiry: true,
     includeReferenceCount: true,
   }
 
@@ -954,6 +1070,7 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
         includeOriginal: options.includeOriginal,
         includeBatch: detailOptions.includeBatch,
         includeCredits: detailOptions.includeCredits,
+        includeExpiry: detailOptions.includeExpiry,
         includeReferenceCount: detailOptions.includeReferenceCount,
       }))
       .eq('id', id)
@@ -963,12 +1080,15 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
     } else if (detailOptions.includeVisibilityFilter) {
       query = query.eq('visibility', 'public')
     }
+    if (detailOptions.includeExpiry) {
+      query = query.or(activeExpiryFilter())
+    }
 
     return await query.maybeSingle()
   }
 
   let result = await getRow()
-  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+  for (let attempt = 0; result.error && attempt < 4; attempt += 1) {
     if (detailOptions.includeReferenceCount && missingReferenceCountHistorySchema(result.error)) {
       detailOptions.includeReferenceCount = false
       console.warn('[image-history] reference count column missing; retrying detail without reference count')
@@ -978,6 +1098,12 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
     if (detailOptions.includeBatch && missingBatchHistorySchema(result.error)) {
       detailOptions.includeBatch = false
       console.warn('[image-history] generation batch column missing; retrying detail without batch metadata')
+      result = await getRow()
+      continue
+    }
+    if (detailOptions.includeExpiry && missingExpiryHistorySchema(result.error)) {
+      detailOptions.includeExpiry = false
+      console.warn('[image-history] expiry column missing; retrying detail without expiry metadata')
       result = await getRow()
       continue
     }
@@ -996,7 +1122,10 @@ export async function getImageHistory(id: string, options: ImageHistoryAccessOpt
   if (error) throw error
   if (!data) return null
 
-  return imageFromRow(data as unknown as ImageHistoryRow, { includeOriginal: options.includeOriginal })
+  const row = data as unknown as ImageHistoryRow
+  if (isExpiredImageRow(row)) return null
+
+  return imageFromRow(row, { includeOriginal: options.includeOriginal })
 }
 
 interface SaveImageHistoryOptions {
@@ -1044,6 +1173,7 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: Save
     includeRequestMeta: true,
     includeMetrics: true,
     includeCredits: true,
+    includeExpiry: true,
     includeReferenceCount: true,
   }
 

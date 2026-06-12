@@ -7,7 +7,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { Readable } from 'node:stream'
 import {
-  TENCENT_COS_BUCKET,
+  TENCENT_COS_FULL_BUCKET,
   TENCENT_COS_PUBLIC_BASE_URL,
   TENCENT_COS_REGION,
   TENCENT_COS_SECRET_ID,
@@ -20,7 +20,7 @@ export function hasTencentCosConfig() {
   return Boolean(
     TENCENT_COS_SECRET_ID &&
     TENCENT_COS_SECRET_KEY &&
-    TENCENT_COS_BUCKET &&
+    TENCENT_COS_FULL_BUCKET &&
     TENCENT_COS_REGION,
   )
 }
@@ -54,18 +54,15 @@ async function bodyToBuffer(body: GetObjectCommandOutput['Body']) {
 }
 
 export function tencentCosObjectUrl(key: string) {
+  if (!TENCENT_COS_PUBLIC_BASE_URL) return undefined
+
   const encodedKey = key
     .split('/')
     .filter(Boolean)
     .map(part => encodeURIComponent(part))
     .join('/')
 
-  if (TENCENT_COS_PUBLIC_BASE_URL) {
-    return `${TENCENT_COS_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
-  }
-
-  if (!TENCENT_COS_BUCKET || !TENCENT_COS_REGION) return undefined
-  return `https://${TENCENT_COS_BUCKET}.cos.${TENCENT_COS_REGION}.myqcloud.com/${encodedKey}`
+  return `${TENCENT_COS_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
 }
 
 export async function putTencentCosObject(options: {
@@ -78,7 +75,7 @@ export async function putTencentCosObject(options: {
   if (!client) return null
 
   await client.send(new PutObjectCommand({
-    Bucket: TENCENT_COS_BUCKET,
+    Bucket: TENCENT_COS_FULL_BUCKET,
     Key: options.key,
     Body: options.body,
     ContentLength: options.body.byteLength,
@@ -98,7 +95,7 @@ export async function deleteTencentCosObject(key: string) {
   if (!client) return false
 
   await client.send(new DeleteObjectCommand({
-    Bucket: TENCENT_COS_BUCKET,
+    Bucket: TENCENT_COS_FULL_BUCKET,
     Key: key,
   }))
   return true
@@ -109,7 +106,7 @@ export async function getTencentCosObject(key: string) {
   if (!client) return null
 
   const data = await client.send(new GetObjectCommand({
-    Bucket: TENCENT_COS_BUCKET,
+    Bucket: TENCENT_COS_FULL_BUCKET,
     Key: key,
   }))
 

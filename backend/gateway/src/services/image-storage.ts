@@ -18,6 +18,7 @@ const LOSSLESS_WEBP_EXTENSION = 'webp'
 const PUBLIC_URL_CACHE_MS = 10 * 60 * 1000
 const PUBLIC_URL_CACHE_MAX = 10_000
 const TENCENT_COS_PATH_PREFIX = 'cos://'
+const IMAGE_PROXY_PATH_PREFIX = '/api/image/storage/'
 
 export type ImageStorageProvider = 'supabase' | 'tencent-cos'
 
@@ -122,6 +123,17 @@ function cosKey(storagePath?: string | null) {
   return key || null
 }
 
+function isSafeProxyStoragePath(storagePath: string) {
+  if (/^https?:\/\//i.test(storagePath) || /^data:/i.test(storagePath)) return false
+  const path = cosKey(storagePath) || storagePath
+  return Boolean(path && !path.includes('..') && !path.startsWith('/') && !path.startsWith('\\'))
+}
+
+export function proxiedImageStorageUrl(storagePath?: string | null) {
+  if (!storagePath || !isSafeProxyStoragePath(storagePath)) return undefined
+  return `${IMAGE_PROXY_PATH_PREFIX}${encodeURIComponent(storagePath)}`
+}
+
 function storageProvider(options: StoreImageOptions = {}): ImageStorageProvider {
   return options.provider === 'tencent-cos' ? 'tencent-cos' : 'supabase'
 }
@@ -159,14 +171,14 @@ export function isStorageUrl(value: string) {
 export function imagePublicUrl(storagePath?: string | null) {
   if (!storagePath) return undefined
   const key = cosKey(storagePath)
-  if (key) return tencentCosObjectUrl(key)
+  if (key) return tencentCosObjectUrl(key) || proxiedImageStorageUrl(storagePath)
 
   const now = Date.now()
   const cached = publicUrlCache.get(storagePath)
   if (cached && cached.expiresAt > now) return cached.publicUrl
 
   const client = getSupabaseAdminClient()
-  if (!client) return undefined
+  if (!client) return proxiedImageStorageUrl(storagePath)
 
   const publicUrl = client.storage
     .from(SUPABASE_IMAGE_BUCKET)
@@ -286,12 +298,18 @@ async function uploadSupabaseBuffer(buffer: Buffer, mime: string, storagePath: s
 }
 
 async function uploadCosBuffer(buffer: Buffer, mime: string, key: string) {
-  return await putTencentCosObject({
+  const stored = await putTencentCosObject({
     key,
     body: buffer,
     contentType: mime,
     cacheControl: `max-age=${IMAGE_CACHE_CONTROL}`,
   })
+  if (!stored) return null
+
+  return {
+    ...stored,
+    publicUrl: stored.publicUrl || proxiedImageStorageUrl(stored.storagePath) || '',
+  }
 }
 
 async function uploadStorageBuffer(

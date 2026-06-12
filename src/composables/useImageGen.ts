@@ -100,6 +100,22 @@ function isPublicGalleryImage(image: GeneratedImage) {
   return image.visibility !== 'private' && image.fundingSource !== 'credit'
 }
 
+function isRecoverableGenerationError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /AbortError|timeout|timed out|aborted|超时|Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|Load failed|network/i.test(message)
+}
+
+function normalizedPrompt(value: unknown) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
+}
+
+function historyMatchesRequest(image: GeneratedImage, expectedPrompt: string, startedAt: number) {
+  const timestamp = Date.parse(image.timestamp || '')
+  if (!Number.isFinite(timestamp) || timestamp < startedAt - 5_000) return false
+  if (!expectedPrompt) return true
+  return normalizedPrompt(image.userPrompt || image.prompt) === expectedPrompt
+}
+
 async function readApiError(response: Response, fallback: string) {
   try {
     const errJson = await response.json()
@@ -488,10 +504,14 @@ export function useImageGen() {
     isGenerating.value = true
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
+    const requestStartedAt = Date.now()
+    const expectedPrompt = normalizedPrompt(options.userPrompt || options.displayPrompt || prompt)
+    const expectedCount = Math.max(1, Number(options.count || 1))
+    let requestReferences: ImageGenReference[] = []
 
     try {
       const token = await getAuthAccessToken()
-      const requestReferences = await prepareGenerationReferences(options.references, token, controller.signal)
+      requestReferences = await prepareGenerationReferences(options.references, token, controller.signal)
       const requestOptions: ImageGenOptions = {
         ...options,
         references: requestReferences,
@@ -541,6 +561,37 @@ export function useImageGen() {
       }
       return imagesWithReferences
     } catch (err: any) {
+      if (isRecoverableGenerationError(err)) {
+        const identity = await getAuthIdentity()
+        const scope: ImageHistoryScope = identity.userId ? 'mine' : 'public'
+        const recoveredHistory = await loadRemoteHistory(0, scope, identity)
+        const recoveredImages = recoveredHistory.images
+          .filter(image => historyMatchesRequest(image, expectedPrompt, requestStartedAt))
+          .slice(0, expectedCount)
+
+        if (recoveredImages.length) {
+          const imagesWithReferences: GeneratedImage[] = recoveredImages.map(image => ({
+            ...image,
+            references: image.references?.length
+              ? image.references.map(reference => ({ ...reference }))
+              : requestReferences.map(reference => ({ ...reference })),
+          }))
+          generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
+          if (!identity.userId) {
+            void saveHistory(generatedImages.value)
+          } else {
+            hasMoreHistory.value = true
+          }
+          if (galleryLoaded.value) {
+            const publicImages = imagesWithReferences.filter(isPublicGalleryImage)
+            if (publicImages.length) {
+              galleryImages.value = uniqueHistory([...publicImages, ...galleryImages.value], MAX_GALLERY_HISTORY)
+            }
+          }
+          error.value = null
+          return imagesWithReferences
+        }
+      }
       error.value = err?.name === 'AbortError'
         ? '图片生成请求超时，请减少参考图数量或稍后重试。'
         : publicClientErrorMessage(err, '图片生成失败，请稍后重试。')

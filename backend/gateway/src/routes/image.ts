@@ -1,6 +1,12 @@
 import { Router, Request, Response, raw } from 'express'
 import { randomUUID } from 'node:crypto'
-import { IMAGE_GEN_API_KEY, IMAGE_GEN_BASE_URL } from '../config.js'
+import {
+  IMAGE_GEN_API_KEY,
+  IMAGE_GEN_BASE_URL,
+  IMAGE_PROXY_RATE_LIMIT_MAX_BYTES,
+  IMAGE_PROXY_RATE_LIMIT_MAX_REQUESTS,
+  IMAGE_PROXY_RATE_LIMIT_WINDOW_MS,
+} from '../config.js'
 import { recordImageGenerationContext, type ImageCanvasContext } from '../services/image-analytics.js'
 import { getAppSettings } from '../services/app-settings.js'
 import { recordImageGenerationAttempt } from '../services/image-attempts.js'
@@ -62,6 +68,7 @@ const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const REFERENCE_UPLOAD_LIMIT = '12mb'
 const REFERENCE_UPLOAD_MAX_BYTES = 12 * 1024 * 1024
 const REFERENCE_UPLOAD_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
+const imageProxyIpBuckets = new Map<string, { resetAt: number; requests: number; bytes: number }>()
 
 interface ImageProviderResponse {
   provider: string
@@ -170,6 +177,46 @@ function publicHistoryImage(image: ImageHistoryItem) {
   }
 }
 
+function warnRejectedSideEffects(label: string, results: PromiseSettledResult<unknown>[]) {
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.warn(`${label} record skipped:`, safeErrorDetail(result.reason))
+    }
+  }
+}
+
+function recordSuccessfulImageGenerationSideEffects(options: {
+  images: ImageHistoryItem[]
+  userId: string | null
+  provider: string
+  imageModel: string
+  textModel?: string
+  latencyMs: number
+  requestIp: string | null
+  requestUserAgent: string | null
+  canvasContext: unknown
+}) {
+  const attemptRecords = Promise.allSettled(options.images.map(image => recordImageGenerationAttempt({
+    generationId: image.id,
+    userId: options.userId,
+    provider: options.provider,
+    imageModel: options.imageModel,
+    textModel: options.textModel,
+    status: 'succeeded',
+    latencyMs: options.latencyMs,
+    requestIp: options.requestIp,
+    requestUserAgent: options.requestUserAgent,
+  }))).then(results => warnRejectedSideEffects('[image-attempts]', results))
+
+  const contextRecords = Promise.allSettled(
+    options.images.map(image => recordImageGenerationContext(image.id, options.userId, options.canvasContext)),
+  ).then(results => warnRejectedSideEffects('[image-contexts]', results))
+
+  void Promise.all([attemptRecords, contextRecords]).catch((err) => {
+    console.warn('[image] post-generation records skipped:', safeErrorDetail(err))
+  })
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -262,6 +309,59 @@ function errorType(err: any) {
 function publicImageErrorMessage(err: any, fallback = '图片生成失败，请稍后重试。') {
   if (typeof err?.publicMessage === 'string' && err.publicMessage) return err.publicMessage
   return publicErrorMessage(err, fallback)
+}
+
+function safeProxyStoragePath(value: unknown) {
+  if (typeof value !== 'string') return null
+  let path = value
+  try {
+    path = decodeURIComponent(value)
+  } catch {
+    return null
+  }
+  path = path.trim()
+  if (!path || /^https?:\/\//i.test(path) || /^data:/i.test(path)) return null
+  const normalized = path.startsWith('cos://') ? path.slice('cos://'.length) : path
+  if (!normalized || normalized.includes('..') || normalized.startsWith('/') || normalized.startsWith('\\')) return null
+  return path
+}
+
+function imageProxyRateLimitKey(req: Request) {
+  return requestIp(req) || req.socket.remoteAddress || 'unknown'
+}
+
+function imageProxyBucket(req: Request) {
+  const now = Date.now()
+  const key = imageProxyRateLimitKey(req)
+  let bucket = imageProxyIpBuckets.get(key)
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { resetAt: now + IMAGE_PROXY_RATE_LIMIT_WINDOW_MS, requests: 0, bytes: 0 }
+    imageProxyIpBuckets.set(key, bucket)
+  }
+
+  pruneImageProxyBuckets(now)
+  return bucket
+}
+
+function reserveImageProxyRequest(req: Request) {
+  const bucket = imageProxyBucket(req)
+  bucket.requests += 1
+  return bucket.requests <= IMAGE_PROXY_RATE_LIMIT_MAX_REQUESTS
+}
+
+function consumeImageProxyBytes(req: Request, bytes: number) {
+  const bucket = imageProxyBucket(req)
+  bucket.bytes += Math.max(0, bytes)
+
+  return bucket.bytes <= IMAGE_PROXY_RATE_LIMIT_MAX_BYTES
+}
+
+function pruneImageProxyBuckets(now = Date.now()) {
+  if (imageProxyIpBuckets.size <= 10_000) return
+  for (const [key, bucket] of imageProxyIpBuckets) {
+    if (bucket.resetAt <= now) imageProxyIpBuckets.delete(key)
+    if (imageProxyIpBuckets.size <= 10_000) return
+  }
 }
 
 function headerText(value: unknown, maxLength = 120) {
@@ -579,6 +679,39 @@ router.post('/image/references', raw({ type: 'image/*', limit: REFERENCE_UPLOAD_
   }
 })
 
+router.get('/image/storage/:encodedPath', async (req: Request, res: Response) => {
+  try {
+    const storagePath = safeProxyStoragePath(req.params.encodedPath)
+    if (!storagePath) {
+      res.status(400).json({ error: 'invalid image storage path' })
+      return
+    }
+    if (!reserveImageProxyRequest(req)) {
+      res.status(429).json({ error: '图片访问过于频繁，请稍后重试。' })
+      return
+    }
+
+    const image = await downloadImageBuffer(storagePath)
+    if (!image?.buffer.byteLength) {
+      res.status(404).json({ error: 'image not found' })
+      return
+    }
+    if (!consumeImageProxyBytes(req, image.buffer.byteLength)) {
+      res.status(429).json({ error: '图片访问过于频繁，请稍后重试。' })
+      return
+    }
+
+    res.setHeader('Content-Type', image.mime || 'image/webp')
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.send(image.buffer)
+  } catch (err: any) {
+    console.error('[image-storage] proxy failed:', safeErrorDetail(err))
+    res.status(err?.status || 500).json({
+      error: publicImageErrorMessage(err, '图片加载失败，请稍后重试。'),
+    })
+  }
+})
+
 router.post('/image/generate', async (req: Request, res: Response) => {
   const {
     prompt,
@@ -846,35 +979,21 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       await refundReservedCredits(missingImages * creditCostPerImage, 'partial_generation')
     }
 
-    const attemptRecords = await Promise.allSettled(responseImages.map(image => recordImageGenerationAttempt({
-      generationId: image.id,
+    res.json({
+      images: responseImages.map(publicHistoryImage),
+      ...(creditBalance !== null ? { creditBalance: { balance: creditBalance } } : {}),
+    })
+
+    recordSuccessfulImageGenerationSideEffects({
+      images: responseImages,
       userId,
       provider: response.provider,
       imageModel: response.imageModel,
       textModel: response.textModel,
-      status: 'succeeded',
       latencyMs,
       requestIp: generationIp,
       requestUserAgent: generationUserAgent,
-    })))
-    for (const result of attemptRecords) {
-      if (result.status === 'rejected') {
-        console.warn('[image-attempts] record skipped:', safeErrorDetail(result.reason))
-      }
-    }
-
-    const contextRecords = await Promise.allSettled(
-      responseImages.map(image => recordImageGenerationContext(image.id, userId, canvasContext)),
-    )
-    for (const result of contextRecords) {
-      if (result.status === 'rejected') {
-        console.warn('[image-contexts] record skipped:', safeErrorDetail(result.reason))
-      }
-    }
-
-    res.json({
-      images: responseImages.map(publicHistoryImage),
-      ...(creditBalance !== null ? { creditBalance: { balance: creditBalance } } : {}),
+      canvasContext,
     })
   } catch (err: any) {
     await refundReservedCredits(undefined, 'image_generation_error')

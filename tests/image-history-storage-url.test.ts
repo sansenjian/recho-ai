@@ -69,6 +69,18 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
           rows = rows.filter(row => row[key] === value)
           return query
         }),
+        or: vi.fn((filter: string) => {
+          const match = /^expires_at\.is\.null,expires_at\.gt\.(.+)$/.exec(filter)
+          if (match) {
+            const cutoff = Date.parse(match[1])
+            rows = rows.filter((row) => {
+              if (!row.expires_at) return true
+              const expiresAt = Date.parse(String(row.expires_at))
+              return Number.isFinite(cutoff) && Number.isFinite(expiresAt) && expiresAt > cutoff
+            })
+          }
+          return query
+        }),
         maybeSingle: vi.fn(() => Promise.resolve({ data: rows[0] || null, error: null })),
         upsert: vi.fn((batch: Array<Record<string, unknown>>) => {
           upsertBatches.push(batch)
@@ -372,7 +384,42 @@ describe('image history storage urls', () => {
       funding_source: 'credit',
       visibility: 'private',
       credit_cost: 0.25,
+      expires_at: '2026-06-16T00:00:00.000Z',
     })
+  })
+
+  it('hides logically expired credit-funded images from user history and detail reads', async () => {
+    const { getImageHistory, listImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [
+      {
+        id: 'img_credit_expired',
+        user_id: 'user_1',
+        storage_path: 'cos://generated/img_credit_expired.webp',
+        prompt: 'expired credit',
+        size: '1024x1024',
+        visibility: 'private',
+        funding_source: 'credit',
+        expires_at: '2026-06-01T00:00:00.000Z',
+        generated_at: '2026-05-25T00:00:00.000Z',
+      },
+      {
+        id: 'img_credit_active',
+        user_id: 'user_1',
+        storage_path: 'cos://generated/img_credit_active.webp',
+        prompt: 'active credit',
+        size: '1024x1024',
+        visibility: 'private',
+        funding_source: 'credit',
+        expires_at: '2099-06-01T00:00:00.000Z',
+        generated_at: '2026-06-09T00:00:00.000Z',
+      },
+    ]
+
+    const history = await listImageHistory(12, 0, { scope: 'mine', userId: 'user_1' })
+
+    expect(history.images.map(image => image.id)).toEqual(['img_credit_active'])
+    rows = rows.filter(row => row.id === 'img_credit_expired')
+    await expect(getImageHistory('img_credit_expired', { scope: 'mine', userId: 'user_1' })).resolves.toBeNull()
   })
 
   it('does not trust client-supplied credit fields without a server opt-in', async () => {
