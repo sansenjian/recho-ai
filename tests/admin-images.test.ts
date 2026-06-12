@@ -246,6 +246,24 @@ describe('admin image helpers', () => {
     expect(images.map(image => image.visibility)).toEqual(['private', 'private'])
   })
 
+  it('does not partially archive when one requested image id is missing', async () => {
+    const { bulkArchiveAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      visibility: 'public',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    await expect(bulkArchiveAdminImages(['img_1', 'missing_img'])).rejects.toMatchObject({
+      message: 'image_not_found',
+    })
+
+    expect(updatedVisibility).toBeNull()
+    expect(rows[0].visibility).toBe('public')
+  })
+
   it('deletes selected images and removes generated storage files', async () => {
     const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
     rows = [
@@ -286,6 +304,25 @@ describe('admin image helpers', () => {
       'cos://generated/img_2.thumb.webp',
     ])
     expect(rows).toEqual([])
+  })
+
+  it('does not partially delete when one requested image id is missing', async () => {
+    const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      storage_path: 'generated/img_1.webp',
+      visibility: 'private',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    await expect(bulkDeleteAdminImages(['img_1', 'missing_img'])).rejects.toMatchObject({
+      message: 'image_not_found',
+    })
+
+    expect(rows.map(row => row.id)).toEqual(['img_1'])
+    expect(removedStoragePaths).toEqual([])
   })
 
   it('returns success when storage cleanup fails after deleting images', async () => {

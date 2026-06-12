@@ -9,6 +9,7 @@ let putCosObjects: Array<{
   cacheControl: string
   bytes: number
 }> = []
+let cosPublicBaseUrl = ''
 
 function encodeKey(key: string) {
   return key
@@ -24,7 +25,7 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
 
 vi.mock('../backend/gateway/src/clients/tencent-cos', () => ({
   hasTencentCosConfig: vi.fn(() => true),
-  tencentCosObjectUrl: vi.fn((key: string) => `https://cos.example.test/${encodeKey(key)}`),
+  tencentCosObjectUrl: vi.fn((key: string) => cosPublicBaseUrl ? `${cosPublicBaseUrl}/${encodeKey(key)}` : undefined),
   deleteTencentCosObject: vi.fn(async (key: string) => {
     deletedCosKeys.push(key)
     return true
@@ -46,7 +47,7 @@ vi.mock('../backend/gateway/src/clients/tencent-cos', () => ({
       bytes: options.body.byteLength,
     })
     return {
-      publicUrl: `https://cos.example.test/${encodeKey(options.key)}`,
+      publicUrl: cosPublicBaseUrl ? `${cosPublicBaseUrl}/${encodeKey(options.key)}` : '',
       storagePath: `cos://${options.key}`,
     }
   }),
@@ -56,17 +57,19 @@ describe('image storage Tencent COS support', () => {
   beforeEach(() => {
     deletedCosKeys = []
     putCosObjects = []
+    cosPublicBaseUrl = 'https://cos.example.test'
     vi.clearAllMocks()
   })
 
-  it('resolves COS public, preview, and thumbnail paths without Supabase', async () => {
+  it('uses the backend proxy for COS paths when no public base url is configured', async () => {
+    cosPublicBaseUrl = ''
     const {
       imagePublicUrl,
       imagePreviewPath,
       imageThumbnailPath,
     } = await import('../backend/gateway/src/services/image-storage')
 
-    expect(imagePublicUrl('cos://generated/a b.webp')).toBe('https://cos.example.test/generated/a%20b.webp')
+    expect(imagePublicUrl('cos://generated/a b.webp')).toBe('/api/image/storage/cos%3A%2F%2Fgenerated%2Fa%20b.webp')
     expect(imagePreviewPath('cos://generated/a b.webp')).toBe('cos://generated/a b.preview.webp')
     expect(imageThumbnailPath('cos://generated/a b.webp')).toBe('cos://generated/a b.thumb.webp')
   })

@@ -146,6 +146,13 @@ function storagePathsFromRows(rows: Array<Record<string, unknown>>) {
   ])
 }
 
+function assertAllRequestedImagesFound(rows: Array<Record<string, unknown>>, idsRequested: string[]) {
+  const foundIds = new Set(rows.map(row => String(row.id || '')).filter(Boolean))
+  if (foundIds.size !== idsRequested.length || idsRequested.some(id => !foundIds.has(id))) {
+    throw new AdminImageError('image_not_found')
+  }
+}
+
 function cleanupDeletedImageStorage(rows: Array<Record<string, unknown>>) {
   const paths = storagePathsFromRows(rows)
   void removeImageStoragePaths(paths).catch((error) => {
@@ -272,7 +279,7 @@ export async function setAdminImageVisibility(id: string, visibilityValue: unkno
 }
 
 export async function bulkSetAdminImageVisibility(idsValue: unknown, visibilityValue: unknown) {
-  const ids = sanitizedImageIds(idsValue)
+  const idsRequested = sanitizedImageIds(idsValue)
   const visibility = sanitizedVisibility(visibilityValue)
   if (!visibility) throw new AdminImageError('invalid_visibility')
 
@@ -280,21 +287,20 @@ export async function bulkSetAdminImageVisibility(idsValue: unknown, visibilityV
   const { data: existing, error: lookupError } = await client
     .from(IMAGE_HISTORY_TABLE)
     .select(ADMIN_IMAGE_COLUMNS)
-    .in('id', ids)
+    .in('id', idsRequested)
 
   if (lookupError) throw lookupError
   const existingRows = (existing || []) as unknown as Array<Record<string, unknown>>
-  if (!existingRows.length) throw new AdminImageError('image_not_found')
+  assertAllRequestedImagesFound(existingRows, idsRequested)
 
   if (visibility === 'public' && existingRows.some(row => stringField(row, 'funding_source') === 'credit')) {
     throw new AdminImageError('credit_image_must_stay_private')
   }
 
-  const targetIds = existingRows.map(row => String(row.id || '')).filter(Boolean)
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .update({ visibility })
-    .in('id', targetIds)
+    .in('id', idsRequested)
     .select(ADMIN_IMAGE_COLUMNS)
 
   if (error) throw error
@@ -314,18 +320,27 @@ export async function bulkArchiveAdminImages(idsValue: unknown) {
 }
 
 export async function bulkDeleteAdminImages(idsValue: unknown) {
-  const ids = sanitizedImageIds(idsValue)
+  const idsRequested = sanitizedImageIds(idsValue)
   const client = requireAdminImageClient()
+
+  const { data: existing, error: lookupError } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select(ADMIN_IMAGE_COLUMNS)
+    .in('id', idsRequested)
+
+  if (lookupError) throw lookupError
+  const existingRows = (existing || []) as unknown as Array<Record<string, unknown>>
+  assertAllRequestedImagesFound(existingRows, idsRequested)
 
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .delete()
-    .in('id', ids)
+    .in('id', idsRequested)
     .select(ADMIN_IMAGE_COLUMNS)
 
   if (error) throw error
   const deletedRows = (data || []) as unknown as Array<Record<string, unknown>>
-  if (!deletedRows.length) throw new AdminImageError('image_not_found')
+  assertAllRequestedImagesFound(deletedRows, idsRequested)
 
   cleanupDeletedImageStorage(deletedRows)
 

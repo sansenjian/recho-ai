@@ -511,6 +511,7 @@ function applyImageUpdates(updatedImages: AdminImageItem[]) {
 }
 
 async function setImageVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
+  if (adminMode.value !== 'manage') return
   if (visibility === 'public' && image.fundingSource === 'credit') return
   if (visibility === 'private' && !window.confirm('确认从作品广场隐藏这张图片？')) return
 
@@ -535,6 +536,7 @@ async function setImageVisibility(image: AdminImageItem, visibility: AdminImageI
 }
 
 async function bulkArchiveImages() {
+  if (adminMode.value !== 'manage') return
   if (!selectedImageIds.value.length) return
   if (!window.confirm(`确认归档 ${selectedImageIds.value.length} 张图片？`)) return
 
@@ -556,6 +558,7 @@ async function bulkArchiveImages() {
 }
 
 async function bulkDeleteImages() {
+  if (adminMode.value !== 'manage') return
   if (!selectedImageIds.value.length) return
   if (!window.confirm(`确认删除 ${selectedImageIds.value.length} 张图片？此操作不可撤销。`)) return
 

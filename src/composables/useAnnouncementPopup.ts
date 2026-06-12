@@ -3,6 +3,7 @@ import { apiUrl } from '../lib/api-base'
 
 const READ_STORAGE_KEY = 'recho-read-announcements'
 const MAX_READ_IDS = 40
+type ReadAnnouncementMap = Map<string, string>
 
 export interface PublicAnnouncement {
   id: string
@@ -14,22 +15,36 @@ export interface PublicAnnouncement {
   updatedAt: string | null
 }
 
-function safeReadIds() {
-  if (typeof localStorage === 'undefined') return new Set<string>()
+function announcementReadVersion(announcement: PublicAnnouncement) {
+  return announcement.updatedAt || announcement.publishedAt || announcement.createdAt || ''
+}
+
+function safeReadIds(): ReadAnnouncementMap {
+  if (typeof localStorage === 'undefined') return new Map<string, string>()
   try {
     const raw = localStorage.getItem(READ_STORAGE_KEY)
-    const ids = JSON.parse(raw || '[]')
-    if (!Array.isArray(ids)) return new Set<string>()
-    return new Set(ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
+    const parsed = JSON.parse(raw || '{}')
+    if (Array.isArray(parsed)) {
+      return new Map(parsed
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .map(id => [id, '']))
+    }
+    if (!parsed || typeof parsed !== 'object') return new Map<string, string>()
+    const entries = Object.entries(parsed)
+      .filter((entry): entry is [string, string] => {
+        const [id, version] = entry
+        return typeof id === 'string' && Boolean(id.trim()) && typeof version === 'string'
+      })
+    return new Map(entries)
   } catch {
-    return new Set<string>()
+    return new Map<string, string>()
   }
 }
 
-function persistReadIds(ids: Set<string>) {
+function persistReadIds(ids: ReadAnnouncementMap) {
   if (typeof localStorage === 'undefined') return
   try {
-    localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(Array.from(ids).slice(-MAX_READ_IDS)))
+    localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(Object.fromEntries(Array.from(ids).slice(-MAX_READ_IDS))))
   } catch {
     // Ignore storage failures; the announcement can be dismissed for this session.
   }
@@ -54,9 +69,10 @@ export function useAnnouncementPopup() {
 
   const shouldShowAnnouncement = computed(() => {
     const item = announcement.value
+    const readVersion = item ? readIds.value.get(item.id) : undefined
     return Boolean(
       item &&
-      !readIds.value.has(item.id) &&
+      readVersion !== announcementReadVersion(item) &&
       !dismissedSessionIds.value.has(item.id),
     )
   })
@@ -73,9 +89,10 @@ export function useAnnouncementPopup() {
   }
 
   function markAnnouncementRead(id = announcement.value?.id) {
-    if (!id) return
-    const nextReadIds = new Set(readIds.value)
-    nextReadIds.add(id)
+    const current = announcement.value
+    if (!id || !current) return
+    const nextReadIds = new Map(readIds.value)
+    nextReadIds.set(id, announcementReadVersion(current))
     readIds.value = nextReadIds
     persistReadIds(nextReadIds)
 

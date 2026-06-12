@@ -19,6 +19,15 @@ function cosStorageKey(storagePath: string) {
     : ''
 }
 
+function originalCosStoragePath(storagePath: string, cosKey: string) {
+  const previewKey = cosKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+  const thumbnailKey = cosKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+  const storagePreviewPath = `cos://${previewKey}`
+  const storageThumbnailPath = `cos://${thumbnailKey}`
+  if (storagePath === storagePreviewPath || storagePath === storageThumbnailPath) return `cos://${cosKey}`
+  return storagePath
+}
+
 export function originalStorageImageUrl(storagePath?: string, ...sourceUrls: Array<string | undefined>) {
   if (!storagePath) return ''
   const cosKey = cosStorageKey(storagePath)
@@ -29,6 +38,14 @@ export function originalStorageImageUrl(storagePath?: string, ...sourceUrls: Arr
       if (cosKey) {
         const previewKey = cosKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
         const thumbnailKey = cosKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+        const proxyPrefix = '/api/image/storage/'
+        if (url.pathname.startsWith(proxyPrefix)) {
+          const encodedProxyPath = url.pathname.slice(proxyPrefix.length)
+          const decodedStoragePath = decodeURIComponent(encodedProxyPath)
+          url.pathname = `${proxyPrefix}${encodeURIComponent(originalCosStoragePath(decodedStoragePath, cosKey))}`
+          url.search = ''
+          return url.toString()
+        }
         const decodedPath = decodeURIComponent(url.pathname)
         const matchedKey = [previewKey, thumbnailKey, cosKey].find(key => decodedPath.endsWith(`/${key}`))
         const encodedMatchedKey = matchedKey ? encodedStoragePath(matchedKey) : ''
