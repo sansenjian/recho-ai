@@ -315,6 +315,10 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
   return publicErrorMessage(err, fallback)
 }
 
+function canGeneratePublicAfterCreditError(err: unknown) {
+  return err instanceof CreditOperationError && err.code === 'insufficient_credits'
+}
+
 function safeProxyStoragePath(value: unknown) {
   if (typeof value !== 'string') return null
   let path = value
@@ -865,7 +869,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         })
         creditBalance = creditReservation.balance
       } catch (creditErr) {
-        console.warn('[credits] reservation skipped; generation will be public:', safeErrorDetail(creditErr))
+        if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
+        console.warn('[credits] insufficient balance; generation will be public:', safeErrorDetail(creditErr))
       }
     }
     let usesCredits = Boolean(creditReservation)

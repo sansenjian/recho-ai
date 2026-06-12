@@ -29,6 +29,11 @@ import {
   shortId,
   tableStatusLabel,
 } from '../utils/admin-format'
+import {
+  formatCreditAmount,
+  formatSignedCreditAmount,
+  normalizeCreditBalance,
+} from '../utils/credit-format'
 
 const {
   user,
@@ -125,8 +130,8 @@ const announcementForm = ref({
 })
 
 const settingsPricePerImage = computed(() => {
-  const cost = Number(settingsForm.value.imageCreditCostPerImage)
-  return Number.isFinite(cost) ? Math.max(0.01, Math.round(cost * 100) / 100) : 1
+  const cost = normalizeCreditBalance(settingsForm.value.imageCreditCostPerImage)
+  return cost !== null ? Math.max(0.01, cost) : 1
 })
 
 const settingsPricePreview = computed(() => [
@@ -216,6 +221,14 @@ function transactionReason(reason: string) {
   return reason
 }
 
+function creditAmount(value: unknown) {
+  return formatCreditAmount(value)
+}
+
+function signedCreditAmount(value: unknown) {
+  return formatSignedCreditAmount(value)
+}
+
 function transactionNote(tx: AdminTransaction) {
   const note = tx.metadata?.note
   return typeof note === 'string' && note.trim() ? note : '-'
@@ -224,8 +237,8 @@ function transactionNote(tx: AdminTransaction) {
 function ledgerDetails(tx: AdminLedgerEntry) {
   const parts = [
     tx.details.count !== null ? `${tx.details.count} 张` : '',
-    tx.details.creditCostPerImage !== null ? `单图 ${tx.details.creditCostPerImage} 额度` : '',
-    tx.details.creditCost !== null ? `合计 ${tx.details.creditCost} 额度` : '',
+    tx.details.creditCostPerImage !== null ? `单图 ${creditAmount(tx.details.creditCostPerImage)} 额度` : '',
+    tx.details.creditCost !== null ? `合计 ${creditAmount(tx.details.creditCost)} 额度` : '',
     tx.details.quality ? `质量 ${tx.details.quality}` : '',
     tx.details.resolution ? `分辨率 ${tx.details.resolution}` : '',
     tx.details.size ? `尺寸 ${tx.details.size}` : '',
@@ -894,19 +907,19 @@ onMounted(async () => {
         <div class="overview-grid">
           <div>
             <span>总余额</span>
-            <strong>{{ overview?.users.totalBalance ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalBalance) }}</strong>
           </div>
           <div>
             <span>累计兑换</span>
-            <strong>{{ overview?.users.totalRedeemed ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
           </div>
           <div>
             <span>累计消耗</span>
-            <strong>{{ overview?.users.totalSpent ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalSpent) }}</strong>
           </div>
           <div>
             <span>生图价格/张</span>
-            <strong>{{ overview?.settings.imageCreditCostPerImage ?? 1 }}</strong>
+            <strong>{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
           </div>
           <div>
             <span>兑换码可用</span>
@@ -914,7 +927,7 @@ onMounted(async () => {
           </div>
           <div>
             <span>已兑换码额度</span>
-            <strong>{{ overview?.codes.totalRedeemedCredits ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
           </div>
           <div>
             <span>7 天流水</span>
@@ -922,11 +935,11 @@ onMounted(async () => {
           </div>
           <div>
             <span>7 天消耗</span>
-            <strong>{{ overview?.transactions.last7Days.spentCredits ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
           </div>
           <div>
             <span>7 天净变化</span>
-            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
+            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(overviewNetChange) }}</strong>
           </div>
         </div>
         <div class="image-cost-panel" aria-label="可视化生图成本">
@@ -1262,8 +1275,8 @@ onMounted(async () => {
                 <td>{{ dateTime(tx.createdAt) }}</td>
                 <td>{{ tx.email || shortId(tx.userId) }}</td>
                 <td>{{ transactionReason(tx.reason) }}</td>
-                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
-                <td>{{ tx.balanceAfter }}</td>
+                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                <td>{{ creditAmount(tx.balanceAfter) }}</td>
                 <td>{{ ledgerDetails(tx) }}</td>
                 <td>{{ tx.note || '-' }}</td>
               </tr>
@@ -1314,7 +1327,7 @@ onMounted(async () => {
               @click="selectUser(item)"
             >
               <span>{{ item.email || shortId(item.userId) }}</span>
-              <strong>{{ item.balance }}</strong>
+              <strong>{{ creditAmount(item.balance) }}</strong>
             </button>
           </div>
         </div>
@@ -1330,15 +1343,15 @@ onMounted(async () => {
           <div v-if="selectedUser" class="metric-grid">
             <div>
               <span>余额</span>
-              <strong>{{ selectedUser.balance }}</strong>
+              <strong>{{ creditAmount(selectedUser.balance) }}</strong>
             </div>
             <div>
               <span>累计兑换</span>
-              <strong>{{ selectedUser.totalRedeemed }}</strong>
+              <strong>{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
             </div>
             <div>
               <span>累计消耗</span>
-              <strong>{{ selectedUser.totalSpent }}</strong>
+              <strong>{{ creditAmount(selectedUser.totalSpent) }}</strong>
             </div>
             <div>
               <span>更新</span>
@@ -1373,8 +1386,8 @@ onMounted(async () => {
                 <tr v-for="tx in transactions" :key="tx.id">
                   <td>{{ dateTime(tx.created_at) }}</td>
                   <td>{{ transactionReason(tx.reason) }}</td>
-                  <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
-                  <td>{{ tx.balance_after }}</td>
+                  <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                  <td>{{ creditAmount(tx.balance_after) }}</td>
                   <td>{{ transactionNote(tx) }}</td>
                 </tr>
                 <tr v-if="!transactions.length">

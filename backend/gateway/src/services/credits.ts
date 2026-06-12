@@ -31,11 +31,13 @@ export class CreditServiceUnavailableError extends Error {
 }
 
 export class CreditOperationError extends Error {
+  code: string
   status: number
   publicMessage: string
 
   constructor(code: string, options: { status?: number; publicMessage?: string } = {}) {
     super(code)
+    this.code = code
     this.status = options.status ?? statusForCreditError(code)
     this.publicMessage = options.publicMessage ?? publicMessageForCreditError(code)
   }

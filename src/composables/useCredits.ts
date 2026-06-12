@@ -1,6 +1,7 @@
 import { readonly, ref, watch } from 'vue'
 import { apiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
+import { normalizeCreditBalance } from '../utils/credit-format'
 import { getAuthAccessToken, useAuthSession } from './useAuthSession'
 
 const creditBalance = ref<number | null>(null)
@@ -19,9 +20,8 @@ interface CreditRedeemResponse extends CreditBalanceResponse {
   redeemedCredits?: number
 }
 
-function numericBalance(value: unknown) {
-  const number = Number(value)
-  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null
+export function numericBalance(value: unknown) {
+  return normalizeCreditBalance(value)
 }
 
 async function readCreditError(response: Response, fallback: string) {
