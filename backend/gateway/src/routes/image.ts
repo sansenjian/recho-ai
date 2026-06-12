@@ -316,7 +316,7 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
 }
 
 function canGeneratePublicAfterCreditError(err: unknown) {
-  return err instanceof CreditOperationError && err.message === 'insufficient_credits'
+  return err instanceof CreditOperationError && err.code === 'insufficient_credits'
 }
 
 function safeProxyStoragePath(value: unknown) {

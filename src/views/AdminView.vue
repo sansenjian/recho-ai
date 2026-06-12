@@ -29,6 +29,11 @@ import {
   shortId,
   tableStatusLabel,
 } from '../utils/admin-format'
+import {
+  formatCreditAmount,
+  formatSignedCreditAmount,
+  normalizeCreditBalance,
+} from '../utils/credit-format'
 
 const {
   user,
@@ -125,8 +130,8 @@ const announcementForm = ref({
 })
 
 const settingsPricePerImage = computed(() => {
-  const cost = Number(settingsForm.value.imageCreditCostPerImage)
-  return Number.isFinite(cost) ? Math.max(0.01, Math.round(cost * 100) / 100) : 1
+  const cost = normalizeCreditBalance(settingsForm.value.imageCreditCostPerImage)
+  return cost !== null ? Math.max(0.01, cost) : 1
 })
 
 const settingsPricePreview = computed(() => [
@@ -217,18 +222,11 @@ function transactionReason(reason: string) {
 }
 
 function creditAmount(value: unknown) {
-  const number = Number(value)
-  if (!Number.isFinite(number)) return '0'
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(Math.round(number * 100) / 100)
+  return formatCreditAmount(value)
 }
 
 function signedCreditAmount(value: unknown) {
-  const number = Number(value)
-  const formatted = creditAmount(number)
-  return number > 0 ? `+${formatted}` : formatted
+  return formatSignedCreditAmount(value)
 }
 
 function transactionNote(tx: AdminTransaction) {

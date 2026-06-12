@@ -23,6 +23,7 @@ import { useAuthSession } from '../composables/useAuthSession'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
 import { useCredits } from '../composables/useCredits'
 import { apiUrl } from '../lib/api-base'
+import { formatCreditAmount } from '../utils/credit-format'
 import type { RouteWorkspace } from '../router'
 
 type ImageWorkspace = 'canvas' | 'gallery'
@@ -219,7 +220,7 @@ const pendingAuthPath = ref<string | null>(null)
 const creditBalanceLabel = computed(() => (
   isLoadingCredits.value && creditBalance.value === null
     ? '...'
-    : String(creditBalance.value ?? 0)
+    : formatCreditAmount(creditBalance.value)
 ))
 
 function openAuthDialog(mode: AuthMode = 'signIn') {
