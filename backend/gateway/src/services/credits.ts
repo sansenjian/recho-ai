@@ -147,7 +147,17 @@ export async function reserveUserCredits(
     p_metadata: metadata,
   })
 
-  if (error) throw new CreditOperationError(creditErrorCode(error))
+  if (error) {
+    const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {}
+    console.error('[credits] reserve_user_credits RPC failed:', {
+      message: record.message,
+      details: record.details,
+      hint: record.hint,
+      code: record.code,
+      error,
+    })
+    throw new CreditOperationError(creditErrorCode(error))
+  }
   const row = rpcRow(data as Array<{ balance?: unknown; transaction_id?: unknown }> | null)
   const transactionId = typeof row?.transaction_id === 'string' ? row.transaction_id : ''
   if (!transactionId) throw new Error('credit transaction was not created')

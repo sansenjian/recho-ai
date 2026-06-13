@@ -315,8 +315,18 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
   return publicErrorMessage(err, fallback)
 }
 
+const PUBLIC_FALLBACK_CREDIT_ERRORS = new Set([
+  'insufficient_credits',
+  'credit_balance_not_found',
+  'credit_operation_failed',
+])
+
 function canGeneratePublicAfterCreditError(err: unknown) {
-  return err instanceof CreditOperationError && err.code === 'insufficient_credits'
+  if (!(err instanceof CreditOperationError)) return false
+  // Only allow known credit-error codes to fall back to public generation.
+  // New or unexpected codes should surface as real errors rather than
+  // silently bypass the credit check.
+  return PUBLIC_FALLBACK_CREDIT_ERRORS.has(err.code)
 }
 
 function safeProxyStoragePath(value: unknown) {
@@ -870,7 +880,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         creditBalance = creditReservation.balance
       } catch (creditErr) {
         if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
-        console.warn('[credits] insufficient balance; generation will be public:', safeErrorDetail(creditErr))
+        const code = creditErr instanceof CreditOperationError ? creditErr.code : 'unknown'
+        console.warn(`[credits] credit error (code=${code}); generation will be public:`, safeErrorDetail(creditErr))
       }
     }
     let usesCredits = Boolean(creditReservation)
