@@ -143,18 +143,22 @@ func (h *ChatHandler) handleNonStream(ctx context.Context, w http.ResponseWriter
 }
 
 func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte) {
-	// Reserve credits before streaming (1 credit for chat by default)
-	creditCost := h.chatService.GetCreditCost(model)
+	// Reserve credits before streaming (model-specific cost)
+	creditCost := float64(h.chatService.GetCreditCost(model))
+	var txID string
 	if h.creditSvc != nil {
-		_, _, _, _, err := h.creditSvc.ReserveCredits(ctx, userID, 1)
+		id, _, err := h.creditSvc.ReserveAmount(ctx, userID, creditCost, map[string]any{
+			"source": "chat",
+			"model":  model,
+		})
 		if err != nil {
-			// If credit reservation fails, check if we can proceed
 			balance, _ := h.creditSvc.GetBalance(ctx, userID)
-			if balance < float64(creditCost) {
-				http.Error(w, fmt.Sprintf(`{"error": {"message": "Insufficient credits. Required: %d, Available: %.2f", "type": "insufficient_credits"}}`, creditCost, balance), http.StatusPaymentRequired)
+			if balance < creditCost {
+				http.Error(w, fmt.Sprintf(`{"error": {"message": "Insufficient credits. Required: %.2f, Available: %.2f", "type": "insufficient_credits"}}`, creditCost, balance), http.StatusPaymentRequired)
 				return
 			}
-			// If error is not about balance, still allow but log
+		} else {
+			txID = id
 		}
 	}
 
@@ -173,9 +177,9 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 	// Call upstream chat API with streaming
 	resp, err := h.chatService.Chat(ctx, model, body)
 	if err != nil {
-		// Refund on error
-		if h.creditSvc != nil {
-			h.creditSvc.RefundCredits(ctx, userID, "", 1, "chat_error")
+		// Refund on error (using the original transaction ID for linked refund)
+		if h.creditSvc != nil && txID != "" {
+			h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_error")
 		}
 		http.Error(w, fmt.Sprintf(`{"error": {"message": "Chat service error: %v", "type": "internal_error"}}`, err), http.StatusInternalServerError)
 		return
@@ -184,7 +188,6 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 
 	// Stream response to client
 	reader := resp.Body
-	defer reader.Close()
 
 	buffer := &bytes.Buffer{}
 

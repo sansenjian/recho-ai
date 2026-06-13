@@ -100,6 +100,20 @@ func (s *CreditService) GetCreditCost(imageCount int) (costPerImage, totalCost f
 	return costPerImage, totalCost
 }
 
+// ReserveAmount reserves a specific credit amount (e.g. for chat model costs).
+// Returns the transaction ID and new balance.
+func (s *CreditService) ReserveAmount(
+	ctx context.Context,
+	userID string,
+	amount float64,
+	metadata map[string]any,
+) (transactionID string, newBalance float64, err error) {
+	if amount <= 0 {
+		return "", 0, nil
+	}
+	return s.repo.ReserveCredits(ctx, userID, amount, metadata)
+}
+
 // roundToTwoDecimals rounds a float to two decimal places
 func roundToTwoDecimals(val float64) float64 {
 	return math.Round(val*100) / 100

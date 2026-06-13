@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go-gateway/internal/config"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,12 +25,18 @@ type CreditReservation struct {
 
 // StorageService handles image storage operations
 type StorageService struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	client *http.Client // reused HTTP client for storage uploads
 }
 
 // NewStorageService creates a new storage service
 func NewStorageService(pool *pgxpool.Pool) *StorageService {
-	return &StorageService{pool: pool}
+	return &StorageService{
+		pool: pool,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
 }
 
 // StoredImage represents a stored image
@@ -71,8 +80,12 @@ type ImageHistoryItem struct {
 
 // StoreFromURL downloads an image from URL and stores it
 func (s *StorageService) StoreFromURL(ctx context.Context, url string) (*StoredImage, error) {
-	// Download image
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download request: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download image: %w", err)
 	}
@@ -100,7 +113,7 @@ func (s *StorageService) StoreFromURL(ctx context.Context, url string) (*StoredI
 	return s.StoreFromBuffer(ctx, data, mime, "")
 }
 
-// StoreFromBuffer stores image data directly
+// StoreFromBuffer uploads image data to Supabase Storage
 func (s *StorageService) StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*StoredImage, error) {
 	// Generate storage path
 	timestamp := time.Now().UnixNano()
@@ -108,23 +121,71 @@ func (s *StorageService) StoreFromBuffer(ctx context.Context, data []byte, mime,
 	extension := getExtension(mime)
 	storagePath := fmt.Sprintf("images/%d_%d.%s", timestamp, random, extension)
 
-	// In production, this would upload to Supabase Storage or COS
-	// For now, we'll store in database as base64
-	publicURL := s.getPublicURL(storagePath)
+	// Upload to Supabase Storage if configured
+	if config.SupabaseURL != "" && config.SupabaseServiceRoleKey != "" && config.SupabaseImageBucket != "" {
+		publicURL, err := s.uploadToSupabaseStorage(ctx, data, storagePath, mime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload to storage: %w", err)
+		}
+		return &StoredImage{
+			PublicURL:   publicURL,
+			StoragePath: storagePath,
+			Bytes:       len(data),
+		}, nil
+	}
 
+	// Fallback: return a proxy URL (storage not configured)
 	return &StoredImage{
-		PublicURL:   publicURL,
+		PublicURL:   "/api/image/storage/" + storagePath,
 		StoragePath: storagePath,
-		Width:       0,
-		Height:      0,
 		Bytes:       len(data),
 	}, nil
+}
+
+// uploadToSupabaseStorage uploads bytes to Supabase Storage via REST API.
+// Returns the public URL of the uploaded object.
+func (s *StorageService) uploadToSupabaseStorage(ctx context.Context, data []byte, objectPath, contentType string) (string, error) {
+	uploadURL := fmt.Sprintf("%s/storage/v1/object/%s/%s",
+		strings.TrimRight(config.SupabaseURL, "/"),
+		config.SupabaseImageBucket,
+		objectPath,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to build upload request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+config.SupabaseServiceRoleKey)
+	req.Header.Set("apikey", config.SupabaseServiceRoleKey)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("x-upsert", "false")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("storage upload returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Build public URL
+	publicURL := fmt.Sprintf("%s/storage/v1/object/public/%s/%s",
+		strings.TrimRight(config.SupabaseURL, "/"),
+		config.SupabaseImageBucket,
+		objectPath,
+	)
+
+	return publicURL, nil
 }
 
 // SaveImageHistory saves an image generation to history
 func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistoryItem, userID string) error {
 	if s.pool == nil {
-		return nil // No database connection
+		return nil
 	}
 
 	query := `
@@ -157,6 +218,7 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 	}
 
 	var query string
+	var countQuery string
 	var args []any
 
 	if scope == "mine" && userID != "" {
@@ -165,10 +227,11 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 			       size, aspect_ratio, resolution, quality, image_model,
 			       image_width, image_height, generated_at, visibility
 			FROM image_generations
-			WHERE user_id = $1
+			WHERE user_id = $1 AND visibility = 'private'
 			ORDER BY generated_at DESC
 			LIMIT $2 OFFSET $3
 		`
+		countQuery = `SELECT COUNT(*) FROM image_generations WHERE user_id = $1 AND visibility = 'private'`
 		args = []any{userID, limit, offset}
 	} else {
 		query = `
@@ -180,6 +243,7 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 			ORDER BY generated_at DESC
 			LIMIT $1 OFFSET $2
 		`
+		countQuery = `SELECT COUNT(*) FROM image_generations WHERE visibility = 'public'`
 		args = []any{limit, offset}
 	}
 
@@ -210,10 +274,13 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 		images = append(images, item)
 	}
 
-	// Get total count
+	// Get total count — use the same scope-specific query
 	var total int
-	countQuery := `SELECT COUNT(*) FROM image_generations WHERE ` + getScopeWhere(scope, userID)
-	s.pool.QueryRow(ctx, countQuery, getScopeArgs(scope, userID)...).Scan(&total)
+	if scope == "mine" && userID != "" {
+		s.pool.QueryRow(ctx, countQuery, userID).Scan(&total)
+	} else {
+		s.pool.QueryRow(ctx, countQuery).Scan(&total)
+	}
 
 	return &ImageHistory{Images: images, Total: total}, nil
 }
@@ -224,16 +291,32 @@ func (s *StorageService) GetImageHistory(ctx context.Context, id, userID, scope 
 		return nil, nil
 	}
 
-	query := `
-		SELECT id, prompt, storage_path, preview_url, thumbnail_url,
-		       size, aspect_ratio, resolution, quality, image_model,
-		       image_width, image_height, generated_at, visibility
-		FROM image_generations
-		WHERE id = $1 AND ` + getScopeWhere(scope, userID)
+	var query string
+	var args []any
+
+	if scope == "mine" && userID != "" {
+		query = `
+			SELECT id, prompt, storage_path, preview_url, thumbnail_url,
+			       size, aspect_ratio, resolution, quality, image_model,
+			       image_width, image_height, generated_at, visibility
+			FROM image_generations
+			WHERE id = $1 AND user_id = $2 AND visibility = 'private'
+		`
+		args = []any{id, userID}
+	} else {
+		query = `
+			SELECT id, prompt, storage_path, preview_url, thumbnail_url,
+			       size, aspect_ratio, resolution, quality, image_model,
+			       image_width, image_height, generated_at, visibility
+			FROM image_generations
+			WHERE id = $1 AND visibility = 'public'
+		`
+		args = []any{id}
+	}
 
 	var item ImageHistoryItem
 	var generatedAt time.Time
-	err := s.pool.QueryRow(ctx, query, id, userID).Scan(
+	err := s.pool.QueryRow(ctx, query, args...).Scan(
 		&item.ID, &item.Prompt, &item.StoragePath,
 		&item.PreviewURL, &item.ThumbnailURL,
 		&item.Size, &item.AspectRatio, &item.Resolution,
@@ -291,7 +374,15 @@ func (s *StorageService) getPublicURL(storagePath string) string {
 	if storagePath == "" {
 		return ""
 	}
-	// Return proxied URL - in production this would be Supabase Storage URL
+	// Use direct Supabase Storage public URL if configured
+	if config.SupabaseURL != "" && config.SupabaseImageBucket != "" {
+		return fmt.Sprintf("%s/storage/v1/object/public/%s/%s",
+			strings.TrimRight(config.SupabaseURL, "/"),
+			config.SupabaseImageBucket,
+			storagePath,
+		)
+	}
+	// Fallback to proxy URL
 	return "/api/image/storage/" + storagePath
 }
 
@@ -306,18 +397,4 @@ func getExtension(mime string) string {
 	default:
 		return "png"
 	}
-}
-
-func getScopeWhere(scope, userID string) string {
-	if scope == "mine" && userID != "" {
-		return "user_id = $2 AND visibility = 'private'"
-	}
-	return "visibility = 'public'"
-}
-
-func getScopeArgs(scope, userID string) []any {
-	if scope == "mine" && userID != "" {
-		return []any{userID}
-	}
-	return []any{}
 }

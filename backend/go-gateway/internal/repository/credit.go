@@ -16,6 +16,9 @@ type CreditRepository struct {
 	pool *pgxpool.Pool
 }
 
+// ErrInsufficientCredits is returned when the user's balance is too low
+var ErrInsufficientCredits = errors.New("insufficient credits")
+
 // NewCreditRepository creates a new credit repository
 func NewCreditRepository(pool *pgxpool.Pool) *CreditRepository {
 	return &CreditRepository{pool: pool}
@@ -107,7 +110,7 @@ func (r *CreditRepository) ReserveCredits(
 	err = tx.QueryRow(ctx, query, amount, userID).Scan(&newBalance)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return "", 0, fmt.Errorf("insufficient credits")
+			return "", 0, ErrInsufficientCredits
 		}
 		return "", 0, fmt.Errorf("failed to reserve credits: %w", err)
 	}
