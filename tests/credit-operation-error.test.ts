@@ -9,4 +9,11 @@ describe('CreditOperationError', () => {
     expect(error.code).toBe('insufficient_credits')
     expect(error.status).toBe(402)
   })
+
+  it('maps credit_balance_not_found to status 500', () => {
+    const error = new CreditOperationError('credit_balance_not_found')
+
+    expect(error.code).toBe('credit_balance_not_found')
+    expect(error.status).toBe(500)
+  })
 })

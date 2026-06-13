@@ -47,6 +47,7 @@ function statusForCreditError(code: string) {
   if (code === 'auth_required') return 401
   if (code === 'insufficient_credits') return 402
   if (code === 'code_already_redeemed') return 409
+  if (code === 'credit_balance_not_found') return 500
   if (code === 'credit_operation_failed') return 500
   return 400
 }
@@ -74,7 +75,7 @@ function creditErrorCode(error: unknown) {
   ]
     .filter(Boolean)
     .join(' ')
-  const match = /\b(auth_required|insufficient_credits|invalid_code|code_disabled|code_expired|code_already_redeemed|code_exhausted|invalid_credit_amount)\b/.exec(message)
+  const match = /\b(auth_required|insufficient_credits|invalid_code|code_disabled|code_expired|code_already_redeemed|code_exhausted|invalid_credit_amount|credit_balance_not_found)\b/.exec(message)
   return match?.[1] || 'credit_operation_failed'
 }
 

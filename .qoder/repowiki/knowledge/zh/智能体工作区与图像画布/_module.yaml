@@ -1,0 +1,43 @@
+schema_version: 1
+module_path: frontend_app/chat_canvas
+title: 智能体工作区与图像画布
+scope:
+    - src/components/AgentWorkspace.vue
+    - src/components/ChatHeader.vue
+    - src/components/ChatInput.vue
+    - src/components/ChatMessage.vue
+    - src/components/ChatSidebar.vue
+    - src/components/ContextMeter.vue
+    - src/components/ImageCanvas.vue
+    - src/components/ImageCanvasBottomToolbar.vue
+    - src/components/ImageCanvasContextMenu.vue
+    - src/components/ImageCanvasGalleryStage.vue
+    - src/components/ImageCanvasNode.vue
+    - src/components/ImageCanvasSidebar.vue
+    - src/components/ImageCanvasStageActions.vue
+    - src/components/StreamingStatus.vue
+    - src/components/ThinkingActivity.vue
+    - src/components/ToolActivity.vue
+    - src/composables/useCanvasDocumentFiles.ts
+    - src/composables/useChatLoop.ts
+    - src/composables/useImageCanvasDocument.ts
+    - src/composables/useImageCanvasGeneration.ts
+    - src/composables/useImageCanvasGraph.ts
+    - src/composables/useImageCanvasImages.ts
+    - src/composables/useImageCanvasMentions.ts
+    - src/composables/useImageCanvasViewer.ts
+    - src/composables/useImageNodeReferences.ts
+    - src/composables/useMeasuredCanvasNodes.ts
+    - src/composables/useMemory.ts
+    - src/composables/useStream.ts
+    - src/composables/useTools.ts
+    - src/lib/canvas-document.ts
+    - src/lib/image-canvas-graph.ts
+    - src/lib/image-canvas-model.ts
+    - src/lib/image-canvas-prompt.ts
+    - src/lib/image-canvas-utils.ts
+    - src/lib/image-canvas-viewport.ts
+    - src/lib/image-mention-editor.ts
+source_files: []
+depends_on: []
+related_to: []
