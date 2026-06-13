@@ -25,7 +25,6 @@ import type {
 } from '../types/admin'
 import {
   dateTime,
-  latencyLabel,
   shortId,
   tableStatusLabel,
 } from '../utils/admin-format'
@@ -48,6 +47,7 @@ const loading = ref(false)
 const overviewLoading = ref(false)
 const systemLoading = ref(false)
 const settingsLoading = ref(false)
+const settingsLoaded = ref(false)
 const settingsSaving = ref(false)
 const ledgerLoading = ref(false)
 const actionLoading = ref(false)
@@ -107,6 +107,8 @@ const settingsForm = ref<AdminAppSettings>({
   imageResponsesImageModel: 'gpt-image-2',
   imageEventsEnabled: false,
   canvasContextEnabled: false,
+  freeGenerationEnabled: true,
+  guestGenerationEnabled: true,
 })
 
 const adminUserForm = ref({
@@ -254,6 +256,7 @@ function ledgerDetails(tx: AdminLedgerEntry) {
 function syncSettingsForm(settings: AdminAppSettings) {
   appSettings.value = settings
   settingsForm.value = { ...settings }
+  settingsLoaded.value = true
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -402,6 +405,7 @@ async function refreshSettings() {
 }
 
 async function saveSettings() {
+  if (!settingsLoaded.value) return
   settingsSaving.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -415,6 +419,8 @@ async function saveSettings() {
         imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
         imageEventsEnabled: Boolean(settingsForm.value.imageEventsEnabled),
         canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
+        freeGenerationEnabled: Boolean(settingsForm.value.freeGenerationEnabled),
+        guestGenerationEnabled: Boolean(settingsForm.value.guestGenerationEnabled),
       }),
     })
     syncSettingsForm(data.settings)
@@ -945,35 +951,35 @@ onMounted(async () => {
         <div class="image-cost-panel" aria-label="可视化生图成本">
           <div class="image-cost-header">
             <div>
-              <span>可视化生图成本指数</span>
-              <strong>{{ overview?.imageCost?.estimatedCostScore ?? '-' }}</strong>
+              <span>可视化生图成本</span>
+              <strong>¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small>/张</small></strong>
             </div>
-            <span>传输 + 存储 + 耗时 · 置信度 {{ imageCostConfidenceLabel }}</span>
+            <span>按量计费 · 置信度 {{ imageCostConfidenceLabel }}</span>
           </div>
           <div class="image-cost-grid">
             <div>
-              <span>平均传输</span>
-              <strong>{{ overview?.imageCost?.averageTrafficMb ?? 0 }} MB</strong>
+              <span>COS 存储/张</span>
+              <strong>¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>平均存储</span>
-              <strong>{{ overview?.imageCost?.averageStoredMb ?? 0 }} MB</strong>
+              <span>COS 流量/张</span>
+              <strong>¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>平均耗时</span>
-              <strong>{{ latencyLabel(overview?.imageCost?.averageLatencyMs ?? null) }}</strong>
+              <span>Supabase 存储/张</span>
+              <strong>¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>网关内存</span>
-              <strong>{{ overview?.imageCost?.gatewayMemoryMb ?? 0 }} MB</strong>
+              <span>Supabase 流量/张</span>
+              <strong>¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>内存参考</span>
-              <strong>不计入指数</strong>
+              <span>预估月成本</span>
+              <strong>¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
             </div>
             <div>
               <span>样本</span>
-              <strong>{{ overview?.imageCost?.imageSampleSize ?? 0 }} 图 / {{ overview?.imageCost?.attemptSampleSize ?? 0 }} 次</strong>
+              <strong>{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} Supabase</strong>
             </div>
           </div>
         </div>
@@ -1100,7 +1106,15 @@ onMounted(async () => {
               <input v-model="settingsForm.canvasContextEnabled" type="checkbox">
               <span>画布上下文</span>
             </label>
-            <button type="submit" :disabled="settingsSaving">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
+            <label class="check-row">
+              <input v-model="settingsForm.freeGenerationEnabled" type="checkbox">
+              <span>免费生成回退</span>
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.guestGenerationEnabled" type="checkbox">
+              <span>游客生成</span>
+            </label>
+            <button type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
           </form>
         </div>
 

@@ -4,11 +4,13 @@ import { apiUrl } from '../lib/api-base'
 export interface PublicAppConfig {
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
+  guestGenerationEnabled: boolean
 }
 
 const fallbackConfig: PublicAppConfig = {
   imageEventsEnabled: false,
   canvasContextEnabled: false,
+  guestGenerationEnabled: true,
 }
 
 const config = ref<PublicAppConfig>({ ...fallbackConfig })
@@ -24,6 +26,9 @@ function normalizeConfig(value: unknown): PublicAppConfig {
     canvasContextEnabled: typeof record.canvasContextEnabled === 'boolean'
       ? record.canvasContextEnabled
       : fallbackConfig.canvasContextEnabled,
+    guestGenerationEnabled: typeof record.guestGenerationEnabled === 'boolean'
+      ? record.guestGenerationEnabled
+      : fallbackConfig.guestGenerationEnabled,
   }
 }
 
@@ -61,6 +66,7 @@ export function useAppConfig() {
     isLoaded: readonly(loaded),
     imageEventsEnabled: computed(() => config.value.imageEventsEnabled),
     canvasContextEnabled: computed(() => config.value.canvasContextEnabled),
+    guestGenerationEnabled: computed(() => config.value.guestGenerationEnabled),
     ensureAppConfig,
   }
 }

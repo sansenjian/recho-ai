@@ -2,6 +2,8 @@ import {
   ADMIN_USER_EMAILS,
   ADMIN_USER_IDS,
   CANVAS_CONTEXT_ENABLED,
+  FREE_GENERATION_ENABLED,
+  GUEST_GENERATION_ENABLED,
   IMAGE_ANALYTICS_ENABLED,
   IMAGE_CREDIT_COST_PER_IMAGE,
   IMAGE_EVENTS_ENABLED,
@@ -26,6 +28,8 @@ type AppSettingKey =
   | 'image_responses_image_model'
   | 'image_events_enabled'
   | 'canvas_context_enabled'
+  | 'free_generation_enabled'
+  | 'guest_generation_enabled'
 
 export type AdminRole = 'senior' | 'operator'
 
@@ -36,6 +40,8 @@ export interface AppSettings {
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
+  freeGenerationEnabled: boolean
+  guestGenerationEnabled: boolean
 }
 
 export interface AdminUserRule {
@@ -78,6 +84,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   imageResponsesImageModel: IMAGE_RESPONSES_IMAGE_MODEL,
   imageEventsEnabled: IMAGE_EVENTS_ENABLED,
   canvasContextEnabled: CANVAS_CONTEXT_ENABLED,
+  freeGenerationEnabled: FREE_GENERATION_ENABLED,
+  guestGenerationEnabled: GUEST_GENERATION_ENABLED,
 }
 
 const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
@@ -87,6 +95,8 @@ const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
   image_responses_image_model: 'imageResponsesImageModel',
   image_events_enabled: 'imageEventsEnabled',
   canvas_context_enabled: 'canvasContextEnabled',
+  free_generation_enabled: 'freeGenerationEnabled',
+  guest_generation_enabled: 'guestGenerationEnabled',
 }
 
 const propertyToSettingKey = Object.fromEntries(
@@ -193,7 +203,7 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
 
     if (property === 'imageCreditCostPerImage') {
       settings[property] = normalizeImageCreditCostPerImage(value)
-    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled') {
+    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled' || property === 'freeGenerationEnabled' || property === 'guestGenerationEnabled') {
       settings[property] = normalizeBoolean(value, settings[property])
     } else if (property === 'imageResponsesModel' || property === 'imageResponsesImageModel') {
       settings[property] = normalizeModelName(value, settings[property])
@@ -227,6 +237,12 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
   }
   if ('canvasContextEnabled' in input) {
     next.canvasContextEnabled = normalizeBoolean(input.canvasContextEnabled, DEFAULT_APP_SETTINGS.canvasContextEnabled)
+  }
+  if ('freeGenerationEnabled' in input) {
+    next.freeGenerationEnabled = normalizeBoolean(input.freeGenerationEnabled, DEFAULT_APP_SETTINGS.freeGenerationEnabled)
+  }
+  if ('guestGenerationEnabled' in input) {
+    next.guestGenerationEnabled = normalizeBoolean(input.guestGenerationEnabled, DEFAULT_APP_SETTINGS.guestGenerationEnabled)
   }
 
   return next
@@ -504,5 +520,6 @@ export async function publicAppConfig() {
   return {
     imageEventsEnabled: settings.imageEventsEnabled,
     canvasContextEnabled: settings.canvasContextEnabled,
+    guestGenerationEnabled: settings.guestGenerationEnabled,
   }
 }

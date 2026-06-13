@@ -190,6 +190,15 @@ export interface AdminOverview {
     estimatedMemoryMbSeconds: number | null
     estimatedCostScore: number | null
     confidence: 'none' | 'low' | 'medium' | 'high'
+    cosStorageCostPerImage: number
+    cosTrafficCostPerImage: number
+    supabaseStorageCostPerImage: number
+    supabaseTrafficCostPerImage: number
+    renderTrafficCostPerImage: number
+    totalCostPerImage: number
+    estimatedMonthlyCost: number
+    cosImageCount: number
+    supabaseImageCount: number
   }
   generatedAt: string
 }
@@ -201,6 +210,8 @@ export interface AdminAppSettings {
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
+  freeGenerationEnabled: boolean
+  guestGenerationEnabled: boolean
 }
 
 export interface AdminUserRule {

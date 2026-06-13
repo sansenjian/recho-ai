@@ -22,6 +22,7 @@ const RECENT_TRANSACTION_DAYS = 7
 const CREDIT_TRANSACTION_REASONS = ['redemption', 'image_generation', 'refund', 'admin_adjustment'] as const
 const CREDIT_CODE_STATES = ['active', 'disabled', 'expired', 'exhausted'] as const
 const BYTES_PER_MIB = 1024 * 1024
+const BYTES_PER_GIB = 1024 * 1024 * 1024
 
 export type { RequestUser } from './request-auth.js'
 
@@ -101,6 +102,15 @@ export interface AdminImageCostOverview {
   estimatedMemoryMbSeconds: number | null
   estimatedCostScore: number | null
   confidence: 'none' | 'low' | 'medium' | 'high'
+  cosStorageCostPerImage: number
+  cosTrafficCostPerImage: number
+  supabaseStorageCostPerImage: number
+  supabaseTrafficCostPerImage: number
+  renderTrafficCostPerImage: number
+  totalCostPerImage: number
+  estimatedMonthlyCost: number
+  cosImageCount: number
+  supabaseImageCount: number
 }
 
 export interface AdminCreditLedgerEntry {
@@ -501,12 +511,31 @@ export function summarizeAdminCreditOverview(input: {
   const imageRows = input.imageRows || []
   let storedBytesTotal = 0
   let trafficBytesTotal = 0
+  let cosStoredBytes = 0
+  let cosTrafficBytes = 0
+  let supabaseStoredBytes = 0
+  let supabaseTrafficBytes = 0
+  let cosImageCount = 0
+  let supabaseImageCount = 0
+
   for (const row of imageRows) {
     const originalBytes = normalizedBytes(row.original_bytes)
     const previewBytes = normalizedBytes(row.preview_bytes)
     const thumbnailBytes = normalizedBytes(row.thumbnail_bytes)
-    storedBytesTotal += originalBytes + previewBytes + thumbnailBytes
-    trafficBytesTotal += previewBytes || thumbnailBytes || originalBytes
+    const stored = originalBytes + previewBytes + thumbnailBytes
+    const traffic = previewBytes || thumbnailBytes || originalBytes
+    storedBytesTotal += stored
+    trafficBytesTotal += traffic
+
+    if (row.funding_source === 'credit') {
+      cosStoredBytes += stored
+      cosTrafficBytes += traffic
+      cosImageCount++
+    } else {
+      supabaseStoredBytes += stored
+      supabaseTrafficBytes += traffic
+      supabaseImageCount++
+    }
   }
 
   const attemptRows = input.attemptRows || []
@@ -527,10 +556,48 @@ export function summarizeAdminCreditOverview(input: {
   const averageLatencyMs = latencyCount ? Math.round(latencyTotal / latencyCount) : null
   const gatewayMemoryMb = Math.max(0, roundedMetric(Number(input.gatewayMemoryMb) || 0, 1))
   const averageLatencySeconds = averageLatencyMs === null ? null : averageLatencyMs / 1000
+  const estimatedMemoryMbSeconds = null
+
+  // Pricing constants (CNY per GB)
+  const CNY_PER_USD = 7.2
+  const COS_STORAGE_CNY_PER_GB = 0.118       // 腾讯云COS标准存储 广州 按量计费
+  const COS_TRAFFIC_CNY_PER_GB = 0.50         // 腾讯云COS外网流出流量 中国大陆
+  const SUPABASE_STORAGE_USD_PER_GB = 0.0213  // Supabase Pro plan storage
+  const SUPABASE_TRAFFIC_USD_PER_GB = 0.09    // Supabase Pro plan egress
+  const RENDER_TRAFFIC_USD_PER_GB = 0.15      // Render web service egress
+
+  const avgCosStoredGb = cosImageCount ? (cosStoredBytes / cosImageCount) / BYTES_PER_GIB : 0
+  const avgCosTrafficGb = cosImageCount ? (cosTrafficBytes / cosImageCount) / BYTES_PER_GIB : 0
+  const avgSupabaseStoredGb = supabaseImageCount ? (supabaseStoredBytes / supabaseImageCount) / BYTES_PER_GIB : 0
+  const avgSupabaseTrafficGb = supabaseImageCount ? (supabaseTrafficBytes / supabaseImageCount) / BYTES_PER_GIB : 0
+
+  const cosStorageCostPerImage = roundedMetric(avgCosStoredGb * COS_STORAGE_CNY_PER_GB, 4)
+  const cosTrafficCostPerImage = roundedMetric(avgCosTrafficGb * COS_TRAFFIC_CNY_PER_GB, 4)
+  const supabaseStorageCostPerImage = roundedMetric(avgSupabaseStoredGb * SUPABASE_STORAGE_USD_PER_GB * CNY_PER_USD, 4)
+  const supabaseTrafficCostPerImage = roundedMetric(avgSupabaseTrafficGb * SUPABASE_TRAFFIC_USD_PER_GB * CNY_PER_USD, 4)
+  // Render traffic only applies when images are proxied through backend (no COS public URL)
+  const renderTrafficCostPerImage = 0
+  const totalCostPerImage = imageSampleSize
+    ? roundedMetric(
+        (cosStorageCostPerImage * cosImageCount +
+         cosTrafficCostPerImage * cosImageCount +
+         supabaseStorageCostPerImage * supabaseImageCount +
+         supabaseTrafficCostPerImage * supabaseImageCount) / imageSampleSize,
+        4,
+      )
+    : 0
+
+  // Estimate monthly cost based on sample rate
+  const sampleDays = RECENT_TRANSACTION_DAYS
+  const daysInMonth = 30
+  const imagesPerMonth = sampleDays > 0 ? Math.round((imageSampleSize / sampleDays) * daysInMonth) : 0
+  const estimatedMonthlyCost = roundedMetric(totalCostPerImage * imagesPerMonth, 2)
+
+  // Legacy score kept for backward compatibility
   const estimatedCostScore = averageLatencySeconds === null
     ? null
     : roundedMetric(averageTrafficMb + averageStoredMb * 0.1 + averageLatencySeconds * 0.02)
-  const estimatedMemoryMbSeconds = null
+
   const confidence: AdminImageCostOverview['confidence'] = imageSampleSize >= 50 && attemptSampleSize >= 50
     ? 'high'
     : imageSampleSize >= 10 && attemptSampleSize >= 10
@@ -560,6 +627,15 @@ export function summarizeAdminCreditOverview(input: {
       estimatedMemoryMbSeconds,
       estimatedCostScore,
       confidence,
+      cosStorageCostPerImage,
+      cosTrafficCostPerImage,
+      supabaseStorageCostPerImage,
+      supabaseTrafficCostPerImage,
+      renderTrafficCostPerImage,
+      totalCostPerImage,
+      estimatedMonthlyCost,
+      cosImageCount,
+      supabaseImageCount,
     },
   }
 }
@@ -696,7 +772,7 @@ export async function getAdminCreditOverview() {
     ),
     selectAllAdminRows(
       'image_generations',
-      'original_bytes,preview_bytes,thumbnail_bytes,generated_at',
+      'original_bytes,preview_bytes,thumbnail_bytes,generated_at,funding_source',
       query => query.gte('generated_at', recentCutoff),
     ),
     selectAllAdminRows(
