@@ -13,7 +13,7 @@ let refreshSeq = 0
 let hasAuthWatcher = false
 
 interface CreditBalanceResponse {
-  balance?: number
+  balance?: number | null
 }
 
 interface CreditRedeemResponse extends CreditBalanceResponse {
@@ -37,6 +37,12 @@ export function useCredits() {
   const { user } = useAuthSession()
 
   function setCreditBalance(balance: unknown) {
+    // Explicit null/undefined from the API means "no balance record";
+    // distinguish from an actual balance of 0 by clearing the ref.
+    if (balance === null || balance === undefined) {
+      creditBalance.value = null
+      return
+    }
     const value = numericBalance(balance)
     if (value !== null) {
       creditBalance.value = value
