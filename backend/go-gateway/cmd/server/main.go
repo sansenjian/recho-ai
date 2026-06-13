@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -128,7 +129,7 @@ func main() {
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:         ":" + string(rune(config.Port)),
+		Addr:         fmt.Sprintf(":%d", config.Port),
 		Handler:      r,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 120 * time.Second,
