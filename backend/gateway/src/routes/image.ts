@@ -651,7 +651,7 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         creditBalance = creditReservation.balance
       } catch (creditErr) {
         if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
-        if (!appSettings.freeGenerationEnabled) {
+        if (!appSettings.freeGenerationEnabled && (creditErr as any)?.code === 'insufficient_credits') {
           const err: any = new Error('free_generation_disabled')
           err.status = 402
           err.publicMessage = '额度不足且免费生成已关闭，请稍后再试或充值。'

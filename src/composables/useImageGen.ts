@@ -504,11 +504,13 @@ export function useImageGen() {
     error.value = null
     isGenerating.value = true
 
-    const appCfg = await ensureAppConfig()
-    if (!user.value?.id && !appCfg.guestGenerationEnabled) {
-      error.value = '请先登录后再生成图片'
-      isGenerating.value = false
-      return null
+    if (!user.value?.id) {
+      const appCfg = await ensureAppConfig()
+      if (!appCfg.guestGenerationEnabled) {
+        error.value = '请先登录后再生成图片'
+        isGenerating.value = false
+        return null
+      }
     }
 
     const controller = new AbortController()

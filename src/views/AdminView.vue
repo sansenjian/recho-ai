@@ -47,6 +47,7 @@ const loading = ref(false)
 const overviewLoading = ref(false)
 const systemLoading = ref(false)
 const settingsLoading = ref(false)
+const settingsLoaded = ref(false)
 const settingsSaving = ref(false)
 const ledgerLoading = ref(false)
 const actionLoading = ref(false)
@@ -255,6 +256,7 @@ function ledgerDetails(tx: AdminLedgerEntry) {
 function syncSettingsForm(settings: AdminAppSettings) {
   appSettings.value = settings
   settingsForm.value = { ...settings }
+  settingsLoaded.value = true
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -403,6 +405,7 @@ async function refreshSettings() {
 }
 
 async function saveSettings() {
+  if (!settingsLoaded.value) return
   settingsSaving.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -1111,7 +1114,7 @@ onMounted(async () => {
               <input v-model="settingsForm.guestGenerationEnabled" type="checkbox">
               <span>游客生成</span>
             </label>
-            <button type="submit" :disabled="settingsSaving">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
+            <button type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
           </form>
         </div>
 
