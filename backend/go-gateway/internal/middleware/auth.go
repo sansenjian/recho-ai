@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
+
+	"go-gateway/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -28,17 +29,33 @@ const (
 // jwtSecret holds the Supabase JWT secret for HMAC-SHA256 verification
 var jwtSecret []byte
 
-func init() {
-	secret := os.Getenv("SUPABASE_JWT_SECRET")
-	if secret == "" {
+// Init initializes the JWT secret from centralized config.
+// Call this from main() after config is loaded.
+// In production (non-localhost CORS), missing JWT secret is fatal.
+func Init() {
+	jwtSecret = []byte(config.SupabaseJWTSecret)
+
+	if len(jwtSecret) == 0 {
+		if isProduction() {
+			log.Fatal("FATAL: SUPABASE_JWT_SECRET is required in production but not set. Refusing to start with authentication disabled.")
+		}
 		log.Println("WARNING: SUPABASE_JWT_SECRET not set — JWT verification disabled, all requests will be unauthenticated")
 	} else {
-		jwtSecret = []byte(secret)
 		log.Println("Supabase JWT secret loaded successfully")
 	}
 }
 
-// AuthMiddleware validates Supabase JWT tokens using HMAC-SHA256 signature verification
+// isProduction returns true when the CORS origin is not a localhost address
+func isProduction() bool {
+	origin := config.CorsOrigin
+	return origin != "" &&
+		!strings.Contains(origin, "localhost") &&
+		!strings.Contains(origin, "127.0.0.1")
+}
+
+// AuthMiddleware validates Supabase JWT tokens using HMAC-SHA256 signature verification.
+// When a Bearer token is present but fails verification, returns 401 instead of
+// silently treating the request as unauthenticated.
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -59,7 +76,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// If no JWT secret is configured, skip verification
+		// If no JWT secret is configured, skip verification (development only — Init() blocks this in production)
 		if len(jwtSecret) == 0 {
 			next.ServeHTTP(w, r)
 			return
@@ -67,7 +84,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		// Parse and verify JWT with HMAC-SHA256
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
-			// Ensure the signing method is HMAC
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 			}
@@ -75,33 +91,30 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		})
 
 		if err != nil || !token.Valid {
-			// Token is invalid — continue without user context (unauthenticated)
-			next.ServeHTTP(w, r)
+			// Token was provided but is invalid or expired — return 401
+			http.Error(w, `{"error":"token 无效或已过期，请重新登录。"}`, http.StatusUnauthorized)
 			return
 		}
 
 		// Extract claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			next.ServeHTTP(w, r)
+			http.Error(w, `{"error":"token 格式无效。"}`, http.StatusUnauthorized)
 			return
 		}
 
 		// Extract user ID from "sub" claim
 		sub, _ := claims["sub"].(string)
 		if sub == "" {
-			next.ServeHTTP(w, r)
+			http.Error(w, `{"error":"token 缺少用户标识。"}`, http.StatusUnauthorized)
 			return
 		}
 
 		user := &User{ID: sub}
 
-		// Extract email if present
 		if email, ok := claims["email"].(string); ok {
 			user.Email = email
 		}
-
-		// Extract role if present
 		if role, ok := claims["role"].(string); ok {
 			user.Role = role
 		}
@@ -150,7 +163,6 @@ func AdminMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check admin role from JWT claims or database
 		if user.Role != "admin" && user.Role != "supabase_admin" {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return

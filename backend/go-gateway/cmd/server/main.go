@@ -29,6 +29,9 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	// Initialize middleware (JWT secret, production safety checks)
+	middleware.Init()
+
 	// Initialize Supabase client
 	var db *supabase.Client
 	var err error

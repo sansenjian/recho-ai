@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -136,7 +137,14 @@ func (r *CreditRepository) ReserveCredits(
 	return transactionID, newBalance, nil
 }
 
-// RefundCredits refunds reserved credits with double-refund protection
+// ErrDoubleRefund is returned when a refund would exceed the original charge
+var ErrDoubleRefund = errors.New("double_refund: cumulative refunds would exceed original transaction amount")
+
+// RefundCredits refunds reserved credits with cumulative double-refund protection.
+//
+// Instead of blocking after the first refund, this allows multiple partial refunds
+// as long as the cumulative refunded amount does not exceed the original charge.
+// A non-unique index on (related_transaction_id, reason) supports the SUM lookup.
 func (r *CreditRepository) RefundCredits(
 	ctx context.Context,
 	userID string,
@@ -150,20 +158,32 @@ func (r *CreditRepository) RefundCredits(
 	}
 	defer tx.Rollback(ctx)
 
-	// Double-refund protection: check if this transaction was already refunded
+	// Cumulative refund protection: ensure total refunds don't exceed original charge
 	if relatedTransactionID != "" {
-		var existingRefund int
-		checkQuery := `
-			SELECT COUNT(*) FROM credit_transactions
-			WHERE related_transaction_id = $1
-			AND reason = 'refund'
+		var originalAmount float64
+		origQuery := `
+			SELECT ABS(amount) FROM credit_transactions
+			WHERE id = $1 AND reason = 'image_generation'
 		`
-		err = tx.QueryRow(ctx, checkQuery, relatedTransactionID).Scan(&existingRefund)
-		if err != nil {
-			return 0, fmt.Errorf("failed to check existing refund: %w", err)
+		err = tx.QueryRow(ctx, origQuery, relatedTransactionID).Scan(&originalAmount)
+		if err != nil && err != pgx.ErrNoRows {
+			return 0, fmt.Errorf("failed to query original transaction: %w", err)
 		}
-		if existingRefund > 0 {
-			return 0, fmt.Errorf("double_refund: transaction %s was already refunded", relatedTransactionID)
+		if err == pgx.ErrNoRows {
+			// Original transaction not found — skip guard (may be a legacy or admin operation)
+		} else {
+			var alreadyRefunded float64
+			refundQuery := `
+				SELECT COALESCE(SUM(amount), 0) FROM credit_transactions
+				WHERE related_transaction_id = $1 AND reason = 'refund'
+			`
+			if err := tx.QueryRow(ctx, refundQuery, relatedTransactionID).Scan(&alreadyRefunded); err != nil {
+				return 0, fmt.Errorf("failed to query existing refunds: %w", err)
+			}
+
+			if alreadyRefunded+amount > originalAmount {
+				return 0, ErrDoubleRefund
+			}
 		}
 	}
 
@@ -206,9 +226,11 @@ func (r *CreditRepository) RefundCredits(
 	txQuery := `
 		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, related_transaction_id, metadata)
 		VALUES ($1, $2, $3, 'refund', $4, $5)
+		RETURNING id
 	`
 
-	_, err = tx.Exec(ctx, txQuery, userID, amount, newBalance, relatedTransactionID, metaJSON)
+	var refundTxID string
+	err = tx.QueryRow(ctx, txQuery, userID, amount, newBalance, relatedTransactionID, metaJSON).Scan(&refundTxID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create refund transaction: %w", err)
 	}
@@ -263,7 +285,8 @@ func (r *CreditRepository) AddCredits(
 		RETURNING id
 	`
 
-	_, err = tx.Exec(ctx, txQuery, userID, amount, newBalance, metaJSON)
+	var txID string
+	err = tx.QueryRow(ctx, txQuery, userID, amount, newBalance, metaJSON).Scan(&txID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create transaction: %w", err)
 	}
