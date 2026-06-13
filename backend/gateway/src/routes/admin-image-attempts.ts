@@ -41,6 +41,10 @@ router.get('/admin/image-attempts', async (req: Request, res: Response) => {
     const result = await listAdminImageAttempts({
       limit: req.query.limit,
       status: req.query.status,
+      userId: req.query.userId,
+      errorType: req.query.errorType,
+      httpStatus: req.query.httpStatus,
+      hours: req.query.hours,
     })
     res.json(result)
   } catch (err) {

@@ -3,9 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 let rows: Array<Record<string, unknown>> = []
 let updatedVisibility: string | null = null
 let orFilter: string | null = null
+let removedStoragePaths: Array<string | null | undefined> = []
+let storageRemoveError: Error | null = null
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
+  removeImageStoragePaths: vi.fn(async (paths: Array<string | null | undefined>) => {
+    removedStoragePaths = paths
+    if (storageRemoveError) throw storageRemoveError
+  }),
 }))
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({
@@ -19,12 +25,31 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
       },
     },
     from: () => {
+      let pendingPatch: Record<string, unknown> | null = null
+      let deleting = false
+      let resultRows = rows
+      function applyFilter(key: string, values: unknown[]) {
+        const valueSet = new Set(values)
+        const matched = resultRows.filter(row => valueSet.has(row[key]))
+        if (pendingPatch) {
+          rows = rows.map(row => valueSet.has(row[key]) ? { ...row, ...pendingPatch } : row)
+          resultRows = rows.filter(row => valueSet.has(row[key]))
+          return
+        }
+        if (deleting) {
+          rows = rows.filter(row => !valueSet.has(row[key]))
+          resultRows = matched
+          return
+        }
+        resultRows = matched
+      }
       const query = {
         select: vi.fn(() => query),
         order: vi.fn(() => query),
-        limit: vi.fn(() => Promise.resolve({ data: rows, error: null })),
+        limit: vi.fn(() => Promise.resolve({ data: resultRows, error: null })),
         eq: vi.fn((key: string, value: unknown) => {
-          rows = rows.filter(row => {
+          applyFilter(key, [value])
+          resultRows = resultRows.filter(row => {
             if (key === 'id') return row.id === value
             if (key === 'visibility') return row.visibility === value
             if (key === 'funding_source') return row.funding_source === value
@@ -33,21 +58,34 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
           })
           return query
         }),
+        in: vi.fn((key: string, values: unknown[]) => {
+          applyFilter(key, values)
+          return query
+        }),
         or: vi.fn((filter: string) => {
           orFilter = filter
           const match = /%([^%]+)%/.exec(filter)
           const term = (match?.[1] || '').toLowerCase()
-          rows = term
-            ? rows.filter(row => String(row.user_prompt || row.prompt || '').toLowerCase().includes(term))
-            : rows
+          resultRows = term
+            ? resultRows.filter(row => String(row.user_prompt || row.prompt || '').toLowerCase().includes(term))
+            : resultRows
           return query
         }),
         update: vi.fn((patch: Record<string, unknown>) => {
           updatedVisibility = typeof patch.visibility === 'string' ? patch.visibility : null
-          rows = rows.map(row => ({ ...row, ...patch }))
+          pendingPatch = patch
+          deleting = false
           return query
         }),
-        maybeSingle: vi.fn(() => Promise.resolve({ data: rows[0] || null, error: null })),
+        delete: vi.fn(() => {
+          deleting = true
+          pendingPatch = null
+          return query
+        }),
+        maybeSingle: vi.fn(() => Promise.resolve({ data: resultRows[0] || null, error: null })),
+        then: (resolve: (value: { data: Array<Record<string, unknown>>; error: null }) => unknown, reject?: (reason: unknown) => unknown) => (
+          Promise.resolve({ data: resultRows, error: null }).then(resolve, reject)
+        ),
       }
       return query
     },
@@ -59,6 +97,8 @@ describe('admin image helpers', () => {
     rows = []
     updatedVisibility = null
     orFilter = null
+    removedStoragePaths = []
+    storageRemoveError = null
     vi.resetModules()
   })
 
@@ -179,5 +219,131 @@ describe('admin image helpers', () => {
 
     expect(updatedVisibility).toBe('public')
     expect(image.visibility).toBe('public')
+  })
+
+  it('archives multiple images with one visibility update', async () => {
+    const { bulkArchiveAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [
+      {
+        id: 'img_1',
+        user_id: 'user_1',
+        visibility: 'public',
+        funding_source: 'free',
+        generated_at: '2026-06-08T12:00:00.000Z',
+      },
+      {
+        id: 'img_2',
+        user_id: 'user_2',
+        visibility: 'public',
+        funding_source: 'credit',
+        generated_at: '2026-06-08T12:01:00.000Z',
+      },
+    ]
+
+    const images = await bulkArchiveAdminImages(['img_1', 'img_2'])
+
+    expect(updatedVisibility).toBe('private')
+    expect(images.map(image => image.visibility)).toEqual(['private', 'private'])
+  })
+
+  it('does not partially archive when one requested image id is missing', async () => {
+    const { bulkArchiveAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      visibility: 'public',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    await expect(bulkArchiveAdminImages(['img_1', 'missing_img'])).rejects.toMatchObject({
+      message: 'image_not_found',
+    })
+
+    expect(updatedVisibility).toBeNull()
+    expect(rows[0].visibility).toBe('public')
+  })
+
+  it('deletes selected images and removes generated storage files', async () => {
+    const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [
+      {
+        id: 'img_1',
+        user_id: 'user_1',
+        storage_path: 'generated/img_1.webp',
+        preview_path: 'generated/img_1.preview.webp',
+        thumbnail_path: 'generated/img_1.thumb.webp',
+        visibility: 'private',
+        funding_source: 'free',
+        generated_at: '2026-06-08T12:00:00.000Z',
+      },
+      {
+        id: 'img_2',
+        user_id: 'user_2',
+        storage_path: 'cos://generated/img_2.webp',
+        preview_path: 'cos://generated/img_2.preview.webp',
+        thumbnail_path: 'cos://generated/img_2.thumb.webp',
+        visibility: 'private',
+        funding_source: 'credit',
+        generated_at: '2026-06-08T12:01:00.000Z',
+      },
+    ]
+
+    const result = await bulkDeleteAdminImages(['img_1', 'img_2'])
+
+    expect(result).toEqual({
+      deletedIds: ['img_1', 'img_2'],
+      deletedCount: 2,
+    })
+    expect(removedStoragePaths).toEqual([
+      'generated/img_1.webp',
+      'generated/img_1.preview.webp',
+      'generated/img_1.thumb.webp',
+      'cos://generated/img_2.webp',
+      'cos://generated/img_2.preview.webp',
+      'cos://generated/img_2.thumb.webp',
+    ])
+    expect(rows).toEqual([])
+  })
+
+  it('does not partially delete when one requested image id is missing', async () => {
+    const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      storage_path: 'generated/img_1.webp',
+      visibility: 'private',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    await expect(bulkDeleteAdminImages(['img_1', 'missing_img'])).rejects.toMatchObject({
+      message: 'image_not_found',
+    })
+
+    expect(rows.map(row => row.id)).toEqual(['img_1'])
+    expect(removedStoragePaths).toEqual([])
+  })
+
+  it('returns success when storage cleanup fails after deleting images', async () => {
+    const { bulkDeleteAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      storage_path: 'generated/img_1.webp',
+      visibility: 'private',
+      funding_source: 'free',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+    storageRemoveError = new Error('storage unavailable')
+
+    await expect(bulkDeleteAdminImages(['img_1'])).resolves.toEqual({
+      deletedIds: ['img_1'],
+      deletedCount: 1,
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(removedStoragePaths).toEqual(['generated/img_1.webp', null, null])
+    expect(rows).toEqual([])
   })
 })

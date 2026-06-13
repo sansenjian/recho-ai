@@ -3,8 +3,11 @@ import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
 import { getAdminSystemStatus } from '../services/admin-system.js'
 import {
   AppSettingsError,
+  type AdminUserRule,
+  assertSeniorAdminUser,
   createAdminUserRule,
   getAdminAccessSummary,
+  getAdminUserRole,
   getAdminUserRules,
   getAppSettings,
   updateAdminUserRule,
@@ -45,6 +48,24 @@ function routeParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] || '' : value || ''
 }
 
+function maskRuleMatcher(value: string | null) {
+  if (!value) return null
+  if (value.includes('@')) {
+    const [name, domain] = value.split('@')
+    return `${name.slice(0, 2) || '*'}***@${domain || '***'}`
+  }
+  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value
+}
+
+function publicAdminUserRules(rules: AdminUserRule[], currentAdminRole: Awaited<ReturnType<typeof getAdminUserRole>>) {
+  if (currentAdminRole === 'senior') return rules
+  return rules.map(rule => ({
+    ...rule,
+    userId: maskRuleMatcher(rule.userId),
+    email: maskRuleMatcher(rule.email),
+  }))
+}
+
 router.get('/admin/system', async (req: Request, res: Response) => {
   try {
     await requireAdmin(req)
@@ -59,13 +80,19 @@ router.get('/admin/system', async (req: Request, res: Response) => {
 
 router.get('/admin/settings', async (req: Request, res: Response) => {
   try {
-    await requireAdmin(req)
+    const adminUser = await requireAdmin(req)
     const [settings, adminUsers, adminAccess] = await Promise.all([
       getAppSettings({ refresh: true }),
       getAdminUserRules({ refresh: true }),
       getAdminAccessSummary({ refresh: true }),
     ])
-    res.json({ settings, adminUsers, adminAccess })
+    const currentAdminRole = await getAdminUserRole(adminUser)
+    res.json({
+      settings,
+      adminUsers: publicAdminUserRules(adminUsers, currentAdminRole),
+      adminAccess,
+      currentAdminRole,
+    })
   } catch (err) {
     console.error('[admin-settings] load failed:', safeErrorDetail(err))
     const response = adminSystemErrorResponse(err, '配置加载失败，请稍后重试。')
@@ -88,6 +115,7 @@ router.patch('/admin/settings', async (req: Request, res: Response) => {
 router.post('/admin/settings/admin-users', async (req: Request, res: Response) => {
   try {
     const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
     const rule = await createAdminUserRule(req.body || {}, adminUser)
     const [adminUsers, adminAccess] = await Promise.all([
       getAdminUserRules({ refresh: true }),
@@ -104,6 +132,7 @@ router.post('/admin/settings/admin-users', async (req: Request, res: Response) =
 router.patch('/admin/settings/admin-users/:ruleId', async (req: Request, res: Response) => {
   try {
     const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
     const rule = await updateAdminUserRule(routeParam(req.params.ruleId), req.body || {}, adminUser)
     const [adminUsers, adminAccess] = await Promise.all([
       getAdminUserRules({ refresh: true }),

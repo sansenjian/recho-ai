@@ -1,223 +1,39 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import AdminImageAttemptsPanel from '../components/admin/AdminImageAttemptsPanel.vue'
+import AdminImagesPanel from '../components/admin/AdminImagesPanel.vue'
 import { apiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import { getAuthAccessToken, useAuthSession } from '../composables/useAuthSession'
-
-interface AdminUser {
-  userId: string
-  email: string | null
-  balance: number
-  totalRedeemed: number
-  totalSpent: number
-  createdAt: string | null
-  updatedAt: string | null
-  lastSignInAt: string | null
-}
-
-interface AdminCode {
-  id: string
-  code?: string
-  credits: number
-  maxRedemptions: number
-  redeemedCount: number
-  expiresAt: string | null
-  disabledAt: string | null
-  note: string | null
-  createdAt: string | null
-}
-
-interface AdminCodeRedemption {
-  id: string
-  userId: string
-  email: string | null
-  credits: number
-  redeemedAt: string | null
-  transactionId: string | null
-  balanceAfter: number | null
-}
-
-interface AdminTransaction {
-  id: string
-  amount: number
-  balance_after: number
-  reason: string
-  metadata?: Record<string, unknown> | null
-  created_at: string | null
-}
-
-interface AdminLedgerEntry {
-  id: string
-  userId: string
-  email: string | null
-  amount: number
-  balanceAfter: number
-  reason: string
-  note: string | null
-  generationId: string | null
-  redemptionId: string | null
-  relatedTransactionId: string | null
-  details: {
-    count: number | null
-    creditCostPerImage: number | null
-    creditCost: number | null
-    size: string | null
-    aspectRatio: string | null
-    resolution: string | null
-    quality: string | null
-    referenceCount: number | null
-    refundReason: string | null
-  }
-  createdAt: string | null
-}
-
-interface AdminImageItem {
-  id: string
-  userId: string | null
-  email: string | null
-  prompt: string
-  previewUrl: string | null
-  thumbnailUrl: string | null
-  visibility: 'public' | 'private'
-  fundingSource: string | null
-  creditCost: number
-  size: string | null
-  aspectRatio: string | null
-  resolution: string | null
-  quality: string | null
-  generatedAt: string | null
-}
-
-interface AdminImageAttemptItem {
-  id: string
-  generationId: string | null
-  userId: string | null
-  email: string | null
-  status: 'succeeded' | 'failed'
-  latencyMs: number | null
-  errorType: string | null
-  errorCode: string | null
-  errorMessage: string | null
-  httpStatus: number | null
-  createdAt: string | null
-}
-
-interface AdminImageAttemptOverview {
-  total: number
-  succeeded: number
-  failed: number
-  failureRate: number
-  averageLatencyMs: number | null
-  byErrorType: Array<{
-    errorType: string
-    count: number
-  }>
-}
-
-interface AdminSystemTableStatus {
-  key: string
-  label: string
-  status: 'ok' | 'missing' | 'restricted' | 'error' | 'unavailable'
-  count: number | null
-  message: string
-}
-
-interface AdminSystemStatus {
-  generatedAt: string
-  status: 'ok' | 'warning' | 'error'
-  config: {
-    supabase: {
-      publicConfigured: boolean
-      adminConfigured: boolean
-      imageBucketConfigured: boolean
-    }
-    imageGeneration: {
-      apiKeyConfigured: boolean
-      creditCostPerImage: number
-      analyticsEnabled: boolean
-    }
-    adminUsers: {
-      configured: boolean
-      userIdCount: number
-      emailCount: number
-      databaseCount: number
-      envUserIdCount: number
-      envEmailCount: number
-      tableAvailable: boolean
-    }
-  }
-  data: {
-    tables: AdminSystemTableStatus[]
-  }
-  warnings: string[]
-}
-
-interface AdminOverview {
-  users: {
-    withCreditRows: number
-    totalBalance: number
-    totalRedeemed: number
-    totalSpent: number
-  }
-  codes: {
-    total: number
-    active: number
-    disabled: number
-    expired: number
-    exhausted: number
-    totalIssuedCredits: number
-    totalRedeemedCredits: number
-  }
-  transactions: {
-    last7Days: {
-      totalCount: number
-      redeemedCredits: number
-      spentCredits: number
-      refundedCredits: number
-      adminAdjustedCredits: number
-    }
-    byReason: Array<{
-      reason: string
-      count: number
-      amount: number
-    }>
-  }
-  settings: {
-    imageCreditCostPerImage: number
-  }
-  generatedAt: string
-}
-
-interface AdminAppSettings {
-  imageCreditCostPerImage: number
-  imageAnalyticsEnabled: boolean
-  imageResponsesModel: string
-  imageResponsesImageModel: string
-  imageEventsEnabled: boolean
-  canvasContextEnabled: boolean
-}
-
-interface AdminUserRule {
-  id: string
-  userId: string | null
-  email: string | null
-  enabled: boolean
-  note: string | null
-  source: 'database' | 'env'
-  createdAt: string | null
-  updatedAt: string | null
-}
-
-interface AdminAccessSummary {
-  configured: boolean
-  userIdCount: number
-  emailCount: number
-  databaseCount: number
-  envUserIdCount: number
-  envEmailCount: number
-  tableAvailable: boolean
-}
+import type {
+  AdminAccessSummary,
+  AdminAnnouncement,
+  AdminAppSettings,
+  AdminCode,
+  AdminCodeRedemption,
+  AdminImageAttemptItem,
+  AdminImageAttemptOverview,
+  AdminImageItem,
+  AdminLedgerEntry,
+  AdminOverview,
+  AdminSystemStatus,
+  AdminTransaction,
+  AdminRole,
+  AdminUser,
+  AdminUserRule,
+} from '../types/admin'
+import {
+  dateTime,
+  latencyLabel,
+  shortId,
+  tableStatusLabel,
+} from '../utils/admin-format'
+import {
+  formatCreditAmount,
+  formatSignedCreditAmount,
+  normalizeCreditBalance,
+} from '../utils/credit-format'
 
 const {
   user,
@@ -238,6 +54,10 @@ const actionLoading = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
 
+type AdminMode = 'visual' | 'manage'
+
+const adminMode = ref<AdminMode>('visual')
+
 const users = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser | null>(null)
 const transactions = ref<AdminTransaction[]>([])
@@ -252,6 +72,8 @@ const systemStatus = ref<AdminSystemStatus | null>(null)
 const appSettings = ref<AdminAppSettings | null>(null)
 const adminUserRules = ref<AdminUserRule[]>([])
 const adminAccess = ref<AdminAccessSummary | null>(null)
+const currentAdminRole = ref<AdminRole>('operator')
+const announcements = ref<AdminAnnouncement[]>([])
 const selectedCode = ref<AdminCode | null>(null)
 const codeRedemptions = ref<AdminCodeRedemption[]>([])
 
@@ -262,9 +84,17 @@ const imageFundingFilter = ref('')
 const imageUserFilter = ref('')
 const imageQuery = ref('')
 const imagesLoading = ref(false)
+const imageBulkLoading = ref(false)
 const imageActionId = ref<string | null>(null)
+const selectedImageIds = ref<string[]>([])
 const attemptStatusFilter = ref('')
+const attemptUserFilter = ref('')
+const attemptErrorTypeFilter = ref('')
+const attemptHttpStatusFilter = ref('')
+const attemptHoursFilter = ref('24')
 const attemptsLoading = ref(false)
+const announcementsLoading = ref(false)
+const announcementActionId = ref<string | null>(null)
 const codeRedemptionsLoading = ref(false)
 const adminRuleActionId = ref<string | null>(null)
 const adjustAmount = ref(10)
@@ -292,6 +122,30 @@ const codeForm = ref({
   maxRedemptions: 1,
   days: 30,
   note: '',
+})
+
+const announcementForm = ref({
+  title: '',
+  body: '',
+})
+
+const settingsPricePerImage = computed(() => {
+  const cost = normalizeCreditBalance(settingsForm.value.imageCreditCostPerImage)
+  return cost !== null ? Math.max(0.01, cost) : 1
+})
+
+const settingsPricePreview = computed(() => [
+  { label: '1 张', value: settingsPricePerImage.value },
+  { label: '4 张', value: settingsPricePerImage.value * 4 },
+  { label: '8 张', value: settingsPricePerImage.value * 8 },
+])
+
+const imageCostConfidenceLabel = computed(() => {
+  const confidence = overview.value?.imageCost?.confidence || 'none'
+  if (confidence === 'high') return '高'
+  if (confidence === 'medium') return '中'
+  if (confidence === 'low') return '低'
+  return '无样本'
 })
 
 const selectedUserTitle = computed(() => {
@@ -331,6 +185,8 @@ const adminRuleTotal = computed(() => adminAccess.value
   ? adminAccess.value.databaseCount + adminAccess.value.envUserIdCount + adminAccess.value.envEmailCount
   : adminUserRules.value.length)
 
+const canManageAdminUsers = computed(() => currentAdminRole.value === 'senior')
+
 const createdCsv = computed(() => {
   const rows = [
     ['code', 'credits', 'max_redemptions', 'expires_at', 'note', 'database_id'],
@@ -350,22 +206,6 @@ function csvCell(value: string) {
   return `"${value.replace(/"/g, '""')}"`
 }
 
-function shortId(value: string) {
-  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
-}
-
-function dateTime(value: string | null) {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
 function codeStatus(code: AdminCode) {
   if (code.disabledAt) return '已停用'
   if (code.expiresAt && new Date(code.expiresAt).getTime() <= Date.now()) return '已过期'
@@ -381,6 +221,14 @@ function transactionReason(reason: string) {
   return reason
 }
 
+function creditAmount(value: unknown) {
+  return formatCreditAmount(value)
+}
+
+function signedCreditAmount(value: unknown) {
+  return formatSignedCreditAmount(value)
+}
+
 function transactionNote(tx: AdminTransaction) {
   const note = tx.metadata?.note
   return typeof note === 'string' && note.trim() ? note : '-'
@@ -389,8 +237,8 @@ function transactionNote(tx: AdminTransaction) {
 function ledgerDetails(tx: AdminLedgerEntry) {
   const parts = [
     tx.details.count !== null ? `${tx.details.count} 张` : '',
-    tx.details.creditCostPerImage !== null ? `单图 ${tx.details.creditCostPerImage} 额度` : '',
-    tx.details.creditCost !== null ? `合计 ${tx.details.creditCost} 额度` : '',
+    tx.details.creditCostPerImage !== null ? `单图 ${creditAmount(tx.details.creditCostPerImage)} 额度` : '',
+    tx.details.creditCost !== null ? `合计 ${creditAmount(tx.details.creditCost)} 额度` : '',
     tx.details.quality ? `质量 ${tx.details.quality}` : '',
     tx.details.resolution ? `分辨率 ${tx.details.resolution}` : '',
     tx.details.size ? `尺寸 ${tx.details.size}` : '',
@@ -401,59 +249,6 @@ function ledgerDetails(tx: AdminLedgerEntry) {
   ].filter(Boolean)
 
   return parts.length ? parts.join(' / ') : '-'
-}
-
-function imageVisibilityLabel(visibility: AdminImageItem['visibility']) {
-  return visibility === 'private' ? '已隐藏' : '公开'
-}
-
-function imageFundingLabel(image: AdminImageItem) {
-  return image.fundingSource === 'credit' ? '额度' : '免费'
-}
-
-function imagePreviewSrc(image: AdminImageItem) {
-  return image.thumbnailUrl || image.previewUrl || ''
-}
-
-function imageDetails(image: AdminImageItem) {
-  const parts = [
-    image.quality ? `质量 ${image.quality}` : '',
-    image.resolution ? `分辨率 ${image.resolution}` : '',
-    image.size ? `尺寸 ${image.size}` : '',
-    image.aspectRatio ? `比例 ${image.aspectRatio}` : '',
-    image.creditCost > 0 ? `${image.creditCost} 额度` : '',
-  ].filter(Boolean)
-
-  return parts.length ? parts.join(' / ') : '-'
-}
-
-function attemptStatusLabel(status: AdminImageAttemptItem['status']) {
-  return status === 'succeeded' ? '成功' : '失败'
-}
-
-function latencyLabel(value: number | null) {
-  if (value === null) return '-'
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`
-  return `${value}ms`
-}
-
-function attemptErrorSummary(attempt: AdminImageAttemptItem) {
-  const parts = [
-    attempt.errorType || '',
-    attempt.httpStatus !== null ? `HTTP ${attempt.httpStatus}` : '',
-    attempt.errorCode || '',
-    attempt.errorMessage || '',
-  ].filter(Boolean)
-
-  return parts.length ? parts.join(' / ') : '-'
-}
-
-function tableStatusLabel(status: AdminSystemTableStatus['status']) {
-  if (status === 'ok') return '正常'
-  if (status === 'missing') return '缺失'
-  if (status === 'restricted') return '受限'
-  if (status === 'unavailable') return '未配置'
-  return '异常'
 }
 
 function syncSettingsForm(settings: AdminAppSettings) {
@@ -468,6 +263,16 @@ function adminRuleIdentity(rule: AdminUserRule) {
 
 function adminRuleSource(rule: AdminUserRule) {
   return rule.source === 'env' ? '环境变量' : '数据库'
+}
+
+function adminRuleRoleLabel(rule: AdminUserRule) {
+  return rule.source === 'env' || rule.role === 'senior' ? '高级管理员' : '运营'
+}
+
+function announcementStatusLabel(status: AdminAnnouncement['status']) {
+  if (status === 'published') return '已发布'
+  if (status === 'archived') return '已下线'
+  return '草稿'
 }
 
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -499,8 +304,9 @@ async function checkAdmin() {
   errorMessage.value = ''
   adminChecked.value = false
   try {
-    await apiJson<{ admin: boolean }>('/api/admin/credits/me')
-    isAdmin.value = true
+    const data = await apiJson<{ admin: boolean; currentAdminRole?: AdminRole | null }>('/api/admin/credits/me')
+    currentAdminRole.value = data.currentAdminRole || 'operator'
+    isAdmin.value = !!data.admin
   } catch (error) {
     isAdmin.value = false
     setError(error, '当前账号没有后台权限。')
@@ -582,10 +388,12 @@ async function refreshSettings() {
       settings: AdminAppSettings
       adminUsers: AdminUserRule[]
       adminAccess: AdminAccessSummary
+      currentAdminRole?: AdminRole | null
     }>('/api/admin/settings')
     syncSettingsForm(data.settings)
     adminUserRules.value = data.adminUsers
     adminAccess.value = data.adminAccess
+    currentAdminRole.value = data.currentAdminRole || 'operator'
   } catch (error) {
     setError(error)
   } finally {
@@ -601,7 +409,7 @@ async function saveSettings() {
     const data = await apiJson<{ settings: AdminAppSettings }>('/api/admin/settings', {
       method: 'PATCH',
       body: JSON.stringify({
-        imageCreditCostPerImage: Number(settingsForm.value.imageCreditCostPerImage),
+        imageCreditCostPerImage: settingsPricePerImage.value,
         imageAnalyticsEnabled: Boolean(settingsForm.value.imageAnalyticsEnabled),
         imageResponsesModel: settingsForm.value.imageResponsesModel,
         imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
@@ -610,12 +418,25 @@ async function saveSettings() {
       }),
     })
     syncSettingsForm(data.settings)
-    noticeMessage.value = '配置已保存'
+    noticeMessage.value = `生图价格已保存：每张 ${data.settings.imageCreditCostPerImage} 额度`
     await Promise.all([refreshOverview(), refreshSystem()])
   } catch (error) {
     setError(error)
   } finally {
     settingsSaving.value = false
+  }
+}
+
+async function refreshAnnouncements() {
+  announcementsLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ announcements: AdminAnnouncement[] }>('/api/admin/announcements')
+    announcements.value = data.announcements
+  } catch (error) {
+    setError(error)
+  } finally {
+    announcementsLoading.value = false
   }
 }
 
@@ -647,6 +468,8 @@ async function refreshImages() {
     if (imageQuery.value.trim()) query.set('query', imageQuery.value.trim())
     const data = await apiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${query.toString()}`)
     adminImages.value = data.images
+    const visibleIds = new Set(data.images.map(image => image.id))
+    selectedImageIds.value = selectedImageIds.value.filter(id => visibleIds.has(id))
   } catch (error) {
     setError(error)
   } finally {
@@ -660,7 +483,11 @@ async function refreshAttempts() {
   try {
     const query = new URLSearchParams()
     query.set('limit', '40')
+    query.set('hours', attemptHoursFilter.value || '24')
     if (attemptStatusFilter.value) query.set('status', attemptStatusFilter.value)
+    if (attemptUserFilter.value.trim()) query.set('userId', attemptUserFilter.value.trim())
+    if (attemptErrorTypeFilter.value.trim()) query.set('errorType', attemptErrorTypeFilter.value.trim())
+    if (attemptHttpStatusFilter.value.trim()) query.set('httpStatus', attemptHttpStatusFilter.value.trim())
     const data = await apiJson<{
       overview: AdminImageAttemptOverview
       attempts: AdminImageAttemptItem[]
@@ -686,7 +513,18 @@ async function selectUser(target: AdminUser) {
   }
 }
 
+function applyImageUpdates(updatedImages: AdminImageItem[]) {
+  const updatedById = new Map(updatedImages.map(image => [image.id, image]))
+  const nextImages = adminImages.value.map(item => updatedById.get(item.id) || item)
+  adminImages.value = imageVisibilityFilter.value
+    ? nextImages.filter(item => item.visibility === imageVisibilityFilter.value)
+    : nextImages
+  const visibleIds = new Set(adminImages.value.map(image => image.id))
+  selectedImageIds.value = selectedImageIds.value.filter(id => visibleIds.has(id))
+}
+
 async function setImageVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
+  if (adminMode.value !== 'manage') return
   if (visibility === 'public' && image.fundingSource === 'credit') return
   if (visibility === 'private' && !window.confirm('确认从作品广场隐藏这张图片？')) return
 
@@ -701,15 +539,106 @@ async function setImageVisibility(image: AdminImageItem, visibility: AdminImageI
         body: JSON.stringify({ visibility }),
       },
     )
-    const nextImages = adminImages.value.map(item => item.id === data.image.id ? data.image : item)
-    adminImages.value = imageVisibilityFilter.value
-      ? nextImages.filter(item => item.visibility === imageVisibilityFilter.value)
-      : nextImages
+    applyImageUpdates([data.image])
     noticeMessage.value = visibility === 'private' ? '作品已隐藏' : '作品已恢复公开'
   } catch (error) {
     setError(error)
   } finally {
     imageActionId.value = null
+  }
+}
+
+async function bulkArchiveImages() {
+  if (adminMode.value !== 'manage') return
+  if (!selectedImageIds.value.length) return
+  if (!window.confirm(`确认归档 ${selectedImageIds.value.length} 张图片？`)) return
+
+  imageBulkLoading.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', {
+      method: 'POST',
+      body: JSON.stringify({ ids: selectedImageIds.value }),
+    })
+    applyImageUpdates(data.images)
+    noticeMessage.value = `已归档 ${data.images.length} 张图片`
+  } catch (error) {
+    setError(error)
+  } finally {
+    imageBulkLoading.value = false
+  }
+}
+
+async function bulkDeleteImages() {
+  if (adminMode.value !== 'manage') return
+  if (!selectedImageIds.value.length) return
+  if (!window.confirm(`确认删除 ${selectedImageIds.value.length} 张图片？此操作不可撤销。`)) return
+
+  imageBulkLoading.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  const deletingIds = new Set(selectedImageIds.value)
+  try {
+    const data = await apiJson<{ deletedIds: string[]; deletedCount: number }>('/api/admin/images/bulk/delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids: selectedImageIds.value }),
+    })
+    const deletedIds = new Set(data.deletedIds.length ? data.deletedIds : Array.from(deletingIds))
+    adminImages.value = adminImages.value.filter(image => !deletedIds.has(image.id))
+    selectedImageIds.value = []
+    noticeMessage.value = `已删除 ${data.deletedCount} 张图片`
+  } catch (error) {
+    setError(error)
+  } finally {
+    imageBulkLoading.value = false
+  }
+}
+
+async function createAnnouncement() {
+  if (!announcementForm.value.title.trim() || !announcementForm.value.body.trim()) {
+    errorMessage.value = '请输入公告标题和内容。'
+    return
+  }
+
+  actionLoading.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ announcement: AdminAnnouncement }>('/api/admin/announcements', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: announcementForm.value.title,
+        body: announcementForm.value.body,
+        status: 'published',
+      }),
+    })
+    announcements.value = [data.announcement, ...announcements.value.filter(item => item.id !== data.announcement.id)]
+    announcementForm.value = { title: '', body: '' }
+    noticeMessage.value = '公告已发布'
+    await refreshSystem()
+  } catch (error) {
+    setError(error)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function setAnnouncementStatus(announcement: AdminAnnouncement, status: AdminAnnouncement['status']) {
+  announcementActionId.value = announcement.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await apiJson<{ announcement: AdminAnnouncement }>(`/api/admin/announcements/${encodeURIComponent(announcement.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+    announcements.value = announcements.value.map(item => item.id === data.announcement.id ? data.announcement : item)
+    noticeMessage.value = status === 'published' ? '公告已发布' : '公告已下线'
+  } catch (error) {
+    setError(error)
+  } finally {
+    announcementActionId.value = null
   }
 }
 
@@ -807,6 +736,10 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
 }
 
 async function createAdminRule() {
+  if (!canManageAdminUsers.value) {
+    errorMessage.value = '只有高级管理员可以设置后台管理员。'
+    return
+  }
   if (!adminUserForm.value.userId.trim() && !adminUserForm.value.email.trim()) {
     errorMessage.value = '请输入用户 ID 或邮箱。'
     return
@@ -841,6 +774,10 @@ async function createAdminRule() {
 
 async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   if (rule.source !== 'database') return
+  if (!canManageAdminUsers.value) {
+    errorMessage.value = '只有高级管理员可以设置后台管理员。'
+    return
+  }
   if (!enabled && !window.confirm('确认停用这个后台管理员规则？')) return
 
   adminRuleActionId.value = rule.id
@@ -897,6 +834,7 @@ onMounted(async () => {
       refreshLedger(),
       refreshImages(),
       refreshAttempts(),
+      refreshAnnouncements(),
       refreshUsers(),
       refreshCodes(),
     ])
@@ -933,12 +871,32 @@ onMounted(async () => {
     </section>
 
     <template v-else>
+      <div class="admin-mode-switch" role="group" aria-label="后台模式">
+        <button
+          type="button"
+          :class="{ active: adminMode === 'visual' }"
+          :aria-pressed="adminMode === 'visual'"
+          @click="adminMode = 'visual'"
+        >
+          可视化后台
+        </button>
+        <button
+          type="button"
+          :class="{ active: adminMode === 'manage' }"
+          :aria-pressed="adminMode === 'manage'"
+          @click="adminMode = 'manage'"
+        >
+          管理后台
+        </button>
+      </div>
+
       <div class="admin-feedback" aria-live="polite">
         <p v-if="errorMessage" class="admin-message error">{{ errorMessage }}</p>
         <p v-if="noticeMessage" class="admin-message success">{{ noticeMessage }}</p>
       </div>
 
-      <section class="overview-panel" aria-label="额度总览">
+      <template v-if="adminMode === 'visual'">
+        <section class="overview-panel" aria-label="额度总览">
         <div class="overview-header">
           <div>
             <span>总览</span>
@@ -949,19 +907,19 @@ onMounted(async () => {
         <div class="overview-grid">
           <div>
             <span>总余额</span>
-            <strong>{{ overview?.users.totalBalance ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalBalance) }}</strong>
           </div>
           <div>
             <span>累计兑换</span>
-            <strong>{{ overview?.users.totalRedeemed ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
           </div>
           <div>
             <span>累计消耗</span>
-            <strong>{{ overview?.users.totalSpent ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.users.totalSpent) }}</strong>
           </div>
           <div>
-            <span>单图成本</span>
-            <strong>{{ overview?.settings.imageCreditCostPerImage ?? 1 }}</strong>
+            <span>生图价格/张</span>
+            <strong>{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
           </div>
           <div>
             <span>兑换码可用</span>
@@ -969,7 +927,7 @@ onMounted(async () => {
           </div>
           <div>
             <span>已兑换码额度</span>
-            <strong>{{ overview?.codes.totalRedeemedCredits ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
           </div>
           <div>
             <span>7 天流水</span>
@@ -977,11 +935,46 @@ onMounted(async () => {
           </div>
           <div>
             <span>7 天消耗</span>
-            <strong>{{ overview?.transactions.last7Days.spentCredits ?? 0 }}</strong>
+            <strong>{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
           </div>
           <div>
             <span>7 天净变化</span>
-            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ overviewNetChange > 0 ? '+' : '' }}{{ overviewNetChange }}</strong>
+            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(overviewNetChange) }}</strong>
+          </div>
+        </div>
+        <div class="image-cost-panel" aria-label="可视化生图成本">
+          <div class="image-cost-header">
+            <div>
+              <span>可视化生图成本指数</span>
+              <strong>{{ overview?.imageCost?.estimatedCostScore ?? '-' }}</strong>
+            </div>
+            <span>传输 + 存储 + 耗时 · 置信度 {{ imageCostConfidenceLabel }}</span>
+          </div>
+          <div class="image-cost-grid">
+            <div>
+              <span>平均传输</span>
+              <strong>{{ overview?.imageCost?.averageTrafficMb ?? 0 }} MB</strong>
+            </div>
+            <div>
+              <span>平均存储</span>
+              <strong>{{ overview?.imageCost?.averageStoredMb ?? 0 }} MB</strong>
+            </div>
+            <div>
+              <span>平均耗时</span>
+              <strong>{{ latencyLabel(overview?.imageCost?.averageLatencyMs ?? null) }}</strong>
+            </div>
+            <div>
+              <span>网关内存</span>
+              <strong>{{ overview?.imageCost?.gatewayMemoryMb ?? 0 }} MB</strong>
+            </div>
+            <div>
+              <span>内存参考</span>
+              <strong>不计入指数</strong>
+            </div>
+            <div>
+              <span>样本</span>
+              <strong>{{ overview?.imageCost?.imageSampleSize ?? 0 }} 图 / {{ overview?.imageCost?.attemptSampleSize ?? 0 }} 次</strong>
+            </div>
           </div>
         </div>
       </section>
@@ -1019,7 +1012,7 @@ onMounted(async () => {
             <strong>{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? '开启' : '关闭') : '-' }}</strong>
           </div>
           <div>
-            <span>单图成本</span>
+            <span>生图价格/张</span>
             <strong>{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
           </div>
         </div>
@@ -1051,9 +1044,23 @@ onMounted(async () => {
             </tbody>
           </table>
         </div>
-      </section>
+        </section>
 
-      <section class="admin-grid settings-grid" aria-label="运行时配置">
+        <AdminImageAttemptsPanel
+          v-model:status-filter="attemptStatusFilter"
+          v-model:user-filter="attemptUserFilter"
+          v-model:error-type-filter="attemptErrorTypeFilter"
+          v-model:http-status-filter="attemptHttpStatusFilter"
+          v-model:hours-filter="attemptHoursFilter"
+          :attempts="imageAttempts"
+          :overview="imageAttemptOverview"
+          :loading="attemptsLoading"
+          @refresh="refreshAttempts"
+        />
+      </template>
+
+      <template v-else>
+        <section class="admin-grid settings-grid" aria-label="运行时配置">
         <div class="admin-panel settings-panel">
           <div class="panel-header">
             <div>
@@ -1064,10 +1071,15 @@ onMounted(async () => {
           </div>
 
           <form class="settings-form" @submit.prevent="saveSettings">
-            <label>
-              <span>单图额度</span>
-              <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="1" step="1">
-            </label>
+            <div class="cost-setting">
+              <label>
+                <span>生图价格/张</span>
+                <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required>
+              </label>
+              <div class="cost-preview" aria-label="生图扣费预估">
+                <span v-for="item in settingsPricePreview" :key="item.label">{{ item.label }} {{ item.value }} 额度</span>
+              </div>
+            </div>
             <label>
               <span>响应模型</span>
               <input v-model.trim="settingsForm.imageResponsesModel" type="text">
@@ -1101,7 +1113,7 @@ onMounted(async () => {
             <button type="button" :disabled="settingsLoading" @click="refreshSettings">刷新</button>
           </div>
 
-          <form class="admin-user-form" @submit.prevent="createAdminRule">
+          <form v-if="canManageAdminUsers" class="admin-user-form" @submit.prevent="createAdminRule">
             <label>
               <span>用户 ID</span>
               <input v-model.trim="adminUserForm.userId" type="text">
@@ -1116,12 +1128,14 @@ onMounted(async () => {
             </label>
             <button type="submit" :disabled="actionLoading">添加</button>
           </form>
+          <p v-else class="panel-note">运营账号不能设置后台管理员。</p>
 
           <div class="table-wrap">
             <table class="admin-rule-table">
               <thead>
                 <tr>
                   <th>账号</th>
+                  <th>等级</th>
                   <th>来源</th>
                   <th>状态</th>
                   <th>更新</th>
@@ -1131,6 +1145,7 @@ onMounted(async () => {
               <tbody>
                 <tr v-for="rule in adminUserRules" :key="rule.id">
                   <td>{{ adminRuleIdentity(rule) }}</td>
+                  <td>{{ adminRuleRoleLabel(rule) }}</td>
                   <td>{{ adminRuleSource(rule) }}</td>
                   <td :class="rule.enabled ? 'positive' : 'negative'">{{ rule.enabled ? '启用' : '停用' }}</td>
                   <td>{{ dateTime(rule.updatedAt) }}</td>
@@ -1138,7 +1153,7 @@ onMounted(async () => {
                     <button
                       type="button"
                       class="table-action"
-                      :disabled="rule.source !== 'database' || adminRuleActionId === rule.id"
+                      :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id"
                       @click="setAdminRuleEnabled(rule, !rule.enabled)"
                     >
                       {{ rule.enabled ? '停用' : '启用' }}
@@ -1146,11 +1161,82 @@ onMounted(async () => {
                   </td>
                 </tr>
                 <tr v-if="!adminUserRules.length">
-                  <td colspan="5">暂无管理员规则</td>
+                  <td colspan="6">暂无管理员规则</td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section class="admin-panel announcements-panel" aria-label="公告管理">
+        <div class="panel-header announcement-header">
+          <div>
+            <span>公告管理</span>
+            <strong>{{ announcements.length }}</strong>
+          </div>
+          <button type="button" :disabled="announcementsLoading" @click="refreshAnnouncements">刷新</button>
+        </div>
+
+        <form class="announcement-form" @submit.prevent="createAnnouncement">
+          <label>
+            <span>标题</span>
+            <input v-model.trim="announcementForm.title" type="text" maxlength="120" required>
+          </label>
+          <label class="wide">
+            <span>内容</span>
+            <textarea v-model.trim="announcementForm.body" rows="4" maxlength="4000" required />
+          </label>
+          <button type="submit" :disabled="actionLoading">发布公告</button>
+        </form>
+
+        <div class="table-wrap announcement-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>更新</th>
+                <th>状态</th>
+                <th>标题</th>
+                <th>内容</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="announcement in announcements" :key="announcement.id">
+                <td>{{ dateTime(announcement.updatedAt) }}</td>
+                <td :class="announcement.status === 'published' ? 'positive' : 'negative'">
+                  {{ announcementStatusLabel(announcement.status) }}
+                </td>
+                <td>{{ announcement.title }}</td>
+                <td class="announcement-body-cell">{{ announcement.body }}</td>
+                <td>
+                  <div class="code-actions">
+                    <button
+                      v-if="announcement.status !== 'published'"
+                      type="button"
+                      class="table-action"
+                      :disabled="announcementActionId === announcement.id"
+                      @click="setAnnouncementStatus(announcement, 'published')"
+                    >
+                      发布
+                    </button>
+                    <button
+                      v-if="announcement.status !== 'archived'"
+                      type="button"
+                      class="table-action"
+                      :disabled="announcementActionId === announcement.id"
+                      @click="setAnnouncementStatus(announcement, 'archived')"
+                    >
+                      下线
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="!announcements.length">
+                <td colspan="5">暂无公告</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -1189,8 +1275,8 @@ onMounted(async () => {
                 <td>{{ dateTime(tx.createdAt) }}</td>
                 <td>{{ tx.email || shortId(tx.userId) }}</td>
                 <td>{{ transactionReason(tx.reason) }}</td>
-                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
-                <td>{{ tx.balanceAfter }}</td>
+                <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                <td>{{ creditAmount(tx.balanceAfter) }}</td>
                 <td>{{ ledgerDetails(tx) }}</td>
                 <td>{{ tx.note || '-' }}</td>
               </tr>
@@ -1202,155 +1288,21 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="admin-panel images-panel" aria-label="作品管理">
-        <div class="panel-header image-header">
-          <div>
-            <span>作品管理</span>
-            <strong>{{ adminImages.length }}</strong>
-          </div>
-          <form class="image-controls" @submit.prevent="refreshImages">
-            <select v-model="imageVisibilityFilter" :disabled="imagesLoading" @change="refreshImages">
-              <option value="">全部状态</option>
-              <option value="public">公开</option>
-              <option value="private">已隐藏</option>
-            </select>
-            <select v-model="imageFundingFilter" :disabled="imagesLoading" @change="refreshImages">
-              <option value="">全部来源</option>
-              <option value="free">免费</option>
-              <option value="credit">额度</option>
-            </select>
-            <input v-model.trim="imageUserFilter" type="search" placeholder="用户 ID" :disabled="imagesLoading">
-            <input v-model.trim="imageQuery" type="search" placeholder="提示词" :disabled="imagesLoading">
-            <button type="submit" :disabled="imagesLoading">筛选</button>
-            <button type="button" :disabled="imagesLoading" @click="refreshImages">刷新</button>
-          </form>
-        </div>
-        <div class="table-wrap image-table-wrap">
-          <table class="image-table">
-            <thead>
-              <tr>
-                <th>预览</th>
-                <th>时间</th>
-                <th>用户</th>
-                <th>状态</th>
-                <th>来源</th>
-                <th>参数</th>
-                <th>提示词</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="image in adminImages" :key="image.id">
-                <td>
-                  <img v-if="imagePreviewSrc(image)" class="image-thumb" :src="imagePreviewSrc(image)" alt="">
-                  <span v-else class="image-thumb empty">无图</span>
-                </td>
-                <td>{{ dateTime(image.generatedAt) }}</td>
-                <td>{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
-                <td>{{ imageVisibilityLabel(image.visibility) }}</td>
-                <td>{{ imageFundingLabel(image) }}</td>
-                <td>{{ imageDetails(image) }}</td>
-                <td class="prompt-cell">{{ image.prompt || '-' }}</td>
-                <td>
-                  <button
-                    v-if="image.visibility === 'public'"
-                    type="button"
-                    class="table-action"
-                    :disabled="imageActionId === image.id"
-                    @click="setImageVisibility(image, 'private')"
-                  >
-                    隐藏
-                  </button>
-                  <button
-                    v-else-if="image.fundingSource !== 'credit'"
-                    type="button"
-                    class="table-action"
-                    :disabled="imageActionId === image.id"
-                    @click="setImageVisibility(image, 'public')"
-                  >
-                    公开
-                  </button>
-                  <span v-else class="table-muted">私有</span>
-                </td>
-              </tr>
-              <tr v-if="!adminImages.length">
-                <td colspan="8">暂无作品</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="admin-panel attempts-panel" aria-label="生图监控">
-        <div class="panel-header attempt-header">
-          <div>
-            <span>生图监控</span>
-            <strong>{{ imageAttemptOverview?.total ?? 0 }}</strong>
-          </div>
-          <div class="attempt-controls">
-            <select v-model="attemptStatusFilter" :disabled="attemptsLoading" @change="refreshAttempts">
-              <option value="">全部状态</option>
-              <option value="succeeded">成功</option>
-              <option value="failed">失败</option>
-            </select>
-            <button type="button" :disabled="attemptsLoading" @click="refreshAttempts">刷新</button>
-          </div>
-        </div>
-        <div class="attempt-metrics">
-          <div>
-            <span>24h 成功</span>
-            <strong>{{ imageAttemptOverview?.succeeded ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>24h 失败</span>
-            <strong>{{ imageAttemptOverview?.failed ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>失败率</span>
-            <strong>{{ imageAttemptOverview?.failureRate ?? 0 }}%</strong>
-          </div>
-          <div>
-            <span>平均耗时</span>
-            <strong>{{ latencyLabel(imageAttemptOverview?.averageLatencyMs ?? null) }}</strong>
-          </div>
-        </div>
-        <div class="attempt-error-list">
-          <span
-            v-for="item in imageAttemptOverview?.byErrorType || []"
-            :key="item.errorType"
-          >
-            {{ item.errorType }} · {{ item.count }}
-          </span>
-          <span v-if="!(imageAttemptOverview?.byErrorType || []).length">暂无错误类型</span>
-        </div>
-        <div class="table-wrap attempt-table-wrap">
-          <table class="attempt-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>用户</th>
-                <th>状态</th>
-                <th>耗时</th>
-                <th>生成 ID</th>
-                <th>错误摘要</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="attempt in imageAttempts" :key="attempt.id">
-                <td>{{ dateTime(attempt.createdAt) }}</td>
-                <td>{{ attempt.email || (attempt.userId ? shortId(attempt.userId) : '-') }}</td>
-                <td :class="attempt.status === 'succeeded' ? 'positive' : 'negative'">{{ attemptStatusLabel(attempt.status) }}</td>
-                <td>{{ latencyLabel(attempt.latencyMs) }}</td>
-                <td>{{ attempt.generationId ? shortId(attempt.generationId) : '-' }}</td>
-                <td class="attempt-error-cell">{{ attemptErrorSummary(attempt) }}</td>
-              </tr>
-              <tr v-if="!imageAttempts.length">
-                <td colspan="6">暂无尝试记录</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminImagesPanel
+        v-model:selected-ids="selectedImageIds"
+        v-model:visibility-filter="imageVisibilityFilter"
+        v-model:funding-filter="imageFundingFilter"
+        v-model:user-filter="imageUserFilter"
+        v-model:query="imageQuery"
+        :images="adminImages"
+        :loading="imagesLoading"
+        :bulk-loading="imageBulkLoading"
+        :action-id="imageActionId"
+        @refresh="refreshImages"
+        @set-visibility="setImageVisibility"
+        @bulk-archive="bulkArchiveImages"
+        @bulk-delete="bulkDeleteImages"
+      />
 
       <section class="admin-grid">
         <div class="admin-panel users-panel">
@@ -1375,7 +1327,7 @@ onMounted(async () => {
               @click="selectUser(item)"
             >
               <span>{{ item.email || shortId(item.userId) }}</span>
-              <strong>{{ item.balance }}</strong>
+              <strong>{{ creditAmount(item.balance) }}</strong>
             </button>
           </div>
         </div>
@@ -1391,15 +1343,15 @@ onMounted(async () => {
           <div v-if="selectedUser" class="metric-grid">
             <div>
               <span>余额</span>
-              <strong>{{ selectedUser.balance }}</strong>
+              <strong>{{ creditAmount(selectedUser.balance) }}</strong>
             </div>
             <div>
               <span>累计兑换</span>
-              <strong>{{ selectedUser.totalRedeemed }}</strong>
+              <strong>{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
             </div>
             <div>
               <span>累计消耗</span>
-              <strong>{{ selectedUser.totalSpent }}</strong>
+              <strong>{{ creditAmount(selectedUser.totalSpent) }}</strong>
             </div>
             <div>
               <span>更新</span>
@@ -1434,8 +1386,8 @@ onMounted(async () => {
                 <tr v-for="tx in transactions" :key="tx.id">
                   <td>{{ dateTime(tx.created_at) }}</td>
                   <td>{{ transactionReason(tx.reason) }}</td>
-                  <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ tx.amount > 0 ? '+' : '' }}{{ tx.amount }}</td>
-                  <td>{{ tx.balance_after }}</td>
+                  <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                  <td>{{ creditAmount(tx.balance_after) }}</td>
                   <td>{{ transactionNote(tx) }}</td>
                 </tr>
                 <tr v-if="!transactions.length">
@@ -1581,7 +1533,8 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-      </section>
+        </section>
+      </template>
     </template>
   </main>
 </template>
@@ -1611,7 +1564,8 @@ onMounted(async () => {
 .adjust-form span,
 .code-form span,
 .settings-form span,
-.admin-user-form span {
+.admin-user-form span,
+.announcement-form span {
   display: block;
   color: var(--text-secondary);
   font-size: 12px;
@@ -1629,6 +1583,37 @@ onMounted(async () => {
   gap: 8px;
 }
 
+.admin-mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 1360px;
+  margin: 0 auto 10px;
+}
+
+.admin-mode-switch button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-mode-switch button:hover {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+.admin-mode-switch button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .admin-nav a,
 .admin-state a,
 .overview-header button,
@@ -1641,6 +1626,7 @@ onMounted(async () => {
 .code-form button,
 .settings-form button,
 .admin-user-form button,
+.announcement-form button,
 .created-actions button,
 .table-action {
   min-height: 34px;
@@ -1667,6 +1653,7 @@ onMounted(async () => {
 .code-form button:hover:not(:disabled),
 .settings-form button:hover:not(:disabled),
 .admin-user-form button:hover:not(:disabled),
+.announcement-form button:hover:not(:disabled),
 .created-actions button:hover,
 .table-action:hover:not(:disabled) {
   border-color: var(--border-strong);
@@ -1776,6 +1763,57 @@ button:disabled {
   font-size: 18px;
 }
 
+.image-cost-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.image-cost-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.image-cost-header > span,
+.image-cost-grid span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.image-cost-header strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 22px;
+}
+
+.image-cost-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.image-cost-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.image-cost-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -1804,7 +1842,8 @@ button:disabled {
 .ledger-panel,
 .images-panel,
 .system-panel,
-.attempts-panel {
+.attempts-panel,
+.announcements-panel {
   max-width: 1360px;
   margin: 0 auto 14px;
 }
@@ -1812,7 +1851,8 @@ button:disabled {
 .ledger-header,
 .image-header,
 .system-header,
-.attempt-header {
+.attempt-header,
+.announcement-header {
   align-items: flex-start;
 }
 
@@ -1968,7 +2008,8 @@ textarea {
 .adjust-form,
 .code-form,
 .settings-form,
-.admin-user-form {
+.admin-user-form,
+.announcement-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   align-items: end;
@@ -1984,18 +2025,53 @@ textarea {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.cost-setting {
+  display: grid;
+  gap: 8px;
+}
+
+.cost-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cost-preview span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .admin-user-form {
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
 }
 
 .code-form .wide,
-.admin-user-form .wide {
+.admin-user-form .wide,
+.announcement-form .wide {
   grid-column: span 2;
+}
+
+.announcement-form {
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr) auto;
+}
+
+.panel-note {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .code-form button,
 .settings-form button,
-.admin-user-form button {
+.admin-user-form button,
+.announcement-form button {
   align-self: end;
 }
 
@@ -2079,6 +2155,16 @@ textarea {
 
 .admin-rule-table {
   min-width: 680px;
+}
+
+.announcement-table-wrap table {
+  min-width: 860px;
+}
+
+.announcement-body-cell {
+  max-width: 520px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .image-table-wrap {
@@ -2265,7 +2351,8 @@ tbody tr:last-child td {
   .adjust-form,
   .code-form,
   .settings-form,
-  .admin-user-form {
+  .admin-user-form,
+  .announcement-form {
     grid-template-columns: 1fr;
   }
 
@@ -2287,7 +2374,8 @@ tbody tr:last-child td {
   }
 
   .code-form .wide,
-  .admin-user-form .wide {
+  .admin-user-form .wide,
+  .announcement-form .wide {
     grid-column: auto;
   }
 }

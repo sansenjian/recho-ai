@@ -4,11 +4,47 @@ let rows: Array<Record<string, unknown>> = []
 let selectArgs: string[] = []
 let upsertBatches: Array<Array<Record<string, unknown>>> = []
 let removeStoragePathBatches: string[][] = []
+let storeImageBufferCalls: Array<{
+  mime: string
+  pathHint: string
+  options: Record<string, unknown>
+}> = []
+let storeImageDataUrlCalls: Array<{
+  pathHint: string
+  options: Record<string, unknown>
+}> = []
+
+function mockStoredImage(pathHint: string, options: Record<string, unknown> = {}) {
+  const path = `${pathHint.replace(/\.[a-z0-9]+$/i, '')}.webp`
+  const storagePath = options.provider === 'tencent-cos' ? `cos://${path}` : path
+  const previewPath = storagePath.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+  const thumbnailPath = storagePath.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+  return {
+    publicUrl: `https://cdn.example.test/${storagePath}`,
+    storagePath,
+    previewUrl: `https://cdn.example.test/${previewPath}`,
+    previewPath,
+    thumbnailUrl: `https://cdn.example.test/${thumbnailPath}`,
+    thumbnailPath,
+    mime: 'image/webp',
+    width: 1024,
+    height: 1024,
+    originalBytes: 100,
+    previewBytes: 40,
+    thumbnailBytes: 10,
+  }
+}
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
-  storeImageBuffer: vi.fn(),
-  storeImageDataUrl: vi.fn(),
+  storeImageBuffer: vi.fn(async (_buffer: Buffer, mime: string, pathHint: string, options: Record<string, unknown> = {}) => {
+    storeImageBufferCalls.push({ mime, pathHint, options })
+    return mockStoredImage(pathHint, options)
+  }),
+  storeImageDataUrl: vi.fn(async (_dataUrl: string, pathHint: string, options: Record<string, unknown> = {}) => {
+    storeImageDataUrlCalls.push({ pathHint, options })
+    return mockStoredImage(pathHint, options)
+  }),
   removeImageStoragePaths: vi.fn(async (paths: string[]) => {
     removeStoragePathBatches.push(paths)
     return true
@@ -31,6 +67,18 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         range: vi.fn(() => Promise.resolve({ data: rows, error: null })),
         eq: vi.fn((key: string, value: unknown) => {
           rows = rows.filter(row => row[key] === value)
+          return query
+        }),
+        or: vi.fn((filter: string) => {
+          const match = /^expires_at\.is\.null,expires_at\.gt\.(.+)$/.exec(filter)
+          if (match) {
+            const cutoff = Date.parse(match[1])
+            rows = rows.filter((row) => {
+              if (!row.expires_at) return true
+              const expiresAt = Date.parse(String(row.expires_at))
+              return Number.isFinite(cutoff) && Number.isFinite(expiresAt) && expiresAt > cutoff
+            })
+          }
           return query
         }),
         maybeSingle: vi.fn(() => Promise.resolve({ data: rows[0] || null, error: null })),
@@ -58,6 +106,8 @@ describe('image history storage urls', () => {
     selectArgs = []
     upsertBatches = []
     removeStoragePathBatches = []
+    storeImageBufferCalls = []
+    storeImageDataUrlCalls = []
     vi.resetModules()
   })
 
@@ -283,6 +333,125 @@ describe('image history storage urls', () => {
     expect(upsertBatches).toHaveLength(2)
     expect(upsertBatches[0]).toHaveLength(50)
     expect(upsertBatches[1]).toHaveLength(5)
+  })
+
+  it('stores credit-funded generated images in Tencent COS while free images stay on Supabase storage', async () => {
+    const { saveImageHistory } = await import('../backend/gateway/src/services/image-history')
+
+    await saveImageHistory([
+      {
+        id: 'img_free_1',
+        dataUrl: 'data:image/png;base64,AAAA',
+        prompt: 'free prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'free',
+        visibility: 'public',
+      },
+      {
+        id: 'img_credit_1',
+        dataUrl: 'data:image/png;base64,BBBB',
+        prompt: 'credit prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'credit',
+        visibility: 'private',
+        creditCost: 0.25,
+      },
+    ], {
+      allowCreditMetadata: true,
+      allowCreditStorage: true,
+    })
+
+    expect(storeImageDataUrlCalls).toHaveLength(2)
+    expect(storeImageDataUrlCalls[0]).toMatchObject({
+      pathHint: 'generated/img_free_1',
+      options: {},
+    })
+    expect(storeImageDataUrlCalls[1]).toMatchObject({
+      pathHint: 'generated/img_credit_1',
+      options: { provider: 'tencent-cos' },
+    })
+
+    const storedRows = upsertBatches.flat()
+    expect(storedRows.find(row => row.id === 'img_free_1')).toMatchObject({
+      storage_path: 'generated/img_free_1.webp',
+      funding_source: 'free',
+      visibility: 'public',
+    })
+    expect(storedRows.find(row => row.id === 'img_credit_1')).toMatchObject({
+      storage_path: 'cos://generated/img_credit_1.webp',
+      funding_source: 'credit',
+      visibility: 'private',
+      credit_cost: 0.25,
+      expires_at: '2026-06-16T00:00:00.000Z',
+    })
+  })
+
+  it('hides logically expired credit-funded images from user history and detail reads', async () => {
+    const { getImageHistory, listImageHistory } = await import('../backend/gateway/src/services/image-history')
+    rows = [
+      {
+        id: 'img_credit_expired',
+        user_id: 'user_1',
+        storage_path: 'cos://generated/img_credit_expired.webp',
+        prompt: 'expired credit',
+        size: '1024x1024',
+        visibility: 'private',
+        funding_source: 'credit',
+        expires_at: '2026-06-01T00:00:00.000Z',
+        generated_at: '2026-05-25T00:00:00.000Z',
+      },
+      {
+        id: 'img_credit_active',
+        user_id: 'user_1',
+        storage_path: 'cos://generated/img_credit_active.webp',
+        prompt: 'active credit',
+        size: '1024x1024',
+        visibility: 'private',
+        funding_source: 'credit',
+        expires_at: '2099-06-01T00:00:00.000Z',
+        generated_at: '2026-06-09T00:00:00.000Z',
+      },
+    ]
+
+    const history = await listImageHistory(12, 0, { scope: 'mine', userId: 'user_1' })
+
+    expect(history.images.map(image => image.id)).toEqual(['img_credit_active'])
+    rows = rows.filter(row => row.id === 'img_credit_expired')
+    await expect(getImageHistory('img_credit_expired', { scope: 'mine', userId: 'user_1' })).resolves.toBeNull()
+  })
+
+  it('does not trust client-supplied credit fields without a server opt-in', async () => {
+    const { saveImageHistory } = await import('../backend/gateway/src/services/image-history')
+
+    await saveImageHistory([
+      {
+        id: 'img_untrusted_credit_1',
+        dataUrl: 'data:image/png;base64,CCCC',
+        prompt: 'untrusted credit prompt',
+        size: '1024x1024',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        fundingSource: 'credit',
+        visibility: 'private',
+        creditCost: 99,
+        creditTransactionId: 'client-controlled-transaction',
+      },
+    ])
+
+    expect(storeImageDataUrlCalls).toHaveLength(1)
+    expect(storeImageDataUrlCalls[0]).toMatchObject({
+      pathHint: 'generated/img_untrusted_credit_1',
+      options: {},
+    })
+
+    expect(upsertBatches.flat()[0]).toMatchObject({
+      storage_path: 'generated/img_untrusted_credit_1.webp',
+      funding_source: 'free',
+      visibility: 'public',
+      credit_cost: 0,
+      credit_transaction_id: null,
+    })
   })
 
   it('removes only generated storage files after deleting one history row', async () => {

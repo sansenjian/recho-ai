@@ -2,6 +2,9 @@ import { Router, Request, Response } from 'express'
 import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
 import {
   AdminImageError,
+  bulkArchiveAdminImages,
+  bulkDeleteAdminImages,
+  bulkSetAdminImageVisibility,
   listAdminImages,
   setAdminImageVisibility,
 } from '../services/admin-images.js'
@@ -53,6 +56,42 @@ router.get('/admin/images', async (req: Request, res: Response) => {
     res.json({ images })
   } catch (err) {
     console.error('[admin-images] list failed:', safeErrorDetail(err))
+    const response = adminImageErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.patch('/admin/images/bulk/visibility', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const images = await bulkSetAdminImageVisibility(req.body?.ids, req.body?.visibility)
+    res.json({ images })
+  } catch (err) {
+    console.error('[admin-images] bulk visibility update failed:', safeErrorDetail(err))
+    const response = adminImageErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.post('/admin/images/bulk/archive', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const images = await bulkArchiveAdminImages(req.body?.ids)
+    res.json({ images })
+  } catch (err) {
+    console.error('[admin-images] bulk archive failed:', safeErrorDetail(err))
+    const response = adminImageErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.post('/admin/images/bulk/delete', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const result = await bulkDeleteAdminImages(req.body?.ids)
+    res.json(result)
+  } catch (err) {
+    console.error('[admin-images] bulk delete failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }

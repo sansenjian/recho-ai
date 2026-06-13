@@ -26,6 +26,12 @@ vi.mock('../backend/gateway/src/config', () => ({
   SUPABASE_SERVICE_ROLE_KEY: '',
   SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_IMAGE_BUCKET: 'secret-bucket-name',
+  TENCENT_COS_APPID: '',
+  TENCENT_COS_BUCKET: '',
+  TENCENT_COS_FULL_BUCKET: '',
+  TENCENT_COS_PUBLIC_BASE_URL: '',
+  TENCENT_COS_SECRET_ID: '',
+  TENCENT_COS_SECRET_KEY: '',
 }))
 
 vi.mock('../backend/gateway/src/clients/supabase', () => ({
@@ -100,6 +106,7 @@ describe('admin system status helpers', () => {
       image_events: 8,
       app_settings: 6,
       admin_users: 1,
+      announcements: 1,
     }
     appSettingRows = [
       { key: 'image_credit_cost_per_image', value: 3 },
@@ -138,7 +145,7 @@ describe('admin system status helpers', () => {
         tableAvailable: true,
       },
     })
-    expect(status.data.tables).toHaveLength(9)
+    expect(status.data.tables).toHaveLength(10)
     expect(status.data.tables.every(table => table.status === 'ok')).toBe(true)
     expect(status.warnings).toEqual([])
 
