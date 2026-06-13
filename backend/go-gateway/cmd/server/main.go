@@ -51,17 +51,23 @@ func main() {
 	// Initialize repositories
 	var creditRepo *repository.CreditRepository
 	var redeemRepo *repository.RedeemRepository
+	var idempotencyRepo *repository.IdempotencyRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
 		redeemRepo = repository.NewRedeemRepository(db)
+		idempotencyRepo = repository.NewIdempotencyRepository(db.Pool())
 	}
 
 	// Initialize services
 	var creditService *service.CreditService
 	var redeemService *service.RedeemService
+	var idempotencyService *service.IdempotencyService
 	if creditRepo != nil {
 		creditService = service.NewCreditService(creditRepo)
 		redeemService = service.NewRedeemService(redeemRepo, creditService)
+	}
+	if idempotencyRepo != nil {
+		idempotencyService = service.NewIdempotencyService(idempotencyRepo)
 	}
 
 	// Initialize storage service
@@ -75,8 +81,8 @@ func main() {
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	creditsHandler := handler.NewCreditsHandler(creditService, redeemService)
-	imageHandler := handler.NewImageHandler(creditService, storageService)
+	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
+	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
 	chatHandler := handler.NewChatHandler(chatService, creditService, os.Getenv("ANALYSIS_URL"))
 
 	// Setup router
@@ -100,7 +106,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           300,

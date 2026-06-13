@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -22,15 +23,22 @@ import (
 
 // ImageHandler handles image-related endpoints
 type ImageHandler struct {
-	creditService *service.CreditService
+	creditService  *service.CreditService
 	storageService *service.StorageService
+	idempotencySvc *service.IdempotencyService // optional, nil disables idempotency
 }
 
-// NewImageHandler creates a new image handler
-func NewImageHandler(creditService *service.CreditService, storageService *service.StorageService) *ImageHandler {
+// NewImageHandler creates a new image handler.
+// idempotencySvc may be nil to disable idempotency checks.
+func NewImageHandler(
+	creditService *service.CreditService,
+	storageService *service.StorageService,
+	idempotencySvc *service.IdempotencyService,
+) *ImageHandler {
 	return &ImageHandler{
-		creditService: creditService,
+		creditService:  creditService,
 		storageService: storageService,
+		idempotencySvc: idempotencySvc,
 	}
 }
 
@@ -85,8 +93,15 @@ type ImageResult struct {
 // Generate handles POST /api/image/generate
 func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
-	
-	// Parse request body
+
+	// Read raw body for idempotency fingerprint, then restore for JSON decoding
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "无效的请求格式。")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(rawBody))
+
 	var req ImageGenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "无效的请求格式。")
@@ -97,6 +112,28 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if req.Prompt == "" {
 		response.Error(w, http.StatusBadRequest, "请输入图片描述。")
 		return
+	}
+
+	// --- Idempotency check ---
+	idemKey := r.Header.Get("Idempotency-Key")
+	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+		outcome, err := h.idempotencySvc.Acquire(r.Context(), user.ID, idemKey, "image_generate", rawBody)
+		if err != nil {
+			log.Printf("[idempotency] acquire error (proceeding without): %v", err)
+		} else if outcome != nil {
+			if outcome.Conflict {
+				response.Error(w, http.StatusConflict, "请求正在处理中或使用相同的幂等键发送了不同的请求。")
+				return
+			}
+			if !outcome.Proceed && outcome.ReplayBody != nil {
+				// Replay cached response — no credit deduction, no API call
+				w.Header().Set("X-Idempotent-Replay", "true")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(int(outcome.ReplayCode))
+				w.Write(outcome.ReplayBody)
+				return
+			}
+		}
 	}
 
 	// Normalize parameters
@@ -113,14 +150,15 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if user != nil && user.ID != "" {
 		txID, newBalance, _, cost, err := h.creditService.ReserveCredits(r.Context(), user.ID, count)
 		if err != nil {
-			// Credit error - fall back to public generation
-			// For now, return error since we don't have the public fallback logic yet
 			if strings.Contains(err.Error(), "insufficient") {
+				// Mark idempotency as failed so the client can retry after topping up
+				if idemKey != "" && h.idempotencySvc != nil {
+					h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
+				}
 				response.Error(w, http.StatusPaymentRequired, "额度不足。")
 				return
 			}
-			// For other errors, try to continue without credits
-			// The image will be generated but marked as public
+			// For other errors, try to continue without credits (public generation)
 		} else {
 			creditReservation = &service.CreditReservation{
 				TransactionID: txID,
@@ -141,6 +179,10 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			if refundErr != nil {
 				log.Printf("[image] failed to refund credits after generation failure: %v", refundErr)
 			}
+		}
+		// Mark idempotency as failed so the client can retry
+		if idemKey != "" && user != nil && h.idempotencySvc != nil {
+			h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
 		}
 		response.Error(w, http.StatusInternalServerError, "图片生成失败，请稍后重试。")
 		return
@@ -164,9 +206,17 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		CreditCost: costPerImage,
 		TotalCost:  totalCost,
 	}
-
 	if creditReservation != nil {
 		resp.CreditBalance = &creditReservation.Balance
+	}
+
+	// Cache response for future idempotent replays
+	if idemKey != "" && user != nil && h.idempotencySvc != nil {
+		txID := ""
+		if creditReservation != nil {
+			txID = creditReservation.TransactionID
+		}
+		h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "image_generate", 200, resp, txID)
 	}
 
 	response.JSON(w, http.StatusOK, resp)
