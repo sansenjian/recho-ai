@@ -628,6 +628,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     const historySystemPrompt = requestText(systemPrompt)
     const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
     userId = await getRequestUserId(req)
+    if (!userId && !appSettings.guestGenerationEnabled) {
+      res.status(401).json({ error: '请先登录后再生成图片' })
+      return
+    }
     if (count > 1 && !userId) {
       res.status(401).json({ error: '请先登录后再批量生成图片' })
       return
@@ -647,6 +651,12 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         creditBalance = creditReservation.balance
       } catch (creditErr) {
         if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
+        if (!appSettings.freeGenerationEnabled) {
+          const err: any = new Error('free_generation_disabled')
+          err.status = 402
+          err.publicMessage = '额度不足且免费生成已关闭，请稍后再试或充值。'
+          throw err
+        }
         console.warn(`[credits] credit error; generation will be public:`, safeErrorDetail(creditErr))
       }
     }

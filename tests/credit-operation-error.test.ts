@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { CreditOperationError } from '../backend/gateway/src/services/credits'
+import { CreditError } from '../backend/gateway/src/services/credit-error'
 
-describe('CreditOperationError', () => {
+describe('CreditError', () => {
   it('exposes a stable code for control flow independently of message text', () => {
-    const error = new CreditOperationError('insufficient_credits')
+    const error = new CreditError('insufficient_credits')
     error.message = 'localized message'
 
     expect(error.code).toBe('insufficient_credits')
     expect(error.status).toBe(402)
   })
 
-  it('maps credit_balance_not_found to status 500', () => {
-    const error = new CreditOperationError('credit_balance_not_found')
+  it('maps credit_operation_failed to status 500', () => {
+    const error = new CreditError('credit_operation_failed')
 
-    expect(error.code).toBe('credit_balance_not_found')
+    expect(error.code).toBe('credit_operation_failed')
     expect(error.status).toBe(500)
   })
 })

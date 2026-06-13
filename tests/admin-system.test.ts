@@ -8,6 +8,8 @@ let adminUserRows: Array<Record<string, unknown>> = []
 vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['admin@example.test'],
   ADMIN_USER_IDS: ['admin-user-id'],
+  FREE_GENERATION_ENABLED: true,
+  GUEST_GENERATION_ENABLED: true,
   IMAGE_ANALYTICS_ENABLED: true,
   IMAGE_CREDIT_COST_PER_IMAGE: 3,
   IMAGE_RESPONSES_MODEL: 'gpt-image-2',

@@ -201,6 +201,8 @@ export interface AdminAppSettings {
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
+  freeGenerationEnabled: boolean
+  guestGenerationEnabled: boolean
 }
 
 export interface AdminUserRule {

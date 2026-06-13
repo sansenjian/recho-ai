@@ -107,6 +107,8 @@ const settingsForm = ref<AdminAppSettings>({
   imageResponsesImageModel: 'gpt-image-2',
   imageEventsEnabled: false,
   canvasContextEnabled: false,
+  freeGenerationEnabled: true,
+  guestGenerationEnabled: true,
 })
 
 const adminUserForm = ref({
@@ -415,6 +417,8 @@ async function saveSettings() {
         imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
         imageEventsEnabled: Boolean(settingsForm.value.imageEventsEnabled),
         canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
+        freeGenerationEnabled: Boolean(settingsForm.value.freeGenerationEnabled),
+        guestGenerationEnabled: Boolean(settingsForm.value.guestGenerationEnabled),
       }),
     })
     syncSettingsForm(data.settings)
@@ -1099,6 +1103,14 @@ onMounted(async () => {
             <label class="check-row">
               <input v-model="settingsForm.canvasContextEnabled" type="checkbox">
               <span>画布上下文</span>
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.freeGenerationEnabled" type="checkbox">
+              <span>免费生成回退</span>
+            </label>
+            <label class="check-row">
+              <input v-model="settingsForm.guestGenerationEnabled" type="checkbox">
+              <span>游客生成</span>
             </label>
             <button type="submit" :disabled="settingsSaving">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
           </form>
