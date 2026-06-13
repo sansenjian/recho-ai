@@ -80,9 +80,17 @@ func (s *RedeemService) Redeem(ctx context.Context, userID, code string) (*Redee
 		}, nil
 	}
 
-	// Mark as used
-	if err := s.repo.MarkAsUsed(ctx, redeemCode.ID, userID); err != nil {
+	// Mark as used (atomic: WHERE used_by IS NULL prevents double-spend)
+	rowsAffected, err := s.repo.MarkAsUsed(ctx, redeemCode.ID, userID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to mark code as used: %w", err)
+	}
+	if rowsAffected == 0 {
+		// Another concurrent request already consumed this code
+		return &RedeemResult{
+			Success: false,
+			Message: "This code has already been used",
+		}, nil
 	}
 
 	// Credit the user's account

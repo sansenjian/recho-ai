@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"go-gateway/internal/config"
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/pkg/response"
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -150,7 +152,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if user != nil && user.ID != "" {
 		txID, newBalance, _, cost, err := h.creditService.ReserveCredits(r.Context(), user.ID, count)
 		if err != nil {
-			if strings.Contains(err.Error(), "insufficient") {
+			if errors.Is(err, repository.ErrInsufficientCredits) {
 				// Mark idempotency as failed so the client can retry after topping up
 				if idemKey != "" && h.idempotencySvc != nil {
 					h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
@@ -257,31 +259,54 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequest("POST", config.ImageGenBaseURL+"/images/generations", strings.NewReader(string(reqBody)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	// Shared HTTP client with retry logic
+	client := &http.Client{Timeout: 360 * time.Second}
+	maxRetries := 3
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+config.ImageGenAPIKey)
+	var resp *http.Response
+	var body []byte
 
-	// Set timeout
-	client := &http.Client{
-		Timeout: 360 * time.Second,
-	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			log.Printf("[image] retrying API call (attempt %d/%d)", attempt+1, maxRetries+1)
+		}
 
-	// Send request
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call image API: %w", err)
-	}
-	defer resp.Body.Close()
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", config.ImageGenBaseURL+"/images/generations", bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+config.ImageGenAPIKey)
 
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries {
+				log.Printf("[image] API call error (will retry): %v", err)
+				continue
+			}
+			return nil, fmt.Errorf("failed to call image API: %w", err)
+		}
+
+		body, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+
+		// Retry on transient failures
+		if isTransientStatus(resp.StatusCode) && attempt < maxRetries {
+			log.Printf("[image] API returned %d (will retry)", resp.StatusCode)
+			continue
+		}
+
+		break
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -473,11 +498,11 @@ func (h *ImageHandler) ClearHistory(w http.ResponseWriter, r *http.Request) {
 
 // RegisterRoutes registers image routes
 func (h *ImageHandler) RegisterRoutes(r chi.Router) {
-	r.Post("/image/generate", h.Generate)
-	r.Get("/image/history", h.ListHistory)
-	r.Get("/image/history/{id}", h.GetHistoryDetail)
-	r.Delete("/image/history/{id}", h.DeleteHistory)
-	r.Delete("/image/history", h.ClearHistory)
+	r.Post("/generate", h.Generate)
+	r.Get("/history", h.ListHistory)
+	r.Get("/history/{id}", h.GetHistoryDetail)
+	r.Delete("/history/{id}", h.DeleteHistory)
+	r.Delete("/history", h.ClearHistory)
 }
 
 // Helper functions
@@ -567,4 +592,14 @@ func determineSize(resolution, aspectRatio string) string {
 
 func roundToTwoDecimals(val float64) float64 {
 	return math.Round(val*100) / 100
+}
+
+// isTransientStatus returns true for HTTP status codes that indicate a transient
+// failure worth retrying (request timeout, rate limit, server errors).
+func isTransientStatus(code int) bool {
+	switch code {
+	case 408, 429, 502, 503, 504:
+		return true
+	}
+	return false
 }

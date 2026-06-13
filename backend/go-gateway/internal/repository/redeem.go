@@ -74,17 +74,22 @@ func (r *RedeemRepository) FindByCode(ctx context.Context, code string) (*Redeem
 	return &rc, nil
 }
 
-// MarkAsUsed marks a code as used by a user
-func (r *RedeemRepository) MarkAsUsed(ctx context.Context, id, userID string) error {
+// MarkAsUsed marks a code as used by a user.
+// Returns the number of rows affected — 0 means the code was already consumed
+// by a concurrent request (WHERE includes AND used_by IS NULL as a race guard).
+func (r *RedeemRepository) MarkAsUsed(ctx context.Context, id, userID string) (rowsAffected int64, err error) {
 	query := `
 		UPDATE %s
 		SET used_by = $1, used_at = $2
-		WHERE id = $3
+		WHERE id = $3 AND used_by IS NULL
 	`
 	query = fmt.Sprintf(query, redeemTable)
 
-	_, err := r.db.Pool().Exec(ctx, query, userID, time.Now(), id)
-	return err
+	result, err := r.db.Pool().Exec(ctx, query, userID, time.Now(), id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 // MarkAsUnused marks a code as unused (for rollback)
