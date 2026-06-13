@@ -315,13 +315,18 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
   return publicErrorMessage(err, fallback)
 }
 
+const PUBLIC_FALLBACK_CREDIT_ERRORS = new Set([
+  'insufficient_credits',
+  'credit_balance_not_found',
+  'credit_operation_failed',
+])
+
 function canGeneratePublicAfterCreditError(err: unknown) {
   if (!(err instanceof CreditOperationError)) return false
-  // auth_required means the user isn't logged in — don't silently bypass.
-  // All other credit errors (insufficient_credits, credit_balance_not_found,
-  // credit_operation_failed, etc.) should gracefully fall back to public
-  // generation so the user isn't blocked by a credit-system failure.
-  return err.code !== 'auth_required'
+  // Only allow known credit-error codes to fall back to public generation.
+  // New or unexpected codes should surface as real errors rather than
+  // silently bypass the credit check.
+  return PUBLIC_FALLBACK_CREDIT_ERRORS.has(err.code)
 }
 
 function safeProxyStoragePath(value: unknown) {
