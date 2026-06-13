@@ -1,17 +1,12 @@
 import { Router, Request, Response } from 'express'
 import { getRequestUserId } from '../services/request-auth.js'
-import {
-  CreditOperationError,
-  CreditServiceUnavailableError,
-  getUserCreditBalance,
-  redeemCreditCode,
-} from '../services/credits.js'
+import { CreditError, CreditServiceUnavailableError, getUserCreditBalance, redeemCreditCode } from '../services/credits.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
 
 function creditErrorResponse(err: unknown) {
-  if (err instanceof CreditOperationError || err instanceof CreditServiceUnavailableError) {
+  if (err instanceof CreditError) {
     return {
       status: err.status,
       error: err.publicMessage,
