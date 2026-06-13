@@ -21,15 +21,6 @@ export interface CreditRefund extends CreditBalance {
   amount: number
 }
 
-export class CreditServiceUnavailableError extends CreditOperationError {
-  constructor() {
-    super('service_unavailable', {
-      status: 503,
-      publicMessage: '额度服务暂时不可用，请稍后重试。',
-    })
-  }
-}
-
 export class CreditOperationError extends Error {
   code: string
   status: number
@@ -40,6 +31,15 @@ export class CreditOperationError extends Error {
     this.code = code
     this.status = options.status ?? statusForCreditError(code)
     this.publicMessage = options.publicMessage ?? publicMessageForCreditError(code)
+  }
+}
+
+export class CreditServiceUnavailableError extends CreditOperationError {
+  constructor() {
+    super('service_unavailable', {
+      status: 503,
+      publicMessage: '额度服务暂时不可用，请稍后重试。',
+    })
   }
 }
 
