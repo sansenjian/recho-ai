@@ -27,8 +27,8 @@ describe('admin credit overview helpers', () => {
         { amount: 30, reason: 'redemption', created_at: '2026-05-01T00:00:00.000Z' },
       ],
       imageRows: [
-        { original_bytes: 2_097_152, preview_bytes: 524_288, thumbnail_bytes: 131_072 },
-        { original_bytes: 1_048_576, preview_bytes: 262_144, thumbnail_bytes: 65_536 },
+        { original_bytes: 2_097_152, preview_bytes: 524_288, thumbnail_bytes: 131_072, funding_source: 'free' },
+        { original_bytes: 1_048_576, preview_bytes: 262_144, thumbnail_bytes: 65_536, funding_source: 'credit' },
       ],
       attemptRows: [
         { latency_ms: 2000 },

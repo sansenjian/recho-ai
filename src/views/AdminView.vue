@@ -25,7 +25,6 @@ import type {
 } from '../types/admin'
 import {
   dateTime,
-  latencyLabel,
   shortId,
   tableStatusLabel,
 } from '../utils/admin-format'
@@ -949,35 +948,35 @@ onMounted(async () => {
         <div class="image-cost-panel" aria-label="可视化生图成本">
           <div class="image-cost-header">
             <div>
-              <span>可视化生图成本指数</span>
-              <strong>{{ overview?.imageCost?.estimatedCostScore ?? '-' }}</strong>
+              <span>可视化生图成本</span>
+              <strong>¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small>/张</small></strong>
             </div>
-            <span>传输 + 存储 + 耗时 · 置信度 {{ imageCostConfidenceLabel }}</span>
+            <span>按量计费 · 置信度 {{ imageCostConfidenceLabel }}</span>
           </div>
           <div class="image-cost-grid">
             <div>
-              <span>平均传输</span>
-              <strong>{{ overview?.imageCost?.averageTrafficMb ?? 0 }} MB</strong>
+              <span>COS 存储/张</span>
+              <strong>¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>平均存储</span>
-              <strong>{{ overview?.imageCost?.averageStoredMb ?? 0 }} MB</strong>
+              <span>COS 流量/张</span>
+              <strong>¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>平均耗时</span>
-              <strong>{{ latencyLabel(overview?.imageCost?.averageLatencyMs ?? null) }}</strong>
+              <span>Supabase 存储/张</span>
+              <strong>¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>网关内存</span>
-              <strong>{{ overview?.imageCost?.gatewayMemoryMb ?? 0 }} MB</strong>
+              <span>Supabase 流量/张</span>
+              <strong>¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
             </div>
             <div>
-              <span>内存参考</span>
-              <strong>不计入指数</strong>
+              <span>预估月成本</span>
+              <strong>¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
             </div>
             <div>
               <span>样本</span>
-              <strong>{{ overview?.imageCost?.imageSampleSize ?? 0 }} 图 / {{ overview?.imageCost?.attemptSampleSize ?? 0 }} 次</strong>
+              <strong>{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} Supabase</strong>
             </div>
           </div>
         </div>

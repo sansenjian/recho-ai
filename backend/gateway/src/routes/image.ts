@@ -522,7 +522,7 @@ router.get('/image/storage/:encodedPath', async (req: Request, res: Response) =>
     }
 
     res.setHeader('Content-Type', image.mime || 'image/webp')
-    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable')
     res.send(image.buffer)
   } catch (err: any) {
     console.error('[image-storage] proxy failed:', safeErrorDetail(err))
