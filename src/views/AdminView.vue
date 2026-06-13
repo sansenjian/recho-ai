@@ -1275,7 +1275,7 @@ onMounted(async () => {
                 <td>{{ dateTime(tx.createdAt) }}</td>
                 <td>{{ tx.email || shortId(tx.userId) }}</td>
                 <td>{{ transactionReason(tx.reason) }}</td>
-                <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
                 <td>{{ creditAmount(tx.balanceAfter) }}</td>
                 <td>{{ ledgerDetails(tx) }}</td>
                 <td>{{ tx.note || '-' }}</td>
@@ -1386,7 +1386,7 @@ onMounted(async () => {
                 <tr v-for="tx in transactions" :key="tx.id">
                   <td>{{ dateTime(tx.created_at) }}</td>
                   <td>{{ transactionReason(tx.reason) }}</td>
-                  <td :class="tx.amount > 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                  <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
                   <td>{{ creditAmount(tx.balance_after) }}</td>
                   <td>{{ transactionNote(tx) }}</td>
                 </tr>
