@@ -15,6 +15,7 @@ var CorsOrigin = parseEnvString("CORS_ORIGIN", "http://localhost:5173")
 // Supabase config
 var SupabaseURL = os.Getenv("SUPABASE_URL")
 var SupabaseServiceRoleKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+var SupabaseJWTSecret = os.Getenv("SUPABASE_JWT_SECRET")
 var SupabaseImageBucket = parseEnvString("SUPABASE_IMAGE_BUCKET", "recho-images")
 
 // Image generation config
