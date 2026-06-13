@@ -47,7 +47,6 @@ function statusForCreditError(code: string) {
   if (code === 'auth_required') return 401
   if (code === 'insufficient_credits') return 402
   if (code === 'code_already_redeemed') return 409
-  if (code === 'credit_balance_not_found') return 500
   if (code === 'credit_operation_failed') return 500
   if (code === 'service_unavailable') return 503
   return 400
@@ -77,7 +76,7 @@ function creditErrorCode(error: unknown) {
   ]
     .filter(Boolean)
     .join(' ')
-  const match = /\b(auth_required|insufficient_credits|invalid_code|code_disabled|code_expired|code_already_redeemed|code_exhausted|invalid_credit_amount|credit_balance_not_found)\b/.exec(message)
+  const match = /\b(auth_required|insufficient_credits|invalid_code|code_disabled|code_expired|code_already_redeemed|code_exhausted|invalid_credit_amount)\b/.exec(message)
   return match?.[1] || 'credit_operation_failed'
 }
 
@@ -93,7 +92,10 @@ function normalizedInteger(value: unknown) {
 }
 
 function normalizedCreditAmount(value: unknown) {
-  return Math.max(0, roundCreditAmount(value))
+  // Always returns a number (never null): used for reserve/refund/redeem paths
+  // where a concrete row was produced by the RPC and a numeric balance exists.
+  const rounded = roundCreditAmount(value)
+  return rounded === null ? 0 : Math.max(0, rounded)
 }
 
 function rpcRow<T>(data: T[] | T | null) {
