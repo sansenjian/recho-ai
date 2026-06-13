@@ -46,19 +46,34 @@ func main() {
 
 	// Initialize repositories
 	var creditRepo *repository.CreditRepository
+	var redeemRepo *repository.RedeemRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
+		redeemRepo = repository.NewRedeemRepository(db)
 	}
 
 	// Initialize services
 	var creditService *service.CreditService
+	var redeemService *service.RedeemService
 	if creditRepo != nil {
 		creditService = service.NewCreditService(creditRepo)
+		redeemService = service.NewRedeemService(redeemRepo, creditService)
 	}
+
+	// Initialize storage service
+	var storageService *service.StorageService
+	if db != nil {
+		storageService = service.NewStorageService(db.Pool())
+	}
+
+	// Initialize chat service
+	chatService := service.NewChatService(config.ImageGenBaseURL, os.Getenv("ANALYSIS_URL"))
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	creditsHandler := handler.NewCreditsHandler(creditService)
+	creditsHandler := handler.NewCreditsHandler(creditService, redeemService)
+	imageHandler := handler.NewImageHandler(creditService, storageService)
+	chatHandler := handler.NewChatHandler(chatService, creditService, os.Getenv("ANALYSIS_URL"))
 
 	// Setup router
 	r := chi.NewRouter()
@@ -99,6 +114,16 @@ func main() {
 
 		// Credits endpoints
 		creditsHandler.RegisterRoutes(r)
+
+		// Image generation endpoints
+		r.Route("/image", func(r chi.Router) {
+			imageHandler.RegisterRoutes(r)
+		})
+
+		// Chat endpoints
+		r.Route("/chat", func(r chi.Router) {
+			r.Mount("/", chatHandler.Routes())
+		})
 	})
 
 	// Create HTTP server

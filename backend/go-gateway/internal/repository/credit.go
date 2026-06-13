@@ -192,3 +192,59 @@ func (r *CreditRepository) RefundCredits(
 
 	return newBalance, nil
 }
+
+// AddCredits adds credits to a user's balance (for redemptions, admin bonuses, etc.)
+func (r *CreditRepository) AddCredits(
+	ctx context.Context,
+	userID string,
+	amount float64,
+	metadata map[string]any,
+) (newBalance float64, err error) {
+	// Start transaction
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Upsert balance - add credits to existing or create new
+	query := `
+		INSERT INTO user_credit_balances (user_id, balance, total_redeemed, total_spent)
+		VALUES ($1, $2, $2, 0)
+		ON CONFLICT (user_id)
+		DO UPDATE SET 
+			balance = user_credit_balances.balance + $2,
+			total_redeemed = user_credit_balances.total_redeemed + $2,
+			updated_at = NOW()
+		RETURNING balance
+	`
+
+	err = tx.QueryRow(ctx, query, userID, amount).Scan(&newBalance)
+	if err != nil {
+		return 0, fmt.Errorf("failed to add credits: %w", err)
+	}
+
+	// Create transaction record
+	txQuery := `
+		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, metadata)
+		VALUES ($1, $2, $3, 'redeem', $4)
+		RETURNING id
+	`
+
+	var metaJSON []byte
+	if metadata != nil {
+		metaJSON = []byte(`{}`)
+	}
+
+	_, err = tx.Exec(ctx, txQuery, userID, amount, newBalance, metaJSON)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create transaction: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return newBalance, nil
+}

@@ -76,6 +76,23 @@ func (s *CreditService) RefundCredits(
 	return s.repo.RefundCredits(ctx, userID, refundAmount, transactionID, metadata)
 }
 
+// AddCredits adds credits to a user's account (for redemptions, admin bonuses, etc.)
+func (s *CreditService) AddCredits(
+	ctx context.Context,
+	userID string,
+	credits int,
+	source string,
+	referenceID string,
+) error {
+	metadata := map[string]any{
+		"source":       source,
+		"reference_id": referenceID,
+	}
+
+	_, err := s.repo.AddCredits(ctx, userID, float64(credits), metadata)
+	return err
+}
+
 // GetCreditCost calculates the credit cost for image generation
 func (s *CreditService) GetCreditCost(imageCount int) (costPerImage, totalCost float64) {
 	costPerImage = config.ImageCreditCostPerImage

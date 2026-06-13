@@ -13,11 +13,15 @@ import (
 // CreditsHandler handles credit-related endpoints
 type CreditsHandler struct {
 	creditService *service.CreditService
+	redeemService *service.RedeemService
 }
 
 // NewCreditsHandler creates a new credits handler
-func NewCreditsHandler(creditService *service.CreditService) *CreditsHandler {
-	return &CreditsHandler{creditService: creditService}
+func NewCreditsHandler(creditService *service.CreditService, redeemService *service.RedeemService) *CreditsHandler {
+	return &CreditsHandler{
+		creditService: creditService,
+		redeemService: redeemService,
+	}
 }
 
 // CreditBalanceResponse represents the credit balance response
@@ -47,6 +51,13 @@ type RedeemRequest struct {
 	Code string `json:"code"`
 }
 
+// RedeemResponse represents the redemption response
+type RedeemResponse struct {
+	Success bool    `json:"success"`
+	Message string  `json:"message"`
+	Credits int     `json:"credits,omitempty"`
+}
+
 // Redeem handles POST /api/credits/redeem
 func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
@@ -66,8 +77,30 @@ func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement code redemption logic
-	response.Error(w, http.StatusNotImplemented, "兑换功能即将上线。")
+	if h.redeemService == nil {
+		response.Error(w, http.StatusServiceUnavailable, "兑换服务暂时不可用。")
+		return
+	}
+
+	result, err := h.redeemService.Redeem(r.Context(), user.ID, req.Code)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "兑换失败，请稍后重试。")
+		return
+	}
+
+	if !result.Success {
+		response.JSON(w, http.StatusOK, RedeemResponse{
+			Success: false,
+			Message: result.Message,
+		})
+		return
+	}
+
+	response.JSON(w, http.StatusOK, RedeemResponse{
+		Success: true,
+		Message: result.Message,
+		Credits: result.Credits,
+	})
 }
 
 // RegisterRoutes registers credit routes
