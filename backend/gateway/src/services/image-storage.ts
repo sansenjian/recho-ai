@@ -135,9 +135,7 @@ export function proxiedImageStorageUrl(storagePath?: string | null) {
 }
 
 function storageProvider(options: StoreImageOptions = {}): ImageStorageProvider {
-  if (options.provider === 'tencent-cos') return 'tencent-cos'
-  if (options.provider === 'supabase') return 'supabase'
-  return hasTencentCosConfig() ? 'tencent-cos' : 'supabase'
+  return options.provider === 'tencent-cos' ? 'tencent-cos' : 'supabase'
 }
 
 async function ensureImageBucket() {
