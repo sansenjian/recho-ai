@@ -54,7 +54,13 @@ async function bodyToBuffer(body: GetObjectCommandOutput['Body']) {
 }
 
 export function tencentCosObjectUrl(key: string) {
-  if (!TENCENT_COS_PUBLIC_BASE_URL) return undefined
+  let baseUrl = TENCENT_COS_PUBLIC_BASE_URL
+  
+  if (!baseUrl && TENCENT_COS_FULL_BUCKET && TENCENT_COS_REGION) {
+    baseUrl = `https://${TENCENT_COS_FULL_BUCKET}.cos.${TENCENT_COS_REGION}.myqcloud.com`
+  }
+  
+  if (!baseUrl) return undefined
 
   const encodedKey = key
     .split('/')
@@ -62,7 +68,7 @@ export function tencentCosObjectUrl(key: string) {
     .map(part => encodeURIComponent(part))
     .join('/')
 
-  return `${TENCENT_COS_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
+  return `${baseUrl.replace(/\/+$/, '')}/${encodedKey}`
 }
 
 export async function putTencentCosObject(options: {
