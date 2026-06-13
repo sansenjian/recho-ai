@@ -316,7 +316,12 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
 }
 
 function canGeneratePublicAfterCreditError(err: unknown) {
-  return err instanceof CreditOperationError && err.code === 'insufficient_credits'
+  if (!(err instanceof CreditOperationError)) return false
+  // auth_required means the user isn't logged in — don't silently bypass.
+  // All other credit errors (insufficient_credits, credit_balance_not_found,
+  // credit_operation_failed, etc.) should gracefully fall back to public
+  // generation so the user isn't blocked by a credit-system failure.
+  return err.code !== 'auth_required'
 }
 
 function safeProxyStoragePath(value: unknown) {
@@ -870,7 +875,8 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         creditBalance = creditReservation.balance
       } catch (creditErr) {
         if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
-        console.warn('[credits] insufficient balance; generation will be public:', safeErrorDetail(creditErr))
+        const code = creditErr instanceof CreditOperationError ? creditErr.code : 'unknown'
+        console.warn(`[credits] credit error (code=${code}); generation will be public:`, safeErrorDetail(creditErr))
       }
     }
     let usesCredits = Boolean(creditReservation)
