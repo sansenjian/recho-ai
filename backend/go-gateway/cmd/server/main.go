@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -27,6 +28,9 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+
+	// Initialize middleware (JWT secret, production safety checks)
+	middleware.Init()
 
 	// Initialize Supabase client
 	var db *supabase.Client
@@ -128,7 +132,7 @@ func main() {
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:         ":" + string(rune(config.Port)),
+		Addr:         fmt.Sprintf(":%d", config.Port),
 		Handler:      r,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 120 * time.Second,

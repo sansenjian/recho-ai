@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -134,12 +135,27 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	images, err := h.callImageAPI(ctx, req, count, aspectRatio, resolution, quality)
 	if err != nil {
-		// Refund credits on failure
+		// Full refund on complete failure
 		if creditReservation != nil {
-			h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
+			_, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
+			if refundErr != nil {
+				log.Printf("[image] failed to refund credits after generation failure: %v", refundErr)
+			}
 		}
 		response.Error(w, http.StatusInternalServerError, "图片生成失败，请稍后重试。")
 		return
+	}
+
+	// Partial refund: if fewer images returned than requested, refund the difference
+	if creditReservation != nil && len(images) < count && count > 0 {
+		missingCount := count - len(images)
+		refundAmount := roundToTwoDecimals(float64(missingCount) * costPerImage)
+		if refundAmount > 0 {
+			_, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
+			if refundErr != nil {
+				log.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
+			}
+		}
 	}
 
 	// Build response
