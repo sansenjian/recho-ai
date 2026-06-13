@@ -5,7 +5,7 @@ import { roundCreditAmount } from './image-credit-cost.js'
 const CREDIT_BALANCES_TABLE = 'user_credit_balances'
 
 export interface CreditBalance {
-  balance: number
+  balance: number | null
 }
 
 export interface CreditRedemptionResult extends CreditBalance {
@@ -21,12 +21,12 @@ export interface CreditRefund extends CreditBalance {
   amount: number
 }
 
-export class CreditServiceUnavailableError extends Error {
-  status = 503
-  publicMessage = '额度服务暂时不可用，请稍后重试。'
-
+export class CreditServiceUnavailableError extends CreditOperationError {
   constructor() {
-    super('credit service unavailable')
+    super('service_unavailable', {
+      status: 503,
+      publicMessage: '额度服务暂时不可用，请稍后重试。',
+    })
   }
 }
 
@@ -49,6 +49,7 @@ function statusForCreditError(code: string) {
   if (code === 'code_already_redeemed') return 409
   if (code === 'credit_balance_not_found') return 500
   if (code === 'credit_operation_failed') return 500
+  if (code === 'service_unavailable') return 503
   return 400
 }
 
@@ -61,6 +62,7 @@ function publicMessageForCreditError(code: string) {
   if (code === 'code_disabled') return '这个兑换码已停用。'
   if (code === 'code_exhausted') return '这个兑换码已被用完。'
   if (code === 'invalid_credit_amount') return '额度数量无效。'
+  if (code === 'service_unavailable') return '额度服务暂时不可用，本次将按公开作品生成。'
   return '额度操作失败，请稍后重试。'
 }
 
@@ -109,7 +111,8 @@ export async function getUserCreditBalance(userId: string): Promise<CreditBalanc
     .maybeSingle()
 
   if (error) throw error
-  return { balance: normalizedCreditAmount((data as { balance?: unknown } | null)?.balance) }
+  if (!data) return { balance: null }
+  return { balance: normalizedCreditAmount((data as { balance?: unknown }).balance) }
 }
 
 export async function redeemCreditCode(userId: string, rawCode: unknown): Promise<CreditRedemptionResult> {
