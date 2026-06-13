@@ -148,7 +148,7 @@ export async function reserveUserCredits(
   })
 
   if (error) {
-    const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {}
+    const record = typeof error === 'object' && error !== null ? (error as unknown as Record<string, unknown>) : {}
     console.error('[credits] reserve_user_credits RPC failed:', {
       message: record.message,
       details: record.details,
