@@ -5,6 +5,7 @@ import {
   S3Client,
   type GetObjectCommandOutput,
 } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { Readable } from 'node:stream'
 import {
   TENCENT_COS_FULL_BUCKET,
@@ -69,6 +70,23 @@ export function tencentCosObjectUrl(key: string) {
     .join('/')
 
   return `${baseUrl.replace(/\/+$/, '')}/${encodedKey}`
+}
+
+/**
+ * 生成腾讯云 COS 预签名 URL，默认有效期 1 小时
+ * 适用于需要临时访问权限的场景（如私有存储桶）
+ */
+export async function tencentCosSignedUrl(key: string, expiresInSeconds = 3600) {
+  const client = getTencentCosClient()
+  if (!client) return undefined
+
+  const command = new GetObjectCommand({
+    Bucket: TENCENT_COS_FULL_BUCKET,
+    Key: key,
+  })
+
+  const url = await getSignedUrl(client, command, { expiresIn: expiresInSeconds })
+  return url
 }
 
 export async function putTencentCosObject(options: {
