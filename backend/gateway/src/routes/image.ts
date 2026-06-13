@@ -317,8 +317,8 @@ function publicImageErrorMessage(err: any, fallback = '图片生成失败，请�
 
 const PUBLIC_FALLBACK_CREDIT_ERRORS = new Set([
   'insufficient_credits',
-  'credit_balance_not_found',
   'credit_operation_failed',
+  'service_unavailable',
 ])
 
 function canGeneratePublicAfterCreditError(err: unknown) {

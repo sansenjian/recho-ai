@@ -21,6 +21,8 @@ export function roundCreditAmount(value: unknown) {
 }
 
 export function normalizeCreditBalance(value: unknown) {
+  // Explicit null/undefined means "no balance record" — distinguish from a record with balance 0.
+  if (value === null || value === undefined) return null
   const rounded = roundCreditAmount(value)
   return rounded === null ? null : Math.max(0, rounded)
 }
