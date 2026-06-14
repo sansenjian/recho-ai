@@ -27,6 +27,7 @@ type MiniMapLayout = {
 
 defineProps<{
   activeWorkspace: WorkspaceMode
+  imageMode?: 'imagio' | 'canvas'
   miniMapLayout: MiniMapLayout
   historyImages: GeneratedImage[]
   hasGeneratedImages: boolean
@@ -34,6 +35,7 @@ defineProps<{
 
 const emit = defineEmits<{
   'select-workspace': [mode: WorkspaceMode]
+  'select-image-mode': [mode: 'imagio' | 'canvas']
   'create-node': [type: CanvasNodeType]
   'use-history-image': [image: GeneratedImage]
   'clear-history': []
@@ -62,8 +64,20 @@ const emit = defineEmits<{
     </div>
 
     <div class="mode-switch">
-      <span>Imagio</span>
-      <button type="button">画布</button>
+      <button
+        type="button"
+        :class="{ active: imageMode === 'imagio' }"
+        @click="emit('select-image-mode', 'imagio')"
+      >
+        Imagio
+      </button>
+      <button
+        type="button"
+        :class="{ active: imageMode === 'canvas' }"
+        @click="emit('select-image-mode', 'canvas')"
+      >
+        画布
+      </button>
     </div>
 
     <div class="mini-map" aria-hidden="true">
@@ -186,36 +200,29 @@ const emit = defineEmits<{
 .mode-switch {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin: 16px 4px 42px;
-  padding: 5px;
+  padding: 4px;
   border-radius: 12px;
-  background: #f1f3f5;
-  color: #73777f;
+  background: #eef1f4;
   font-size: 15px;
   font-weight: 800;
 }
 
-.mode-switch span,
 .mode-switch button {
   flex: 1;
-  min-height: 34px;
+  min-height: 38px;
   border: 0;
   border-radius: 9px;
-  text-align: center;
+  background: transparent;
+  color: #73777f;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.mode-switch span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mode-switch button {
+.mode-switch button.active {
   background: #fff;
   color: #0f172a;
-  font-weight: 800;
   box-shadow: var(--shadow-sm);
 }
 

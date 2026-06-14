@@ -28,11 +28,15 @@ describe('useAppConfig', () => {
       imageEventsEnabled: false,
       canvasContextEnabled: false,
       guestGenerationEnabled: true,
+      availableImageModels: [],
+      defaultImageModel: '',
     })
     await expect(ensureAppConfig()).resolves.toEqual({
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
+      availableImageModels: [],
+      defaultImageModel: '',
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })

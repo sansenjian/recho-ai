@@ -38,6 +38,7 @@ export interface ImageGenReference {
 
 export interface ImageGenRequest {
   prompt: string
+  model?: string
   displayPrompt?: string
   userPrompt?: string
   systemPrompt?: string

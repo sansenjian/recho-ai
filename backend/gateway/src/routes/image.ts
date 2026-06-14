@@ -60,6 +60,7 @@ const imageGenerationCounts = new Set<ImageGenerationCount>([1, 2, 4, 8])
 
 interface ImageGenRequest {
   prompt: string
+  model?: string
   displayPrompt?: string
   userPrompt?: string
   systemPrompt?: string
@@ -535,6 +536,7 @@ router.get('/image/storage/:encodedPath', async (req: Request, res: Response) =>
 router.post('/image/generate', async (req: Request, res: Response) => {
   const {
     prompt,
+    model: requestedModel,
     displayPrompt,
     userPrompt,
     systemPrompt,
@@ -563,7 +565,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
   const appSettings = await getAppSettings()
-  const imageModel = appSettings.imageResponsesImageModel
+  const requested = requestedModel?.trim()
+  const allowedModelIds = appSettings.availableImageModels.map(m => m.id)
+  const imageModel = requested && allowedModelIds.includes(requested)
+    ? requested
+    : appSettings.imageResponsesImageModel
   const sizeError = imageModel === 'gpt-image-2' ? validateGptImage2Size(size) : null
   const creditCostPerImage = appSettings.imageCreditCostPerImage
   const requestedCreditCost = imageCreditCost(count, creditCostPerImage)
