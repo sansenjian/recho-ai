@@ -314,6 +314,7 @@ function toCreditUser(
   userId: string,
   user: ReturnType<typeof toUserSummary> | undefined,
   balance: Record<string, unknown> | undefined,
+  generationStats?: { total: number; succeeded: number; failed: number },
 ): AdminCreditUser {
   return {
     userId,
@@ -324,6 +325,14 @@ function toCreditUser(
     createdAt: typeof balance?.created_at === 'string' ? balance.created_at : user?.createdAt || null,
     updatedAt: typeof balance?.updated_at === 'string' ? balance.updated_at : null,
     lastSignInAt: user?.lastSignInAt || null,
+    generationStats: generationStats
+      ? {
+          totalGenerations: generationStats.total,
+          succeededGenerations: generationStats.succeeded,
+          failedGenerations: generationStats.failed,
+          successRate: generationStats.total > 0 ? Math.round((generationStats.succeeded / generationStats.total) * 100) : 0,
+        }
+      : undefined,
   }
 }
 
@@ -749,8 +758,39 @@ export async function listAdminCreditUsers(options: {
     }
   }
 
+  // Query generation stats for users
+  const generationStatsMap = new Map<string, { total: number; succeeded: number; failed: number }>()
+  if (ids.length) {
+    const now = new Date()
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+
+    // Get total attempts
+    const { data: attemptData, error: attemptError } = await client
+      .from('image_generation_attempts')
+      .select('user_id,status')
+      .in('user_id', ids)
+      .gte('created_at', thirtyDaysAgo)
+
+    if (!attemptError && attemptData) {
+      for (const row of attemptData || []) {
+        const userId = String(row.user_id || '')
+        if (!userId) continue
+        const stats = generationStatsMap.get(userId) || { total: 0, succeeded: 0, failed: 0 }
+        stats.total++
+        if (row.status === 'succeeded') stats.succeeded++
+        else if (row.status === 'failed') stats.failed++
+        generationStatsMap.set(userId, stats)
+      }
+    }
+  }
+
   return ids
-    .map(userId => toCreditUser(userId, authUsers.get(userId), balanceRows.get(userId)))
+    .map(userId => toCreditUser(
+      userId,
+      authUsers.get(userId),
+      balanceRows.get(userId),
+      generationStatsMap.get(userId),
+    ))
     .sort((left, right) => {
       const leftTime = left.updatedAt || left.createdAt || ''
       const rightTime = right.updatedAt || right.createdAt || ''
@@ -820,10 +860,14 @@ export async function listAdminCreditTransactions(userId: string, limitValue?: u
 export async function listAdminCreditLedger(options: {
   limit?: unknown
   reason?: unknown
+  hours?: unknown
+  userId?: unknown
 } = {}) {
   const client = requireAdminClient()
   const limit = sanitizedLimit(options.limit)
   const reason = sanitizedReason(options.reason)
+  const hours = typeof options.hours === 'string' ? parseInt(options.hours, 10) : null
+  const userId = typeof options.userId === 'string' ? options.userId : null
 
   let query = client
     .from('credit_transactions')
@@ -832,6 +876,11 @@ export async function listAdminCreditLedger(options: {
     .limit(limit)
 
   if (reason) query = query.eq('reason', reason)
+  if (hours && hours > 0) {
+    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+    query = query.gte('created_at', cutoff)
+  }
+  if (userId) query = query.eq('user_id', userId)
 
   const { data, error } = await query
   if (error) throw error

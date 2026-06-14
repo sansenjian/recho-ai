@@ -5,7 +5,7 @@ import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
 import { useGalleryDetailPreview } from '../composables/useGalleryDetailPreview'
 import { useImageCanvasDocument } from '../composables/useImageCanvasDocument'
-// import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
+import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
 import { useImageCanvasGraph } from '../composables/useImageCanvasGraph'
 import { useImageCanvasImages } from '../composables/useImageCanvasImages'
 import { useImageCanvasMentions } from '../composables/useImageCanvasMentions'
@@ -106,6 +106,7 @@ const {
   ensureGalleryLoaded,
   loadMoreGalleryHistory,
   resolveImageDetail,
+  generate,
 } = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -190,6 +191,8 @@ const {
   connectionPath,
   hasPromptLink,
   getGenerationPromptValue,
+  buildPromptParts,
+  buildCanvasContext,
 } = useImageCanvasGraph({
   canvasId,
   canvasVersion: CANVAS_EXPORT_VERSION,
@@ -403,23 +406,32 @@ const {
   },
 })
 
-// async function generateFromNode(node: CanvasNode) {
-//   await ensureAppConfig()
-//   await generateFromNodeWithConfig(node)
-// }
-async function generateFromNode(_node: any) {
-  // Generation functionality temporarily disabled for imagio mode
-  console.log('Generation from node not available in imagio mode')
-}
+const {
+  generationCountOptions,
+  generationCountForNode,
+  setGenerationCount,
+  generateFromNode: generateFromNodeWithConfig,
+  createContinuation,
+} = useImageCanvasGeneration({
+  nodes,
+  connections,
+  isGenerating,
+  error,
+  canSelectGenerationCount: () => Boolean(props.canSelectGenerationCount),
+  canvasContextEnabled: () => _appConfig.value.canvasContextEnabled,
+  createNode,
+  createConnectionId: () => createId('conn'),
+  getRenderedNodeSize,
+  buildReferences,
+  buildPromptParts,
+  buildCanvasContext,
+  generate,
+})
 
-// Generation composable temporarily disabled for imagio mode
-const generationCountOptions: Array<{ value: 1 | 2 | 4 | 8; label: string }> = [
-  { value: 1, label: '1' },
-  { value: 2, label: '2' },
-  { value: 4, label: '4' },
-]
-function setGenerationCount() {}
-function createContinuation() {}
+async function generateFromNode(node: CanvasNode) {
+  await ensureAppConfig()
+  await generateFromNodeWithConfig(node)
+}
 
 function updateNodeContent(node: CanvasNode, value: string) {
   node.content = value
@@ -1100,7 +1112,7 @@ onUnmounted(() => {
             :generation-prompt-value="getGenerationPromptValue(node)"
             :referenced-image-nodes="referencedImageNodes(node)"
             :can-select-generation-count="Boolean(props.canSelectGenerationCount)"
-            :generation-count="1"
+            :generation-count="generationCountForNode(node)"
             :generation-count-options="generationCountOptions"
             :resolution-options="resolutionOptions"
             :aspect-ratio-options="aspectRatioOptions"
