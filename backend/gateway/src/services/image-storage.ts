@@ -308,7 +308,7 @@ async function uploadCosBuffer(buffer: Buffer, mime: string, key: string) {
 
   return {
     ...stored,
-    publicUrl: stored.publicUrl || proxiedImageStorageUrl(stored.storagePath) || '',
+    publicUrl: stored.publicUrl ?? proxiedImageStorageUrl(stored.storagePath) ?? '',
   }
 }
 
@@ -319,8 +319,15 @@ async function uploadStorageBuffer(
   options: StoreImageOptions = {},
 ) {
   if (storageProvider(options) === 'tencent-cos') {
-    if (!hasTencentCosConfig()) return null
-    return await uploadCosBuffer(buffer, mime, storagePath)
+    if (!hasTencentCosConfig()) {
+      console.warn('[image-storage] Tencent COS config missing; falling back to Supabase for path:', storagePath)
+      return await uploadSupabaseBuffer(buffer, mime, storagePath)
+    } else {
+      const cosStored = await uploadCosBuffer(buffer, mime, storagePath)
+      if (cosStored) return cosStored
+      console.warn('[image-storage] Tencent COS upload returned null; falling back to Supabase for path:', storagePath)
+      return await uploadSupabaseBuffer(buffer, mime, storagePath)
+    }
   }
   return await uploadSupabaseBuffer(buffer, mime, storagePath)
 }
