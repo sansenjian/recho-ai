@@ -80,6 +80,10 @@ export interface AdminImageItem {
   resolution: string | null
   quality: string | null
   generatedAt: string | null
+  storagePath: string | null
+  storageLocation: 'cos' | 'supabase' | 'data' | null
+  provider: string | null
+  imageModel: string | null
 }
 
 export interface AdminImageAttemptItem {

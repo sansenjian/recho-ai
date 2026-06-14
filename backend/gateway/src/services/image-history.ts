@@ -494,19 +494,23 @@ async function storedImage(image: ImageHistoryItem, context: StoreImageContext) 
     if (stored) references.push(stored)
   }
 
+  const fallbackDataUrl = image.sourceBuffer
+    ? `data:${image.sourceMime || 'image/png'};base64,${image.sourceBuffer.toString('base64')}`
+    : image.dataUrl
+
   return withoutSourcePayload({
     ...image,
-    dataUrl: stored?.publicUrl || image.dataUrl,
-    storagePath: stored?.storagePath || image.storagePath,
-    previewUrl: stored?.previewUrl || image.previewUrl,
-    previewPath: stored?.previewPath || image.previewPath,
-    thumbnailUrl: stored?.thumbnailUrl || image.thumbnailUrl,
-    thumbnailPath: stored?.thumbnailPath || image.thumbnailPath,
-    imageWidth: stored?.width || image.imageWidth,
-    imageHeight: stored?.height || image.imageHeight,
-    originalBytes: stored?.originalBytes || image.originalBytes,
-    previewBytes: stored?.previewBytes || image.previewBytes,
-    thumbnailBytes: stored?.thumbnailBytes || image.thumbnailBytes,
+    dataUrl: stored?.publicUrl ?? image.dataUrl ?? fallbackDataUrl,
+    storagePath: stored?.storagePath ?? image.storagePath,
+    previewUrl: stored?.previewUrl ?? image.previewUrl,
+    previewPath: stored?.previewPath ?? image.previewPath,
+    thumbnailUrl: stored?.thumbnailUrl ?? image.thumbnailUrl,
+    thumbnailPath: stored?.thumbnailPath ?? image.thumbnailPath,
+    imageWidth: stored?.width ?? image.imageWidth,
+    imageHeight: stored?.height ?? image.imageHeight,
+    originalBytes: stored?.originalBytes ?? image.originalBytes,
+    previewBytes: stored?.previewBytes ?? image.previewBytes,
+    thumbnailBytes: stored?.thumbnailBytes ?? image.thumbnailBytes,
     references,
   })
 }
