@@ -764,28 +764,27 @@ export async function listAdminCreditUsers(options: {
     }
   }
 
-  // Query generation stats for users
+  // Query generation stats for users using database-side aggregation
   const generationStatsMap = new Map<string, { total: number; succeeded: number; failed: number }>()
   if (ids.length) {
     const now = new Date()
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-    // Get total attempts
-    const { data: attemptData, error: attemptError } = await client
-      .from('image_generation_attempts')
-      .select('user_id,status')
-      .in('user_id', ids)
-      .gte('created_at', thirtyDaysAgo)
+    const { data: statsRows, error: statsError } = await client
+      .rpc('admin_user_generation_stats', {
+        p_user_ids: ids,
+        p_since: thirtyDaysAgo,
+      })
 
-    if (!attemptError && attemptData) {
-      for (const row of attemptData || []) {
+    if (!statsError && statsRows) {
+      for (const row of statsRows as unknown as Array<Record<string, unknown>>) {
         const userId = String(row.user_id || '')
         if (!userId) continue
-        const stats = generationStatsMap.get(userId) || { total: 0, succeeded: 0, failed: 0 }
-        stats.total++
-        if (row.status === 'succeeded') stats.succeeded++
-        else if (row.status === 'failed') stats.failed++
-        generationStatsMap.set(userId, stats)
+        generationStatsMap.set(userId, {
+          total: Number(row.total || 0),
+          succeeded: Number(row.succeeded || 0),
+          failed: Number(row.failed || 0),
+        })
       }
     }
   }
@@ -873,7 +872,9 @@ export async function listAdminCreditLedger(options: {
   const limit = sanitizedLimit(options.limit)
   const reason = sanitizedReason(options.reason)
   const hours = typeof options.hours === 'string' ? parseInt(options.hours, 10) : null
-  const userId = typeof options.userId === 'string' ? options.userId : null
+  const userId = typeof options.userId === 'string' && isUuid(options.userId.trim())
+    ? options.userId.trim()
+    : null
 
   let query = client
     .from('credit_transactions')

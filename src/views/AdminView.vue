@@ -15,6 +15,8 @@ import type {
   AdminImageAttemptItem,
   AdminImageAttemptOverview,
   AdminImageItem,
+  AdminImageStorageOverview,
+  AdminImageStorageStat,
   AdminLedgerEntry,
   AdminOverview,
   AdminSystemStatus,
@@ -95,6 +97,8 @@ const attemptErrorTypeFilter = ref('')
 const attemptHttpStatusFilter = ref('')
 const attemptHoursFilter = ref('24')
 const attemptsLoading = ref(false)
+const storageOverview = ref<AdminImageStorageOverview | null>(null)
+const storageOverviewLoading = ref(false)
 const announcementsLoading = ref(false)
 const announcementActionId = ref<string | null>(null)
 const codeRedemptionsLoading = ref(false)
@@ -489,6 +493,33 @@ async function refreshImages() {
   }
 }
 
+async function refreshStorageOverview() {
+  storageOverviewLoading.value = true
+  errorMessage.value = ''
+  try {
+    const data = await apiJson<{ overview: AdminImageStorageOverview }>('/api/admin/images/storage-overview')
+    storageOverview.value = data.overview
+  } catch (error) {
+    setError(error)
+  } finally {
+    storageOverviewLoading.value = false
+  }
+}
+
+function formatByteSize(bytes: number) {
+  if (!bytes || bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(3)} GB`
+}
+
+function storageLocationLabel(location: AdminImageStorageStat['location']) {
+  if (location === 'cos') return '腾讯云 COS'
+  if (location === 'supabase') return 'Supabase'
+  if (location === 'data') return '内联数据'
+  return '未知'
+}
+
 async function refreshAttempts() {
   attemptsLoading.value = true
   errorMessage.value = ''
@@ -845,6 +876,7 @@ onMounted(async () => {
       refreshSettings(),
       refreshLedger(),
       refreshImages(),
+      refreshStorageOverview(),
       refreshAttempts(),
       refreshAnnouncements(),
       refreshUsers(),
@@ -1352,6 +1384,47 @@ onMounted(async () => {
         @bulk-archive="bulkArchiveImages"
         @bulk-delete="bulkDeleteImages"
       />
+
+      <section class="admin-panel storage-overview-panel" aria-label="存储流量统计">
+        <div class="panel-header">
+          <div>
+            <span>存储流量统计</span>
+            <strong>{{ storageOverview ? `${storageOverview.totalImages} 张图片 / ${formatByteSize(storageOverview.totalBytes)}` : '等待刷新' }}</strong>
+          </div>
+          <div>
+            <button type="button" :disabled="storageOverviewLoading" @click="refreshStorageOverview">刷新</button>
+          </div>
+        </div>
+        <div v-if="storageOverviewLoading" class="storage-detail">
+          <div class="storage-summary">
+            <div>
+              <span>正在统计...</span>
+            </div>
+          </div>
+        </div>
+        <table v-else-if="storageOverview" class="storage-detail">
+          <thead>
+            <tr>
+              <th>存储位置</th>
+              <th>图片数量</th>
+              <th>总大小</th>
+              <th>平均大小</th>
+              <th>总积分消耗</th>
+              <th>大小占比</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="stat in storageOverview.byLocation" :key="stat.location">
+              <td>{{ storageLocationLabel(stat.location) }}</td>
+              <td>{{ stat.imageCount }}</td>
+              <td>{{ formatByteSize(stat.totalBytes) }}</td>
+              <td>{{ formatByteSize(stat.averageBytes) }}</td>
+              <td>{{ formatCreditAmount(stat.totalCreditCost) }}</td>
+              <td>{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
       <section class="admin-grid">
         <div class="admin-panel users-panel">

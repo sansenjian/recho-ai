@@ -439,8 +439,14 @@ const {
 })
 
 async function generateFromNode(node: CanvasNode) {
-  await ensureAppConfig()
-  await generateFromNodeWithConfig(node)
+  if (isGenerating.value || node.loading) return
+  node.loading = true
+  try {
+    await ensureAppConfig()
+    await generateFromNodeWithConfig(node)
+  } finally {
+    node.loading = false
+  }
 }
 
 function updateNodeContent(node: CanvasNode, value: string) {

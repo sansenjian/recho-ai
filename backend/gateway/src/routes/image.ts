@@ -406,7 +406,26 @@ async function generateWithImagesApi(
     form.append(key, String(value))
   }
 
-  const uploads = await Promise.all(references.map((reference, index) => referenceToBlob(reference, index)))
+  // Limit in-flight reference downloads to cap memory pressure on the free
+  // Render plan. Each reference can be several MBs when PNG-compressed, so
+  // running all of them at once can trigger OOM or connection resets from
+  // the proxy. We also enforce an individual per-reference timeout so a
+  // single slow download doesn't block the whole request.
+  const MAX_CONCURRENT_REFERENCES = 4
+  const REFERENCE_TIMEOUT_MS = 60_000
+  const uploads: Array<{ blob: Blob; fileName: string }> = []
+  for (let i = 0; i < references.length; i += MAX_CONCURRENT_REFERENCES) {
+    const batch = references.slice(i, i + MAX_CONCURRENT_REFERENCES)
+    const batchBlobs = await Promise.all(
+      batch.map((reference, j) => {
+        const refSignal = AbortSignal.timeout(REFERENCE_TIMEOUT_MS)
+        return referenceToBlob(reference, i + j).then((result) => ({ result, signal: refSignal }))
+      }),
+    )
+    for (const upload of batchBlobs) {
+      uploads.push(upload.result)
+    }
+  }
   for (const upload of uploads) {
     form.append('image[]', upload.blob, upload.fileName)
   }
@@ -855,7 +874,14 @@ router.post('/image/generate', async (req: Request, res: Response) => {
       requestIp: generationIp,
       requestUserAgent: generationUserAgent,
     })
-    res.status(status).json({ error: errorMessage })
+    // If the client has already closed the connection (the original
+    // ERR_CONNECTION_CLOSED symptom), don't try to write a JSON body onto a
+    // dead socket -- it would throw a second "write after end" error.
+    if (!res.headersSent && !req.socket?.destroyed) {
+      res.status(status).json({ error: errorMessage })
+    } else {
+      console.warn('[image] client disconnected before response; skipping body write')
+    }
   }
 })
 
