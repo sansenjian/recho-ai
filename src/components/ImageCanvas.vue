@@ -65,7 +65,7 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
-import type { GeneratedImage } from '../types/image'
+import type { GeneratedImage, ImageAspectRatio, ImageGenerationCount, ImageQuality, ImageResolution } from '../types/image'
 import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
 import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
 import ImageCanvasNode from './ImageCanvasNode.vue'
@@ -89,7 +89,23 @@ const emit = defineEmits<{
   imageModeChange: [mode: 'imagio' | 'canvas']
 }>()
 
-const { config: _appConfig, ensureAppConfig } = useAppConfig()
+const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
+
+// Model options for Imagio prompt generation panel
+const imagioModelOptions = computed(() =>
+  availableImageModels.value.map((m) => ({ value: m.id, label: m.name })),
+)
+
+// Initialize model when config loads; re-validate if config changes
+watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
+  const modelIds = models.map((m) => m.id)
+  if (imageModel.value && !modelIds.includes(imageModel.value)) {
+    imageModel.value = defaultModel || ''
+  }
+  if (!imageModel.value && defaultModel) {
+    imageModel.value = defaultModel
+  }
+})
 
 const {
   isGenerating,
@@ -133,6 +149,36 @@ const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const currentImageMode = ref<'imagio' | 'canvas'>('imagio')
+
+// --- Imagio prompt generation parameters (right side settings panel) ---
+const imageModel = ref('')
+const generationCount = ref<ImageGenerationCount>(1)
+const resolution = ref<ImageResolution>('auto')
+const aspectRatio = ref<ImageAspectRatio>('auto')
+const quality = ref<ImageQuality>('auto')
+
+const imagioResolutionOptions: Array<{ value: ImageResolution; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: '1k', label: '1K' },
+  { value: '2k', label: '2K' },
+  { value: '4k', label: '4K' },
+]
+
+const imagioAspectRatioOptions: Array<{ value: ImageAspectRatio; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: '1:1', label: '1:1' },
+  { value: '3:2', label: '3:2' },
+  { value: '2:3', label: '2:3' },
+  { value: '16:9', label: '16:9' },
+  { value: '9:16', label: '9:16' },
+]
+
+const imagioQualityOptions: Array<{ value: ImageQuality; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+]
 
 // Sync imageMode from props
 watch(
@@ -318,6 +364,9 @@ const qualityOptions: Array<{ value: NodeQuality; label: string }> = [
 ]
 const contextMenuNode = computed(() => (
   contextMenu.value.targetNodeId ? getNodeById(contextMenu.value.targetNodeId) ?? null : null
+))
+const selectedNode = computed<CanvasNode | null>(() => (
+  selectedNodeId.value ? getNodeById(selectedNodeId.value) ?? null : null
 ))
 
 function historyImageForViewer(viewer: ImageDownloadViewer) {
@@ -1040,35 +1089,78 @@ onUnmounted(() => {
 
 <template>
   <div class="image-canvas">
-    <template v-if="currentImageMode === 'imagio'">
-      <ImagioSidebar
-        :image-mode="currentImageMode"
-        :history-images="historyImages"
-        :has-generated-images="Boolean(generatedImages.length)"
-        @select-image-mode="handleImageModeChange"
-        @use-history-image="useHistoryImage"
-        @clear-history="clearHistory"
-      />
-    </template>
-    <template v-else>
-      <ImageCanvasSidebar
-        :active-workspace="activeWorkspace"
-        :image-mode="currentImageMode"
-        :mini-map-layout="miniMapLayout"
-        :history-images="historyImages"
-        :has-generated-images="Boolean(generatedImages.length)"
-        @select-workspace="selectWorkspace"
-        @select-image-mode="handleImageModeChange"
-        @create-node="createNodeNearCenter"
-        @use-history-image="useHistoryImage"
-        @clear-history="clearHistory"
-      />
-    </template>
+    <div class="left-main-column">
+      <!-- Top workspace switcher (always visible in the left column) -->
+      <div class="top-tabs-bar">
+        <button
+          type="button"
+          class="workspace-tab"
+          :class="{ active: activeWorkspace === 'canvas' }"
+          @click="selectWorkspace('canvas')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="14" height="14">
+            <rect x="3" y="3" width="18" height="18" rx="3" />
+            <path d="M3 9h18" />
+            <path d="M9 21V9" />
+          </svg>
+          <span>工作台</span>
+        </button>
+        <button
+          type="button"
+          class="workspace-tab"
+          :class="{ active: activeWorkspace === 'gallery' }"
+          @click="selectWorkspace('gallery')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="14" height="14">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <circle cx="8.5" cy="10.5" r="1.5" />
+            <path d="m21 15-5-5L5 21" />
+          </svg>
+          <span>作品广场</span>
+        </button>
+      </div>
 
-    <section v-if="activeWorkspace === 'canvas'" class="canvas-stage">
+      <!-- Content row: sidebar + main content -->
+      <div class="content-row">
+        <!-- Sidebar: only in canvas workspace mode -->
+        <template v-if="activeWorkspace === 'canvas'">
+          <ImagioSidebar
+            v-if="currentImageMode === 'imagio'"
+            :image-mode="currentImageMode"
+            :history-images="historyImages"
+            :has-generated-images="Boolean(generatedImages.length)"
+            @select-image-mode="handleImageModeChange"
+            @select-workspace-tab="selectWorkspace"
+            @use-history-image="useHistoryImage"
+            @clear-history="clearHistory"
+          />
+          <ImageCanvasSidebar
+            v-else
+            :active-workspace="activeWorkspace"
+            :image-mode="currentImageMode"
+            :mini-map-layout="miniMapLayout"
+            :history-images="historyImages"
+            :has-generated-images="Boolean(generatedImages.length)"
+            @select-workspace="selectWorkspace"
+            @select-image-mode="handleImageModeChange"
+            @create-node="createNodeNearCenter"
+            @use-history-image="useHistoryImage"
+            @clear-history="clearHistory"
+          />
+        </template>
+
+        <section v-if="activeWorkspace === 'canvas'" class="canvas-stage">
       <template v-if="currentImageMode === 'imagio'">
         <ImagioView
           :can-select-generation-count="props.canSelectGenerationCount"
+          v-model:image-model="imageModel"
+          v-model:resolution="resolution"
+          v-model:aspect-ratio="aspectRatio"
+          v-model:quality="quality"
+          :model-options="imagioModelOptions"
+          :resolution-options="imagioResolutionOptions"
+          :aspect-ratio-options="imagioAspectRatioOptions"
+          :quality-options="imagioQualityOptions"
         />
       </template>
       <template v-else>
@@ -1200,6 +1292,77 @@ onUnmounted(() => {
       @download="handleGalleryDownload"
       @send-to-chat="handleGallerySendToChat"
     />
+    </div>
+    </div>
+
+    <!-- Right side: settings panel (only in imagio mode) -->
+    <aside
+      v-if="activeWorkspace === 'canvas' && currentImageMode === 'imagio'"
+      class="settings-sidebar"
+    >
+      <h3>参数设置</h3>
+
+      <div class="setting-group">
+        <label>模型</label>
+        <div v-if="imagioModelOptions.length" class="option-buttons model-buttons">
+          <button
+            v-for="opt in imagioModelOptions"
+            :key="opt.value"
+            type="button"
+            :class="{ active: imageModel === opt.value }"
+            @click="imageModel = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <span v-else class="loading-hint">加载中...</span>
+      </div>
+
+      <div class="setting-group">
+        <label>分辨率</label>
+        <div class="option-buttons">
+          <button
+            v-for="opt in imagioResolutionOptions"
+            :key="opt.value"
+            type="button"
+            :class="{ active: resolution === opt.value }"
+            @click="resolution = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>尺寸 / 比例</label>
+        <div class="option-buttons">
+          <button
+            v-for="opt in imagioAspectRatioOptions"
+            :key="opt.value"
+            type="button"
+            :class="{ active: aspectRatio === opt.value }"
+            @click="aspectRatio = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>质量</label>
+        <div class="option-buttons">
+          <button
+            v-for="opt in imagioQualityOptions"
+            :key="opt.value"
+            type="button"
+            :class="{ active: quality === opt.value }"
+            @click="quality = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
+    </aside>
 
     <ImageGalleryDetailModal
       v-if="galleryDetail"
@@ -1236,10 +1399,86 @@ onUnmounted(() => {
 <style scoped>
 .image-canvas {
   display: flex;
+  flex-direction: row;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   background: #f6f8fb;
+}
+
+.left-main-column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.top-tabs-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 14px 0;
+  padding: 4px;
+  width: max-content;
+  border-radius: 10px;
+  background: #eef1f4;
+  pointer-events: auto;
+}
+
+.content-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.content-row > aside {
+  padding-top: 60px;
+}
+
+.content-row > .gallery-stage {
+  padding-top: 60px;
+}
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.workspace-tab:hover {
+  color: var(--text-primary);
+}
+
+.workspace-tab.active {
+  background: #0b0f14;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+}
+
+.content-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 
 .canvas-stage {
@@ -1247,6 +1486,82 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  padding-top: 60px;
+}
+
+.settings-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  padding: 24px 20px;
+  border-left: 1px solid var(--border);
+  background: #fff;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings-sidebar h3 {
+  margin: 0 0 24px;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.setting-group {
+  margin-bottom: 24px;
+}
+
+.setting-group label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.option-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.option-buttons button {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.option-buttons button.active {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+.model-buttons {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.empty-state {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #fafbfc;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.loading-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .canvas-viewport {
@@ -1310,13 +1625,21 @@ onUnmounted(() => {
   transform: translateX(-50%);
 }
 
+@media (max-width: 960px) {
+  .settings-sidebar {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .content-row > aside {
+    display: none;
+  }
+}
+
 @media (max-width: 760px) {
   .image-canvas {
     flex-direction: column;
-  }
-
-  .canvas-stage {
-    min-height: 0;
   }
 }
 </style>
