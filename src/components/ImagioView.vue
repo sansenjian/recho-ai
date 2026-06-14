@@ -1,11 +1,25 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
-import { useAppConfig } from '../composables/useAppConfig'
-import type { ImageAspectRatio, ImageGenerationCount, ImageQuality, ImageResolution } from '../types/image'
+import type { ImageGenerationCount, ImageQuality, ImageResolution, ImageAspectRatio } from '../types/image'
 
 const props = defineProps<{
   canSelectGenerationCount?: boolean
+  imageModel?: string
+  resolution?: ImageResolution
+  aspectRatio?: ImageAspectRatio
+  quality?: ImageQuality
+  modelOptions?: Array<{ value: string; label: string }>
+  resolutionOptions?: Array<{ value: ImageResolution; label: string }>
+  aspectRatioOptions?: Array<{ value: ImageAspectRatio; label: string }>
+  qualityOptions?: Array<{ value: ImageQuality; label: string }>
+}>()
+
+const emit = defineEmits<{
+  'update:image-model': [value: string]
+  'update:resolution': [value: ImageResolution]
+  'update:aspect-ratio': [value: ImageAspectRatio]
+  'update:quality': [value: ImageQuality]
 }>()
 
 const {
@@ -14,67 +28,18 @@ const {
   generate,
 } = useImageGen()
 
-const { availableImageModels, defaultImageModel, ensureAppConfig } = useAppConfig()
-
 const promptText = ref('')
 const generationCount = ref<ImageGenerationCount>(1)
-const imageModel = ref('')
-const resolution = ref<ImageResolution>('auto')
-const aspectRatio = ref<ImageAspectRatio>('auto')
-const quality = ref<ImageQuality>('auto')
-
-const modelOptions = computed(() =>
-  availableImageModels.value.map((m) => ({ value: m.id, label: m.name }))
-)
-
-// Initialize model when config loads; re-validate if config changes
-watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
-  const modelIds = models.map((m) => m.id)
-  // If current model is no longer available, fall back to default
-  if (imageModel.value && !modelIds.includes(imageModel.value)) {
-    imageModel.value = defaultModel || ''
-  }
-  // If no model selected yet, use default
-  if (!imageModel.value && defaultModel) {
-    imageModel.value = defaultModel
-  }
-}, { immediate: true })
-
-// Ensure config is loaded on mount
-ensureAppConfig()
-
-const resolutionOptions: Array<{ value: ImageResolution; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: '1k', label: '1K' },
-  { value: '2k', label: '2K' },
-  { value: '4k', label: '4K' },
-]
-
-const aspectRatioOptions: Array<{ value: ImageAspectRatio; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: '1:1', label: '1:1' },
-  { value: '3:2', label: '3:2' },
-  { value: '2:3', label: '2:3' },
-  { value: '16:9', label: '16:9' },
-  { value: '9:16', label: '9:16' },
-]
-
-const qualityOptions: Array<{ value: ImageQuality; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
 
 async function handleGenerate() {
   if (!promptText.value.trim()) return
-  
+
   await generate(promptText.value, {
-    count: generationCount.value,
-    resolution: resolution.value,
-    aspectRatio: aspectRatio.value,
-    quality: quality.value,
-    model: imageModel.value,
+    count: props.canSelectGenerationCount ? generationCount.value : 1,
+    resolution: props.resolution,
+    aspectRatio: props.aspectRatio,
+    quality: props.quality,
+    model: props.imageModel,
   })
 }
 </script>
@@ -90,36 +55,99 @@ async function handleGenerate() {
           rows="4"
           :disabled="isGenerating"
         />
-        
+
+        <!-- Inline parameter panel: shown only on narrow viewports (<=960px) -->
+        <div class="inline-params">
+          <div v-if="modelOptions && modelOptions.length" class="param-group">
+            <label>模型</label>
+            <div class="param-buttons">
+              <button
+                v-for="opt in modelOptions"
+                :key="opt.value"
+                type="button"
+                :class="{ active: imageModel === opt.value }"
+                @click="emit('update:image-model', opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
+            <label>分辨率</label>
+            <div class="param-buttons">
+              <button
+                v-for="opt in resolutionOptions"
+                :key="opt.value"
+                type="button"
+                :class="{ active: resolution === opt.value }"
+                @click="emit('update:resolution', opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group">
+            <label>尺寸 / 比例</label>
+            <div class="param-buttons">
+              <button
+                v-for="opt in aspectRatioOptions"
+                :key="opt.value"
+                type="button"
+                :class="{ active: aspectRatio === opt.value }"
+                @click="emit('update:aspect-ratio', opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="qualityOptions && qualityOptions.length" class="param-group">
+            <label>质量</label>
+            <div class="param-buttons">
+              <button
+                v-for="opt in qualityOptions"
+                :key="opt.value"
+                type="button"
+                :class="{ active: quality === opt.value }"
+                @click="emit('update:quality', opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="prompt-actions">
           <div class="generation-count">
             <span>生成数量</span>
-            <button
-              v-if="canSelectGenerationCount"
-              type="button"
-              :class="{ active: generationCount === 1 }"
-              @click="generationCount = 1"
-            >
-              ×1
-            </button>
-            <button
-              v-if="canSelectGenerationCount"
-              type="button"
-              :class="{ active: generationCount === 2 }"
-              @click="generationCount = 2"
-            >
-              ×2
-            </button>
-            <button
-              v-if="canSelectGenerationCount"
-              type="button"
-              :class="{ active: generationCount === 4 }"
-              @click="generationCount = 4"
-            >
-              ×4
-            </button>
+            <template v-if="canSelectGenerationCount">
+              <button
+                type="button"
+                :class="{ active: generationCount === 1 }"
+                @click="generationCount = 1"
+              >
+                ×1
+              </button>
+              <button
+                type="button"
+                :class="{ active: generationCount === 2 }"
+                @click="generationCount = 2"
+              >
+                ×2
+              </button>
+              <button
+                type="button"
+                :class="{ active: generationCount === 4 }"
+                @click="generationCount = 4"
+              >
+                ×4
+              </button>
+            </template>
+            <span v-else class="count-fixed">×1</span>
           </div>
-          
+
           <button
             class="generate-btn"
             :disabled="!promptText.trim() || isGenerating"
@@ -134,81 +162,16 @@ async function handleGenerate() {
         </div>
       </div>
     </div>
-
-    <aside class="settings-panel">
-      <h3>参数设置</h3>
-
-      <div class="setting-group">
-        <label>模型</label>
-        <div v-if="modelOptions.length" class="option-buttons model-buttons">
-          <button
-            v-for="opt in modelOptions"
-            :key="opt.value"
-            type="button"
-            :class="{ active: imageModel === opt.value }"
-            @click="imageModel = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-        <span v-else class="loading-hint">加载中...</span>
-      </div>
-
-      <div class="setting-group">
-        <label>分辨率</label>
-        <div class="option-buttons">
-          <button
-            v-for="opt in resolutionOptions"
-            :key="opt.value"
-            type="button"
-            :class="{ active: resolution === opt.value }"
-            @click="resolution = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-      </div>
-
-      <div class="setting-group">
-        <label>尺寸 / 比例</label>
-        <div class="option-buttons">
-          <button
-            v-for="opt in aspectRatioOptions"
-            :key="opt.value"
-            type="button"
-            :class="{ active: aspectRatio === opt.value }"
-            @click="aspectRatio = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-      </div>
-
-      <div class="setting-group">
-        <label>质量</label>
-        <div class="option-buttons">
-          <button
-            v-for="opt in qualityOptions"
-            :key="opt.value"
-            type="button"
-            :class="{ active: quality === opt.value }"
-            @click="quality = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-      </div>
-
-      <div v-if="error" class="error-message">{{ error }}</div>
-    </aside>
   </div>
 </template>
 
 <style scoped>
 .imagio-view {
   display: flex;
+  flex-direction: column;
+  flex: 1;
   height: 100%;
-  width: 100%;
+  min-height: 0;
   background: #f6f8fb;
 }
 
@@ -219,7 +182,7 @@ async function handleGenerate() {
   min-width: 0;
   overflow-y: auto;
   padding: 24px;
-  height: 100%;
+  min-height: 0;
 }
 
 .prompt-area {
@@ -228,20 +191,26 @@ async function handleGenerate() {
 
 .prompt-input {
   width: 100%;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: #fff;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--text-primary);
   resize: vertical;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: inherit;
+}
+
+.prompt-input::placeholder {
+  color: var(--text-muted);
 }
 
 .prompt-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .prompt-input:disabled {
@@ -249,12 +218,76 @@ async function handleGenerate() {
   cursor: not-allowed;
 }
 
+/* Inline parameter panel (shown on narrow viewports) */
+.inline-params {
+  display: none;
+  margin-top: 18px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.param-group {
+  margin-bottom: 16px;
+}
+
+.param-group:last-child {
+  margin-bottom: 0;
+}
+
+.param-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.param-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.param-buttons button {
+  min-height: 30px;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.param-buttons button:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.param-buttons button.active {
+  background: #0b0f14;
+  color: #fff;
+  border-color: #0b0f14;
+}
+
+/* Narrow viewport: show inline params */
+@media (max-width: 960px) {
+  .inline-params {
+    display: block;
+  }
+}
+
 .prompt-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .generation-count {
@@ -267,140 +300,67 @@ async function handleGenerate() {
 }
 
 .generation-count button {
-  min-height: 32px;
+  min-height: 30px;
   padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.generation-count button:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
 }
 
 .generation-count button.active {
-  background: #111827;
+  background: #4b5563;
   color: #fff;
-  border-color: #111827;
+  border-color: #4b5563;
+}
+
+.generation-count .count-fixed {
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: #eef1f4;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .generate-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 0 24px;
+  min-height: 44px;
+  padding: 0 26px;
   border: 0;
-  border-radius: 8px;
-  background: #111827;
+  border-radius: 12px;
+  background: #4b5563;
   color: #fff;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: background 0.15s, transform 0.1s;
+  font-family: inherit;
 }
 
 .generate-btn:hover:not(:disabled) {
-  opacity: 0.9;
+  background: #374151;
+}
+
+.generate-btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .generate-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
-}
-
-.settings-panel {
-  width: 320px;
-  flex-shrink: 0;
-  padding: 24px 20px;
-  border-left: 1px solid var(--border);
-  background: #fff;
-  overflow-y: auto;
-  height: 100%;
-}
-
-.settings-panel h3 {
-  margin: 0 0 24px;
-  color: var(--text-primary);
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.setting-group {
-  margin-bottom: 24px;
-}
-
-.setting-group label {
-  display: block;
-  margin-bottom: 10px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.option-buttons {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-}
-
-.option-buttons button {
-  min-height: 36px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.option-buttons button.active {
-  background: #111827;
-  color: #fff;
-  border-color: #111827;
-}
-
-.model-buttons {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.loading-hint {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.error-message {
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px solid rgba(220, 38, 38, 0.18);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--danger);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-@media (max-width: 1024px) {
-  .settings-panel {
-    width: 260px;
-  }
-}
-
-@media (max-width: 768px) {
-  .imagio-view {
-    flex-direction: column;
-  }
-  
-  .settings-panel {
-    width: 100%;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    max-height: 300px;
-  }
 }
 </style>

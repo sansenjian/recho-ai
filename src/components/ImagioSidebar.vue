@@ -17,10 +17,12 @@ const props = defineProps<{
   imageMode?: 'imagio' | 'canvas'
   historyImages: GeneratedImage[]
   hasGeneratedImages: boolean
+  isLoadingHistory?: boolean
 }>()
 
 const emit = defineEmits<{
   'select-image-mode': [mode: 'imagio' | 'canvas']
+  'select-workspace-tab': [tab: 'canvas' | 'gallery']
   'use-history-image': [image: GeneratedImage]
   'clear-history': []
 }>()
@@ -80,18 +82,23 @@ function selectWorkspace(id: string) {
   persistWorkspaces()
 }
 
-// Refresh credits on mount
 refreshCredits()
 </script>
 
 <template>
   <aside class="imagio-sidebar">
-    <!-- Header -->
-    <div class="sidebar-header">
-      <span class="logo-label">Imagio</span>
+    <!-- Mode switch: Imagio / 画布 -->
+    <div class="mode-switch">
       <button
         type="button"
-        class="mode-toggle-btn"
+        :class="{ active: imageMode !== 'canvas' }"
+        @click="emit('select-image-mode', 'imagio')"
+      >
+        Imagio
+      </button>
+      <button
+        type="button"
+        :class="{ active: imageMode === 'canvas' }"
         @click="emit('select-image-mode', 'canvas')"
       >
         画布
@@ -99,11 +106,11 @@ refreshCredits()
     </div>
 
     <!-- Workspace section -->
-    <div class="sidebar-section">
+    <div class="sidebar-section workspace-section">
       <div class="section-header">
         <span>工作区</span>
-        <button type="button" class="icon-btn" title="新建工作区" @click="addWorkspace">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+        <button type="button" class="plus-btn" title="新建工作区" @click="addWorkspace">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
             <path d="M12 5v14" />
             <path d="M5 12h14" />
           </svg>
@@ -118,6 +125,14 @@ refreshCredits()
           :class="{ active: ws.id === activeWorkspaceId }"
           @click="selectWorkspace(ws.id)"
         >
+          <svg class="drag-handle" viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true">
+            <circle cx="9" cy="6" r="1.4" />
+            <circle cx="15" cy="6" r="1.4" />
+            <circle cx="9" cy="12" r="1.4" />
+            <circle cx="15" cy="12" r="1.4" />
+            <circle cx="9" cy="18" r="1.4" />
+            <circle cx="15" cy="18" r="1.4" />
+          </svg>
           <span class="ws-name">{{ ws.name }}</span>
         </button>
       </div>
@@ -125,10 +140,11 @@ refreshCredits()
 
     <!-- History section -->
     <div class="sidebar-section history-section">
-      <div class="section-header">
+      <div class="section-header history-header">
         <span>历史记录</span>
         <span class="history-meta">
-          <span class="history-count">{{ historyImages.length }} 个任务</span>
+          <span v-if="isLoadingHistory" class="history-loading">加载中...</span>
+          <span v-else class="history-count">{{ historyImages.length }} 个任务</span>
           <button
             v-if="hasGeneratedImages"
             type="button"
@@ -166,24 +182,6 @@ refreshCredits()
       </div>
       <div v-else class="history-empty">暂无记录</div>
     </div>
-
-    <!-- Bottom status bar -->
-    <div class="sidebar-footer">
-      <div class="footer-info">
-        <span class="credit-label">剩余额度: {{ creditDisplay }}</span>
-        <span v-if="userName" class="user-name">{{ userName }}</span>
-      </div>
-      <div class="footer-actions">
-        <button type="button" class="icon-btn" title="刷新额度" @click="refreshCredits">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 16h5v5" />
-          </svg>
-        </button>
-      </div>
-    </div>
   </aside>
 </template>
 
@@ -195,43 +193,46 @@ refreshCredits()
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: linear-gradient(180deg, #f9fafb 0%, #ffffff 100%);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.sidebar-header {
+/* --- Mode switch: Imagio / 画布 --- */
+.mode-switch {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 14px 10px;
-}
-
-.logo-label {
-  color: var(--text-primary);
-  font-size: 16px;
+  gap: 8px;
+  margin: 18px 14px 18px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #eef1f4;
+  font-size: 14px;
   font-weight: 800;
 }
 
-.mode-toggle-btn {
-  min-height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--text-secondary);
+.mode-switch button {
+  flex: 1;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.mode-toggle-btn:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
+.mode-switch button.active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
+/* --- Section common --- */
 .sidebar-section {
-  padding: 6px 14px 12px;
+  padding: 0 14px 14px;
 }
 
 .section-header {
@@ -244,12 +245,12 @@ refreshCredits()
   font-weight: 800;
 }
 
-.icon-btn {
+.plus-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -258,9 +259,16 @@ refreshCredits()
   transition: all 0.15s;
 }
 
-.icon-btn:hover {
+.plus-btn:hover {
   background: var(--hover-bg);
   color: var(--text-primary);
+}
+
+/* --- Workspace section --- */
+.workspace-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+  margin-bottom: 4px;
 }
 
 .workspace-list {
@@ -272,8 +280,9 @@ refreshCredits()
 .workspace-item {
   display: flex;
   align-items: center;
+  gap: 8px;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   padding: 0 10px;
   border: 0;
   border-radius: 8px;
@@ -283,11 +292,12 @@ refreshCredits()
   font-weight: 700;
   cursor: pointer;
   text-align: left;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .workspace-item:hover {
   background: var(--hover-bg);
+  color: var(--text-primary);
 }
 
 .workspace-item.active {
@@ -295,24 +305,38 @@ refreshCredits()
   color: var(--text-primary);
 }
 
+.drag-handle {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
 .ws-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* --- History section --- */
 .history-section {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  border-top: 1px solid var(--border);
   padding-top: 12px;
 }
 
-.history-meta {
+.history-header .history-meta {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.history-loading {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.7;
 }
 
 .history-count {
@@ -328,6 +352,7 @@ refreshCredits()
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
+  transition: color 0.15s;
 }
 
 .clear-btn:hover {
@@ -337,12 +362,12 @@ refreshCredits()
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .history-task {
   display: grid;
-  grid-template-columns: 42px 1fr;
+  grid-template-columns: 44px 1fr;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -360,15 +385,16 @@ refreshCredits()
 }
 
 .task-thumb {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 6px;
   object-fit: cover;
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 .task-thumb-placeholder {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 6px;
   background: #eef1f4;
 }
@@ -413,47 +439,7 @@ refreshCredits()
   text-align: center;
 }
 
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: auto 10px 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: #fff;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  flex-shrink: 0;
-}
-
-.footer-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.credit-label {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.user-name {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footer-actions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
+/* --- Responsive --- */
 @media (max-width: 980px) {
   .imagio-sidebar {
     width: 220px;

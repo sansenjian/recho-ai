@@ -123,7 +123,8 @@ const showSidebar = ref(false)
 const showAgentPanel = ref(false)
 const showImagePanel = ref(true)
 const imageWorkspace = ref<ImageWorkspace>('canvas')
-const imageMode = ref<'imagio' | 'canvas'>('imagio')
+const isMobile = () => (typeof window !== 'undefined' ? window.innerWidth < 768 : false)
+const imageMode = ref<'imagio' | 'canvas'>(isMobile() ? 'imagio' : 'canvas')
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
 
@@ -157,9 +158,11 @@ function syncWorkspaceFromRoute() {
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
   imageWorkspace.value = workspace === 'works' ? 'gallery' : 'canvas'
-  // Default to imagio mode for /image route
   if (workspace === 'image') {
-    imageMode.value = 'imagio'
+    imageMode.value = isMobile() ? 'imagio' : 'canvas'
+  }
+  if (workspace !== 'chat') {
+    showSystemEditor.value = false
   }
 }
 
@@ -184,6 +187,7 @@ const showSystemEditor = ref(false)
 const systemPromptDraft = ref('')
 
 function toggleSystemEditor() {
+  if (showImagePanel.value) return
   if (!showSystemEditor.value) {
     systemPromptDraft.value = getActiveConversation()?.systemPrompt ?? ''
   }
@@ -500,7 +504,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         <ImageCanvas
           :workspace-mode="imageWorkspace"
           :image-mode="imageMode"
-          :can-select-generation-count="Boolean(user)"
+          :can-select-generation-count="true"
           @send-to-chat="handleImageToChat"
           @workspace-change="handleImageWorkspaceChange"
           @image-mode-change="handleImageModeChange"
