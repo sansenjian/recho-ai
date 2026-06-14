@@ -54,6 +54,22 @@ export interface AdminImageItem {
   imageModel: string | null
 }
 
+export interface AdminImageStorageStat {
+  location: 'cos' | 'supabase' | 'data' | 'unknown'
+  imageCount: number
+  totalBytes: number
+  averageBytes: number
+  totalCreditCost: number
+}
+
+export interface AdminImageStorageOverview {
+  generatedAt: string
+  totalImages: number
+  totalBytes: number
+  totalCreditCost: number
+  byLocation: AdminImageStorageStat[]
+}
+
 export class AdminImageError extends Error {
   status: number
   publicMessage: string
@@ -365,5 +381,60 @@ export async function bulkDeleteAdminImages(idsValue: unknown) {
   return {
     deletedIds: deletedRows.map(row => String(row.id || '')).filter(Boolean),
     deletedCount: deletedRows.length,
+  }
+}
+
+function parseSizeToBytes(size: string | null): number {
+  if (!size) return 0
+  const match = /^(\d+(?:\.\d+)?)\s*(KB|MB|GB|bytes|KBytes|Bytes)?$/i.exec(size.trim())
+  if (!match) return 0
+  const value = Number(match[1])
+  const unit = (match[2] || '').toLowerCase()
+  switch (unit) {
+    case 'kb':
+    case 'kbytes':
+      return Math.round(value * 1024)
+    case 'mb':
+      return Math.round(value * 1024 * 1024)
+    case 'gb':
+      return Math.round(value * 1024 * 1024 * 1024)
+    case 'bytes':
+    case '':
+      return Math.round(value)
+    default:
+      return Math.round(value)
+  }
+}
+
+export async function getAdminImageStorageOverview(): Promise<AdminImageStorageOverview> {
+  const client = requireAdminImageClient()
+  const { data: statsRows, error } = await client
+    .rpc('admin_image_storage_overview')
+
+  if (error) throw error
+
+  const rows = (statsRows || []) as unknown as Array<Record<string, unknown>>
+  const byLocation: AdminImageStorageStat[] = rows.map(row => ({
+    location: (String(row.location || 'unknown')) as AdminImageStorageStat['location'],
+    imageCount: Number(row.image_count || 0),
+    totalBytes: Number(row.total_bytes || 0),
+    averageBytes: Number(row.image_count || 0) > 0
+      ? Math.round(Number(row.total_bytes || 0) / Number(row.image_count || 1))
+      : 0,
+    totalCreditCost: Math.round(Number(row.total_credit_cost || 0) * 100) / 100,
+  }))
+
+  byLocation.sort((a, b) => b.totalBytes - a.totalBytes)
+
+  const totalImages = byLocation.reduce((sum, stat) => sum + stat.imageCount, 0)
+  const totalBytes = byLocation.reduce((sum, stat) => sum + stat.totalBytes, 0)
+  const totalCreditCost = byLocation.reduce((sum, stat) => sum + stat.totalCreditCost, 0)
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalImages,
+    totalBytes,
+    totalCreditCost: Math.round(totalCreditCost * 100) / 100,
+    byLocation,
   }
 }

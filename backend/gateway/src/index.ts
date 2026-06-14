@@ -21,10 +21,49 @@ import adminAnnouncementsRouter from './routes/admin-announcements.js'
 
 const app = express()
 
+// Allow long-running requests (image generation can take several minutes).
+// req/res 层面设置为 10 分钟，再配合 server 级 socket timeout / keep-alive 设置。
+const LONG_REQUEST_MS = 600_000
+app.use((req, res, next) => {
+  req.setTimeout(LONG_REQUEST_MS)
+  res.setTimeout(LONG_REQUEST_MS)
+  res.on('timeout', () => {
+    console.warn('[server] response timeout exceeded for', req.method, req.url)
+    if (!res.headersSent) {
+      res.status(504).json({ error: '请求超时，请稍后重试。' })
+    }
+  })
+  next()
+})
+
 app.use(cors({
   origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN
 }))
 app.use(express.json({ limit: '50mb' }))
+
+// Explicit JSON parser for the image generation endpoint so large bodies with
+// many data-URI reference images are not rejected by a generic body size limit,
+// and we surface parsing errors as clean JSON responses rather than closed
+// connections from the default error handler.
+app.use('/api/image/generate', express.json({ limit: '50mb' }))
+app.use('/api/image/generate', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err && err.type === 'entity.parse.failed') {
+    console.warn('[image] request body parse failed', err?.message)
+    res.status(400).json({ error: '请求体解析失败，请检查输入是否为合法 JSON。' })
+    return
+  }
+  if (err && (err.status === 413 || err.type === 'entity.too.large')) {
+    console.warn('[image] request body too large', err?.message)
+    res.status(413).json({ error: '请求体过大，请减少参考图数量或压缩图片后重试。' })
+    return
+  }
+  if (err) {
+    console.warn('[image] request body error', err?.status, err?.message)
+    res.status(err.status || 400).json({ error: '请求体读取失败，请稍后重试。' })
+    return
+  }
+  res.status(500).json({ error: '未知错误' })
+})
 
 // Initialize clients
 initClients()
@@ -49,9 +88,22 @@ app.get('/', (_req, res) => {
   res.json({ status: 'ok', message: 'recho-ai gateway' })
 })
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`Gateway running on http://localhost:${PORT}`)
   await skillLoader.load()
   await mcpManager.initialize()
   skillLoader.validateTools(mcpManager.getToolNames())
 })
+
+// Ensure long-running image generation requests are not killed by the default
+// Node.js server socket timeout (which historically defaults to 0 in modern
+// versions, but we set headersTimeout/keepAliveTimeout/timeout explicitly to
+// avoid surprises on platforms like Render that sit idle waiting for the
+// upstream image provider).
+server.keepAliveTimeout = 620_000
+server.headersTimeout = 630_000
+server.timeout = 0
+try {
+  // @ts-expect-error -- node might not expose requestsTimeout; set only if present.
+  server.requestsTimeout = 0
+} catch { /* ignore */ }
