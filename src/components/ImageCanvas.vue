@@ -106,6 +106,7 @@ const {
   ensureGalleryLoaded,
   loadMoreGalleryHistory,
   resolveImageDetail,
+  generate,
 } = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -417,7 +418,7 @@ const {
   isGenerating,
   error,
   canSelectGenerationCount: () => Boolean(props.canSelectGenerationCount),
-  canvasContextEnabled: () => appConfig.value.canvasContextEnabled,
+  canvasContextEnabled: () => _appConfig.value.canvasContextEnabled,
   createNode,
   createConnectionId: () => createId('conn'),
   getRenderedNodeSize,
