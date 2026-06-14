@@ -16,6 +16,7 @@ import type {
   AdminImageAttemptOverview,
   AdminImageItem,
   AdminImageStorageOverview,
+  AdminImageStorageStat,
   AdminLedgerEntry,
   AdminOverview,
   AdminSystemStatus,
@@ -512,7 +513,7 @@ function formatByteSize(bytes: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(3)} GB`
 }
 
-function storageLocationLabel(location: string) {
+function storageLocationLabel(location: AdminImageStorageStat['location']) {
   if (location === 'cos') return '腾讯云 COS'
   if (location === 'supabase') return 'Supabase'
   if (location === 'data') return '内联数据'
