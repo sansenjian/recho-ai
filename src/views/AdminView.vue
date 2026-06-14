@@ -79,6 +79,8 @@ const codeRedemptions = ref<AdminCodeRedemption[]>([])
 
 const userQuery = ref('')
 const ledgerReason = ref('')
+const ledgerHours = ref('168')
+const ledgerUserId = ref('')
 const imageVisibilityFilter = ref('')
 const imageFundingFilter = ref('')
 const imageUserFilter = ref('')
@@ -455,6 +457,8 @@ async function refreshLedger() {
     const query = new URLSearchParams()
     query.set('limit', '50')
     if (ledgerReason.value) query.set('reason', ledgerReason.value)
+    if (ledgerHours.value) query.set('hours', ledgerHours.value)
+    if (ledgerUserId.value.trim()) query.set('userId', ledgerUserId.value.trim())
     const data = await apiJson<{ transactions: AdminLedgerEntry[] }>(`/api/admin/credits/transactions?${query.toString()}`)
     ledgerTransactions.value = data.transactions
   } catch (error) {
@@ -1024,6 +1028,28 @@ onMounted(async () => {
             <strong>{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
           </div>
         </div>
+        <div class="storage-stats-grid">
+          <div>
+            <span>腾讯云 COS</span>
+            <strong>{{ overview?.imageCost?.cosImageCount ?? 0 }} 张</strong>
+            <span class="storage-sub">平均 {{ (overview?.imageCost?.averageStoredMb ?? 0).toFixed(2) }} MB/张</span>
+          </div>
+          <div>
+            <span>Supabase 存储</span>
+            <strong>{{ overview?.imageCost?.supabaseImageCount ?? 0 }} 张</strong>
+            <span class="storage-sub">样本 {{ overview?.imageCost?.sampleDays ?? 0 }} 天</span>
+          </div>
+          <div>
+            <span>预估月成本</span>
+            <strong>¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
+            <span class="storage-sub">置信度 {{ imageCostConfidenceLabel }}</span>
+          </div>
+          <div>
+            <span>总图片数</span>
+            <strong>{{ (overview?.imageCost?.cosImageCount ?? 0) + (overview?.imageCost?.supabaseImageCount ?? 0) }} 张</strong>
+            <span class="storage-sub">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}/张</span>
+          </div>
+        </div>
         <div class="system-warnings">
           <span v-for="warning in systemStatus?.warnings || []" :key="warning">{{ warning }}</span>
           <span v-if="systemStatus && !systemStatus.warnings.length">无告警</span>
@@ -1270,6 +1296,13 @@ onMounted(async () => {
               <option value="refund">退款</option>
               <option value="admin_adjustment">后台调整</option>
             </select>
+            <select v-model="ledgerHours" :disabled="ledgerLoading" @change="refreshLedger">
+              <option value="24">24小时内</option>
+              <option value="168">7天内</option>
+              <option value="720">30天内</option>
+              <option value="">全部</option>
+            </select>
+            <input v-model="ledgerUserId" type="search" placeholder="用户 ID" :disabled="ledgerLoading" @keyup.enter="refreshLedger">
             <button type="button" :disabled="ledgerLoading" @click="refreshLedger">刷新</button>
           </div>
         </div>
@@ -2133,6 +2166,40 @@ textarea {
   background: var(--surface-soft);
 }
 
+.storage-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.storage-stats-grid > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.storage-stats-grid span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.storage-stats-grid strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.storage-stats-grid .storage-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .system-grid span,
 .system-warnings span {
   display: block;
@@ -2354,6 +2421,10 @@ tbody tr:last-child td {
   }
 
   .system-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .storage-stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
