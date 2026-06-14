@@ -7,6 +7,8 @@ vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: [],
   ADMIN_USER_IDS: [],
   CANVAS_CONTEXT_ENABLED: false,
+  FREE_GENERATION_ENABLED: true,
+  GUEST_GENERATION_ENABLED: true,
   IMAGE_ANALYTICS_ENABLED: false,
   IMAGE_CREDIT_COST_PER_IMAGE: 1,
   IMAGE_EVENTS_ENABLED: false,

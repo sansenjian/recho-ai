@@ -32,6 +32,8 @@ const AgentWorkspace = defineAsyncComponent(() => import('../components/AgentWor
 const ChatInput = defineAsyncComponent(() => import('../components/ChatInput.vue'))
 const ChatMessage = defineAsyncComponent(() => import('../components/ChatMessage.vue'))
 const ImageCanvas = defineAsyncComponent(() => import('../components/ImageCanvas.vue'))
+// ImagioView is now used internally by ImageCanvas component
+// const ImagioView = defineAsyncComponent(() => import('../components/ImagioView.vue'))
 
 // --- Composables ---
 const { isLoading, runState, runStatusLabel, activeToolCalls, completedToolCalls, submitMessage, stopGeneration } = useChatLoop()
@@ -121,6 +123,7 @@ const showSidebar = ref(false)
 const showAgentPanel = ref(false)
 const showImagePanel = ref(true)
 const imageWorkspace = ref<ImageWorkspace>('canvas')
+const imageMode = ref<'imagio' | 'canvas'>('imagio')
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
 
@@ -142,6 +145,7 @@ function syncWorkspaceFromRoute() {
     showImagePanel.value = true
     showAgentPanel.value = false
     imageWorkspace.value = 'canvas'
+    imageMode.value = 'imagio'
     if (isAuthReady.value) {
       pendingAuthPath.value = '/chat'
       openAuthDialog('signIn')
@@ -153,6 +157,10 @@ function syncWorkspaceFromRoute() {
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
   imageWorkspace.value = workspace === 'works' ? 'gallery' : 'canvas'
+  // Default to imagio mode for /image route
+  if (workspace === 'image') {
+    imageMode.value = 'imagio'
+  }
 }
 
 async function toggleAgentPanel() {
@@ -421,6 +429,10 @@ function handleImageToChat(dataUrl: string) {
 function handleImageWorkspaceChange(mode: ImageWorkspace) {
   void router.push(mode === 'gallery' ? '/works' : '/image')
 }
+
+function handleImageModeChange(mode: 'imagio' | 'canvas') {
+  imageMode.value = mode
+}
 </script>
 
 <template>
@@ -487,9 +499,11 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
       <template v-if="showImagePanel">
         <ImageCanvas
           :workspace-mode="imageWorkspace"
+          :image-mode="imageMode"
           :can-select-generation-count="Boolean(user)"
           @send-to-chat="handleImageToChat"
           @workspace-change="handleImageWorkspaceChange"
+          @image-mode-change="handleImageModeChange"
         />
       </template>
       <template v-else>

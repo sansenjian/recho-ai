@@ -2,6 +2,8 @@ import {
   ADMIN_USER_EMAILS,
   ADMIN_USER_IDS,
   CANVAS_CONTEXT_ENABLED,
+  FREE_GENERATION_ENABLED,
+  GUEST_GENERATION_ENABLED,
   IMAGE_ANALYTICS_ENABLED,
   IMAGE_CREDIT_COST_PER_IMAGE,
   IMAGE_EVENTS_ENABLED,
@@ -26,8 +28,16 @@ type AppSettingKey =
   | 'image_responses_image_model'
   | 'image_events_enabled'
   | 'canvas_context_enabled'
+  | 'free_generation_enabled'
+  | 'guest_generation_enabled'
+  | 'available_image_models'
 
 export type AdminRole = 'senior' | 'operator'
+
+export interface ImageModelEntry {
+  id: string
+  name: string
+}
 
 export interface AppSettings {
   imageCreditCostPerImage: number
@@ -36,6 +46,9 @@ export interface AppSettings {
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
+  freeGenerationEnabled: boolean
+  guestGenerationEnabled: boolean
+  availableImageModels: ImageModelEntry[]
 }
 
 export interface AdminUserRule {
@@ -78,6 +91,14 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   imageResponsesImageModel: IMAGE_RESPONSES_IMAGE_MODEL,
   imageEventsEnabled: IMAGE_EVENTS_ENABLED,
   canvasContextEnabled: CANVAS_CONTEXT_ENABLED,
+  freeGenerationEnabled: FREE_GENERATION_ENABLED,
+  guestGenerationEnabled: GUEST_GENERATION_ENABLED,
+  availableImageModels: [
+    { id: 'gpt-image-1', name: 'GPT Image 1' },
+    { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini' },
+    { id: 'dall-e-3', name: 'DALL·E 3' },
+    { id: 'dall-e-2', name: 'DALL·E 2' },
+  ],
 }
 
 const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
@@ -87,6 +108,9 @@ const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
   image_responses_image_model: 'imageResponsesImageModel',
   image_events_enabled: 'imageEventsEnabled',
   canvas_context_enabled: 'canvasContextEnabled',
+  free_generation_enabled: 'freeGenerationEnabled',
+  guest_generation_enabled: 'guestGenerationEnabled',
+  available_image_models: 'availableImageModels',
 }
 
 const propertyToSettingKey = Object.fromEntries(
@@ -150,6 +174,25 @@ function normalizeModelName(value: unknown, fallback: string) {
   return /^[a-zA-Z0-9._:/-]+$/.test(model) ? model : fallback
 }
 
+function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): ImageModelEntry[] {
+  let parsed: unknown = value
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value) } catch { return fallback }
+  }
+  if (!Array.isArray(parsed)) return fallback
+  const result: ImageModelEntry[] = []
+  for (const item of parsed) {
+    if (item == null || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    if (typeof record.id !== 'string' || !record.id.trim()) continue
+    result.push({
+      id: record.id.trim(),
+      name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : record.id.trim(),
+    })
+  }
+  return result.length > 0 ? result : fallback
+}
+
 function normalizeEmail(value: unknown) {
   if (typeof value !== 'string') return null
   const email = value.trim().toLowerCase()
@@ -193,10 +236,12 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
 
     if (property === 'imageCreditCostPerImage') {
       settings[property] = normalizeImageCreditCostPerImage(value)
-    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled') {
+    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled' || property === 'freeGenerationEnabled' || property === 'guestGenerationEnabled') {
       settings[property] = normalizeBoolean(value, settings[property])
     } else if (property === 'imageResponsesModel' || property === 'imageResponsesImageModel') {
       settings[property] = normalizeModelName(value, settings[property])
+    } else if (property === 'availableImageModels') {
+      settings[property] = normalizeImageModelList(value, settings[property])
     }
   }
 
@@ -227,6 +272,19 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
   }
   if ('canvasContextEnabled' in input) {
     next.canvasContextEnabled = normalizeBoolean(input.canvasContextEnabled, DEFAULT_APP_SETTINGS.canvasContextEnabled)
+  }
+  if ('freeGenerationEnabled' in input) {
+    next.freeGenerationEnabled = normalizeBoolean(input.freeGenerationEnabled, DEFAULT_APP_SETTINGS.freeGenerationEnabled)
+  }
+  if ('guestGenerationEnabled' in input) {
+    next.guestGenerationEnabled = normalizeBoolean(input.guestGenerationEnabled, DEFAULT_APP_SETTINGS.guestGenerationEnabled)
+  }
+  if ('availableImageModels' in input) {
+    const models = normalizeImageModelList(input.availableImageModels, [])
+    if (!models.length) throw new AppSettingsError('invalid_available_image_models', {
+      publicMessage: '至少需要一个可用的图像模型。',
+    })
+    next.availableImageModels = models
   }
 
   return next
@@ -404,7 +462,7 @@ export async function updateAppSettings(input: Record<string, unknown>, adminUse
   const updatedAt = new Date().toISOString()
   const rows = entries.map(([property, value]) => ({
     key: propertyToSettingKey[property],
-    value,
+    value: Array.isArray(value) ? JSON.stringify(value) : value,
     updated_at: updatedAt,
     updated_by: adminUser.id,
   }))
@@ -504,5 +562,8 @@ export async function publicAppConfig() {
   return {
     imageEventsEnabled: settings.imageEventsEnabled,
     canvasContextEnabled: settings.canvasContextEnabled,
+    guestGenerationEnabled: settings.guestGenerationEnabled,
+    availableImageModels: settings.availableImageModels,
+    defaultImageModel: settings.imageResponsesImageModel,
   }
 }

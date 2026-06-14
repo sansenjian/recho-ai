@@ -71,3 +71,6 @@ export const IMAGE_RESPONSES_IMAGE_MODEL = process.env.IMAGE_RESPONSES_IMAGE_MOD
 export const IMAGE_ANALYTICS_ENABLED = process.env.IMAGE_ANALYTICS_ENABLED === 'true'
 export const IMAGE_EVENTS_ENABLED = process.env.IMAGE_EVENTS_ENABLED === 'true'
 export const CANVAS_CONTEXT_ENABLED = process.env.CANVAS_CONTEXT_ENABLED === 'true'
+
+export const FREE_GENERATION_ENABLED = process.env.FREE_GENERATION_ENABLED !== 'false'
+export const GUEST_GENERATION_ENABLED = process.env.GUEST_GENERATION_ENABLED !== 'false'

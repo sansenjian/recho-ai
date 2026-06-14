@@ -8,6 +8,8 @@ import {
   imagePreviewSrc,
   imageVisibilityLabel,
   shortId,
+  storageLocationLabel,
+  storageLocationClass,
 } from '../../utils/admin-format'
 
 const props = defineProps<{
@@ -133,6 +135,8 @@ function toggleImage(id: string, event: Event) {
             <th>用户</th>
             <th>状态</th>
             <th>来源</th>
+            <th>存储</th>
+            <th>模型</th>
             <th>参数</th>
             <th>提示词</th>
             <th>操作</th>
@@ -157,6 +161,11 @@ function toggleImage(id: string, event: Event) {
             <td>{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
             <td>{{ imageVisibilityLabel(image.visibility) }}</td>
             <td>{{ imageFundingLabel(image) }}</td>
+            <td :class="['storage-cell', storageLocationClass(image.storageLocation)]">
+              <span class="storage-label">{{ storageLocationLabel(image.storageLocation) }}</span>
+              <span v-if="image.storagePath" class="storage-path">{{ shortId(image.storagePath) }}</span>
+            </td>
+            <td class="model-cell">{{ image.imageModel || '-' }}</td>
             <td>{{ imageDetails(image) }}</td>
             <td class="prompt-cell">{{ image.prompt || '-' }}</td>
             <td>
@@ -182,7 +191,7 @@ function toggleImage(id: string, event: Event) {
             </td>
           </tr>
           <tr v-if="!images.length">
-            <td colspan="9">暂无作品</td>
+            <td colspan="11">暂无作品</td>
           </tr>
         </tbody>
       </table>
@@ -304,7 +313,40 @@ button:disabled {
 }
 
 .image-table {
-  min-width: 1120px;
+  min-width: 1360px;
+}
+
+.storage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.storage-label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.storage-cos .storage-label {
+  color: #2563eb;
+}
+
+.storage-supabase .storage-label {
+  color: #3ecf8e;
+}
+
+.storage-data .storage-label {
+  color: #f59e0b;
+}
+
+.storage-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.model-cell {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 table {

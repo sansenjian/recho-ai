@@ -1,6 +1,7 @@
 import { ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
 import { useCredits } from './useCredits'
+import { ensureAppConfig } from './useAppConfig'
 import { apiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse, ImageHistoryScope } from '../types/image'
@@ -502,6 +503,16 @@ export function useImageGen() {
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage[] | null> {
     error.value = null
     isGenerating.value = true
+
+    if (!user.value?.id) {
+      const appCfg = await ensureAppConfig()
+      if (!appCfg.guestGenerationEnabled) {
+        error.value = '请先登录后再生成图片'
+        isGenerating.value = false
+        return null
+      }
+    }
+
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
     const requestStartedAt = Date.now()

@@ -60,6 +60,7 @@ const imageGenerationCounts = new Set<ImageGenerationCount>([1, 2, 4, 8])
 
 interface ImageGenRequest {
   prompt: string
+  model?: string
   displayPrompt?: string
   userPrompt?: string
   systemPrompt?: string
@@ -522,7 +523,7 @@ router.get('/image/storage/:encodedPath', async (req: Request, res: Response) =>
     }
 
     res.setHeader('Content-Type', image.mime || 'image/webp')
-    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable')
     res.send(image.buffer)
   } catch (err: any) {
     console.error('[image-storage] proxy failed:', safeErrorDetail(err))
@@ -535,6 +536,7 @@ router.get('/image/storage/:encodedPath', async (req: Request, res: Response) =>
 router.post('/image/generate', async (req: Request, res: Response) => {
   const {
     prompt,
+    model: requestedModel,
     displayPrompt,
     userPrompt,
     systemPrompt,
@@ -563,7 +565,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   const generationIp = requestIp(req)
   const generationUserAgent = requestUserAgent(req)
   const appSettings = await getAppSettings()
-  const imageModel = appSettings.imageResponsesImageModel
+  const requested = requestedModel?.trim()
+  const allowedModelIds = appSettings.availableImageModels.map(m => m.id)
+  const imageModel = requested && allowedModelIds.includes(requested)
+    ? requested
+    : appSettings.imageResponsesImageModel
   const sizeError = imageModel === 'gpt-image-2' ? validateGptImage2Size(size) : null
   const creditCostPerImage = appSettings.imageCreditCostPerImage
   const requestedCreditCost = imageCreditCost(count, creditCostPerImage)
@@ -628,6 +634,10 @@ router.post('/image/generate', async (req: Request, res: Response) => {
     const historySystemPrompt = requestText(systemPrompt)
     const historyModelPrompt = requestText(modelPrompt) || trimmedPrompt
     userId = await getRequestUserId(req)
+    if (!userId && !appSettings.guestGenerationEnabled) {
+      res.status(401).json({ error: '请先登录后再生成图片' })
+      return
+    }
     if (count > 1 && !userId) {
       res.status(401).json({ error: '请先登录后再批量生成图片' })
       return
@@ -647,6 +657,12 @@ router.post('/image/generate', async (req: Request, res: Response) => {
         creditBalance = creditReservation.balance
       } catch (creditErr) {
         if (!canGeneratePublicAfterCreditError(creditErr)) throw creditErr
+        if (!appSettings.freeGenerationEnabled && (creditErr as any)?.code === 'insufficient_credits') {
+          const err: any = new Error('free_generation_disabled')
+          err.status = 402
+          err.publicMessage = '额度不足且免费生成已关闭，请稍后再试或充值。'
+          throw err
+        }
         console.warn(`[credits] credit error; generation will be public:`, safeErrorDetail(creditErr))
       }
     }

@@ -9,6 +9,8 @@ vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['env-admin@example.test'],
   ADMIN_USER_IDS: ['env-admin-id'],
   CANVAS_CONTEXT_ENABLED: false,
+  FREE_GENERATION_ENABLED: true,
+  GUEST_GENERATION_ENABLED: true,
   IMAGE_ANALYTICS_ENABLED: false,
   IMAGE_CREDIT_COST_PER_IMAGE: 1,
   IMAGE_EVENTS_ENABLED: false,
@@ -110,8 +112,22 @@ describe('app settings service', () => {
     expect(publicConfig).toEqual({
       imageEventsEnabled: true,
       canvasContextEnabled: true,
+      guestGenerationEnabled: true,
+      availableImageModels: [
+        { id: 'gpt-image-1', name: 'GPT Image 1' },
+        { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini' },
+        { id: 'dall-e-3', name: 'DALL·E 3' },
+        { id: 'dall-e-2', name: 'DALL·E 2' },
+      ],
+      defaultImageModel: 'custom-image-model',
     })
-    expect(Object.keys(publicConfig).sort()).toEqual(['canvasContextEnabled', 'imageEventsEnabled'])
+    expect(Object.keys(publicConfig).sort()).toEqual([
+      'availableImageModels',
+      'canvasContextEnabled',
+      'defaultImageModel',
+      'guestGenerationEnabled',
+      'imageEventsEnabled',
+    ])
   })
 
   it('briefly caches default settings when the settings table is unavailable', async () => {

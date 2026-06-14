@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { AdminImageAttemptItem, AdminImageAttemptOverview } from '../../types/admin'
 import {
   attemptErrorSummary,
@@ -8,6 +8,16 @@ import {
   latencyLabel,
   shortId,
 } from '../../utils/admin-format'
+
+const expandedErrors = ref(new Set<string>())
+
+function toggleErrorDetail(id: string) {
+  if (expandedErrors.value.has(id)) {
+    expandedErrors.value.delete(id)
+  } else {
+    expandedErrors.value.add(id)
+  }
+}
 
 const props = defineProps<{
   attempts: AdminImageAttemptItem[]
@@ -162,6 +172,7 @@ function barWidth(value: number, max: number) {
             <th>耗时</th>
             <th>生成 ID</th>
             <th>错误摘要</th>
+            <th>详情</th>
           </tr>
         </thead>
         <tbody>
@@ -172,9 +183,42 @@ function barWidth(value: number, max: number) {
             <td>{{ latencyLabel(attempt.latencyMs) }}</td>
             <td>{{ attempt.generationId ? shortId(attempt.generationId) : '-' }}</td>
             <td class="attempt-error-cell">{{ attemptErrorSummary(attempt) }}</td>
+            <td>
+              <button
+                v-if="attempt.status === 'failed'"
+                type="button"
+                class="expand-btn"
+                @click="toggleErrorDetail(attempt.id)"
+              >
+                {{ expandedErrors.has(attempt.id) ? '收起' : '详情' }}
+              </button>
+              <span v-else class="table-muted">-</span>
+            </td>
+          </tr>
+          <tr v-for="attempt in attempts" :key="'detail-' + attempt.id" v-show="expandedErrors.has(attempt.id)">
+            <td colspan="7" class="error-detail-cell">
+              <div class="error-detail">
+                <div class="error-row">
+                  <span class="error-label">错误类型</span>
+                  <span class="error-value">{{ attempt.errorType || '-' }}</span>
+                </div>
+                <div class="error-row">
+                  <span class="error-label">HTTP 状态</span>
+                  <span class="error-value">{{ attempt.httpStatus !== null ? `HTTP ${attempt.httpStatus}` : '-' }}</span>
+                </div>
+                <div class="error-row">
+                  <span class="error-label">错误码</span>
+                  <span class="error-value">{{ attempt.errorCode || '-' }}</span>
+                </div>
+                <div class="error-row error-message-row">
+                  <span class="error-label">错误信息</span>
+                  <pre class="error-message">{{ attempt.errorMessage || '-' }}</pre>
+                </div>
+              </div>
+            </td>
           </tr>
           <tr v-if="!attempts.length">
-            <td colspan="6">暂无尝试记录</td>
+            <td colspan="7">暂无尝试记录</td>
           </tr>
         </tbody>
       </table>
@@ -365,7 +409,7 @@ button:disabled {
 }
 
 .attempt-table {
-  min-width: 920px;
+  min-width: 1020px;
 }
 
 table {
@@ -404,10 +448,70 @@ tbody tr:last-child td {
 }
 
 .attempt-error-cell {
-  max-width: 420px;
+  max-width: 380px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.expand-btn {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.expand-btn:hover {
+  background: var(--hover-bg);
+}
+
+.error-detail-cell {
+  background: var(--surface-soft);
+  padding: 12px !important;
+}
+
+.error-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.error-row {
+  display: flex;
+  gap: 12px;
+}
+
+.error-label {
+  width: 100px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.error-value {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.error-message-row {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error-message {
+  margin: 0;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--danger);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 @media (max-width: 980px) {

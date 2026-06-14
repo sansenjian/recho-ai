@@ -67,6 +67,20 @@ export function attemptErrorSummary(attempt: AdminImageAttemptItem) {
   return parts.length ? parts.join(' / ') : '-'
 }
 
+export function storageLocationLabel(location: AdminImageItem['storageLocation']) {
+  if (location === 'cos') return '腾讯云 COS'
+  if (location === 'supabase') return 'Supabase'
+  if (location === 'data') return '内联数据'
+  return '-'
+}
+
+export function storageLocationClass(location: AdminImageItem['storageLocation']) {
+  if (location === 'cos') return 'storage-cos'
+  if (location === 'supabase') return 'storage-supabase'
+  if (location === 'data') return 'storage-data'
+  return ''
+}
+
 export function tableStatusLabel(status: AdminSystemTableStatus['status']) {
   if (status === 'ok') return '正常'
   if (status === 'missing') return '缺失'
