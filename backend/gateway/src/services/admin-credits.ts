@@ -35,6 +35,12 @@ export interface AdminCreditUser {
   createdAt: string | null
   updatedAt: string | null
   lastSignInAt: string | null
+  generationStats?: {
+    totalGenerations: number
+    succeededGenerations: number
+    failedGenerations: number
+    successRate: number
+  }
 }
 
 export interface AdminCreditCode {
