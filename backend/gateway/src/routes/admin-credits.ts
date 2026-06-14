@@ -87,6 +87,8 @@ router.get('/admin/credits/transactions', async (req: Request, res: Response) =>
     const transactions = await listAdminCreditLedger({
       limit: req.query.limit,
       reason: req.query.reason,
+      hours: req.query.hours,
+      userId: req.query.userId,
     })
     res.json({ transactions })
   } catch (err) {

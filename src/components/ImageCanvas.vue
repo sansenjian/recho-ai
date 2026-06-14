@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useImageGen } from '../composables/useImageGen'
+import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
-// import { useGalleryDetailPreview } from '../composables/useGalleryDetailPreview'
+import { useGalleryDetailPreview } from '../composables/useGalleryDetailPreview'
 import { useImageCanvasDocument } from '../composables/useImageCanvasDocument'
-// import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
+import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
 import { useImageCanvasGraph } from '../composables/useImageCanvasGraph'
-// import { useImageCanvasImages } from '../composables/useImageCanvasImages'
+import { useImageCanvasImages } from '../composables/useImageCanvasImages'
 import { useImageCanvasMentions } from '../composables/useImageCanvasMentions'
-// import { useImageCanvasViewer } from '../composables/useImageCanvasViewer'
-// import { useImageGalleryStage } from '../composables/useImageGalleryStage'
+import { useImageCanvasViewer } from '../composables/useImageCanvasViewer'
+import { useImageGalleryStage } from '../composables/useImageGalleryStage'
 import { useImageNodeReferences } from '../composables/useImageNodeReferences'
 import { useAppConfig } from '../composables/useAppConfig'
 import { type CanvasExportDocument } from '../lib/canvas-document'
@@ -46,7 +46,14 @@ import {
   isGeneratedImageNode,
   updateNodeImageDimensions,
 } from '../lib/image-canvas-utils'
-// import { previewImageUrl } from '../lib/image-gallery'
+import {
+  galleryFileName,
+  galleryParamItems as buildGalleryParamItems,
+  galleryPrompt,
+  galleryReferenceCount,
+  galleryReferences,
+  previewImageUrl,
+} from '../lib/image-gallery'
 import {
   buildMiniMapLayout,
   canvasPlaneStyle,
@@ -58,12 +65,15 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
-// import type { GeneratedImage } from '../types/image'
+import type { GeneratedImage } from '../types/image'
 import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
 import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
 import ImageCanvasNode from './ImageCanvasNode.vue'
 import ImageCanvasSidebar from './ImageCanvasSidebar.vue'
 import ImageCanvasStageActions from './ImageCanvasStageActions.vue'
+import ImageCanvasGalleryStage from './ImageCanvasGalleryStage.vue'
+import ImageGalleryDetailModal from './ImageGalleryDetailModal.vue'
+import ImageViewerModal from './ImageViewerModal.vue'
 import ImagioView from './ImagioView.vue'
 import ImagioSidebar from './ImagioSidebar.vue'
 
@@ -83,11 +93,20 @@ const { config: _appConfig, ensureAppConfig } = useAppConfig()
 
 const {
   isGenerating,
+  isLoadingHistory,
+  hasMoreHistory,
+  isLoadingGallery,
+  hasMoreGallery,
+  galleryLoaded,
   error,
   generatedImages,
   galleryImages: publicGalleryImages,
   clearHistory,
+  loadMoreHistory,
+  ensureGalleryLoaded,
+  loadMoreGalleryHistory,
   resolveImageDetail,
+  generate,
 } = useImageGen()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -98,6 +117,7 @@ const {
   selectedNodeId,
   createId,
   createNode,
+  nextImageTitle,
   getNodeById,
   insertNodeCopy,
   copySelectedNode: copySelectedDocumentNode,
@@ -129,6 +149,16 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   currentImageMode.value = mode
   emit('imageModeChange', mode)
 }
+
+function canvasPointFromClient(clientX: number, clientY: number) {
+  return canvasPointFromClientPoint(
+    clientX,
+    clientY,
+    viewportRef.value?.getBoundingClientRect(),
+    viewport.value,
+  )
+}
+
 const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
@@ -171,6 +201,8 @@ const {
   connectionPath,
   hasPromptLink,
   getGenerationPromptValue,
+  buildPromptParts,
+  buildCanvasContext,
 } = useImageCanvasGraph({
   canvasId,
   canvasVersion: CANVAS_EXPORT_VERSION,
@@ -240,8 +272,30 @@ const miniMapLayout = computed(() => {
 })
 
 const historyImages = computed(() => generatedImages.value.slice(0, 6))
-// Gallery stage functionality temporarily disabled for imagio mode
-// const { ... } = useImageGalleryStage({...})
+const {
+  query: galleryQuery,
+  filter: galleryFilter,
+  filterOptions: galleryFilterOptions,
+  isPublicFilter: isPublicGalleryFilter,
+  actionScope: galleryActionScope,
+  sourceImages: gallerySourceImages,
+  filteredImages: filteredGalleryImages,
+  visibleImages: visibleGalleryImages,
+  hasFilter: galleryHasFilter,
+  isLoading: isGalleryLoading,
+  isLoadingMore: isGalleryLoadingMore,
+  loadMore: handleLoadMoreGallery,
+} = useImageGalleryStage({
+  generatedImages,
+  publicGalleryImages,
+  isLoadingHistory,
+  hasMoreHistory,
+  isLoadingGallery,
+  hasMoreGallery,
+  ensureGalleryLoaded,
+  loadMoreHistory,
+  loadMoreGalleryHistory,
+})
 const resolutionOptions: Array<{ value: NodeResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: '1k', label: '1K' },
@@ -276,19 +330,25 @@ function historyImageForViewer(viewer: ImageDownloadViewer) {
     null
 }
 
-// Gallery detail functionality temporarily disabled for imagio mode
-// const { ... } = useGalleryDetailPreview({...})
-const _galleryDetail = ref(null)
-const _galleryDetailScope = ref<'mine' | 'public'>('mine')
-const _isGalleryDetailLoadingPreview = ref(false)
-function _galleryDetailImageUrl() { return null }
-function _closeGalleryDetail() {}
-function _openGalleryDetail() {}
-function _createGalleryDetailViewerState() { return null }
-function _resolveGalleryDetailViewerPreview() { return null }
+const {
+  galleryDetail,
+  galleryDetailScope,
+  isGalleryDetailLoadingPreview,
+  galleryDetailImageUrl,
+  closeGalleryDetail,
+  openGalleryDetail,
+  createViewerState: createGalleryDetailViewerState,
+  resolveViewerPreview: resolveGalleryDetailViewerPreview,
+} = useGalleryDetailPreview({
+  currentScope: () => galleryActionScope.value,
+  resolveImageDetail,
+  setError(message) {
+    error.value = message
+  },
+})
 
 const {
-  buildReferences: _buildReferences,
+  buildReferences,
   resolveNodePreviewImageUrl,
 } = useImageNodeReferences({
   historyImageForNode: node => historyImageForNode(node),
@@ -297,18 +357,18 @@ const {
 })
 
 const {
-  imageDownloadKey: _imageDownloadKey,
+  imageDownloadKey,
   nodeDownloadKey,
-  viewerDownloadKey: _imageViewerDownloadKey,
+  viewerDownloadKey: imageViewerDownloadKey,
   isDownloadingImage,
-  generatedImageTarget: _generatedImageTarget,
+  generatedImageTarget,
   nodeTarget,
   viewerTarget,
-  preloadTarget: _preloadTarget,
+  preloadTarget,
   downloadTarget,
 } = useImageDownload({
   resolveImageDetail,
-  imageFileName: (image: any) => `image-${image.id || Date.now()}.png`,
+  imageFileName: galleryFileName,
   historyImageForNode,
   historyImageForViewer,
   setError(message) {
@@ -316,34 +376,71 @@ const {
   },
 })
 
-// Viewer functionality temporarily disabled for imagio mode
-// const { ... } = useImageCanvasViewer({...})
-const imageViewer = ref(null)
-function _openGalleryDetailViewer() {}
-function openImageViewer() {}
-function closeImageViewer() {}
-function _zoomImageViewer() {}
-function resetImageViewerZoom() {}
+const {
+  imageViewer,
+  openGalleryDetailViewer,
+  openImageViewer,
+  closeImageViewer,
+  zoomImageViewer,
+  resetImageViewerZoom,
+} = useImageCanvasViewer({
+  historyImageForNode: node => historyImageForNode(node),
+  resolveNodePreviewImageUrl,
+  createGalleryDetailViewerState,
+  resolveGalleryDetailViewerPreview,
+})
 
-// Canvas images and generation functionality temporarily disabled for imagio mode
-// const { ... } = useImageCanvasImages({...})
-// const { ... } = useImageCanvasGeneration({...})
-function _chooseImage() {}
-function handleWindowPaste() {}
-function useHistoryImage() {}
-const generationCountOptions = [] as any[]
-function _generationCountForNode() { return 1 }
-function setGenerationCount() {}
-function _generateFromNodeWithConfig() {}
-function createContinuation() {}
+const {
+  chooseImage,
+  handleWindowPaste,
+  useHistoryImage,
+} = useImageCanvasImages({
+  getNodeById,
+  createImageNode: (x, y, data) => createNode('image', x, y, data),
+  nextImageTitle,
+  removeNode,
+  pasteNodeFromClipboard: pasteDocumentNodeFromClipboard,
+  selectCanvasWorkspace: () => selectWorkspace('canvas'),
+  isImageViewerOpen: () => Boolean(imageViewer.value),
+  isEditableEventTarget,
+  imageNodePositionNearCenter: () => nodePositionNearVisibleCenter('image'),
+  historyImageDropPoint: () => {
+    const rect = viewportRef.value?.getBoundingClientRect()
+    return rect
+      ? canvasPointFromClient(rect.left + rect.width * 0.56, rect.top + rect.height * 0.58)
+      : { x: 720, y: 420 }
+  },
+  resolveImageDetail,
+  setError(message) {
+    error.value = message
+  },
+})
 
-// async function generateFromNode(node: CanvasNode) {
-//   await ensureAppConfig()
-//   await generateFromNodeWithConfig(node)
-// }
-async function generateFromNode(_node: any) {
-  // Generation functionality temporarily disabled for imagio mode
-  console.log('Generation from node not available in imagio mode')
+const {
+  generationCountOptions,
+  generationCountForNode,
+  setGenerationCount,
+  generateFromNode: generateFromNodeWithConfig,
+  createContinuation,
+} = useImageCanvasGeneration({
+  nodes,
+  connections,
+  isGenerating,
+  error,
+  canSelectGenerationCount: () => Boolean(props.canSelectGenerationCount),
+  canvasContextEnabled: () => _appConfig.value.canvasContextEnabled,
+  createNode,
+  createConnectionId: () => createId('conn'),
+  getRenderedNodeSize,
+  buildReferences,
+  buildPromptParts,
+  buildCanvasContext,
+  generate,
+})
+
+async function generateFromNode(node: CanvasNode) {
+  await ensureAppConfig()
+  await generateFromNodeWithConfig(node)
 }
 
 function updateNodeContent(node: CanvasNode, value: string) {
@@ -366,15 +463,6 @@ function resetNodeScale(node: CanvasNode) {
   node.scale = 1
 }
 
-function canvasPointFromClient(clientX: number, clientY: number) {
-  return canvasPointFromClientPoint(
-    clientX,
-    clientY,
-    viewportRef.value?.getBoundingClientRect(),
-    viewport.value,
-  )
-}
-
 function nodePositionNearVisibleCenter(type: CanvasNodeType) {
   return nodePositionNearVisibleCenterForViewport(
     type,
@@ -391,20 +479,18 @@ function createNodeAtMenu(type: CanvasNodeType) {
   if (pendingConnection) {
     connectPendingMenuConnection(pendingConnection, node)
   }
-  // Image creation temporarily disabled for imagio mode
-  // if (type === 'image') {
-  //   requestAnimationFrame(() => chooseImage(node.id))
-  // }
+  if (type === 'image') {
+    requestAnimationFrame(() => chooseImage(node.id))
+  }
 }
 
 function createNodeNearCenter(type: CanvasNodeType) {
   const position = nodePositionNearVisibleCenter(type)
   if (!position) return
-  const _node = createNode(type, position.x, position.y)
-  // Image creation temporarily disabled for imagio mode
-  // if (type === 'image') {
-  //   requestAnimationFrame(() => chooseImage(node.id))
-  // }
+  const node = createNode(type, position.x, position.y)
+  if (type === 'image') {
+    requestAnimationFrame(() => chooseImage(node.id))
+  }
 }
 
 function openContextMenuAtClient(
@@ -711,32 +797,89 @@ function handleNodeImageLoad(node: CanvasNode, event: Event) {
   }
 }
 
-// Gallery functions temporarily disabled for imagio mode
-// function galleryParamItems(image: GeneratedImage) { ... }
-// function downloadGalleryDetail() { ... }
-// function useGalleryDetailImage() { ... }
-// function sendGalleryDetailToChat() { ... }
+function galleryParamItems(image: GeneratedImage) {
+  return buildGalleryParamItems(image, {
+    aspectRatioOptions,
+    resolutionOptions,
+    qualityOptions,
+  } as any)
+}
 
-// Gallery functions temporarily disabled for imagio mode
-// function viewerDownloadKey() { ... }
-// function isGalleryImageDownloading(image: GeneratedImage) { ... }
-// function handleGalleryUseImage(image: GeneratedImage) { ... }
-// function handleGalleryPreloadDownload(image: GeneratedImage) { ... }
-// function handleGalleryDownload(image: GeneratedImage) { ... }
-// function handleGallerySendToChat(image: GeneratedImage) { ... }
-// function preloadGeneratedImageDownload(image: GeneratedImage, scope: ImageHistoryScope = galleryActionScope.value) { ... }
-// function preloadNodeImageDownload(node: CanvasNode) { ... }
-// function preloadViewerImageDownload() { ... }
-// function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') { ... }
-// function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') { ... }
+function downloadGalleryDetail() {
+  if (galleryDetail.value) {
+    void downloadGeneratedImage(galleryDetail.value, galleryDetailScope.value)
+  }
+}
+
+function useGalleryDetailImage() {
+  if (galleryDetail.value) {
+    void useHistoryImage(galleryDetail.value, galleryDetailScope.value)
+    closeGalleryDetail()
+  }
+}
+
+function sendGalleryDetailToChat() {
+  if (galleryDetail.value) {
+    void sendHistoryImageToChat(galleryDetail.value, galleryDetailScope.value)
+  }
+}
+
+function viewerDownloadKey() {
+  return imageViewerDownloadKey(imageViewer.value)
+}
+
+function isGalleryImageDownloading(image: GeneratedImage) {
+  return isDownloadingImage(imageDownloadKey(image, galleryActionScope.value))
+}
+
+function handleGalleryUseImage(image: GeneratedImage) {
+  void useHistoryImage(image, galleryActionScope.value)
+}
+
+function handleGalleryPreloadDownload(image: GeneratedImage) {
+  preloadGeneratedImageDownload(image, galleryActionScope.value)
+}
+
+function handleGalleryDownload(image: GeneratedImage) {
+  downloadGeneratedImage(image, galleryActionScope.value)
+}
+
+function handleGallerySendToChat(image: GeneratedImage) {
+  void sendHistoryImageToChat(image, galleryActionScope.value)
+}
+
+function preloadGeneratedImageDownload(image: GeneratedImage, scope: ImageHistoryScope = galleryActionScope.value) {
+  preloadTarget(generatedImageTarget(image, scope))
+}
+
+function preloadNodeImageDownload(node: CanvasNode) {
+  preloadTarget(nodeTarget(node))
+}
+
+function preloadViewerImageDownload() {
+  preloadTarget(viewerTarget(imageViewer.value))
+}
+
+function downloadGeneratedImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  void downloadTarget(generatedImageTarget(image, scope))
+}
+
+async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
+  const detail = await resolveImageDetail(image, scope)
+  const imageUrl = previewImageUrl(detail)
+  if (!imageUrl) {
+    error.value = '预览图加载失败，请稍后重试。'
+    return
+  }
+  emit('sendToChat', imageUrl)
+}
 
 function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
   activeWorkspace.value = mode
   closeContextMenu()
-  // Gallery functionality disabled for imagio mode
-  // if (mode === 'gallery' && isPublicGalleryFilter.value) {
-  //   void ensureGalleryLoaded()
-  // }
+  if (mode === 'gallery' && isPublicGalleryFilter.value) {
+    void ensureGalleryLoaded()
+  }
   if (options.emitChange !== false) {
     emit('workspaceChange', mode)
   }
@@ -773,7 +916,7 @@ async function sendNodeImageToChat(node: CanvasNode) {
   emit('sendToChat', imageUrl)
 }
 
-function _downloadImageViewerImage() {
+function downloadImageViewerImage() {
   void downloadTarget(viewerTarget(imageViewer.value))
 }
 
@@ -970,7 +1113,7 @@ onUnmounted(() => {
             :generation-prompt-value="getGenerationPromptValue(node)"
             :referenced-image-nodes="referencedImageNodes(node)"
             :can-select-generation-count="Boolean(props.canSelectGenerationCount)"
-            :generation-count="1"
+            :generation-count="generationCountForNode(node)"
             :generation-count-options="generationCountOptions"
             :resolution-options="resolutionOptions"
             :aspect-ratio-options="aspectRatioOptions"
@@ -1027,15 +1170,60 @@ onUnmounted(() => {
       </template>
     </section>
 
-    <!-- Gallery stage temporarily disabled for imagio mode -->
-    <!-- <ImageCanvasGalleryStage
+    <ImageCanvasGalleryStage
       v-else
-      ...
-    /> -->
+      v-model:query="galleryQuery"
+      v-model:filter="galleryFilter"
+      :images="visibleGalleryImages"
+      :filtered-count="filteredGalleryImages.length"
+      :source-count="gallerySourceImages.length"
+      :filter-options="galleryFilterOptions"
+      :has-filter="galleryHasFilter"
+      :is-public-filter="isPublicGalleryFilter"
+      :gallery-loaded="galleryLoaded"
+      :is-loading="isGalleryLoading"
+      :is-loading-more="isGalleryLoadingMore"
+      :error="error"
+      :resolution-options="resolutionOptions"
+      :quality-options="qualityOptions"
+      :is-image-downloading="isGalleryImageDownloading"
+      @load-more="handleLoadMoreGallery"
+      @view="openGalleryDetail"
+      @use-image="handleGalleryUseImage"
+      @preload-download="handleGalleryPreloadDownload"
+      @download="handleGalleryDownload"
+      @send-to-chat="handleGallerySendToChat"
+    />
 
-    <!-- Gallery detail and image viewer temporarily disabled for imagio mode -->
-    <!-- <ImageGalleryDetailModal ... /> -->
-    <!-- <ImageViewerModal ... /> -->
+    <ImageGalleryDetailModal
+      v-if="galleryDetail"
+      :image-url="galleryDetailImageUrl(galleryDetail)"
+      :image-alt="galleryPrompt(galleryDetail)"
+      :image-title="galleryFileName(galleryDetail).replace(/\.[a-z0-9]{2,5}$/i, '')"
+      :prompt="galleryPrompt(galleryDetail)"
+      :reference-count="galleryReferenceCount(galleryDetail)"
+      :references="galleryReferences(galleryDetail)"
+      :params="galleryParamItems(galleryDetail)"
+      :is-loading-preview="isGalleryDetailLoadingPreview"
+      :is-downloading="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
+      @close="closeGalleryDetail"
+      @open-viewer="openGalleryDetailViewer"
+      @use-image="useGalleryDetailImage"
+      @preload-download="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
+      @download="downloadGalleryDetail"
+      @send-to-chat="sendGalleryDetailToChat"
+    />
+
+    <ImageViewerModal
+      v-if="imageViewer"
+      :viewer="imageViewer"
+      :is-downloading="isDownloadingImage(viewerDownloadKey())"
+      @close="closeImageViewer"
+      @zoom="zoomImageViewer"
+      @reset-zoom="resetImageViewerZoom"
+      @preload-download="preloadViewerImageDownload"
+      @download="downloadImageViewerImage"
+    />
   </div>
 </template>
 
