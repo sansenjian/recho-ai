@@ -48,6 +48,10 @@ export interface AdminImageItem {
   resolution: string | null
   quality: string | null
   generatedAt: string | null
+  storagePath: string | null
+  storageLocation: string | null
+  provider: string | null
+  imageModel: string | null
 }
 
 export class AdminImageError extends Error {
