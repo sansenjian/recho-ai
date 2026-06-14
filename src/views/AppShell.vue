@@ -496,7 +496,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         </div>
       </div>
 
-      <template v-if="showImagePanel && imageWorkspace === 'canvas'">
+      <template v-if="showImagePanel">
         <ImageCanvas
           :workspace-mode="imageWorkspace"
           :image-mode="imageMode"

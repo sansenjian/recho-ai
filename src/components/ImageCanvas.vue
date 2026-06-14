@@ -278,17 +278,17 @@ function historyImageForViewer(viewer: ImageDownloadViewer) {
 
 // Gallery detail functionality temporarily disabled for imagio mode
 // const { ... } = useGalleryDetailPreview({...})
-const galleryDetail = ref(null)
-const galleryDetailScope = ref<'mine' | 'public'>('mine')
-const isGalleryDetailLoadingPreview = ref(false)
-function galleryDetailImageUrl() { return null }
-function closeGalleryDetail() {}
-function openGalleryDetail() {}
-function createGalleryDetailViewerState() { return null }
-function resolveGalleryDetailViewerPreview() { return null }
+const _galleryDetail = ref(null)
+const _galleryDetailScope = ref<'mine' | 'public'>('mine')
+const _isGalleryDetailLoadingPreview = ref(false)
+function _galleryDetailImageUrl() { return null }
+function _closeGalleryDetail() {}
+function _openGalleryDetail() {}
+function _createGalleryDetailViewerState() { return null }
+function _resolveGalleryDetailViewerPreview() { return null }
 
 const {
-  buildReferences,
+  buildReferences: _buildReferences,
   resolveNodePreviewImageUrl,
 } = useImageNodeReferences({
   historyImageForNode: node => historyImageForNode(node),
@@ -297,14 +297,14 @@ const {
 })
 
 const {
-  imageDownloadKey,
+  imageDownloadKey: _imageDownloadKey,
   nodeDownloadKey,
-  viewerDownloadKey: imageViewerDownloadKey,
+  viewerDownloadKey: _imageViewerDownloadKey,
   isDownloadingImage,
-  generatedImageTarget,
+  generatedImageTarget: _generatedImageTarget,
   nodeTarget,
   viewerTarget,
-  preloadTarget,
+  preloadTarget: _preloadTarget,
   downloadTarget,
 } = useImageDownload({
   resolveImageDetail,
@@ -319,22 +319,22 @@ const {
 // Viewer functionality temporarily disabled for imagio mode
 // const { ... } = useImageCanvasViewer({...})
 const imageViewer = ref(null)
-function openGalleryDetailViewer() {}
+function _openGalleryDetailViewer() {}
 function openImageViewer() {}
 function closeImageViewer() {}
-function zoomImageViewer() {}
+function _zoomImageViewer() {}
 function resetImageViewerZoom() {}
 
 // Canvas images and generation functionality temporarily disabled for imagio mode
 // const { ... } = useImageCanvasImages({...})
 // const { ... } = useImageCanvasGeneration({...})
-function chooseImage() {}
+function _chooseImage() {}
 function handleWindowPaste() {}
 function useHistoryImage() {}
 const generationCountOptions = [] as any[]
-function generationCountForNode() { return 1 }
+function _generationCountForNode() { return 1 }
 function setGenerationCount() {}
-function generateFromNodeWithConfig() {}
+function _generateFromNodeWithConfig() {}
 function createContinuation() {}
 
 // async function generateFromNode(node: CanvasNode) {
@@ -400,7 +400,7 @@ function createNodeAtMenu(type: CanvasNodeType) {
 function createNodeNearCenter(type: CanvasNodeType) {
   const position = nodePositionNearVisibleCenter(type)
   if (!position) return
-  const node = createNode(type, position.x, position.y)
+  const _node = createNode(type, position.x, position.y)
   // Image creation temporarily disabled for imagio mode
   // if (type === 'image') {
   //   requestAnimationFrame(() => chooseImage(node.id))
@@ -503,7 +503,7 @@ function copySelectedNode() {
   return copied
 }
 
-function pasteNodeFromClipboard() {
+function _pasteNodeFromClipboard() {
   const pasted = pasteDocumentNodeFromClipboard()
   if (pasted) closeContextMenu()
   return pasted
@@ -773,7 +773,7 @@ async function sendNodeImageToChat(node: CanvasNode) {
   emit('sendToChat', imageUrl)
 }
 
-function downloadImageViewerImage() {
+function _downloadImageViewerImage() {
   void downloadTarget(viewerTarget(imageViewer.value))
 }
 
