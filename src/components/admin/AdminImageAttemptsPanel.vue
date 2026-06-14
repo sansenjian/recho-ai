@@ -510,7 +510,7 @@ tbody tr:last-child td {
   color: var(--danger);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 200px;
+  max-height: 400px;
   overflow-y: auto;
 }
 
