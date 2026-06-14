@@ -54,6 +54,22 @@ export interface AdminImageItem {
   imageModel: string | null
 }
 
+export interface AdminImageStorageStat {
+  location: 'cos' | 'supabase' | 'data' | 'unknown'
+  imageCount: number
+  totalBytes: number
+  averageBytes: number
+  totalCreditCost: number
+}
+
+export interface AdminImageStorageOverview {
+  generatedAt: string
+  totalImages: number
+  totalBytes: number
+  totalCreditCost: number
+  byLocation: AdminImageStorageStat[]
+}
+
 export class AdminImageError extends Error {
   status: number
   publicMessage: string
@@ -365,5 +381,76 @@ export async function bulkDeleteAdminImages(idsValue: unknown) {
   return {
     deletedIds: deletedRows.map(row => String(row.id || '')).filter(Boolean),
     deletedCount: deletedRows.length,
+  }
+}
+
+function parseSizeToBytes(size: string | null): number {
+  if (!size) return 0
+  const match = /^(\d+(?:\.\d+)?)\s*(KB|MB|GB|bytes|KBytes|Bytes)?$/i.exec(size.trim())
+  if (!match) return 0
+  const value = Number(match[1])
+  const unit = (match[2] || '').toLowerCase()
+  switch (unit) {
+    case 'kb':
+    case 'kbytes':
+      return Math.round(value * 1024)
+    case 'mb':
+      return Math.round(value * 1024 * 1024)
+    case 'gb':
+      return Math.round(value * 1024 * 1024 * 1024)
+    case 'bytes':
+    case '':
+      return Math.round(value)
+    default:
+      return Math.round(value)
+  }
+}
+
+export async function getAdminImageStorageOverview(): Promise<AdminImageStorageOverview> {
+  const client = requireAdminImageClient()
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select('storage_path, credit_cost, size')
+
+  if (error) throw error
+
+  const rows = (data || []) as unknown as Array<Record<string, unknown>>
+  const stats = new Map<string, { imageCount: number; totalBytes: number; totalCreditCost: number }>()
+  let totalImages = 0
+  let totalBytes = 0
+  let totalCreditCost = 0
+
+  for (const row of rows) {
+    const storagePath = stringField(row, 'storage_path')
+    const location = storageLocationFromPath(storagePath) || 'unknown'
+    const bytes = parseSizeToBytes(stringField(row, 'size'))
+    const creditCost = normalizedCreditAmount(row.credit_cost)
+    totalImages += 1
+    totalBytes += bytes
+    totalCreditCost += creditCost
+
+    const existing = stats.get(location) || { imageCount: 0, totalBytes: 0, totalCreditCost: 0 }
+    existing.imageCount += 1
+    existing.totalBytes += bytes
+    existing.totalCreditCost += creditCost
+    stats.set(location, existing)
+  }
+
+  const byLocation: AdminImageStorageStat[] = Array.from(stats.entries()).map(([location, stat]) => ({
+    location: location as AdminImageStorageStat['location'],
+    imageCount: stat.imageCount,
+    totalBytes: stat.totalBytes,
+    averageBytes: stat.imageCount > 0 ? Math.round(stat.totalBytes / stat.imageCount) : 0,
+    totalCreditCost: Math.round(stat.totalCreditCost * 100) / 100,
+  }))
+
+  byLocation.sort((a, b) => b.totalBytes - a.totalBytes)
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalImages,
+    totalBytes,
+    totalCreditCost: Math.round(totalCreditCost * 100) / 100,
+    byLocation,
   }
 }

@@ -5,6 +5,7 @@ import {
   bulkArchiveAdminImages,
   bulkDeleteAdminImages,
   bulkSetAdminImageVisibility,
+  getAdminImageStorageOverview,
   listAdminImages,
   setAdminImageVisibility,
 } from '../services/admin-images.js'
@@ -56,6 +57,18 @@ router.get('/admin/images', async (req: Request, res: Response) => {
     res.json({ images })
   } catch (err) {
     console.error('[admin-images] list failed:', safeErrorDetail(err))
+    const response = adminImageErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.get('/admin/images/storage-overview', async (req: Request, res: Response) => {
+  try {
+    await requireAdmin(req)
+    const overview = await getAdminImageStorageOverview()
+    res.json({ overview })
+  } catch (err) {
+    console.error('[admin-images] storage overview failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
     res.status(response.status).json({ error: response.error })
   }

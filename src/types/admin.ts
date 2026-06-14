@@ -118,6 +118,22 @@ export interface AdminImageAttemptOverview {
   }>
 }
 
+export interface AdminImageStorageStat {
+  location: 'cos' | 'supabase' | 'data' | 'unknown'
+  imageCount: number
+  totalBytes: number
+  averageBytes: number
+  totalCreditCost: number
+}
+
+export interface AdminImageStorageOverview {
+  generatedAt: string
+  totalImages: number
+  totalBytes: number
+  totalCreditCost: number
+  byLocation: AdminImageStorageStat[]
+}
+
 export interface AdminSystemTableStatus {
   key: string
   label: string
