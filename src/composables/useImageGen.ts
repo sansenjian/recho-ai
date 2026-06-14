@@ -103,7 +103,7 @@ function isPublicGalleryImage(image: GeneratedImage) {
 
 function isRecoverableGenerationError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
-  return /AbortError|timeout|timed out|aborted|超时|Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|Load failed|network/i.test(message)
+  return /AbortError|timeout|timed out|aborted|超时|Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|ERR_CONNECTION_CLOSED|Load failed|network|socket hang up|ECONNRESET/i.test(message)
 }
 
 function normalizedPrompt(value: unknown) {
@@ -613,6 +613,8 @@ export function useImageGen() {
       }
       error.value = err?.name === 'AbortError'
         ? '图片生成请求超时，请减少参考图数量或稍后重试。'
+        : /ERR_CONNECTION_CLOSED|socket hang up|ECONNRESET|Failed to fetch|NetworkError/i.test(err?.message || '')
+        ? '服务器连接被中断，可能是参考图下载超时或平台限制。请减少参考图数量或稍后重试。'
         : publicClientErrorMessage(err, '图片生成失败，请稍后重试。')
       return null
     } finally {
