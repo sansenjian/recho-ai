@@ -35,7 +35,7 @@ async function handleGenerate() {
   if (!promptText.value.trim()) return
 
   await generate(promptText.value, {
-    count: generationCount.value,
+    count: props.canSelectGenerationCount ? generationCount.value : 1,
     resolution: props.resolution,
     aspectRatio: props.aspectRatio,
     quality: props.quality,

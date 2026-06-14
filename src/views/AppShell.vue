@@ -123,8 +123,8 @@ const showSidebar = ref(false)
 const showAgentPanel = ref(false)
 const showImagePanel = ref(true)
 const imageWorkspace = ref<ImageWorkspace>('canvas')
-const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false
-const imageMode = ref<'imagio' | 'canvas'>(isMobile ? 'imagio' : 'canvas')
+const isMobile = () => (typeof window !== 'undefined' ? window.innerWidth < 768 : false)
+const imageMode = ref<'imagio' | 'canvas'>(isMobile() ? 'imagio' : 'canvas')
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
 
@@ -159,7 +159,9 @@ function syncWorkspaceFromRoute() {
   showAgentPanel.value = false
   imageWorkspace.value = workspace === 'works' ? 'gallery' : 'canvas'
   if (workspace === 'image') {
-    imageMode.value = isMobile ? 'imagio' : 'canvas'
+    imageMode.value = isMobile() ? 'imagio' : 'canvas'
+  }
+  if (workspace !== 'chat') {
     showSystemEditor.value = false
   }
 }

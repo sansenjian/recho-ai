@@ -105,7 +105,7 @@ watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
   if (!imageModel.value && defaultModel) {
     imageModel.value = defaultModel
   }
-})
+}, { immediate: true })
 
 const {
   isGenerating,
@@ -1129,6 +1129,7 @@ onUnmounted(() => {
             :image-mode="currentImageMode"
             :history-images="historyImages"
             :has-generated-images="Boolean(generatedImages.length)"
+            :is-loading-history="isLoadingHistory"
             @select-image-mode="handleImageModeChange"
             @select-workspace-tab="selectWorkspace"
             @use-history-image="useHistoryImage"
