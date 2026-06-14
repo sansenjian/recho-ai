@@ -1,21 +1,38 @@
 import { computed, readonly, ref } from 'vue'
 import { apiUrl } from '../lib/api-base'
 
+export interface ImageModelOption {
+  id: string
+  name: string
+}
+
 export interface PublicAppConfig {
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
   guestGenerationEnabled: boolean
+  availableImageModels: ImageModelOption[]
+  defaultImageModel: string
 }
 
 const fallbackConfig: PublicAppConfig = {
   imageEventsEnabled: false,
   canvasContextEnabled: false,
   guestGenerationEnabled: true,
+  availableImageModels: [],
+  defaultImageModel: '',
 }
 
 const config = ref<PublicAppConfig>({ ...fallbackConfig })
 const loaded = ref(false)
 let configPromise: Promise<PublicAppConfig> | null = null
+
+function normalizeImageModels(value: unknown): ImageModelOption[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
+    .filter((item) => typeof item.id === 'string')
+    .map((item) => ({ id: item.id as string, name: typeof item.name === 'string' ? item.name as string : item.id as string }))
+}
 
 function normalizeConfig(value: unknown): PublicAppConfig {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -29,6 +46,10 @@ function normalizeConfig(value: unknown): PublicAppConfig {
     guestGenerationEnabled: typeof record.guestGenerationEnabled === 'boolean'
       ? record.guestGenerationEnabled
       : fallbackConfig.guestGenerationEnabled,
+    availableImageModels: normalizeImageModels(record.availableImageModels),
+    defaultImageModel: typeof record.defaultImageModel === 'string'
+      ? record.defaultImageModel
+      : fallbackConfig.defaultImageModel,
   }
 }
 
@@ -67,6 +88,8 @@ export function useAppConfig() {
     imageEventsEnabled: computed(() => config.value.imageEventsEnabled),
     canvasContextEnabled: computed(() => config.value.canvasContextEnabled),
     guestGenerationEnabled: computed(() => config.value.guestGenerationEnabled),
+    availableImageModels: computed(() => config.value.availableImageModels),
+    defaultImageModel: computed(() => config.value.defaultImageModel),
     ensureAppConfig,
   }
 }

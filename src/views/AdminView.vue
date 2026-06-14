@@ -109,6 +109,7 @@ const settingsForm = ref<AdminAppSettings>({
   canvasContextEnabled: false,
   freeGenerationEnabled: true,
   guestGenerationEnabled: true,
+  availableImageModels: [],
 })
 
 const adminUserForm = ref({
@@ -421,6 +422,7 @@ async function saveSettings() {
         canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
         freeGenerationEnabled: Boolean(settingsForm.value.freeGenerationEnabled),
         guestGenerationEnabled: Boolean(settingsForm.value.guestGenerationEnabled),
+        availableImageModels: settingsForm.value.availableImageModels,
       }),
     })
     syncSettingsForm(data.settings)

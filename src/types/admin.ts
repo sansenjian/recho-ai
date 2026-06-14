@@ -212,6 +212,7 @@ export interface AdminAppSettings {
   canvasContextEnabled: boolean
   freeGenerationEnabled: boolean
   guestGenerationEnabled: boolean
+  availableImageModels: Array<{ id: string; name: string }>
 }
 
 export interface AdminUserRule {
