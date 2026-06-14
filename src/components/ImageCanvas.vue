@@ -149,6 +149,16 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   currentImageMode.value = mode
   emit('imageModeChange', mode)
 }
+
+function canvasPointFromClient(clientX: number, clientY: number) {
+  return canvasPointFromClientPoint(
+    clientX,
+    clientY,
+    viewportRef.value?.getBoundingClientRect(),
+    viewport.value,
+  )
+}
+
 const contextMenu = ref<ContextMenuState>({
   visible: false,
   x: 0,
@@ -451,15 +461,6 @@ function updateNodeQuality(node: CanvasNode, value: NodeQuality) {
 
 function resetNodeScale(node: CanvasNode) {
   node.scale = 1
-}
-
-function canvasPointFromClient(clientX: number, clientY: number) {
-  return canvasPointFromClientPoint(
-    clientX,
-    clientY,
-    viewportRef.value?.getBoundingClientRect(),
-    viewport.value,
-  )
 }
 
 function nodePositionNearVisibleCenter(type: CanvasNodeType) {
