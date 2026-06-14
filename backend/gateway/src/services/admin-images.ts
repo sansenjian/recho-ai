@@ -26,6 +26,8 @@ const ADMIN_IMAGE_COLUMNS = [
   'resolution',
   'quality',
   'generated_at',
+  'provider',
+  'image_model',
 ].join(',')
 
 export type AdminImageVisibility = 'public' | 'private'
@@ -169,12 +171,20 @@ function normalizedCreditAmount(value: unknown) {
   return Math.max(0, roundCreditAmount(value))
 }
 
+function storageLocationFromPath(storagePath: string | null): 'cos' | 'supabase' | 'data' | null {
+  if (!storagePath) return null
+  if (storagePath.startsWith('cos://')) return 'cos'
+  if (storagePath.startsWith('data:')) return 'data'
+  return 'supabase'
+}
+
 export function toAdminImageItem(
   row: Record<string, unknown>,
   user?: AdminUserSummary,
 ): AdminImageItem {
   const previewPath = stringField(row, 'preview_path')
   const thumbnailPath = stringField(row, 'thumbnail_path')
+  const storagePath = stringField(row, 'storage_path')
   const prompt = safeText(row.user_prompt || row.prompt || '')
   const visibility = sanitizedVisibility(row.visibility) || 'public'
 
@@ -193,6 +203,10 @@ export function toAdminImageItem(
     resolution: stringField(row, 'resolution'),
     quality: stringField(row, 'quality'),
     generatedAt: stringField(row, 'generated_at'),
+    storagePath,
+    storageLocation: storageLocationFromPath(storagePath),
+    provider: stringField(row, 'provider'),
+    imageModel: stringField(row, 'image_model'),
   }
 }
 
