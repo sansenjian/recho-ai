@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
 import {
   clipboardImageFile,
@@ -90,7 +90,7 @@ function removeReference(index: number) {
   pendingReferences.value = pendingReferences.value.filter((_, i) => i !== index)
 }
 
-function handleWindowPaste(event: ClipboardEvent) {
+function handlePaste(event: ClipboardEvent) {
   const file = clipboardImageFile(event)
   if (!file) return
 
@@ -114,17 +114,10 @@ async function handleGenerate() {
   }
 }
 
-onMounted(() => {
-  window.addEventListener('paste', handleWindowPaste)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('paste', handleWindowPaste)
-})
 </script>
 
 <template>
-  <div class="imagio-view">
+  <div class="imagio-view" @paste="handlePaste">
     <div class="imagio-main">
       <div class="prompt-area">
         <textarea

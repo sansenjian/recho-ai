@@ -138,7 +138,7 @@ export function useImageCanvasGeneration(options: UseImageCanvasGenerationOption
         })),
       ]
     } catch (err) {
-      node.error = err instanceof Error ? err.message : '生成失败'
+      node.error = options.error.value || (err instanceof Error ? err.message : '生成失败')
     } finally {
       node.loading = false
       node.status = null

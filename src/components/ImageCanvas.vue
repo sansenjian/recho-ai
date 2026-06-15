@@ -1087,7 +1087,7 @@ onUnmounted(() => {
   <div class="image-canvas">
     <div class="left-main-column">
       <!-- Top workspace switcher (always visible in the left column) -->
-      <div class="top-tabs-bar">
+      <div class="top-tabs-bar non-selectable">
         <button
           type="button"
           class="workspace-tab"
