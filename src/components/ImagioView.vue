@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useImageGen } from '../composables/useImageGen'
-import type { ImageGenerationCount, ImageQuality, ImageResolution, ImageAspectRatio } from '../types/image'
+import {
+  clipboardImageFile,
+  compressReferenceImageDataUrl,
+  fallbackImageFileName,
+  readImageFileAsDataUrl,
+} from '../lib/image-canvas-utils'
+import type { ImageGenReference, ImageGenerationCount, ImageQuality, ImageResolution, ImageAspectRatio } from '../types/image'
 
 const props = defineProps<{
   canSelectGenerationCount?: boolean
@@ -30,18 +36,91 @@ const {
 
 const promptText = ref('')
 const generationCount = ref<ImageGenerationCount>(1)
+const pendingReferences = ref<ImageGenReference[]>([])
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const pasteMessage = ref<string | null>(null)
+
+const canGenerate = computed(() => Boolean(promptText.value.trim()) && !isGenerating.value)
+
+let referenceIdSeed = Date.now()
+
+async function addReferenceFile(file: File) {
+  if (!file.type.startsWith('image/')) return
+
+  const dataUrl = await compressReferenceImageDataUrl(await readImageFileAsDataUrl(file))
+  referenceIdSeed += 1
+  pendingReferences.value = [
+    ...pendingReferences.value,
+    {
+      id: `imagio_reference_${referenceIdSeed}`,
+      title: `参考图 ${pendingReferences.value.length + 1}`,
+      dataUrl,
+      fileName: fallbackImageFileName(file),
+    },
+  ]
+  pasteMessage.value = null
+}
+
+async function addReferenceFiles(files: File[] | FileList) {
+  for (const file of Array.from(files)) {
+    try {
+      await addReferenceFile(file)
+    } catch {
+      pasteMessage.value = '图片读取失败，请重新复制或选择图片。'
+    }
+  }
+}
+
+function openReferencePicker() {
+  if (isGenerating.value) return
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+    fileInputRef.value.click()
+  }
+}
+
+function handleReferenceInput(event: Event) {
+  const input = event.currentTarget as HTMLInputElement
+  if (input.files?.length) {
+    void addReferenceFiles(input.files)
+  }
+}
+
+function removeReference(index: number) {
+  pendingReferences.value = pendingReferences.value.filter((_, i) => i !== index)
+}
+
+function handleWindowPaste(event: ClipboardEvent) {
+  const file = clipboardImageFile(event)
+  if (!file) return
+
+  event.preventDefault()
+  void addReferenceFile(file)
+}
 
 async function handleGenerate() {
   if (!promptText.value.trim()) return
 
-  await generate(promptText.value, {
+  const results = await generate(promptText.value, {
     count: props.canSelectGenerationCount ? generationCount.value : 1,
     resolution: props.resolution,
     aspectRatio: props.aspectRatio,
     quality: props.quality,
     model: props.imageModel,
+    references: pendingReferences.value.map(reference => ({ ...reference })),
   })
+  if (results?.length) {
+    pendingReferences.value = []
+  }
 }
+
+onMounted(() => {
+  window.addEventListener('paste', handleWindowPaste)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('paste', handleWindowPaste)
+})
 </script>
 
 <template>
@@ -55,6 +134,49 @@ async function handleGenerate() {
           rows="4"
           :disabled="isGenerating"
         />
+
+        <div class="reference-row">
+          <button
+            class="reference-add"
+            type="button"
+            :disabled="isGenerating"
+            title="添加参考图"
+            @click="openReferencePicker"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M12 8v8" />
+              <path d="M8 12h8" />
+            </svg>
+            <span>参考图</span>
+          </button>
+          <input
+            ref="fileInputRef"
+            class="reference-file-input"
+            type="file"
+            accept="image/*"
+            multiple
+            @change="handleReferenceInput"
+          >
+          <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+            <div
+              v-for="(reference, index) in pendingReferences"
+              :key="reference.id"
+              class="reference-item"
+            >
+              <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+              <button type="button" title="移除参考图" @click="removeReference(index)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <span v-else class="reference-hint">可粘贴图片作为参考</span>
+        </div>
+        <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
+        <p v-if="error" class="reference-error">{{ error }}</p>
 
         <!-- Inline parameter panel: shown only on narrow viewports (<=960px) -->
         <div class="inline-params">
@@ -150,7 +272,7 @@ async function handleGenerate() {
 
           <button
             class="generate-btn"
-            :disabled="!promptText.trim() || isGenerating"
+            :disabled="!canGenerate"
             @click="handleGenerate"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18">
@@ -216,6 +338,98 @@ async function handleGenerate() {
 .prompt-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.reference-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  margin-top: 12px;
+}
+
+.reference-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reference-add:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+.reference-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reference-file-input {
+  display: none;
+}
+
+.reference-list {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0;
+}
+
+.reference-item {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.reference-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reference-item button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: pointer;
+}
+
+.reference-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reference-error {
+  margin: 0 0 4px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 /* Inline parameter panel (shown on narrow viewports) */

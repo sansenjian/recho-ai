@@ -77,67 +77,72 @@ export function useImageCanvasGeneration(options: UseImageCanvasGenerationOption
     node.loading = true
     node.error = null
     node.status = '正在准备生成...'
-    const references = await options.buildReferences(node)
-    const canvasContext = options.canvasContextEnabled()
-      ? options.buildCanvasContext(node, userPrompt)
-      : undefined
-    const generationCount = options.canSelectGenerationCount() ? generationCountForNode(node) : 1
-    node.status = references.length
-      ? `正在上传 ${references.length} 张参考图并生成 ${generationCount} 张图片...`
-      : `正在生成 ${generationCount} 张图片...`
-    const results = await options.generate(modelPrompt, {
-      userPrompt,
-      systemPrompt,
-      modelPrompt,
-      aspectRatio: node.aspectRatio,
-      resolution: node.resolution,
-      quality: node.quality,
-      count: generationCount,
-      references,
-      ...(canvasContext ? { canvasContext } : {}),
-    })
-    node.loading = false
-    node.status = null
+    try {
+      const references = await options.buildReferences(node)
+      const canvasContext = options.canvasContextEnabled()
+        ? options.buildCanvasContext(node, userPrompt)
+        : undefined
+      const generationCount = options.canSelectGenerationCount() ? generationCountForNode(node) : 1
+      node.status = references.length
+        ? `正在上传 ${references.length} 张参考图并生成 ${generationCount} 张图片...`
+        : `正在生成 ${generationCount} 张图片...`
+      const results = await options.generate(modelPrompt, {
+        userPrompt,
+        systemPrompt,
+        modelPrompt,
+        aspectRatio: node.aspectRatio,
+        resolution: node.resolution,
+        quality: node.quality,
+        count: generationCount,
+        references,
+        ...(canvasContext ? { canvasContext } : {}),
+      })
 
-    if (!results?.length) {
-      node.error = options.error.value || '生成失败'
-      return
+      if (!results?.length) {
+        node.error = options.error.value || '生成失败'
+        return
+      }
+
+      const outputColumns = Math.min(2, results.length)
+      const outputX = node.x + NODE_SIZE.generation.width + 132
+      const outputY = node.y + 46
+      let nextTitleIndex = nextOutputImageTitleIndex(options.nodes.value)
+      const outputNodes = results.map((result, index) => {
+        nextTitleIndex += 1
+        return options.createNode(
+          'image',
+          outputX + (index % outputColumns) * (NODE_SIZE.image.width + 28),
+          outputY + Math.floor(index / outputColumns) * (NODE_SIZE.image.height + 28),
+          {
+            title: `图片${nextTitleIndex}`,
+            content: '',
+            imageUrl: previewImageUrl(result),
+            storagePath: result.storagePath,
+            sourceImageId: result.id,
+            sourceHistoryScope: 'mine',
+            sourcePrompt: result.prompt,
+            fileName: result.size,
+            ...imageDimensionsFromHistory(result),
+          },
+        )
+      })
+
+      options.connections.value = [
+        ...options.connections.value,
+        ...outputNodes.map((outputNode): Connection => ({
+          id: options.createConnectionId(),
+          fromNodeId: node.id,
+          fromHandle: 'generation-out',
+          toNodeId: outputNode.id,
+          toHandle: 'image-in',
+        })),
+      ]
+    } catch (err) {
+      node.error = err instanceof Error ? err.message : '生成失败'
+    } finally {
+      node.loading = false
+      node.status = null
     }
-
-    const outputColumns = Math.min(2, results.length)
-    const outputX = node.x + NODE_SIZE.generation.width + 132
-    const outputY = node.y + 46
-    let nextTitleIndex = nextOutputImageTitleIndex(options.nodes.value)
-    const outputNodes = results.map((result, index) => {
-      nextTitleIndex += 1
-      return options.createNode(
-        'image',
-        outputX + (index % outputColumns) * (NODE_SIZE.image.width + 28),
-        outputY + Math.floor(index / outputColumns) * (NODE_SIZE.image.height + 28),
-        {
-          title: `图片${nextTitleIndex}`,
-          content: '',
-          imageUrl: previewImageUrl(result),
-          storagePath: result.storagePath,
-          sourceImageId: result.id,
-          sourceHistoryScope: 'mine',
-          sourcePrompt: result.prompt,
-          fileName: result.size,
-          ...imageDimensionsFromHistory(result),
-        },
-      )
-    })
-
-    options.connections.value = [
-      ...options.connections.value,
-      ...outputNodes.map((outputNode): Connection => ({
-        id: options.createConnectionId(),
-        fromNodeId: node.id,
-        fromHandle: 'generation-out',
-        toNodeId: outputNode.id,
-        toHandle: 'image-in',
-      })),
-    ]
   }
 
   function createContinuation(node: CanvasNode) {

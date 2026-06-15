@@ -26,6 +26,7 @@ export interface UseImageCanvasImagesOptions {
   selectCanvasWorkspace: () => void
   isImageViewerOpen: () => boolean
   isEditableEventTarget: (event: Event) => boolean
+  canCreateImageNodeFromPaste?: () => boolean
   imageNodePositionNearCenter: () => CanvasPoint | null
   historyImageDropPoint: () => CanvasPoint
   resolveImageDetail: (
@@ -65,14 +66,16 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
 
   async function handleWindowPaste(event: ClipboardEvent) {
     const file = clipboardImageFile(event)
-    if (options.isImageViewerOpen() || options.isEditableEventTarget(event)) return
+    if (options.isImageViewerOpen()) return
 
     if (!file) {
+      if (options.isEditableEventTarget(event)) return
       if (options.pasteNodeFromClipboard()) {
         event.preventDefault()
       }
       return
     }
+    if (options.canCreateImageNodeFromPaste && !options.canCreateImageNodeFromPaste()) return
 
     event.preventDefault()
     options.selectCanvasWorkspace()

@@ -33,6 +33,56 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
 }
 
+body,
+button,
+[role="button"],
+.chat-header,
+.chat-sidebar,
+.announcement-popup,
+.auth-dialog,
+.auth-message,
+.auth-credit-message,
+.admin-message,
+.workspace-tab,
+.workspace-item,
+.history-task,
+.tool-button,
+.stage-actions,
+.canvas-sidebar,
+.imagio-sidebar,
+.settings-sidebar,
+.model-selector,
+.model-dropdown,
+.model-option,
+.project-selector,
+.footer-link,
+.msg-actions,
+.msg-time,
+.section-header,
+.sidebar-label,
+.toolbar-label,
+.panel-label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.md,
+.msg-text,
+.system-editor-textarea,
+.chat-input,
+.prompt-input,
+.image-caption,
+.image-output-note,
+.generation-prompt,
+.thinking-content {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 html, body {
   height: 100%;
   font-family: var(--font-sans);
