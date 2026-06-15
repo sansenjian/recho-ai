@@ -22,7 +22,7 @@ function handleZoomInput(event: Event) {
 </script>
 
 <template>
-  <div class="bottom-toolbar">
+  <div class="bottom-toolbar non-selectable">
     <button class="tool-button active" type="button" title="选择">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
         <path d="m5 3 14 8-6 2-3 6L5 3Z" />

@@ -334,6 +334,7 @@ function onDrop(e: DragEvent) {
   if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files)
 }
 function onPaste(e: ClipboardEvent) {
+  if (showImagePanel.value) return
   const items = e.clipboardData?.items
   if (!items) return
   const files: File[] = []

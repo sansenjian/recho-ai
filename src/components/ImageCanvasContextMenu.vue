@@ -17,7 +17,7 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="context-menu"
+    class="context-menu non-selectable"
     :style="{ transform: `translate(${x}px, ${y}px)` }"
     @click.stop
   >

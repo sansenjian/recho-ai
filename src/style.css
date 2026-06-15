@@ -33,6 +33,29 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
 }
 
+.non-selectable,
+.non-selectable * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.md,
+.msg-text,
+.system-editor-textarea,
+.chat-input,
+.prompt-input,
+.image-caption,
+.image-output-note,
+.generation-prompt,
+.thinking-content {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 html, body {
   height: 100%;
   font-family: var(--font-sans);

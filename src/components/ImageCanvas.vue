@@ -96,17 +96,6 @@ const imagioModelOptions = computed(() =>
   availableImageModels.value.map((m) => ({ value: m.id, label: m.name })),
 )
 
-// Initialize model when config loads; re-validate if config changes
-watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
-  const modelIds = models.map((m) => m.id)
-  if (imageModel.value && !modelIds.includes(imageModel.value)) {
-    imageModel.value = defaultModel || ''
-  }
-  if (!imageModel.value && defaultModel) {
-    imageModel.value = defaultModel
-  }
-}, { immediate: true })
-
 const {
   isGenerating,
   isLoadingHistory,
@@ -156,6 +145,17 @@ const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
+
+// Initialize model when config loads; re-validate if config changes
+watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
+  const modelIds = models.map((m) => m.id)
+  if (imageModel.value && !modelIds.includes(imageModel.value)) {
+    imageModel.value = defaultModel || ''
+  }
+  if (!imageModel.value && defaultModel) {
+    imageModel.value = defaultModel
+  }
+}, { immediate: true })
 
 const imagioResolutionOptions: Array<{ value: ImageResolution; label: string }> = [
   { value: 'auto', label: 'Auto' },
@@ -452,6 +452,7 @@ const {
   selectCanvasWorkspace: () => selectWorkspace('canvas'),
   isImageViewerOpen: () => Boolean(imageViewer.value),
   isEditableEventTarget,
+  canCreateImageNodeFromPaste: () => activeWorkspace.value === 'canvas' && currentImageMode.value === 'canvas',
   imageNodePositionNearCenter: () => nodePositionNearVisibleCenter('image'),
   historyImageDropPoint: () => {
     const rect = viewportRef.value?.getBoundingClientRect()
@@ -489,13 +490,8 @@ const {
 
 async function generateFromNode(node: CanvasNode) {
   if (isGenerating.value || node.loading) return
-  node.loading = true
-  try {
-    await ensureAppConfig()
-    await generateFromNodeWithConfig(node)
-  } finally {
-    node.loading = false
-  }
+  await ensureAppConfig()
+  await generateFromNodeWithConfig(node)
 }
 
 function updateNodeContent(node: CanvasNode, value: string) {
@@ -1091,7 +1087,7 @@ onUnmounted(() => {
   <div class="image-canvas">
     <div class="left-main-column">
       <!-- Top workspace switcher (always visible in the left column) -->
-      <div class="top-tabs-bar">
+      <div class="top-tabs-bar non-selectable">
         <button
           type="button"
           class="workspace-tab"
@@ -1229,6 +1225,7 @@ onUnmounted(() => {
             @insert-mention="insertMention"
             @start-connection="startConnection"
             @finish-connection="finishConnection"
+            @choose-image="chooseImage"
             @image-load="handleNodeImageLoad"
             @open-image-viewer="openImageViewer"
             @update-content="updateNodeContent"

@@ -33,7 +33,7 @@ function handleCanvasImport(event: Event) {
 </script>
 
 <template>
-  <div class="stage-actions">
+  <div class="stage-actions non-selectable">
     <div class="mobile-create-bar" aria-label="创建节点">
       <button type="button" @click="emit('create-node', 'text')">
         <span class="mobile-create-icon">T</span>
