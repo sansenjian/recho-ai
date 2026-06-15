@@ -90,12 +90,16 @@ function removeReference(index: number) {
   pendingReferences.value = pendingReferences.value.filter((_, i) => i !== index)
 }
 
-function handlePaste(event: ClipboardEvent) {
+async function handlePaste(event: ClipboardEvent) {
   const file = clipboardImageFile(event)
   if (!file) return
 
   event.preventDefault()
-  void addReferenceFile(file)
+  try {
+    await addReferenceFile(file)
+  } catch {
+    pasteMessage.value = '图片读取失败，请重新复制或选择图片。'
+  }
 }
 
 async function handleGenerate() {
