@@ -47,6 +47,37 @@ services:
       - key: CORS_ORIGIN
         value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
 
+  # ── Go API 网关候选服务：用于逐步降低 Node 网关冷启动和内存占用 ──
+  - type: web
+    name: recho-go-gateway
+    runtime: docker
+    rootDir: backend/go-gateway
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: IMAGE_GEN_API_KEY
+        sync: false
+      - key: IMAGE_GEN_BASE_URL
+        value: https://lucen.plus/v1
+      - key: IMAGE_CREDIT_COST_PER_IMAGE
+        value: 1
+      - key: IMAGE_RESPONSES_MODEL
+        value: gpt-image-2
+      - key: IMAGE_RESPONSES_IMAGE_MODEL
+        value: gpt-image-2
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_IMAGE_BUCKET
+        value: recho-images
+      - key: CORS_ORIGIN
+        value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
+
   # ── 前端静态站点 ──
   - type: web
     name: recho-ai
