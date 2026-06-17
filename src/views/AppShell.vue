@@ -326,11 +326,42 @@ function triggerFileInput() {
 }
 
 // --- Drag & drop ---
-function onDragEnter(e: DragEvent) { e.preventDefault(); dragCounter++; if (dragCounter === 1) isDragOver.value = true }
-function onDragLeave(_e: DragEvent) { dragCounter--; if (dragCounter === 0) isDragOver.value = false }
-function onDragOver(e: DragEvent) { e.preventDefault() }
+function isFileDragEvent(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+}
+
+function suppressWorksFileDrag(e: DragEvent) {
+  if (currentRouteWorkspace() !== 'works' || !isFileDragEvent(e)) return false
+  e.preventDefault()
+  dragCounter = 0
+  isDragOver.value = false
+  return true
+}
+
+function onDragEnter(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  if (showImagePanel.value) return
+  e.preventDefault()
+  dragCounter++
+  if (dragCounter === 1) isDragOver.value = true
+}
+function onDragLeave(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  if (showImagePanel.value) return
+  dragCounter--
+  if (dragCounter === 0) isDragOver.value = false
+}
+function onDragOver(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  if (showImagePanel.value) return
+  e.preventDefault()
+}
 function onDrop(e: DragEvent) {
-  e.preventDefault(); dragCounter = 0; isDragOver.value = false
+  if (suppressWorksFileDrag(e)) return
+  if (showImagePanel.value) return
+  e.preventDefault()
+  dragCounter = 0
+  isDragOver.value = false
   if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files)
 }
 function onPaste(e: ClipboardEvent) {
