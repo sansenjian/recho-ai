@@ -18,6 +18,7 @@ import adminImagesRouter from './routes/admin-images.js'
 import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
 import adminSystemRouter from './routes/admin-system.js'
 import adminAnnouncementsRouter from './routes/admin-announcements.js'
+import goSidecarRouter from './routes/go-sidecar.js'
 
 const app = express()
 
@@ -39,6 +40,11 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN
 }))
+
+// When deployed as a single Render backend, proxy Go-owned image/works routes
+// to the local Go sidecar before body parsers consume request streams.
+app.use('/api', goSidecarRouter)
+
 app.use(express.json({ limit: '50mb' }))
 
 // Explicit JSON parser for the image generation endpoint so large bodies with

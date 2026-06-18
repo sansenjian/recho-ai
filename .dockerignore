@@ -1,0 +1,14 @@
+.git
+.github
+.vscode
+.idea
+node_modules
+backend/gateway/node_modules
+backend/go-gateway/go-gateway
+dist
+dist-ssr
+logs
+*.log
+*.local
+*.local.*
+output

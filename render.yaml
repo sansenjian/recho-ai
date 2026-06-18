@@ -2,11 +2,9 @@ services:
   # ── 后端 API 网关 ──
   - type: web
     name: recho-gateway
-    runtime: node
-    rootDir: backend/gateway
-    buildCommand: npm install && npm run build
-    startCommand: npm start
+    runtime: docker
     plan: free
+    healthCheckPath: /health
     envVars:
       - key: NVIDIA_API_KEY
         sync: false
@@ -32,49 +30,12 @@ services:
         value: gpt-image-2
       - key: IMAGE_RESPONSES_IMAGE_MODEL
         value: gpt-image-2
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_PUBLISHABLE_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: SUPABASE_IMAGE_BUCKET
-        value: recho-images
-      - key: ADMIN_USER_IDS
-        sync: false
-      - key: ADMIN_USER_EMAILS
-        sync: false
-      - key: CORS_ORIGIN
-        value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
-
-  # ── Go API 网关候选服务：用于逐步降低 Node 网关冷启动和内存占用 ──
-  - type: web
-    name: recho-go-gateway
-    runtime: docker
-    rootDir: backend/go-gateway
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: IMAGE_GEN_API_KEY
-        sync: false
-      - key: IMAGE_GEN_BASE_URL
-        value: https://lucen.plus/v1
-      - key: IMAGE_CREDIT_COST_PER_IMAGE
-        value: 1
-      - key: IMAGE_RESPONSES_MODEL
-        value: gpt-image-2
-      - key: IMAGE_RESPONSES_IMAGE_MODEL
-        value: gpt-image-2
       - key: APP_ENV
         value: production
-      - key: CHAT_BASE_URL
-        sync: false
-      - key: CHAT_API_KEY
-        sync: false
-      - key: ANALYSIS_URL
-        sync: false
-      - key: ANALYSIS_API_KEY
-        sync: false
+      - key: GO_GATEWAY_BASE_URL
+        value: http://127.0.0.1:3001
+      - key: GO_GATEWAY_PORT
+        value: 3001
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
@@ -87,6 +48,10 @@ services:
         sync: false
       - key: SUPABASE_IMAGE_BUCKET
         value: recho-images
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: ADMIN_USER_EMAILS
+        sync: false
       - key: CORS_ORIGIN
         value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
 
@@ -100,8 +65,6 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://recho-gateway.onrender.com
-      - key: VITE_IMAGE_API_BASE_URL
-        value: https://recho-go-gateway.onrender.com
     headers:
       - path: /assets/*
         name: Cache-Control
