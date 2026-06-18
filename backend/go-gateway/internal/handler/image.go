@@ -3,14 +3,19 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
+	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -78,19 +83,46 @@ type ImageGenResponse struct {
 	Images        []ImageResult `json:"images"`
 	CreditCost    float64       `json:"creditCost,omitempty"`
 	TotalCost     float64       `json:"totalCost,omitempty"`
-	CreditBalance *float64      `json:"creditBalance,omitempty"`
+	CreditBalance *struct {
+		Balance float64 `json:"balance"`
+	} `json:"creditBalance,omitempty"`
 }
 
 // ImageResult represents a generated image result
 type ImageResult struct {
-	ID            string `json:"id"`
-	URL           string `json:"url,omitempty"`
-	PreviewURL    string `json:"previewUrl,omitempty"`
-	ThumbnailURL  string `json:"thumbnailUrl,omitempty"`
-	RevisedPrompt string `json:"revisedPrompt,omitempty"`
-	Width         int    `json:"width,omitempty"`
-	Height        int    `json:"height,omitempty"`
+	ID                string                          `json:"id"`
+	UserID            string                          `json:"userId,omitempty"`
+	GenerationBatchID string                          `json:"generationBatchId,omitempty"`
+	StoragePath       string                          `json:"storagePath,omitempty"`
+	URL               string                          `json:"url,omitempty"`
+	PreviewURL        string                          `json:"previewUrl,omitempty"`
+	PreviewPath       string                          `json:"previewPath,omitempty"`
+	ThumbnailURL      string                          `json:"thumbnailUrl,omitempty"`
+	ThumbnailPath     string                          `json:"thumbnailPath,omitempty"`
+	Prompt            string                          `json:"prompt"`
+	UserPrompt        string                          `json:"userPrompt,omitempty"`
+	SystemPrompt      string                          `json:"systemPrompt,omitempty"`
+	ModelPrompt       string                          `json:"modelPrompt,omitempty"`
+	References        []service.ImageHistoryReference `json:"references,omitempty"`
+	ReferenceCount    int                             `json:"referenceImageCount,omitempty"`
+	Visibility        string                          `json:"visibility,omitempty"`
+	FundingSource     string                          `json:"fundingSource,omitempty"`
+	CreditCost        float64                         `json:"creditCost,omitempty"`
+	RevisedPrompt     string                          `json:"revisedPrompt,omitempty"`
+	Size              string                          `json:"size"`
+	AspectRatio       string                          `json:"aspectRatio,omitempty"`
+	Resolution        string                          `json:"resolution,omitempty"`
+	Quality           string                          `json:"quality,omitempty"`
+	Timestamp         string                          `json:"timestamp"`
+	Width             int                             `json:"width,omitempty"`
+	Height            int                             `json:"height,omitempty"`
 }
+
+type referenceUploadResponse struct {
+	Reference ImageGenReference `json:"reference"`
+}
+
+const referenceUploadMaxBytes = 12 * 1024 * 1024
 
 // Generate handles POST /api/image/generate
 func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +179,9 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	aspectRatio := normalizeAspectRatio(req.AspectRatio)
 	resolution := normalizeResolution(req.Resolution)
 	quality := normalizeQuality(req.Quality)
+	size := determineSize(resolution, aspectRatio)
+	displayPrompt := firstNonEmpty(strings.TrimSpace(req.UserPrompt), strings.TrimSpace(req.DisplayPrompt), strings.TrimSpace(req.Prompt))
+	modelPrompt := firstNonEmpty(strings.TrimSpace(req.ModelPrompt), strings.TrimSpace(req.Prompt))
 
 	// Calculate credit cost
 	costPerImage := config.ImageCreditCostPerImage
@@ -210,14 +245,103 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	references := historyReferences(req.References)
+	visibility := "public"
+	fundingSource := "free"
+	creditCost := 0.0
+	var userID string
+	var creditTransactionID string
+	if user != nil {
+		userID = user.ID
+	}
+	if creditReservation != nil {
+		visibility = "private"
+		fundingSource = "credit"
+		creditCost = costPerImage
+		creditTransactionID = creditReservation.TransactionID
+	}
+
+	batchID := "batch_" + randomID()
+	responseImages := make([]ImageResult, 0, len(images))
+	for _, image := range images {
+		image.UserID = userID
+		image.GenerationBatchID = batchID
+		image.Prompt = displayPrompt
+		image.UserPrompt = displayPrompt
+		image.SystemPrompt = req.SystemPrompt
+		image.ModelPrompt = modelPrompt
+		image.References = references
+		image.ReferenceCount = len(references)
+		image.Visibility = visibility
+		image.FundingSource = fundingSource
+		image.CreditCost = creditCost
+		image.Size = size
+		image.AspectRatio = aspectRatio
+		image.Resolution = resolution
+		image.Quality = quality
+		image.Timestamp = time.Now().UTC().Format(time.RFC3339)
+		if image.PreviewURL == "" {
+			image.PreviewURL = image.URL
+		}
+		if h.storageService != nil {
+			generatedAt := time.Now().UTC()
+			if parsed, err := time.Parse(time.RFC3339, image.Timestamp); err == nil {
+				generatedAt = parsed
+			}
+			historyItem := service.ImageHistoryItem{
+				ID:                  image.ID,
+				UserID:              userID,
+				GenerationBatchID:   batchID,
+				Prompt:              displayPrompt,
+				UserPrompt:          displayPrompt,
+				SystemPrompt:        req.SystemPrompt,
+				ModelPrompt:         modelPrompt,
+				StoragePath:         image.StoragePath,
+				URL:                 image.URL,
+				PreviewURL:          image.PreviewURL,
+				PreviewPath:         image.PreviewPath,
+				ThumbnailURL:        image.ThumbnailURL,
+				ThumbnailPath:       image.ThumbnailPath,
+				Size:                size,
+				AspectRatio:         aspectRatio,
+				Resolution:          resolution,
+				Quality:             quality,
+				ImageModel:          config.ImageResponsesImageModel,
+				RevisedPrompt:       image.RevisedPrompt,
+				Width:               image.Width,
+				Height:              image.Height,
+				Timestamp:           generatedAt,
+				References:          references,
+				ReferenceCount:      len(references),
+				Visibility:          visibility,
+				FundingSource:       fundingSource,
+				CreditCost:          creditCost,
+				CreditTransactionID: creditTransactionID,
+			}
+			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
+				if creditReservation != nil {
+					_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
+					if refundErr != nil {
+						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
+					}
+					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
+					return
+				}
+				log.Printf("[image-history] save skipped: %v", err)
+			}
+		}
+		responseImages = append(responseImages, image)
+	}
 	// Build response
 	resp := ImageGenResponse{
-		Images:     images,
+		Images:     responseImages,
 		CreditCost: costPerImage,
 		TotalCost:  totalCost,
 	}
 	if creditReservation != nil {
-		resp.CreditBalance = &creditReservation.Balance
+		resp.CreditBalance = &struct {
+			Balance float64 `json:"balance"`
+		}{Balance: creditReservation.Balance}
 	}
 
 	// Cache response for future idempotent replays
@@ -230,6 +354,102 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.JSON(w, http.StatusOK, resp)
+}
+
+// UploadReference handles POST /api/image/references.
+func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		response.Error(w, http.StatusServiceUnavailable, "参考图存储服务暂时不可用。")
+		return
+	}
+
+	mime := requestContentType(r)
+	if !isAllowedReferenceMime(mime) {
+		response.Error(w, http.StatusUnsupportedMediaType, "reference image type is not supported")
+		return
+	}
+
+	body := http.MaxBytesReader(w, r.Body, referenceUploadMaxBytes)
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		response.Error(w, http.StatusRequestEntityTooLarge, "reference image is too large")
+		return
+	}
+	if len(data) == 0 {
+		response.Error(w, http.StatusBadRequest, "reference image is required")
+		return
+	}
+
+	user := middleware.GetUserFromRequest(r)
+	userID := "anon"
+	if user != nil && user.ID != "" {
+		userID = user.ID
+	}
+	referenceID := headerText(r.Header.Get("x-reference-id"), 80)
+	if referenceID == "" {
+		referenceID = "ref_" + randomID()
+	}
+	title := headerText(r.Header.Get("x-reference-title"), 80)
+	if title == "" {
+		title = "参考图"
+	}
+	fileName := headerText(r.Header.Get("x-reference-filename"), 120)
+	if fileName == "" {
+		fileName = referenceID + "." + extensionForMime(mime)
+	}
+	uploadName := safeUploadName(fileName, extensionForMime(mime))
+
+	storagePath := strings.Join([]string{
+		"references",
+		"uploads",
+		safePathPart(userID, "anon"),
+		fmt.Sprintf("%d_%s_%s", time.Now().UnixMilli(), randomID(), uploadName),
+	}, "/")
+	stored, err := h.storageService.StoreFromBufferAtPath(r.Context(), data, mime, storagePath)
+	if err != nil || stored == nil || stored.StoragePath == "" {
+		log.Printf("[image] reference upload failed: %v", err)
+		response.Error(w, http.StatusServiceUnavailable, "参考图上传失败，请稍后重试。")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, referenceUploadResponse{
+		Reference: ImageGenReference{
+			ID:          referenceID,
+			Title:       title,
+			StoragePath: stored.StoragePath,
+			PreviewURL:  firstNonEmpty(stored.PreviewURL, stored.PublicURL),
+			FileName:    fileName,
+		},
+	})
+}
+
+// ProxyStorage handles GET /api/image/storage/{encodedPath}.
+func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
+		return
+	}
+	encodedPath := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	if encodedPath == "" {
+		encodedPath = chi.URLParam(r, "encodedPath")
+	}
+	storagePath, ok := safeProxyStoragePath(encodedPath)
+	if !ok {
+		response.Error(w, http.StatusBadRequest, "invalid image storage path")
+		return
+	}
+
+	image, err := h.storageService.DownloadImage(r.Context(), storagePath)
+	if err != nil || image == nil || len(image.Data) == 0 {
+		response.Error(w, http.StatusNotFound, "image not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", firstNonEmpty(image.Mime, mimeFromPath(storagePath)))
+	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(image.Data)
 }
 
 // callImageAPI calls the image generation API
@@ -245,31 +465,25 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		"quality": mapQualityToAPI(quality),
 	}
 
-	// Add references if provided
-	if len(req.References) > 0 {
-		images := make([]string, 0, len(req.References))
-		for _, ref := range req.References {
-			if ref.DataUrl != "" {
-				// Extract base64 from data URL
-				if idx := strings.Index(ref.DataUrl, ","); idx >= 0 {
-					images = append(images, ref.DataUrl[idx+1:])
-				}
-			}
-		}
-		if len(images) > 0 {
-			apiReq["image"] = images
-		}
-	}
-
-	// Marshal request
-	reqBody, err := json.Marshal(apiReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
 	// Shared HTTP client with retry logic
 	client := &http.Client{Timeout: 360 * time.Second}
 	maxRetries := 3
+	urlPath := "/images/generations"
+	var bodyFactory func() (io.Reader, string, error)
+	if len(req.References) > 0 {
+		urlPath = "/images/edits"
+		bodyFactory = func() (io.Reader, string, error) {
+			return h.imageEditBody(ctx, apiReq, req.References)
+		}
+	} else {
+		reqBody, err := json.Marshal(apiReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		bodyFactory = func() (io.Reader, string, error) {
+			return bytes.NewReader(reqBody), "application/json", nil
+		}
+	}
 
 	var resp *http.Response
 	var body []byte
@@ -286,11 +500,15 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 			log.Printf("[image] retrying API call (attempt %d/%d)", attempt+1, maxRetries+1)
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", config.ImageGenBaseURL+"/images/generations", bytes.NewReader(reqBody))
+		bodyReader, contentType, err := bodyFactory()
+		if err != nil {
+			return nil, err
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", config.ImageGenBaseURL+urlPath, bodyReader)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Content-Type", contentType)
 		httpReq.Header.Set("Authorization", "Bearer "+config.ImageGenAPIKey)
 
 		resp, err = client.Do(httpReq)
@@ -338,7 +556,7 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	results := make([]ImageResult, 0, len(apiResp.Data))
 	for i, item := range apiResp.Data {
 		result := ImageResult{
-			ID:            fmt.Sprintf("img_%d_%d", time.Now().UnixNano(), i),
+			ID:            fmt.Sprintf("img_%d_%d_%s", time.Now().UnixNano(), i, randomID()),
 			RevisedPrompt: item.RevisedPrompt,
 		}
 
@@ -350,8 +568,12 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 				result.URL = stored.PublicURL
 				result.PreviewURL = stored.PreviewURL
 				result.ThumbnailURL = stored.ThumbnailURL
+				result.StoragePath = stored.StoragePath
+				result.PreviewPath = stored.PreviewPath
+				result.ThumbnailPath = stored.ThumbnailPath
 			} else {
 				result.URL = item.URL // Fallback to original URL
+				result.PreviewURL = item.URL
 			}
 		} else if item.Base64 != "" {
 			// Decode base64 and store
@@ -362,6 +584,9 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 					result.URL = stored.PublicURL
 					result.PreviewURL = stored.PreviewURL
 					result.ThumbnailURL = stored.ThumbnailURL
+					result.StoragePath = stored.StoragePath
+					result.PreviewPath = stored.PreviewPath
+					result.ThumbnailPath = stored.ThumbnailPath
 				}
 			}
 		}
@@ -372,12 +597,72 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	return results, nil
 }
 
+func (h *ImageHandler) imageEditBody(ctx context.Context, fields map[string]any, references []ImageGenReference) (io.Reader, string, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	for key, value := range fields {
+		if err := writer.WriteField(key, fmt.Sprint(value)); err != nil {
+			return nil, "", err
+		}
+	}
+
+	for index, reference := range references {
+		data, mime, err := h.referenceImageBytes(ctx, reference)
+		if err != nil {
+			return nil, "", err
+		}
+		fileName := reference.FileName
+		if fileName == "" {
+			fileName = fmt.Sprintf("reference_%d.%s", index+1, extensionForMime(mime))
+		}
+		part, err := writer.CreateFormFile("image[]", fileName)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := part.Write(data); err != nil {
+			return nil, "", err
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return bytes.NewReader(body.Bytes()), writer.FormDataContentType(), nil
+}
+
+func (h *ImageHandler) referenceImageBytes(ctx context.Context, reference ImageGenReference) ([]byte, string, error) {
+	if reference.StoragePath != "" {
+		if h.storageService == nil {
+			return nil, "", fmt.Errorf("storage service unavailable")
+		}
+		image, err := h.storageService.DownloadImage(ctx, reference.StoragePath)
+		if err != nil {
+			return nil, "", err
+		}
+		if image == nil || len(image.Data) == 0 {
+			return nil, "", fmt.Errorf("reference image not found")
+		}
+		return image.Data, firstNonEmpty(image.Mime, mimeFromPath(reference.StoragePath)), nil
+	}
+	if reference.DataUrl != "" {
+		data, mime, err := dataURLBytes(reference.DataUrl)
+		if err != nil {
+			return nil, "", err
+		}
+		return data, mime, nil
+	}
+	return nil, "", fmt.Errorf("reference image is missing image data")
+}
+
 // ImageHistoryListResponse represents the image history list response
 type ImageHistoryListResponse struct {
 	Images      []service.ImageHistoryItem `json:"images"`
 	Total       int                        `json:"total"`
 	Limit       int                        `json:"limit,omitempty"`
 	Offset      int                        `json:"offset,omitempty"`
+	HasMore     bool                       `json:"hasMore"`
+	NextOffset  *int                       `json:"nextOffset"`
 	Persistence bool                       `json:"persistence"`
 }
 
@@ -437,11 +722,20 @@ func (h *ImageHandler) ListHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hasMore := offset+len(history.Images) < history.Total
+	var nextOffset *int
+	if hasMore {
+		value := offset + len(history.Images)
+		nextOffset = &value
+	}
+
 	response.JSON(w, http.StatusOK, ImageHistoryListResponse{
 		Images:      history.Images,
 		Total:       history.Total,
 		Limit:       limit,
 		Offset:      offset,
+		HasMore:     hasMore,
+		NextOffset:  nextOffset,
 		Persistence: true,
 	})
 }
@@ -537,6 +831,8 @@ func (h *ImageHandler) ClearHistory(w http.ResponseWriter, r *http.Request) {
 
 // RegisterRoutes registers image routes
 func (h *ImageHandler) RegisterRoutes(r chi.Router) {
+	r.Post("/references", h.UploadReference)
+	r.Get("/storage/*", h.ProxyStorage)
 	r.Post("/generate", h.Generate)
 	r.Get("/history", h.ListHistory)
 	r.Get("/history/{id}", h.GetHistoryDetail)
@@ -631,6 +927,191 @@ func determineSize(resolution, aspectRatio string) string {
 
 func roundToTwoDecimals(val float64) float64 {
 	return math.Round(val*100) / 100
+}
+
+func randomID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func historyReferences(references []ImageGenReference) []service.ImageHistoryReference {
+	result := make([]service.ImageHistoryReference, 0, len(references))
+	for index, reference := range references {
+		if reference.DataUrl == "" && reference.StoragePath == "" && reference.PreviewURL == "" && reference.ThumbnailURL == "" {
+			continue
+		}
+		id := reference.ID
+		if id == "" {
+			id = fmt.Sprintf("reference_%d", index+1)
+		}
+		title := reference.Title
+		if title == "" {
+			title = fmt.Sprintf("参考图%d", index+1)
+		}
+		result = append(result, service.ImageHistoryReference{
+			ID:            id,
+			Title:         title,
+			StoragePath:   reference.StoragePath,
+			PreviewURL:    reference.PreviewURL,
+			PreviewPath:   reference.PreviewPath,
+			ThumbnailURL:  reference.ThumbnailURL,
+			ThumbnailPath: reference.ThumbnailPath,
+			Content:       reference.Content,
+			FileName:      reference.FileName,
+		})
+	}
+	return result
+}
+
+func requestContentType(r *http.Request) string {
+	mime := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	if mime == "image/jpg" {
+		return "image/jpeg"
+	}
+	if mime == "" {
+		return "application/octet-stream"
+	}
+	return mime
+}
+
+func isAllowedReferenceMime(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/webp", "image/gif":
+		return true
+	default:
+		return false
+	}
+}
+
+func extensionForMime(mime string) string {
+	switch mime {
+	case "image/jpeg", "image/jpg":
+		return "jpg"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	default:
+		return "png"
+	}
+}
+
+func headerText(value string, maxLength int) string {
+	if value == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(value)
+	if err != nil {
+		decoded = value
+	}
+	decoded = strings.ReplaceAll(decoded, "\r", " ")
+	decoded = strings.ReplaceAll(decoded, "\n", " ")
+	decoded = strings.TrimSpace(decoded)
+	if len(decoded) > maxLength {
+		return decoded[:maxLength]
+	}
+	return decoded
+}
+
+func safePathPart(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = fallback
+	}
+	value = strings.Trim(path.Base(value), ". ")
+	var builder strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteByte('_')
+		}
+		if builder.Len() >= 80 {
+			break
+		}
+	}
+	result := strings.Trim(builder.String(), "_")
+	if result == "" {
+		return fallback
+	}
+	return result
+}
+
+func safeUploadName(fileName, extension string) string {
+	stem := strings.TrimSuffix(fileName, path.Ext(fileName))
+	stem = safePathPart(stem, "reference")
+	stem = strings.Trim(stem, "_")
+	if stem == "" {
+		stem = "reference"
+	}
+	return stem + "." + extension
+}
+
+func safeProxyStoragePath(value string) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return "", false
+	}
+	decoded = strings.TrimSpace(decoded)
+	if decoded == "" || strings.HasPrefix(decoded, "/") || strings.HasPrefix(decoded, "\\") {
+		return "", false
+	}
+	if strings.Contains(decoded, "..") || strings.HasPrefix(strings.ToLower(decoded), "http:") || strings.HasPrefix(strings.ToLower(decoded), "https:") || strings.HasPrefix(strings.ToLower(decoded), "data:") {
+		return "", false
+	}
+	return decoded, true
+}
+
+func mimeFromPath(storagePath string) string {
+	switch strings.ToLower(path.Ext(storagePath)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
+}
+
+func dataURLBytes(value string) ([]byte, string, error) {
+	if !strings.HasPrefix(value, "data:") {
+		return nil, "", fmt.Errorf("invalid data url")
+	}
+	parts := strings.SplitN(value, ",", 2)
+	if len(parts) != 2 {
+		return nil, "", fmt.Errorf("invalid data url")
+	}
+	meta := strings.TrimPrefix(parts[0], "data:")
+	mime := "image/png"
+	if meta != "" {
+		mime = strings.Split(meta, ";")[0]
+	}
+	if strings.Contains(meta, ";base64") {
+		data, err := base64.StdEncoding.DecodeString(parts[1])
+		return data, mime, err
+	}
+	decoded, err := url.QueryUnescape(parts[1])
+	if err != nil {
+		return nil, "", err
+	}
+	return []byte(decoded), mime, nil
 }
 
 // isTransientStatus returns true for HTTP status codes that indicate a transient

@@ -93,13 +93,13 @@ func main() {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(chiMiddleware.RequestID)
-	r.Use(chiMiddleware.Timeout(60 * time.Second))
+	r.Use(chiMiddleware.Timeout(600 * time.Second))
 
 	// CORS middleware
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   config.CorsOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key", "X-Reference-ID", "X-Reference-Title", "X-Reference-Filename"},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -137,8 +137,8 @@ func main() {
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", config.Port),
 		Handler:      r,
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 120 * time.Second,
+		ReadTimeout:  120 * time.Second,
+		WriteTimeout: 620 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 

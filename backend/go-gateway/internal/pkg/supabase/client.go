@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -37,8 +38,8 @@ func NewClient() (*Client, error) {
 	// Connection pool settings optimized for serverless
 	poolConfig.MaxConns = 10
 	poolConfig.MinConns = 0
-	poolConfig.MaxConnLifetime = 60 * 60 // 1 hour
-	poolConfig.MaxConnIdleTime = 5 * 60  // 5 minutes
+	poolConfig.MaxConnLifetime = time.Hour
+	poolConfig.MaxConnIdleTime = 5 * time.Minute
 
 	ctx := context.Background()
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)

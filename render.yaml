@@ -73,6 +73,8 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: SUPABASE_IMAGE_BUCKET
         value: recho-images
       - key: CORS_ORIGIN
@@ -88,6 +90,8 @@ services:
     envVars:
       - key: VITE_API_BASE_URL
         value: https://recho-gateway.onrender.com
+      - key: VITE_IMAGE_API_BASE_URL
+        value: https://recho-go-gateway.onrender.com
     headers:
       - path: /assets/*
         name: Cache-Control

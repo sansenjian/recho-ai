@@ -9,7 +9,7 @@ Reduce Render memory pressure and cold-start latency by moving selected API path
 - Node gateway remains the default backend for local development and production.
 - Go gateway is introduced as a parallel service under `backend/go-gateway`.
 - Local Go gateway runs on port `3001`.
-- Vite can point `/api` to Go with `VITE_API_PROXY_TARGET=http://127.0.0.1:3001`.
+- Vite keeps `/api` proxied to Node and can point only image calls to Go with `VITE_IMAGE_API_BASE_URL=http://127.0.0.1:3001`.
 - Render can deploy a separate `recho-go-gateway` service without replacing `recho-gateway`.
 
 ## Why Parallel First
@@ -20,20 +20,20 @@ The existing `go-gateway` branch diverged from current `master` and also rewrite
 
 These endpoints are good candidates because they affect Image page startup or credit-consuming flows and do not require MCP:
 
-- `GET /health`
-- `GET /api/config/app`
-- `GET /api/config/supabase`
 - `GET /api/image/history?scope=public`
 - `GET /api/image/history?scope=mine`
+- `GET /api/image/history/:id`
+- `POST /api/image/references`
 - `POST /api/image/generate`
-- `GET /api/credits`
-- `POST /api/credits/redeem`
+- `DELETE /api/image/history/:id`
+- `DELETE /api/image/history`
 
 Node should remain responsible for now:
 
 - Chat streaming with MCP/tool calls
 - Skills loading
 - Admin panels
+- Credits and app config, unless they are explicitly moved after parity testing
 - Tool endpoints
 - Any route that has not been response-compatible tested against Node
 
@@ -51,6 +51,8 @@ Go candidate path:
 npm run dev:go
 ```
 
+This starts both gateways. `/api` still goes to Node through the Vite proxy; only image calls use the Go service through `VITE_IMAGE_API_BASE_URL`.
+
 Build checks:
 
 ```bash
@@ -64,22 +66,20 @@ With Go running on `3001`:
 
 ```bash
 curl http://127.0.0.1:3001/health
-curl http://127.0.0.1:3001/api/config/app
 curl "http://127.0.0.1:3001/api/image/history?scope=public&limit=2"
 ```
 
 Expected in limited local mode without Supabase env:
 
 - `/health` returns `status: ok`.
-- `/api/config/app` returns frontend-safe defaults.
 - Public image history returns an empty list with `persistence: false`, rather than crashing.
 
 ## Deploy Strategy
 
 1. Deploy `recho-go-gateway` alongside the existing Node `recho-gateway`.
 2. Keep frontend `VITE_API_BASE_URL` pointing to Node.
-3. Test Go endpoints directly in production.
-4. Move only Image-related frontend API base to Go after response compatibility is verified.
+3. Set frontend `VITE_IMAGE_API_BASE_URL` to the Go service when image endpoints are ready.
+4. Test Go image endpoints directly in production.
 5. Keep Chat/MCP/Admin on Node until dedicated parity work is complete.
 
 ## Success Metrics
@@ -91,8 +91,7 @@ Expected in limited local mode without Supabase env:
 
 ## Known Gaps
 
-- Go app config currently uses env defaults and does not read `app_settings`.
-- Go image history response needs parity review against Node before production cutover.
+- Go app config and credits endpoints exist for experiments, but frontend traffic should remain on Node for now.
 - Go image storage proxy and COS behavior need parity review.
 - Go chat route is basic upstream streaming and does not implement the current Node MCP/tool loop.
 - Go admin APIs are not implemented.
