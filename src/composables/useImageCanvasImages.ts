@@ -5,6 +5,7 @@ import {
   compressReferenceImageDataUrl,
   fallbackImageFileName,
   imageDimensionsFromHistory,
+  hasFileTransfer,
   readImageDimensions,
   readImageFileAsDataUrl,
 } from '../lib/image-canvas-utils'
@@ -43,11 +44,6 @@ function isImageFile(file: File) {
 
 function imageFilesFromTransfer(dataTransfer: DataTransfer | null) {
   return Array.from(dataTransfer?.files ?? []).filter(isImageFile)
-}
-
-function hasFileTransfer(event: DragEvent) {
-  const types = Array.from(event.dataTransfer?.types ?? [])
-  return types.includes('Files') || Array.from(event.dataTransfer?.items ?? []).some(item => item.kind === 'file')
 }
 
 export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {

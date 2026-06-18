@@ -23,6 +23,7 @@ import { useAuthSession } from '../composables/useAuthSession'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
 import { useCredits } from '../composables/useCredits'
 import { apiUrl } from '../lib/api-base'
+import { hasFileTransfer } from '../lib/image-canvas-utils'
 import { formatCreditAmount } from '../utils/credit-format'
 import type { RouteWorkspace } from '../router'
 
@@ -326,12 +327,8 @@ function triggerFileInput() {
 }
 
 // --- Drag & drop ---
-function isFileDragEvent(e: DragEvent) {
-  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
-}
-
 function suppressWorksFileDrag(e: DragEvent) {
-  if (currentRouteWorkspace() !== 'works' || !isFileDragEvent(e)) return false
+  if (currentRouteWorkspace() !== 'works' || !hasFileTransfer(e)) return false
   e.preventDefault()
   dragCounter = 0
   isDragOver.value = false
