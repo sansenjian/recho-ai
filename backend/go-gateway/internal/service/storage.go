@@ -3,11 +3,12 @@ package service
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
+	"log"
 	"net/http"
 	"path"
 	"strings"
@@ -408,6 +409,7 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 			&item.FundingSource, &item.CreditCost,
 		)
 		if err != nil {
+			log.Printf("[image-history] failed to scan history row: %v", err)
 			continue
 		}
 		item.Timestamp = generatedAt
@@ -574,7 +576,16 @@ func imageStoragePath(mime, hint string) string {
 		}
 		return cleanHint
 	}
-	return fmt.Sprintf("images/%d_%d.%s", time.Now().UnixNano(), rand.Int63(), extension)
+	return fmt.Sprintf("images/%d_%s.%s", time.Now().UnixNano(), secureRandomPathPart(), extension)
+}
+
+func secureRandomPathPart() string {
+	var randomBytes [16]byte
+	if _, err := crand.Read(randomBytes[:]); err != nil {
+		log.Printf("[image-storage] crypto random path generation failed: %v", err)
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", randomBytes[:])
 }
 
 func mimeFromStoragePath(storagePath string) string {
