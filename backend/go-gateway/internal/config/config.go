@@ -8,6 +8,11 @@ import (
 
 // Server config
 var Port = parseEnvInt("PORT", 3000)
+var AppEnv = firstNonEmpty(
+	os.Getenv("APP_ENV"),
+	os.Getenv("GO_ENV"),
+	os.Getenv("NODE_ENV"),
+)
 
 // CORS config
 var CorsOrigin = parseEnvString("CORS_ORIGIN", "http://localhost:5173")
@@ -31,6 +36,17 @@ var ImageCreditCostPerImage = parseEnvFloat("IMAGE_CREDIT_COST_PER_IMAGE", 0.5)
 var ImageResponsesModel = parseEnvString("IMAGE_RESPONSES_MODEL", "gpt-image-2")
 var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gpt-image-2")
 
+// Chat and analytics config. Chat is optional while Go runs as an image sidecar.
+var ChatBaseURL = firstNonEmpty(
+	os.Getenv("CHAT_BASE_URL"),
+	os.Getenv("ANALYSIS_URL"),
+)
+var ChatAPIKey = firstNonEmpty(
+	os.Getenv("CHAT_API_KEY"),
+	os.Getenv("ANALYSIS_API_KEY"),
+)
+var AnalysisURL = os.Getenv("ANALYSIS_URL")
+
 // Analytics config
 var ImageAnalyticsEnabled = parseEnvBool("IMAGE_ANALYTICS_ENABLED", false)
 var ImageEventsEnabled = parseEnvBool("IMAGE_EVENTS_ENABLED", false)
@@ -51,12 +67,8 @@ func CorsOrigins() []string {
 }
 
 func IsProduction() bool {
-	for _, origin := range CorsOrigins() {
-		if origin != "" && !strings.Contains(origin, "localhost") && !strings.Contains(origin, "127.0.0.1") {
-			return true
-		}
-	}
-	return false
+	env := strings.ToLower(strings.TrimSpace(AppEnv))
+	return env == "production" || env == "prod"
 }
 
 func firstNonEmpty(values ...string) string {

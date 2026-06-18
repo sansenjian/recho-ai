@@ -8,14 +8,14 @@
 
 - Node 网关仍然是默认开发和生产入口。
 - Go 网关默认用于本地验证，建议监听 `3001`。
-- 前端可通过 `VITE_API_PROXY_TARGET` 指向 Go 网关进行对比测试。
-- 只有确认接口等价后，再逐步把具体 API 路由切到 Go。
+- 本地 `npm run dev:go` 会同时启动 Node 和 Go；普通 `/api` 仍走 Node，图片 API 通过 `VITE_IMAGE_API_BASE_URL` 指向 Go。
+- 只有确认接口等价后，再逐步把具体 image API 路由切到 Go。
 
 ## 快速开始
 
 ### 前置要求
 
-- Go 1.21+
+- Go 1.25+
 - PostgreSQL 连接（通过 `DATABASE_URL` 或 Supabase `POSTGRES_URL`）
 
 ### 安装依赖
@@ -44,6 +44,7 @@ go build -o go-gateway ./cmd/server/
 ```bash
 # Server
 PORT=3001
+APP_ENV=development
 CORS_ORIGIN=http://localhost:5173
 
 # Supabase Database
@@ -56,7 +57,13 @@ IMAGE_GEN_API_KEY=[API_KEY]
 IMAGE_GEN_BASE_URL=https://lucen.plus/v1
 IMAGE_CREDIT_COST_PER_IMAGE=0.5
 
+# Optional chat forwarding
+CHAT_BASE_URL=https://api.openai.com
+CHAT_API_KEY=[API_KEY]
+
 # Analytics
+ANALYSIS_URL=
+ANALYSIS_API_KEY=
 IMAGE_ANALYTICS_ENABLED=false
 IMAGE_EVENTS_ENABLED=false
 CANVAS_CONTEXT_ENABLED=false
@@ -68,7 +75,7 @@ ADMIN_USER_EMAILS=admin@example.com
 
 ## 项目结构
 
-```
+```text
 backend/go-gateway/
 ├── cmd/server/main.go           # 应用入口
 ├── internal/
@@ -141,7 +148,7 @@ backend/go-gateway/
 
 ```bash
 docker build -t recho-go-gateway .
-docker run -p 3000:3000 --env-file .env recho-go-gateway
+docker run -p 3001:3000 --env-file .env recho-go-gateway
 ```
 
 ### Render

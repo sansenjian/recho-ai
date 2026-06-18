@@ -13,6 +13,13 @@ type CreditService struct {
 	repo *repository.CreditRepository
 }
 
+// CreditReservation holds credit reservation info for a generation request.
+type CreditReservation struct {
+	TransactionID string
+	Amount        float64
+	Balance       float64
+}
+
 // NewCreditService creates a new credit service
 func NewCreditService(repo *repository.CreditRepository) *CreditService {
 	return &CreditService{repo: repo}

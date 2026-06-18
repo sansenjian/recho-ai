@@ -20,13 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// CreditReservation holds credit reservation info
-type CreditReservation struct {
-	TransactionID string
-	Amount        float64
-	Balance       float64
-}
-
 // StorageService handles image storage operations
 type StorageService struct {
 	pool   *pgxpool.Pool
@@ -426,9 +419,13 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 	// Get total count — use the same scope-specific query
 	var total int
 	if scope == "mine" && userID != "" {
-		s.pool.QueryRow(ctx, countQuery, userID).Scan(&total)
+		if err := s.pool.QueryRow(ctx, countQuery, userID).Scan(&total); err != nil {
+			return nil, fmt.Errorf("failed to count private image history: %w", err)
+		}
 	} else {
-		s.pool.QueryRow(ctx, countQuery).Scan(&total)
+		if err := s.pool.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+			return nil, fmt.Errorf("failed to count public image history: %w", err)
+		}
 	}
 
 	return &ImageHistory{Images: images, Total: total}, nil

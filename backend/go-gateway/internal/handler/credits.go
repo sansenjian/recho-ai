@@ -6,12 +6,15 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/pkg/response"
 	"go-gateway/internal/service"
 )
+
+const redeemRequestMaxBytes = 1 * 1024 * 1024
 
 // CreditsHandler handles credit-related endpoints
 type CreditsHandler struct {
@@ -81,8 +84,14 @@ func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read raw body for idempotency fingerprint, then restore for JSON decoding
-	rawBody, err := io.ReadAll(r.Body)
+	body := http.MaxBytesReader(w, r.Body, redeemRequestMaxBytes)
+	defer body.Close()
+	rawBody, err := io.ReadAll(body)
 	if err != nil {
+		if strings.Contains(err.Error(), "http: request body too large") {
+			response.Error(w, http.StatusRequestEntityTooLarge, "请求内容过大。")
+			return
+		}
 		response.Error(w, http.StatusBadRequest, "无效的请求格式。")
 		return
 	}

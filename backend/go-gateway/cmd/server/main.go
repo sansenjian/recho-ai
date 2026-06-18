@@ -76,15 +76,15 @@ func main() {
 		storageService = service.NewStorageService(db.Pool())
 	}
 
-	// Initialize chat service
-	chatService := service.NewChatService(config.ImageGenBaseURL, os.Getenv("ANALYSIS_URL"))
+	// Initialize chat service. Chat remains optional while Go is used as an image sidecar.
+	chatService := service.NewChatService(config.ChatBaseURL, config.ChatAPIKey, config.AnalysisURL)
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
 	configHandler := handler.NewConfigHandler()
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
-	chatHandler := handler.NewChatHandler(chatService, creditService, os.Getenv("ANALYSIS_URL"))
+	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)
 
 	// Setup router
 	r := chi.NewRouter()
@@ -93,7 +93,6 @@ func main() {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(chiMiddleware.RequestID)
-	r.Use(chiMiddleware.Timeout(600 * time.Second))
 
 	// CORS middleware
 	r.Use(cors.Handler(cors.Options{

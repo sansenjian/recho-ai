@@ -28,10 +28,6 @@ CREATE TABLE IF NOT EXISTS public.idempotency_keys (
     UNIQUE (user_id, idem_key, scope)
 );
 
--- Fast lookup for the acquire path
-CREATE INDEX IF NOT EXISTS idx_idempotency_user_key_scope
-    ON public.idempotency_keys (user_id, idem_key, scope);
-
 -- Cleanup of expired records
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires
     ON public.idempotency_keys (expires_at)

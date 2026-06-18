@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -21,8 +21,10 @@ FROM alpine:3.19
 
 WORKDIR /app
 
-# Install CA certificates for HTTPS
-RUN apk add --no-cache ca-certificates tzdata
+# Install CA certificates for HTTPS and create a non-root runtime user
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S app \
+    && adduser -S -G app app
 
 # Copy binary from builder
 COPY --from=builder /app/go-gateway .
@@ -32,6 +34,9 @@ EXPOSE 3000
 
 # Set environment
 ENV PORT=3000
+
+# Run as non-root
+USER app
 
 # Run
 CMD ["./go-gateway"]

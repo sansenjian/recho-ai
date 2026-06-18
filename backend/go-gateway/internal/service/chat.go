@@ -7,19 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type ChatService struct {
 	chatURL       string
+	chatAPIKey    string
 	analysisURL   string
 	httpClient    *http.Client
 	creditConfigs map[string]int // model -> credits per request
 }
 
-func NewChatService(chatURL, analysisURL string) *ChatService {
+func NewChatService(chatURL, chatAPIKey, analysisURL string) *ChatService {
 	return &ChatService{
 		chatURL:     chatURL,
+		chatAPIKey:  chatAPIKey,
 		analysisURL: analysisURL,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
@@ -39,8 +42,10 @@ func NewChatService(chatURL, analysisURL string) *ChatService {
 func (s *ChatService) Chat(ctx context.Context, model string, body []byte) (*http.Response, error) {
 	url := s.chatURL
 	if url == "" {
-		// Default to analysis URL for chat
-		url = s.analysisURL + "/v1/chat/completions"
+		return nil, fmt.Errorf("chat upstream is not configured")
+	}
+	if !strings.HasSuffix(url, "/chat/completions") {
+		url = strings.TrimRight(url, "/") + "/v1/chat/completions"
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -48,7 +53,9 @@ func (s *ChatService) Chat(ctx context.Context, model string, body []byte) (*htt
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.analysisURL)) // Use analysis API key
+	if s.chatAPIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.chatAPIKey))
+	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -100,8 +107,11 @@ func (s *ChatService) SendAnalytics(userID, event string, data map[string]interf
 		"ts":      time.Now().Unix(),
 	}
 
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", s.analysisURL+"/api/analytics", bytes.NewReader(body))
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(context.Background(), "POST", s.analysisURL+"/api/analytics", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -112,7 +122,13 @@ func (s *ChatService) SendAnalytics(userID, event string, data map[string]interf
 		return err
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return readErr
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("analytics request failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
 
 	return nil
 }

@@ -48,7 +48,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	if h.db != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		
+
 		if err := h.db.Ping(ctx); err != nil {
 			services["database"] = "unhealthy: " + err.Error()
 			allHealthy = false
@@ -57,6 +57,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		services["database"] = "not configured"
+		allHealthy = false
 	}
 
 	status := "ok"

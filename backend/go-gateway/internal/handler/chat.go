@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/pkg/response"
 	"go-gateway/internal/service"
 
 	"github.com/go-chi/chi/v5"
@@ -30,7 +32,7 @@ func NewChatHandler(chatSvc *service.ChatService, creditSvc *service.CreditServi
 
 type ChatRequest struct {
 	Model    string    `json:"model"`
-	Messages []Message  `json:"messages"`
+	Messages []Message `json:"messages"`
 	Stream   *bool     `json:"stream"`
 }
 
@@ -70,9 +72,9 @@ type ChatStreamResponse struct {
 }
 
 type StreamChoice struct {
-	Index        int                  `json:"index"`
+	Index        int                    `json:"index"`
 	Delta        map[string]interface{} `json:"delta"`
-	FinishReason string               `json:"finish_reason,omitempty"`
+	FinishReason string                 `json:"finish_reason,omitempty"`
 }
 
 // StreamChunk for SSE
@@ -84,13 +86,13 @@ type StreamChunk struct {
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 	if user == nil {
-		http.Error(w, `{"error": {"message": "Unauthorized", "type": "authentication_error"}}`, http.StatusUnauthorized)
+		response.Error(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error": {"message": "Invalid request body", "type": "invalid_request_error"}}`, http.StatusBadRequest)
+		response.Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -118,7 +120,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	body, err := json.Marshal(upstreamReq)
 	if err != nil {
-		http.Error(w, `{"error": {"message": "Failed to build request", "type": "internal_error"}}`, http.StatusInternalServerError)
+		response.Error(w, http.StatusInternalServerError, "Failed to build request")
 		return
 	}
 
@@ -133,12 +135,13 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte) {
 	resp, err := h.chatService.Chat(ctx, model, body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": {"message": "Chat service error: %v", "type": "internal_error"}}`, err), http.StatusInternalServerError)
+		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("Chat service error: %v", err))
 		return
 	}
 	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
@@ -154,25 +157,15 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 		if err != nil {
 			balance, _ := h.creditSvc.GetBalance(ctx, userID)
 			if balance < creditCost {
-				http.Error(w, fmt.Sprintf(`{"error": {"message": "Insufficient credits. Required: %.2f, Available: %.2f", "type": "insufficient_credits"}}`, creditCost, balance), http.StatusPaymentRequired)
+				response.Error(w, http.StatusPaymentRequired, fmt.Sprintf("Insufficient credits. Required: %.2f, Available: %.2f", creditCost, balance))
 				return
 			}
+			response.Error(w, http.StatusServiceUnavailable, "Credit service unavailable")
+			return
 		} else {
 			txID = id
 		}
 	}
-
-	// Create SSE writer
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "SSE not supported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Call upstream chat API with streaming
 	resp, err := h.chatService.Chat(ctx, model, body)
@@ -181,10 +174,32 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 		if h.creditSvc != nil && txID != "" {
 			h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_error")
 		}
-		http.Error(w, fmt.Sprintf(`{"error": {"message": "Chat service error: %v", "type": "internal_error"}}`, err), http.StatusInternalServerError)
+		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("Chat service error: %v", err))
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(resp.Body)
+		if h.creditSvc != nil && txID != "" {
+			if _, refundErr := h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_upstream_error"); refundErr != nil {
+				log.Printf("[chat] failed to refund credits after upstream status %d: %v", resp.StatusCode, refundErr)
+			}
+		}
+		response.Error(w, resp.StatusCode, fmt.Sprintf("Chat upstream error: %s", string(respBody)))
+		return
+	}
+
+	// Create SSE writer
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		response.Error(w, http.StatusInternalServerError, "SSE not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Stream response to client
 	reader := resp.Body
@@ -228,7 +243,16 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 				return
 			}
 			if err != nil {
-				break
+				log.Printf("[chat] stream read failed: %v", err)
+				if h.creditSvc != nil && txID != "" {
+					if _, refundErr := h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_stream_error"); refundErr != nil {
+						log.Printf("[chat] failed to refund credits after stream error: %v", refundErr)
+					}
+				}
+				fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+				fmt.Fprint(w, "data: [DONE]\n\n")
+				flusher.Flush()
+				return
 			}
 		}
 	}
@@ -238,13 +262,13 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 func (h *ChatHandler) ChatHistory(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 	if user == nil {
-		http.Error(w, `{"error": {"message": "Unauthorized", "type": "authentication_error"}}`, http.StatusUnauthorized)
+		response.Error(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	history, err := h.chatService.GetChatHistory(user.ID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": {"message": "Failed to get chat history", "type": "internal_error"}}`), http.StatusInternalServerError)
+		response.Error(w, http.StatusInternalServerError, "Failed to get chat history")
 		return
 	}
 

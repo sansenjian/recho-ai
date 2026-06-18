@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"go-gateway/internal/pkg/supabase"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type RedeemRepository struct {
@@ -19,12 +21,12 @@ func NewRedeemRepository(db *supabase.Client) *RedeemRepository {
 // RedeemCode represents a redemption code in the database
 type RedeemCode struct {
 	ID        string     `json:"id"`
-	Code       string     `json:"code"`
-	Credits    int        `json:"credits"`
-	UsedBy     *string    `json:"used_by"`
-	UsedAt     *time.Time `json:"used_at"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	Code      string     `json:"code"`
+	Credits   int        `json:"credits"`
+	UsedBy    *string    `json:"used_by"`
+	UsedAt    *time.Time `json:"used_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 const redeemTable = "redeem_codes"
@@ -68,6 +70,9 @@ func (r *RedeemRepository) FindByCode(ctx context.Context, code string) (*Redeem
 		&rc.CreatedAt,
 	)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 

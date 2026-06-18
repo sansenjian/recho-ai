@@ -5,19 +5,20 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 
 	"go-gateway/internal/repository"
 )
 
 type RedeemService struct {
-	repo     *repository.RedeemRepository
+	repo      *repository.RedeemRepository
 	creditSvc *CreditService
 }
 
 func NewRedeemService(repo *repository.RedeemRepository, creditSvc *CreditService) *RedeemService {
 	return &RedeemService{
-		repo:     repo,
+		repo:      repo,
 		creditSvc: creditSvc,
 	}
 }
@@ -63,6 +64,12 @@ func (s *RedeemService) Redeem(ctx context.Context, userID, code string) (*Redee
 			Message: "Invalid redemption code",
 		}, nil
 	}
+	if redeemCode == nil {
+		return &RedeemResult{
+			Success: false,
+			Message: "Invalid redemption code",
+		}, nil
+	}
 
 	// Check if expired
 	if time.Now().After(redeemCode.ExpiresAt) {
@@ -96,7 +103,9 @@ func (s *RedeemService) Redeem(ctx context.Context, userID, code string) (*Redee
 	// Credit the user's account
 	if err := s.creditSvc.AddCredits(ctx, userID, redeemCode.Credits, "redeem", redeemCode.ID); err != nil {
 		// Rollback the mark as used
-		s.repo.MarkAsUnused(ctx, redeemCode.ID)
+		if rollbackErr := s.repo.MarkAsUnused(ctx, redeemCode.ID); rollbackErr != nil {
+			log.Printf("[redeem] failed to rollback code usage for %s: %v", redeemCode.ID, rollbackErr)
+		}
 		return nil, fmt.Errorf("failed to credit user: %w", err)
 	}
 

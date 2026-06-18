@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go-gateway/internal/config"
+	"go-gateway/internal/pkg/response"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -31,7 +32,7 @@ var jwtSecret []byte
 
 // Init initializes the JWT secret from centralized config.
 // Call this from main() after config is loaded.
-// In production (non-localhost CORS), missing JWT secret is fatal.
+// In production, missing JWT secret is fatal.
 func Init() {
 	jwtSecret = []byte(config.SupabaseJWTSecret)
 
@@ -45,7 +46,7 @@ func Init() {
 	}
 }
 
-// isProduction returns true when the CORS origin is not a localhost address
+// isProduction returns true when the configured app environment is production.
 func isProduction() bool {
 	return config.IsProduction()
 }
@@ -89,21 +90,21 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		if err != nil || !token.Valid {
 			// Token was provided but is invalid or expired — return 401
-			http.Error(w, `{"error":"token 无效或已过期，请重新登录。"}`, http.StatusUnauthorized)
+			response.Error(w, http.StatusUnauthorized, "token 无效或已过期，请重新登录。")
 			return
 		}
 
 		// Extract claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			http.Error(w, `{"error":"token 格式无效。"}`, http.StatusUnauthorized)
+			response.Error(w, http.StatusUnauthorized, "token 格式无效。")
 			return
 		}
 
 		// Extract user ID from "sub" claim
 		sub, _ := claims["sub"].(string)
 		if sub == "" {
-			http.Error(w, `{"error":"token 缺少用户标识。"}`, http.StatusUnauthorized)
+			response.Error(w, http.StatusUnauthorized, "token 缺少用户标识。")
 			return
 		}
 
@@ -126,7 +127,7 @@ func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := GetUserFromContext(r.Context())
 		if user == nil || user.ID == "" {
-			http.Error(w, `{"error":"请先登录后再使用额度。"}`, http.StatusUnauthorized)
+			response.Error(w, http.StatusUnauthorized, "请先登录后再使用额度。")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -156,12 +157,12 @@ func AdminMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := GetUserFromContext(r.Context())
 		if user == nil || user.ID == "" {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			response.Error(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		if user.Role != "admin" && user.Role != "supabase_admin" {
-			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			response.Error(w, http.StatusForbidden, "forbidden")
 			return
 		}
 

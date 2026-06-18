@@ -156,9 +156,12 @@ func (r *IdempotencyRepository) Complete(
 		  AND status = 'processing'
 	`
 
-	_, err = r.pool.Exec(ctx, query, userID, idemKey, scope, responseCode, bodyJSON, txID)
+	result, err := r.pool.Exec(ctx, query, userID, idemKey, scope, responseCode, bodyJSON, txID)
 	if err != nil {
 		return fmt.Errorf("failed to complete idempotency record: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("idempotency record was not completed because it was missing or not processing")
 	}
 	return nil
 }

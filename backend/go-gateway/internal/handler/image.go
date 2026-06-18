@@ -123,14 +123,21 @@ type referenceUploadResponse struct {
 }
 
 const referenceUploadMaxBytes = 12 * 1024 * 1024
+const imageGenerateMaxBytes = 2 * 1024 * 1024
 
 // Generate handles POST /api/image/generate
 func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 
 	// Read raw body for idempotency fingerprint, then restore for JSON decoding
-	rawBody, err := io.ReadAll(r.Body)
+	body := http.MaxBytesReader(w, r.Body, imageGenerateMaxBytes)
+	defer body.Close()
+	rawBody, err := io.ReadAll(body)
 	if err != nil {
+		if strings.Contains(err.Error(), "http: request body too large") {
+			response.Error(w, http.StatusRequestEntityTooLarge, "请求内容过大。")
+			return
+		}
 		response.Error(w, http.StatusBadRequest, "无效的请求格式。")
 		return
 	}
@@ -203,7 +210,9 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				response.Error(w, http.StatusPaymentRequired, "额度不足。")
 				return
 			}
-			// For other errors, try to continue without credits (public generation)
+			log.Printf("[image] failed to reserve credits: %v", err)
+			response.Error(w, http.StatusServiceUnavailable, "额度服务暂时不可用，请稍后重试。")
+			return
 		} else {
 			creditReservation = &service.CreditReservation{
 				TransactionID: txID,
@@ -238,9 +247,12 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		missingCount := count - len(images)
 		refundAmount := roundToTwoDecimals(float64(missingCount) * costPerImage)
 		if refundAmount > 0 {
-			_, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
+			newBalance, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
 			if refundErr != nil {
 				log.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
+			} else {
+				totalCost = roundToTwoDecimals(totalCost - refundAmount)
+				creditReservation.Balance = newBalance
 			}
 		}
 	}

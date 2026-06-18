@@ -207,7 +207,9 @@ func (r *CreditRepository) RefundCredits(
 			insertQuery := `
 				INSERT INTO user_credit_balances (user_id, balance, total_redeemed, total_spent)
 				VALUES ($1, $2, 0, 0)
-				ON CONFLICT (user_id) DO NOTHING
+				ON CONFLICT (user_id) DO UPDATE
+				SET balance = user_credit_balances.balance + $2,
+				    updated_at = NOW()
 				RETURNING balance
 			`
 			err = tx.QueryRow(ctx, insertQuery, userID, amount).Scan(&newBalance)
