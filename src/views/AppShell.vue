@@ -337,26 +337,27 @@ function suppressWorksFileDrag(e: DragEvent) {
 
 function onDragEnter(e: DragEvent) {
   if (suppressWorksFileDrag(e)) return
-  if (showImagePanel.value) return
   e.preventDefault()
+  if (showImagePanel.value) return
   dragCounter++
   if (dragCounter === 1) isDragOver.value = true
 }
 function onDragLeave(e: DragEvent) {
   if (suppressWorksFileDrag(e)) return
+  e.preventDefault()
   if (showImagePanel.value) return
   dragCounter--
   if (dragCounter === 0) isDragOver.value = false
 }
 function onDragOver(e: DragEvent) {
   if (suppressWorksFileDrag(e)) return
-  if (showImagePanel.value) return
   e.preventDefault()
+  if (showImagePanel.value) return
 }
 function onDrop(e: DragEvent) {
   if (suppressWorksFileDrag(e)) return
-  if (showImagePanel.value) return
   e.preventDefault()
+  if (showImagePanel.value) return
   dragCounter = 0
   isDragOver.value = false
   if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files)
