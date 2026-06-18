@@ -441,6 +441,8 @@ const {
 
 const {
   chooseImage,
+  handleImageDragOver,
+  handleImageDrop,
   handleWindowPaste,
   useHistoryImage,
 } = useImageCanvasImages({
@@ -465,6 +467,17 @@ const {
     error.value = message
   },
 })
+
+function handleCanvasDragOver(event: DragEvent) {
+  if (props.workspaceMode === 'gallery' || activeWorkspace.value !== 'canvas' || currentImageMode.value !== 'canvas') return
+  handleImageDragOver(event)
+}
+
+function handleCanvasDrop(event: DragEvent) {
+  if (props.workspaceMode === 'gallery' || activeWorkspace.value !== 'canvas' || currentImageMode.value !== 'canvas') return
+  const position = canvasPointFromClient(event.clientX, event.clientY)
+  void handleImageDrop(event, position)
+}
 
 const {
   generationCountOptions,
@@ -1174,6 +1187,8 @@ onUnmounted(() => {
           ref="viewportRef"
           class="canvas-viewport"
           @contextmenu.prevent="openContextMenu"
+          @dragover="handleCanvasDragOver"
+          @drop="handleCanvasDrop"
           @pointerdown="startPan"
           @wheel="handleWheel"
         >

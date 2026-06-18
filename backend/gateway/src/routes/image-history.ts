@@ -39,6 +39,7 @@ function referenceImageCount(image: ImageHistoryItem) {
 
 function publicGallerySummaryImage(image: ImageHistoryItem) {
   const publicImage = publicHistoryImage(image)
+  const references = publicImage.references ?? []
   return {
     id: publicImage.id,
     prompt: publicImage.prompt,
@@ -50,6 +51,7 @@ function publicGallerySummaryImage(image: ImageHistoryItem) {
     quality: publicImage.quality,
     timestamp: publicImage.timestamp,
     referenceImageCount: referenceImageCount(publicImage),
+    ...(references.length ? { references } : {}),
   }
 }
 

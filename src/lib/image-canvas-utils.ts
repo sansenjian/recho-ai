@@ -176,3 +176,8 @@ export function clipboardImageFile(event: ClipboardEvent) {
   return Array.from(event.clipboardData?.files ?? [])
     .find(file => file.type.startsWith('image/')) ?? null
 }
+
+export function hasFileTransfer(event: DragEvent) {
+  const types = Array.from(event.dataTransfer?.types ?? [])
+  return types.includes('Files') || Array.from(event.dataTransfer?.items ?? []).some(item => item.kind === 'file')
+}

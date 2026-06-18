@@ -5,6 +5,7 @@ import {
   compressReferenceImageDataUrl,
   fallbackImageFileName,
   imageDimensionsFromHistory,
+  hasFileTransfer,
   readImageDimensions,
   readImageFileAsDataUrl,
 } from '../lib/image-canvas-utils'
@@ -37,6 +38,14 @@ export interface UseImageCanvasImagesOptions {
   setError: (message: string) => void
 }
 
+function isImageFile(file: File) {
+  return file.type.startsWith('image/') || /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(file.name)
+}
+
+function imageFilesFromTransfer(dataTransfer: DataTransfer | null) {
+  return Array.from(dataTransfer?.files ?? []).filter(isImageFile)
+}
+
 export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
   async function applyImageFileToNode(nodeId: string, file: File) {
     const dataUrl = await compressReferenceImageDataUrl(await readImageFileAsDataUrl(file))
@@ -64,6 +73,57 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
     input.click()
   }
 
+  async function createImageNodeFromFile(file: File, position: CanvasPoint, errorMessage: string) {
+    const node = options.createImageNode(position.x, position.y, {
+      title: options.nextImageTitle(),
+      content: '',
+    })
+
+    try {
+      await applyImageFileToNode(node.id, file)
+      return true
+    } catch {
+      options.removeNode(node.id)
+      options.setError(errorMessage)
+      return false
+    }
+  }
+
+  function handleImageDragOver(event: DragEvent) {
+    if (!hasFileTransfer(event)) return false
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy'
+    }
+    return true
+  }
+
+  async function handleImageDrop(event: DragEvent, position: CanvasPoint) {
+    if (!hasFileTransfer(event)) return false
+    event.preventDefault()
+    event.stopPropagation()
+
+    const files = imageFilesFromTransfer(event.dataTransfer)
+    if (!files.length) {
+      options.setError('只能拖入图片文件。')
+      return false
+    }
+
+    options.selectCanvasWorkspace()
+    await nextTick()
+
+    for (let index = 0; index < files.length; index += 1) {
+      await createImageNodeFromFile(
+        files[index],
+        { x: position.x + index * 36, y: position.y + index * 36 },
+        '拖放图片读取失败，请重新拖入图片。',
+      )
+    }
+
+    return true
+  }
+
   async function handleWindowPaste(event: ClipboardEvent) {
     const file = clipboardImageFile(event)
     if (options.isImageViewerOpen()) return
@@ -82,17 +142,7 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
     await nextTick()
 
     const position = options.imageNodePositionNearCenter() ?? { x: 720, y: 420 }
-    const node = options.createImageNode(position.x, position.y, {
-      title: options.nextImageTitle(),
-      content: '',
-    })
-
-    try {
-      await applyImageFileToNode(node.id, file)
-    } catch {
-      options.removeNode(node.id)
-      options.setError('剪贴板图片读取失败，请重新复制图片后再试。')
-    }
+    await createImageNodeFromFile(file, position, '剪贴板图片读取失败，请重新复制图片后再试。')
   }
 
   async function useHistoryImage(image: GeneratedImage, scope: ImageHistoryScope = 'mine') {
@@ -127,6 +177,8 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
   return {
     applyImageFileToNode,
     chooseImage,
+    handleImageDragOver,
+    handleImageDrop,
     handleWindowPaste,
     useHistoryImage,
   }

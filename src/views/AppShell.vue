@@ -23,6 +23,7 @@ import { useAuthSession } from '../composables/useAuthSession'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
 import { useCredits } from '../composables/useCredits'
 import { apiUrl } from '../lib/api-base'
+import { hasFileTransfer } from '../lib/image-canvas-utils'
 import { formatCreditAmount } from '../utils/credit-format'
 import type { RouteWorkspace } from '../router'
 
@@ -326,11 +327,39 @@ function triggerFileInput() {
 }
 
 // --- Drag & drop ---
-function onDragEnter(e: DragEvent) { e.preventDefault(); dragCounter++; if (dragCounter === 1) isDragOver.value = true }
-function onDragLeave(_e: DragEvent) { dragCounter--; if (dragCounter === 0) isDragOver.value = false }
-function onDragOver(e: DragEvent) { e.preventDefault() }
+function suppressWorksFileDrag(e: DragEvent) {
+  if (currentRouteWorkspace() !== 'works' || !hasFileTransfer(e)) return false
+  e.preventDefault()
+  dragCounter = 0
+  isDragOver.value = false
+  return true
+}
+
+function onDragEnter(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  e.preventDefault()
+  if (showImagePanel.value) return
+  dragCounter++
+  if (dragCounter === 1) isDragOver.value = true
+}
+function onDragLeave(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  e.preventDefault()
+  if (showImagePanel.value) return
+  dragCounter--
+  if (dragCounter === 0) isDragOver.value = false
+}
+function onDragOver(e: DragEvent) {
+  if (suppressWorksFileDrag(e)) return
+  e.preventDefault()
+  if (showImagePanel.value) return
+}
 function onDrop(e: DragEvent) {
-  e.preventDefault(); dragCounter = 0; isDragOver.value = false
+  if (suppressWorksFileDrag(e)) return
+  e.preventDefault()
+  if (showImagePanel.value) return
+  dragCounter = 0
+  isDragOver.value = false
   if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files)
 }
 function onPaste(e: ClipboardEvent) {
