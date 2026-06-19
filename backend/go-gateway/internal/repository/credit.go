@@ -121,9 +121,6 @@ func (r *CreditRepository) ReserveCredits(
 	return transactionID, newBalance, nil
 }
 
-// ErrDoubleRefund is returned when a refund would exceed the original charge
-var ErrDoubleRefund = errors.New("double_refund: cumulative refunds would exceed original transaction amount")
-
 // RefundCredits refunds reserved credits with cumulative double-refund protection.
 //
 // Instead of blocking after the first refund, this allows multiple partial refunds
@@ -147,9 +144,6 @@ func (r *CreditRepository) RefundCredits(
 	`
 	err = r.pool.QueryRow(ctx, query, userID, amount, relatedTransactionID, metaJSON).Scan(&newBalance)
 	if err != nil {
-		if isCreditError(err, "double_refund") {
-			return 0, ErrDoubleRefund
-		}
 		return 0, fmt.Errorf("failed to refund credits: %w", err)
 	}
 

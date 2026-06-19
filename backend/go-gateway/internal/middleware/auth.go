@@ -79,8 +79,13 @@ var (
 func Init() {
 	jwksURL = config.SupabaseJWKSURL
 	authUserURL = authUserURLFromSupabaseURL(config.SupabaseURL)
-	authAPIKey = firstNonEmpty(config.SupabasePublishableKey, config.SupabaseServiceRoleKey)
+	authAPIKey = config.FirstNonEmpty(config.SupabasePublishableKey, config.SupabaseServiceRoleKey)
 	authFallbackConfigured := authUserURL != "" && authAPIKey != ""
+	authFallbackIncomplete := authUserURL != "" && authAPIKey == ""
+
+	if authFallbackIncomplete {
+		log.Println("WARNING: Supabase Auth user verification fallback is configured but disabled because SUPABASE_PUBLISHABLE_KEY or SUPABASE_SERVICE_ROLE_KEY is missing")
+	}
 
 	if jwksURL == "" && !authFallbackConfigured {
 		if isProduction() {
@@ -93,8 +98,6 @@ func Init() {
 		}
 		if authFallbackConfigured {
 			log.Printf("Supabase Auth user verification fallback configured: %s", authUserURL)
-		} else if authUserURL != "" {
-			log.Println("WARNING: Supabase Auth fallback URL is configured without an API key; fallback verification is disabled")
 		}
 	}
 }
@@ -102,15 +105,6 @@ func Init() {
 // isProduction returns true when the configured app environment is production.
 func isProduction() bool {
 	return config.IsProduction()
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func authUserURLFromSupabaseURL(value string) string {
