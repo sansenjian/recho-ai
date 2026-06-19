@@ -15,3 +15,13 @@ export function apiUrl(path: string) {
   const cleanPath = path.startsWith('/') ? path : `/${path}`
   return `${apiBaseUrl()}${cleanPath}`
 }
+
+export function imageApiBaseUrl() {
+  const imageBase = String(import.meta.env.VITE_IMAGE_API_BASE_URL || '').trim().replace(/\/+$/, '')
+  return imageBase || apiBaseUrl()
+}
+
+export function imageApiUrl(path: string) {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  return `${imageApiBaseUrl()}${cleanPath}`
+}

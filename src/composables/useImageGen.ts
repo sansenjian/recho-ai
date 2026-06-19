@@ -2,7 +2,7 @@ import { ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
 import { useCredits } from './useCredits'
 import { ensureAppConfig } from './useAppConfig'
-import { apiUrl } from '../lib/api-base'
+import { imageApiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse, ImageHistoryScope } from '../types/image'
 
@@ -181,7 +181,7 @@ async function uploadReference(
   if (title) headers['x-reference-title'] = title
   if (fileName) headers['x-reference-filename'] = fileName
 
-  const response = await fetch(apiUrl('/api/image/references'), {
+  const response = await fetch(imageApiUrl('/api/image/references'), {
     method: 'POST',
     headers,
     body: blob,
@@ -371,7 +371,7 @@ async function loadRemoteHistory(
       offset: String(offset),
       scope,
     })
-    const res = await fetch(apiUrl(`/api/image/history?${query.toString()}`), {
+    const res = await fetch(imageApiUrl(`/api/image/history?${query.toString()}`), {
       cache: 'no-store',
       headers: scope === 'mine' && auth.accessToken
         ? { Authorization: `Bearer ${auth.accessToken}` }
@@ -405,7 +405,7 @@ async function loadRemoteImageDetail(
     if (options.includeOriginal) {
       query.set('original', '1')
     }
-    const res = await fetch(apiUrl(`/api/image/history/${encodeURIComponent(id)}?${query.toString()}`), {
+    const res = await fetch(imageApiUrl(`/api/image/history/${encodeURIComponent(id)}?${query.toString()}`), {
       cache: 'no-store',
       headers: scope === 'mine' && auth.accessToken
         ? { Authorization: `Bearer ${auth.accessToken}` }
@@ -445,7 +445,7 @@ async function deleteRemoteHistory(id: string) {
     const token = await getAuthAccessToken()
     if (!token) return
 
-    await fetch(apiUrl(`/api/image/history/${encodeURIComponent(id)}`), {
+    await fetch(imageApiUrl(`/api/image/history/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -527,7 +527,7 @@ export function useImageGen() {
         ...options,
         references: requestReferences,
       }
-      const res = await fetch(apiUrl('/api/image/generate'), {
+      const res = await fetch(imageApiUrl('/api/image/generate'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
