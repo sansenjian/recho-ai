@@ -1,8 +1,15 @@
 import { Router, Request, Response } from 'express'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
 const router = Router()
 const GO_GATEWAY_BASE_URL = (process.env.GO_GATEWAY_BASE_URL || '').replace(/\/+$/, '')
-const PROXY_TIMEOUT_MS = Number(process.env.GO_GATEWAY_PROXY_TIMEOUT_MS || 620_000)
+const DEFAULT_PROXY_TIMEOUT_MS = 620_000
+const parsedProxyTimeoutMs = Number(process.env.GO_GATEWAY_PROXY_TIMEOUT_MS)
+const PROXY_TIMEOUT_MS = Number.isFinite(parsedProxyTimeoutMs) && parsedProxyTimeoutMs > 0
+  ? parsedProxyTimeoutMs
+  : DEFAULT_PROXY_TIMEOUT_MS
 
 const proxiedRoutes = [
   /^\/image\/references(?:\/|$)/,
@@ -65,8 +72,13 @@ router.use(async (req: Request, res: Response, next) => {
       res.setHeader(key, value)
     })
 
-    const responseBody = Buffer.from(await upstream.arrayBuffer())
-    res.send(responseBody)
+    if (!upstream.body) {
+      res.end()
+      return
+    }
+
+    const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+    await pipeline(responseStream, res)
   } catch (err: any) {
     console.error('[go-sidecar] proxy failed:', err?.message || err)
     if (!res.headersSent) {
