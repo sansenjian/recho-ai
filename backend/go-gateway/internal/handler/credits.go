@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -70,9 +71,8 @@ type RedeemRequest struct {
 
 // RedeemResponse represents the redemption response
 type RedeemResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Credits int    `json:"credits,omitempty"`
+	Balance         float64 `json:"balance"`
+	RedeemedCredits int     `json:"redeemedCredits"`
 }
 
 // Redeem handles POST /api/credits/redeem
@@ -140,30 +140,42 @@ func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.redeemService.Redeem(r.Context(), user.ID, req.Code)
 	if err != nil {
-		// System error — mark as failed so client can retry with same key
+		status, message, businessErr := redeemErrorResponse(err)
+		body := map[string]string{"error": message}
 		if idemKey != "" && h.idempotencySvc != nil {
-			h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "credit_redeem")
+			if businessErr && status < 500 {
+				h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "credit_redeem", int16(status), body, "")
+			} else {
+				h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "credit_redeem")
+			}
 		}
-		response.Error(w, http.StatusInternalServerError, "兑换失败，请稍后重试。")
+		response.Error(w, status, message)
 		return
 	}
 
-	if !result.Success {
-		resp := RedeemResponse{Success: false, Message: result.Message}
-		// Business-level failure (invalid code, expired, already used) — cache the response
-		// so a retry with the same key gets the same "failed" answer without re-querying
-		if idemKey != "" && h.idempotencySvc != nil {
-			h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "credit_redeem", 200, resp, "")
-		}
-		response.JSON(w, http.StatusOK, resp)
-		return
-	}
-
-	resp := RedeemResponse{Success: true, Message: result.Message, Credits: result.Credits}
+	resp := RedeemResponse{Balance: result.Balance, RedeemedCredits: result.RedeemedCredits}
 	if idemKey != "" && h.idempotencySvc != nil {
 		h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "credit_redeem", 200, resp, "")
 	}
 	response.JSON(w, http.StatusOK, resp)
+}
+
+func redeemErrorResponse(err error) (status int, message string, business bool) {
+	switch {
+	case errors.Is(err, service.ErrInvalidCode):
+		return http.StatusBadRequest, "兑换码无效，请检查后重试。", true
+	case errors.Is(err, service.ErrCodeAlreadyRedeemed):
+		return http.StatusConflict, "这个兑换码已经兑换过。", true
+	case errors.Is(err, service.ErrCodeExpired):
+		return http.StatusBadRequest, "这个兑换码已过期。", true
+	case errors.Is(err, service.ErrCodeDisabled):
+		return http.StatusBadRequest, "这个兑换码已停用。", true
+	case errors.Is(err, service.ErrCodeExhausted):
+		return http.StatusBadRequest, "这个兑换码已被用完。", true
+	default:
+		log.Printf("[credits] redeem failed: %v", err)
+		return http.StatusInternalServerError, "兑换失败，请稍后重试。", false
+	}
 }
 
 // RegisterRoutes registers credit routes

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,6 +24,8 @@ var ErrInsufficientCredits = errors.New("insufficient credits")
 func NewCreditRepository(pool *pgxpool.Pool) *CreditRepository {
 	return &CreditRepository{pool: pool}
 }
+
+const plpgsqlRaiseExceptionSQLState = "P0001"
 
 // UserBalance represents a user's credit balance record
 type UserBalance struct {
@@ -70,16 +73,24 @@ type CreditTransaction struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// marshalMetadata serializes metadata map to JSON bytes, returning nil for nil input
-func marshalMetadata(metadata map[string]any) ([]byte, error) {
+// marshalMetadata serializes metadata for jsonb RPC parameters.
+func marshalMetadata(metadata map[string]any) (string, error) {
 	if metadata == nil {
-		return nil, nil
+		return "{}", nil
 	}
 	data, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		return "", fmt.Errorf("failed to marshal metadata: %w", err)
 	}
-	return data, nil
+	return string(data), nil
+}
+
+func isCreditError(err error, message string) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == plpgsqlRaiseExceptionSQLState && pgErr.Message == message
 }
 
 // ReserveCredits reserves credits for image generation
@@ -90,58 +101,25 @@ func (r *CreditRepository) ReserveCredits(
 	amount float64,
 	metadata map[string]any,
 ) (transactionID string, newBalance float64, err error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Atomic update: deduct only when balance is sufficient
-	query := `
-		UPDATE user_credit_balances
-		SET balance = balance - $1,
-		    total_spent = total_spent + $1,
-		    updated_at = NOW()
-		WHERE user_id = $2
-		AND balance >= $1
-		RETURNING balance
-	`
-
-	err = tx.QueryRow(ctx, query, amount, userID).Scan(&newBalance)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return "", 0, ErrInsufficientCredits
-		}
-		return "", 0, fmt.Errorf("failed to reserve credits: %w", err)
-	}
-
-	// Serialize metadata properly
 	metaJSON, err := marshalMetadata(metadata)
 	if err != nil {
 		return "", 0, err
 	}
 
-	// Create transaction record
-	txQuery := `
-		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, metadata)
-		VALUES ($1, -$2, $3, 'image_generation', $4)
-		RETURNING id
+	query := `
+		SELECT balance, transaction_id
+		FROM public.reserve_user_credits($1::uuid, $2::numeric, $3::jsonb)
 	`
-
-	err = tx.QueryRow(ctx, txQuery, userID, amount, newBalance, metaJSON).Scan(&transactionID)
+	err = r.pool.QueryRow(ctx, query, userID, amount, metaJSON).Scan(&newBalance, &transactionID)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create transaction: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return "", 0, fmt.Errorf("failed to commit transaction: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) || isCreditError(err, "insufficient_credits") {
+			return "", 0, ErrInsufficientCredits
+		}
+		return "", 0, fmt.Errorf("failed to reserve credits: %w", err)
 	}
 
 	return transactionID, newBalance, nil
 }
-
-// ErrDoubleRefund is returned when a refund would exceed the original charge
-var ErrDoubleRefund = errors.New("double_refund: cumulative refunds would exceed original transaction amount")
 
 // RefundCredits refunds reserved credits with cumulative double-refund protection.
 //
@@ -155,93 +133,18 @@ func (r *CreditRepository) RefundCredits(
 	relatedTransactionID string,
 	metadata map[string]any,
 ) (newBalance float64, err error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Cumulative refund protection: ensure total refunds don't exceed original charge
-	if relatedTransactionID != "" {
-		var originalAmount float64
-		origQuery := `
-			SELECT ABS(amount) FROM credit_transactions
-			WHERE id = $1 AND reason = 'image_generation'
-		`
-		err = tx.QueryRow(ctx, origQuery, relatedTransactionID).Scan(&originalAmount)
-		if err != nil && err != pgx.ErrNoRows {
-			return 0, fmt.Errorf("failed to query original transaction: %w", err)
-		}
-		if err == pgx.ErrNoRows {
-			// Original transaction not found — skip guard (may be a legacy or admin operation)
-		} else {
-			var alreadyRefunded float64
-			refundQuery := `
-				SELECT COALESCE(SUM(amount), 0) FROM credit_transactions
-				WHERE related_transaction_id = $1 AND reason = 'refund'
-			`
-			if err := tx.QueryRow(ctx, refundQuery, relatedTransactionID).Scan(&alreadyRefunded); err != nil {
-				return 0, fmt.Errorf("failed to query existing refunds: %w", err)
-			}
-
-			if alreadyRefunded+amount > originalAmount {
-				return 0, ErrDoubleRefund
-			}
-		}
-	}
-
-	// Update balance
-	query := `
-		UPDATE user_credit_balances
-		SET balance = balance + $1,
-		    total_spent = GREATEST(total_spent - $1, 0),
-		    updated_at = NOW()
-		WHERE user_id = $2
-		RETURNING balance
-	`
-
-	err = tx.QueryRow(ctx, query, amount, userID).Scan(&newBalance)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			// Create balance record if it doesn't exist
-			insertQuery := `
-				INSERT INTO user_credit_balances (user_id, balance, total_redeemed, total_spent)
-				VALUES ($1, $2, 0, 0)
-				ON CONFLICT (user_id) DO UPDATE
-				SET balance = user_credit_balances.balance + $2,
-				    updated_at = NOW()
-				RETURNING balance
-			`
-			err = tx.QueryRow(ctx, insertQuery, userID, amount).Scan(&newBalance)
-			if err != nil {
-				return 0, fmt.Errorf("failed to create balance record: %w", err)
-			}
-		} else {
-			return 0, fmt.Errorf("failed to refund credits: %w", err)
-		}
-	}
-
-	// Serialize metadata properly
 	metaJSON, err := marshalMetadata(metadata)
 	if err != nil {
 		return 0, err
 	}
 
-	// Create refund transaction record
-	txQuery := `
-		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, related_transaction_id, metadata)
-		VALUES ($1, $2, $3, 'refund', $4, $5)
-		RETURNING id
+	query := `
+		SELECT balance
+		FROM public.refund_user_credits($1::uuid, $2::numeric, nullif($3, '')::uuid, $4::jsonb)
 	`
-
-	var refundTxID string
-	err = tx.QueryRow(ctx, txQuery, userID, amount, newBalance, relatedTransactionID, metaJSON).Scan(&refundTxID)
+	err = r.pool.QueryRow(ctx, query, userID, amount, relatedTransactionID, metaJSON).Scan(&newBalance)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create refund transaction: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+		return 0, fmt.Errorf("failed to refund credits: %w", err)
 	}
 
 	return newBalance, nil
@@ -286,7 +189,7 @@ func (r *CreditRepository) AddCredits(
 	// Create transaction record — reason must be 'redemption' to match DB CHECK constraint
 	txQuery := `
 		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, metadata)
-		VALUES ($1, $2, $3, 'redemption', $4)
+		VALUES ($1, $2, $3, 'redemption', $4::jsonb)
 		RETURNING id
 	`
 

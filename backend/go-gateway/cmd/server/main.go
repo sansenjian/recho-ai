@@ -54,7 +54,7 @@ func main() {
 	var idempotencyRepo *repository.IdempotencyRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
-		redeemRepo = repository.NewRedeemRepository(db)
+		redeemRepo = repository.NewRedeemRepository(db.Pool())
 		idempotencyRepo = repository.NewIdempotencyRepository(db.Pool())
 	}
 
@@ -64,7 +64,7 @@ func main() {
 	var idempotencyService *service.IdempotencyService
 	if creditRepo != nil {
 		creditService = service.NewCreditService(creditRepo)
-		redeemService = service.NewRedeemService(redeemRepo, creditService)
+		redeemService = service.NewRedeemService(redeemRepo)
 	}
 	if idempotencyRepo != nil {
 		idempotencyService = service.NewIdempotencyService(idempotencyRepo)

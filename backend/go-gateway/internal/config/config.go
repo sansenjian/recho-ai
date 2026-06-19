@@ -8,7 +8,7 @@ import (
 
 // Server config
 var Port = parseEnvInt("PORT", 3000)
-var AppEnv = firstNonEmpty(
+var AppEnv = FirstNonEmpty(
 	os.Getenv("APP_ENV"),
 	os.Getenv("GO_ENV"),
 	os.Getenv("NODE_ENV"),
@@ -19,14 +19,14 @@ var CorsOrigin = parseEnvString("CORS_ORIGIN", "http://localhost:5173")
 
 // Supabase config
 var SupabaseURL = os.Getenv("SUPABASE_URL")
-var SupabasePublishableKey = firstNonEmpty(
+var SupabasePublishableKey = FirstNonEmpty(
 	os.Getenv("SUPABASE_PUBLISHABLE_KEY"),
 	os.Getenv("SUPABASE_ANON_KEY"),
 	os.Getenv("VITE_SUPABASE_PUBLISHABLE_KEY"),
 	os.Getenv("VITE_SUPABASE_ANON_KEY"),
 )
 var SupabaseServiceRoleKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
-var SupabaseJWKSURL = firstNonEmpty(
+var SupabaseJWKSURL = FirstNonEmpty(
 	os.Getenv("SUPABASE_JWKS_URL"),
 	jwksURLFromSupabaseURL(SupabaseURL),
 )
@@ -40,11 +40,11 @@ var ImageResponsesModel = parseEnvString("IMAGE_RESPONSES_MODEL", "gpt-image-2")
 var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gpt-image-2")
 
 // Chat and analytics config. Chat is optional while Go runs as an image sidecar.
-var ChatBaseURL = firstNonEmpty(
+var ChatBaseURL = FirstNonEmpty(
 	os.Getenv("CHAT_BASE_URL"),
 	os.Getenv("ANALYSIS_URL"),
 )
-var ChatAPIKey = firstNonEmpty(
+var ChatAPIKey = FirstNonEmpty(
 	os.Getenv("CHAT_API_KEY"),
 	os.Getenv("ANALYSIS_API_KEY"),
 )
@@ -74,7 +74,7 @@ func IsProduction() bool {
 	return env == "production" || env == "prod"
 }
 
-func firstNonEmpty(values ...string) string {
+func FirstNonEmpty(values ...string) string {
 	for _, val := range values {
 		if trimmed := strings.TrimSpace(val); trimmed != "" {
 			return trimmed

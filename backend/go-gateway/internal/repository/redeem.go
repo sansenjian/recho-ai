@@ -2,110 +2,102 @@ package repository
 
 import (
 	"context"
-	"fmt"
-	"time"
-
-	"go-gateway/internal/pkg/supabase"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/text/unicode/norm"
+)
+
+const (
+	maxCreditCodeLength = 120
+)
+
+var (
+	ErrInvalidCode         = errors.New("invalid_code")
+	ErrCodeDisabled        = errors.New("code_disabled")
+	ErrCodeExpired         = errors.New("code_expired")
+	ErrCodeAlreadyRedeemed = errors.New("code_already_redeemed")
+	ErrCodeExhausted       = errors.New("code_exhausted")
 )
 
 type RedeemRepository struct {
-	db *supabase.Client
+	pool *pgxpool.Pool
 }
 
-func NewRedeemRepository(db *supabase.Client) *RedeemRepository {
-	return &RedeemRepository{db: db}
+func NewRedeemRepository(pool *pgxpool.Pool) *RedeemRepository {
+	return &RedeemRepository{pool: pool}
 }
 
-// RedeemCode represents a redemption code in the database
-type RedeemCode struct {
-	ID        string     `json:"id"`
-	Code      string     `json:"code"`
-	Credits   int        `json:"credits"`
-	UsedBy    *string    `json:"used_by"`
-	UsedAt    *time.Time `json:"used_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	CreatedAt time.Time  `json:"created_at"`
+type RedeemResult struct {
+	Balance float64
+	Credits int
 }
 
-const redeemTable = "redeem_codes"
-
-// Create inserts a new redemption code
-func (r *RedeemRepository) Create(ctx context.Context, code *RedeemCode) error {
-	query := `
-		INSERT INTO %s (code, credits, expires_at, created_at)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id
-	`
-	query = fmt.Sprintf(query, redeemTable)
-
-	err := r.db.Pool().QueryRow(ctx, query,
-		code.Code,
-		code.Credits,
-		code.ExpiresAt,
-		code.CreatedAt,
-	).Scan(&code.ID)
-
-	return err
+func NormalizeCreditCode(value string) string {
+	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "", "-", "")
+	normalized := norm.NFKC.String(value)
+	normalized = strings.ToUpper(strings.TrimSpace(normalized))
+	normalized = replacer.Replace(normalized)
+	if len(normalized) > maxCreditCodeLength {
+		return normalized[:maxCreditCodeLength]
+	}
+	return normalized
 }
 
-// FindByCode finds a redemption code by its code string
-func (r *RedeemRepository) FindByCode(ctx context.Context, code string) (*RedeemCode, error) {
-	query := `
-		SELECT id, code, credits, used_by, used_at, expires_at, created_at
-		FROM %s
-		WHERE code = $1
-	`
-	query = fmt.Sprintf(query, redeemTable)
+func CreditCodeHash(value string) string {
+	normalized := NormalizeCreditCode(value)
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
 
-	var rc RedeemCode
-	err := r.db.Pool().QueryRow(ctx, query, code).Scan(
-		&rc.ID,
-		&rc.Code,
-		&rc.Credits,
-		&rc.UsedBy,
-		&rc.UsedAt,
-		&rc.ExpiresAt,
-		&rc.CreatedAt,
-	)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
+func (r *RedeemRepository) Redeem(ctx context.Context, userID, rawCode string) (*RedeemResult, error) {
+	codeHash := CreditCodeHash(rawCode)
+	if codeHash == "" {
+		return nil, pgx.ErrNoRows
 	}
 
-	return &rc, nil
-}
-
-// MarkAsUsed marks a code as used by a user.
-// Returns the number of rows affected — 0 means the code was already consumed
-// by a concurrent request (WHERE includes AND used_by IS NULL as a race guard).
-func (r *RedeemRepository) MarkAsUsed(ctx context.Context, id, userID string) (rowsAffected int64, err error) {
 	query := `
-		UPDATE %s
-		SET used_by = $1, used_at = $2
-		WHERE id = $3 AND used_by IS NULL
+		SELECT balance, credits
+		FROM public.redeem_credit_code($1::uuid, $2::text)
 	`
-	query = fmt.Sprintf(query, redeemTable)
 
-	result, err := r.db.Pool().Exec(ctx, query, userID, time.Now(), id)
-	if err != nil {
-		return 0, err
+	var result RedeemResult
+	if err := r.pool.QueryRow(ctx, query, userID, codeHash).Scan(&result.Balance, &result.Credits); err != nil {
+		return nil, redeemRepositoryError(err)
 	}
-	return result.RowsAffected(), nil
+	return &result, nil
 }
 
-// MarkAsUnused marks a code as unused (for rollback)
-func (r *RedeemRepository) MarkAsUnused(ctx context.Context, id string) error {
-	query := `
-		UPDATE %s
-		SET used_by = NULL, used_at = NULL
-		WHERE id = $1
-	`
-	query = fmt.Sprintf(query, redeemTable)
+func redeemRepositoryError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidCode
+	}
 
-	_, err := r.db.Pool().Exec(ctx, query, id)
-	return err
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != plpgsqlRaiseExceptionSQLState {
+		return err
+	}
+
+	switch pgErr.Message {
+	case "invalid_code":
+		return ErrInvalidCode
+	case "code_disabled":
+		return ErrCodeDisabled
+	case "code_expired":
+		return ErrCodeExpired
+	case "code_already_redeemed":
+		return ErrCodeAlreadyRedeemed
+	case "code_exhausted":
+		return ErrCodeExhausted
+	default:
+		return err
+	}
 }
