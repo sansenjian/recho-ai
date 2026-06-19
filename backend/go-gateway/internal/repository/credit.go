@@ -42,7 +42,7 @@ func (r *CreditRepository) GetBalance(ctx context.Context, userID string) (*User
 	query := `
 		SELECT user_id, balance, total_redeemed, total_spent, created_at, updated_at
 		FROM user_credit_balances
-		WHERE user_id = $1
+		WHERE user_id = $1::uuid
 	`
 
 	var balance UserBalance
@@ -166,7 +166,7 @@ func (r *CreditRepository) AddCredits(
 	// Upsert balance - add credits to existing or create new
 	query := `
 		INSERT INTO user_credit_balances (user_id, balance, total_redeemed, total_spent)
-		VALUES ($1, $2, $2, 0)
+		VALUES ($1::uuid, $2, $2, 0)
 		ON CONFLICT (user_id)
 		DO UPDATE SET 
 			balance = user_credit_balances.balance + $2,
@@ -189,7 +189,7 @@ func (r *CreditRepository) AddCredits(
 	// Create transaction record — reason must be 'redemption' to match DB CHECK constraint
 	txQuery := `
 		INSERT INTO credit_transactions (user_id, amount, balance_after, reason, metadata)
-		VALUES ($1, $2, $3, 'redemption', $4::jsonb)
+		VALUES ($1::uuid, $2, $3, 'redemption', $4::jsonb)
 		RETURNING id
 	`
 

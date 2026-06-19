@@ -65,7 +65,7 @@ func (r *IdempotencyRepository) Acquire(
 	// Try INSERT first — the common path for new requests
 	insertQuery := `
 		INSERT INTO idempotency_keys (user_id, idem_key, scope, request_hash, status)
-		VALUES ($1, $2, $3, $4, 'processing')
+		VALUES ($1::uuid, $2, $3, $4, 'processing')
 		ON CONFLICT (user_id, idem_key, scope) DO NOTHING
 		RETURNING id
 	`
@@ -151,8 +151,8 @@ func (r *IdempotencyRepository) Complete(
 		SET status = 'completed',
 		    response_code = $4,
 		    response_body = $5,
-		    transaction_id = $6
-		WHERE user_id = $1 AND idem_key = $2 AND scope = $3
+		    transaction_id = $6::uuid
+		WHERE user_id = $1::uuid AND idem_key = $2 AND scope = $3
 		  AND status = 'processing'
 	`
 
@@ -174,7 +174,7 @@ func (r *IdempotencyRepository) Fail(
 	query := `
 		UPDATE idempotency_keys
 		SET status = 'failed'
-		WHERE user_id = $1 AND idem_key = $2 AND scope = $3
+		WHERE user_id = $1::uuid AND idem_key = $2 AND scope = $3
 		  AND status = 'processing'
 	`
 
@@ -194,7 +194,7 @@ func (r *IdempotencyRepository) findByUserKeyScope(
 		SELECT id, user_id, idem_key, scope, request_hash, status,
 		       response_code, response_body, transaction_id, created_at, expires_at
 		FROM idempotency_keys
-		WHERE user_id = $1 AND idem_key = $2 AND scope = $3
+		WHERE user_id = $1::uuid AND idem_key = $2 AND scope = $3
 	`
 
 	var rec IdempotencyRecord

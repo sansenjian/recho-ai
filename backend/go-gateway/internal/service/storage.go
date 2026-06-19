@@ -297,6 +297,7 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 	if item.CreditTransactionID != "" {
 		creditTxID = item.CreditTransactionID
 	}
+	insertUserID := nullableString(userID)
 
 	query := `
 		INSERT INTO image_generations (
@@ -307,9 +308,9 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 			original_bytes, visibility, funding_source, credit_cost, credit_transaction_id,
 			expires_at, generated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10,
 			$11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20,
-			$21, $22, $23, $24, $25, $26, $27, $28, $29
+			$21, $22, $23, $24, $25, $26, $27::uuid, $28, $29
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			prompt = EXCLUDED.prompt,
@@ -320,7 +321,7 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 	`
 
 	_, err = s.pool.Exec(ctx, query,
-		item.ID, nullableString(userID), nullableString(item.GenerationBatchID),
+		item.ID, insertUserID, nullableString(item.GenerationBatchID),
 		item.Prompt, nullableString(firstNonEmpty(item.UserPrompt, item.Prompt)),
 		nullableString(item.SystemPrompt), nullableString(firstNonEmpty(item.ModelPrompt, item.Prompt)),
 		nullableString(item.RevisedPrompt), nullableString(item.StoragePath),
@@ -356,12 +357,12 @@ func (s *StorageService) ListImageHistory(ctx context.Context, userID, scope str
 			       generated_at, coalesce(reference_images, '[]'::jsonb), coalesce(reference_count, 0),
 			       coalesce(visibility, 'public'), coalesce(funding_source, 'free'), coalesce(credit_cost, 0)
 			FROM image_generations
-			WHERE user_id = $1 AND visibility = 'private'
+			WHERE user_id = $1::uuid AND visibility = 'private'
 			  AND (expires_at IS NULL OR expires_at > now())
 			ORDER BY generated_at DESC
 			LIMIT $2 OFFSET $3
 		`
-		countQuery = `SELECT COUNT(*) FROM image_generations WHERE user_id = $1 AND visibility = 'private' AND (expires_at IS NULL OR expires_at > now())`
+		countQuery = `SELECT COUNT(*) FROM image_generations WHERE user_id = $1::uuid AND visibility = 'private' AND (expires_at IS NULL OR expires_at > now())`
 		args = []any{userID, limit, offset}
 	} else {
 		query = `
@@ -452,7 +453,7 @@ func (s *StorageService) GetImageHistory(ctx context.Context, id, userID, scope 
 			       generated_at, coalesce(reference_images, '[]'::jsonb), coalesce(reference_count, 0),
 			       coalesce(visibility, 'public'), coalesce(funding_source, 'free'), coalesce(credit_cost, 0)
 			FROM image_generations
-			WHERE id = $1 AND user_id = $2 AND visibility = 'private'
+			WHERE id = $1 AND user_id = $2::uuid AND visibility = 'private'
 			  AND (expires_at IS NULL OR expires_at > now())
 		`
 		args = []any{id, userID}
@@ -509,7 +510,7 @@ func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID stri
 		return false, nil
 	}
 
-	query := `DELETE FROM image_generations WHERE id = $1 AND user_id = $2`
+	query := `DELETE FROM image_generations WHERE id = $1 AND user_id = $2::uuid`
 	result, err := s.pool.Exec(ctx, query, id, userID)
 	if err != nil {
 		return false, err
@@ -524,7 +525,7 @@ func (s *StorageService) ClearImageHistory(ctx context.Context, userID string) (
 		return 0, nil
 	}
 
-	query := `DELETE FROM image_generations WHERE user_id = $1`
+	query := `DELETE FROM image_generations WHERE user_id = $1::uuid`
 	result, err := s.pool.Exec(ctx, query, userID)
 	if err != nil {
 		return 0, err
