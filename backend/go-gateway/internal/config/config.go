@@ -26,7 +26,10 @@ var SupabasePublishableKey = firstNonEmpty(
 	os.Getenv("VITE_SUPABASE_ANON_KEY"),
 )
 var SupabaseServiceRoleKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
-var SupabaseJWTSecret = os.Getenv("SUPABASE_JWT_SECRET")
+var SupabaseJWKSURL = firstNonEmpty(
+	os.Getenv("SUPABASE_JWKS_URL"),
+	jwksURLFromSupabaseURL(SupabaseURL),
+)
 var SupabaseImageBucket = parseEnvString("SUPABASE_IMAGE_BUCKET", "recho-images")
 
 // Image generation config
@@ -73,11 +76,19 @@ func IsProduction() bool {
 
 func firstNonEmpty(values ...string) string {
 	for _, val := range values {
-		if val != "" {
-			return val
+		if trimmed := strings.TrimSpace(val); trimmed != "" {
+			return trimmed
 		}
 	}
 	return ""
+}
+
+func jwksURLFromSupabaseURL(value string) string {
+	base := strings.TrimRight(strings.TrimSpace(value), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/auth/v1/.well-known/jwks.json"
 }
 
 func parseEnvString(key, defaultVal string) string {

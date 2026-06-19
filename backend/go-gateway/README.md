@@ -51,6 +51,8 @@ CORS_ORIGIN=http://localhost:5173
 POSTGRES_URL=postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres
 SUPABASE_URL=https://[PROJECT].supabase.co
 SUPABASE_SERVICE_ROLE_KEY=[SERVICE_ROLE_KEY]
+# Optional: defaults to SUPABASE_URL/auth/v1/.well-known/jwks.json
+SUPABASE_JWKS_URL=
 
 # Image Generation
 IMAGE_GEN_API_KEY=[API_KEY]

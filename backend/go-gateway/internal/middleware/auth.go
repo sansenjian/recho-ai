@@ -2,10 +2,18 @@ package middleware
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"go-gateway/internal/config"
 	"go-gateway/internal/pkg/response"
@@ -27,22 +35,44 @@ const (
 	userContextKey contextKey = "user"
 )
 
-// jwtSecret holds the Supabase JWT secret for HMAC-SHA256 verification
-var jwtSecret []byte
+const jwksCacheTTL = 10 * time.Minute
 
-// Init initializes the JWT secret from centralized config.
+type jwksKey struct {
+	KID string `json:"kid"`
+	ALG string `json:"alg"`
+	KTY string `json:"kty"`
+	Use string `json:"use,omitempty"`
+	N   string `json:"n,omitempty"`
+	E   string `json:"e,omitempty"`
+	Crv string `json:"crv,omitempty"`
+	X   string `json:"x,omitempty"`
+	Y   string `json:"y,omitempty"`
+}
+
+type jwksResponse struct {
+	Keys []jwksKey `json:"keys"`
+}
+
+var (
+	jwksURL       string
+	jwksMu        sync.Mutex
+	jwksExpiresAt time.Time
+	jwksKeys      map[string]any
+)
+
+// Init initializes Supabase JWT verification from the JWKS discovery endpoint.
 // Call this from main() after config is loaded.
-// In production, missing JWT secret is fatal.
+// In production, a JWKS URL is required.
 func Init() {
-	jwtSecret = []byte(config.SupabaseJWTSecret)
+	jwksURL = config.SupabaseJWKSURL
 
-	if len(jwtSecret) == 0 {
+	if jwksURL == "" {
 		if isProduction() {
-			log.Fatal("FATAL: SUPABASE_JWT_SECRET is required in production but not set. Refusing to start with authentication disabled.")
+			log.Fatal("FATAL: SUPABASE_URL or SUPABASE_JWKS_URL is required in production for JWT verification.")
 		}
-		log.Println("WARNING: SUPABASE_JWT_SECRET not set — JWT verification disabled, all requests will be unauthenticated")
+		log.Println("WARNING: Supabase JWKS URL not configured — JWT verification disabled, all requests will be unauthenticated")
 	} else {
-		log.Println("Supabase JWT secret loaded successfully")
+		log.Printf("Supabase JWKS verification configured: %s", jwksURL)
 	}
 }
 
@@ -51,7 +81,7 @@ func isProduction() bool {
 	return config.IsProduction()
 }
 
-// AuthMiddleware validates Supabase JWT tokens using HMAC-SHA256 signature verification.
+// AuthMiddleware validates Supabase JWT tokens using Supabase JWKS public keys.
 // When a Bearer token is present but fails verification, returns 401 instead of
 // silently treating the request as unauthenticated.
 func AuthMiddleware(next http.Handler) http.Handler {
@@ -74,18 +104,25 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// If no JWT secret is configured, skip verification (development only — Init() blocks this in production)
-		if len(jwtSecret) == 0 {
+		// If no JWKS URL is configured, skip verification (development only — Init() blocks this in production)
+		if jwksURL == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Parse and verify JWT with HMAC-SHA256
+		// Parse and verify JWT with Supabase asymmetric signing keys.
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			switch t.Method.(type) {
+			case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
+			default:
 				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 			}
-			return jwtSecret, nil
+
+			kid, _ := t.Header["kid"].(string)
+			if kid == "" {
+				return nil, fmt.Errorf("missing JWT key id")
+			}
+			return jwksPublicKey(r.Context(), kid)
 		})
 
 		if err != nil || !token.Valid {
@@ -120,6 +157,167 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func jwksPublicKey(ctx context.Context, kid string) (any, error) {
+	keys, err := cachedJWKSKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := keys[kid]
+	if !ok {
+		// Refresh once in case Supabase rotated keys after our cache fill.
+		keys, err = fetchJWKSKeys(ctx, true)
+		if err != nil {
+			return nil, err
+		}
+		key, ok = keys[kid]
+	}
+	if !ok {
+		return nil, fmt.Errorf("JWT signing key %q not found", kid)
+	}
+	return key, nil
+}
+
+func cachedJWKSKeys(ctx context.Context) (map[string]any, error) {
+	jwksMu.Lock()
+	if len(jwksKeys) > 0 && time.Now().Before(jwksExpiresAt) {
+		keys := jwksKeys
+		jwksMu.Unlock()
+		return keys, nil
+	}
+	jwksMu.Unlock()
+
+	return fetchJWKSKeys(ctx, false)
+}
+
+func fetchJWKSKeys(ctx context.Context, force bool) (map[string]any, error) {
+	jwksMu.Lock()
+	defer jwksMu.Unlock()
+
+	if !force && len(jwksKeys) > 0 && time.Now().Before(jwksExpiresAt) {
+		return jwksKeys, nil
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, jwksURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch Supabase JWKS: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Supabase JWKS returned status %d", resp.StatusCode)
+	}
+
+	var jwks jwksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to decode Supabase JWKS: %w", err)
+	}
+
+	keys := make(map[string]any, len(jwks.Keys))
+	for _, key := range jwks.Keys {
+		publicKey, err := jwksPublicKeyFromKey(key)
+		if err != nil {
+			log.Printf("[auth] skipping unsupported JWKS key %q: %v", key.KID, err)
+			continue
+		}
+		keys[key.KID] = publicKey
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("Supabase JWKS did not contain usable asymmetric signing keys")
+	}
+
+	jwksKeys = keys
+	jwksExpiresAt = time.Now().Add(jwksCacheTTL)
+	return jwksKeys, nil
+}
+
+func jwksPublicKeyFromKey(key jwksKey) (any, error) {
+	if key.KID == "" {
+		return nil, fmt.Errorf("missing kid")
+	}
+	switch key.KTY {
+	case "RSA":
+		return rsaPublicKey(key)
+	case "EC":
+		return ecPublicKey(key)
+	default:
+		return nil, fmt.Errorf("unsupported key type %q", key.KTY)
+	}
+}
+
+func rsaPublicKey(key jwksKey) (*rsa.PublicKey, error) {
+	nBytes, err := decodeBase64URLUInt(key.N)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RSA modulus: %w", err)
+	}
+	eBytes, err := decodeBase64URLUInt(key.E)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RSA exponent: %w", err)
+	}
+
+	exponent := 0
+	for _, b := range eBytes {
+		exponent = exponent<<8 + int(b)
+	}
+	if exponent <= 1 {
+		return nil, fmt.Errorf("invalid RSA exponent")
+	}
+
+	return &rsa.PublicKey{
+		N: new(big.Int).SetBytes(nBytes),
+		E: exponent,
+	}, nil
+}
+
+func ecPublicKey(key jwksKey) (*ecdsa.PublicKey, error) {
+	curve, err := ellipticCurve(key.Crv)
+	if err != nil {
+		return nil, err
+	}
+	xBytes, err := decodeBase64URLUInt(key.X)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EC x coordinate: %w", err)
+	}
+	yBytes, err := decodeBase64URLUInt(key.Y)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EC y coordinate: %w", err)
+	}
+
+	x := new(big.Int).SetBytes(xBytes)
+	y := new(big.Int).SetBytes(yBytes)
+	if !curve.IsOnCurve(x, y) {
+		return nil, fmt.Errorf("EC point is not on curve")
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+}
+
+func ellipticCurve(name string) (elliptic.Curve, error) {
+	switch name {
+	case "P-256":
+		return elliptic.P256(), nil
+	case "P-384":
+		return elliptic.P384(), nil
+	case "P-521":
+		return elliptic.P521(), nil
+	default:
+		return nil, fmt.Errorf("unsupported EC curve %q", name)
+	}
+}
+
+func decodeBase64URLUInt(value string) ([]byte, error) {
+	if value == "" {
+		return nil, fmt.Errorf("empty value")
+	}
+	return base64.RawURLEncoding.DecodeString(value)
 }
 
 // RequireAuth requires authentication for the handler
