@@ -107,7 +107,7 @@ func (r *CreditRepository) ReserveCredits(
 	}
 
 	query := `
-		SELECT balance, transaction_id
+		SELECT *
 		FROM public.reserve_user_credits($1::uuid, $2::numeric, $3::jsonb)
 	`
 	err = r.pool.QueryRow(ctx, query, userID, amount, metaJSON).Scan(&newBalance, &transactionID)
@@ -139,7 +139,7 @@ func (r *CreditRepository) RefundCredits(
 	}
 
 	query := `
-		SELECT balance
+		SELECT *
 		FROM public.refund_user_credits($1::uuid, $2::numeric, nullif($3, '')::uuid, $4::jsonb)
 	`
 	err = r.pool.QueryRow(ctx, query, userID, amount, relatedTransactionID, metaJSON).Scan(&newBalance)
