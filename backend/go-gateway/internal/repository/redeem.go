@@ -4,11 +4,25 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/text/unicode/norm"
+)
+
+const (
+	maxCreditCodeLength = 120
+)
+
+var (
+	ErrInvalidCode         = errors.New("invalid_code")
+	ErrCodeDisabled        = errors.New("code_disabled")
+	ErrCodeExpired         = errors.New("code_expired")
+	ErrCodeAlreadyRedeemed = errors.New("code_already_redeemed")
+	ErrCodeExhausted       = errors.New("code_exhausted")
 )
 
 type RedeemRepository struct {
@@ -29,8 +43,8 @@ func NormalizeCreditCode(value string) string {
 	normalized := norm.NFKC.String(value)
 	normalized = strings.ToUpper(strings.TrimSpace(normalized))
 	normalized = replacer.Replace(normalized)
-	if len(normalized) > 120 {
-		return normalized[:120]
+	if len(normalized) > maxCreditCodeLength {
+		return normalized[:maxCreditCodeLength]
 	}
 	return normalized
 }
@@ -57,7 +71,33 @@ func (r *RedeemRepository) Redeem(ctx context.Context, userID, rawCode string) (
 
 	var result RedeemResult
 	if err := r.pool.QueryRow(ctx, query, userID, codeHash).Scan(&result.Balance, &result.Credits); err != nil {
-		return nil, err
+		return nil, redeemRepositoryError(err)
 	}
 	return &result, nil
+}
+
+func redeemRepositoryError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidCode
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != plpgsqlRaiseExceptionSQLState {
+		return err
+	}
+
+	switch pgErr.Message {
+	case "invalid_code":
+		return ErrInvalidCode
+	case "code_disabled":
+		return ErrCodeDisabled
+	case "code_expired":
+		return ErrCodeExpired
+	case "code_already_redeemed":
+		return ErrCodeAlreadyRedeemed
+	case "code_exhausted":
+		return ErrCodeExhausted
+	default:
+		return err
+	}
 }

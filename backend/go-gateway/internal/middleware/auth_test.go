@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -115,6 +116,19 @@ func TestAuthMiddlewareFallsBackToSupabaseAuthUser(t *testing.T) {
 
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestVerifyBearerTokenRequiresFallbackAPIKey(t *testing.T) {
+	resetAuthForTest("", "http://127.0.0.1:1/auth/v1/user", "")
+	defer resetAuthForTest("", "", "")
+
+	_, err := verifyBearerToken(t.Context(), "legacy-token")
+	if err == nil {
+		t.Fatal("expected auth verification configuration error")
+	}
+	if !errors.Is(err, errAuthVerificationNotConfigured) {
+		t.Fatalf("expected errAuthVerificationNotConfigured, got %v", err)
 	}
 }
 

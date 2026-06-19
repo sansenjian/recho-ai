@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -36,6 +37,9 @@ const (
 )
 
 const jwksCacheTTL = 10 * time.Minute
+const authHTTPTimeout = 5 * time.Second
+
+var errAuthVerificationNotConfigured = errors.New("Supabase auth verification is not configured")
 
 type jwksKey struct {
 	KID string `json:"kid"`
@@ -63,6 +67,7 @@ var (
 	jwksURL       string
 	authUserURL   string
 	authAPIKey    string
+	authHTTP      = &http.Client{Timeout: authHTTPTimeout}
 	jwksMu        sync.Mutex
 	jwksExpiresAt time.Time
 	jwksKeys      map[string]any
@@ -75,18 +80,21 @@ func Init() {
 	jwksURL = config.SupabaseJWKSURL
 	authUserURL = authUserURLFromSupabaseURL(config.SupabaseURL)
 	authAPIKey = firstNonEmpty(config.SupabasePublishableKey, config.SupabaseServiceRoleKey)
+	authFallbackConfigured := authUserURL != "" && authAPIKey != ""
 
-	if jwksURL == "" && authUserURL == "" {
+	if jwksURL == "" && !authFallbackConfigured {
 		if isProduction() {
-			log.Fatal("FATAL: SUPABASE_URL or SUPABASE_JWKS_URL is required in production for JWT verification.")
+			log.Fatal("FATAL: SUPABASE_JWKS_URL or SUPABASE_URL plus SUPABASE_PUBLISHABLE_KEY/SUPABASE_SERVICE_ROLE_KEY is required in production for JWT verification.")
 		}
 		log.Println("WARNING: Supabase auth verification not configured — all requests will be unauthenticated")
 	} else {
 		if jwksURL != "" {
 			log.Printf("Supabase JWKS verification configured: %s", jwksURL)
 		}
-		if authUserURL != "" {
+		if authFallbackConfigured {
 			log.Printf("Supabase Auth user verification fallback configured: %s", authUserURL)
+		} else if authUserURL != "" {
+			log.Println("WARNING: Supabase Auth fallback URL is configured without an API key; fallback verification is disabled")
 		}
 	}
 }
@@ -160,7 +168,7 @@ func verifyBearerToken(ctx context.Context, tokenString string) (*User, error) {
 		return verifyTokenWithAuthServer(ctx, tokenString)
 	}
 
-	return nil, fmt.Errorf("Supabase auth verification is not configured")
+	return nil, errAuthVerificationNotConfigured
 }
 
 func verifyTokenWithJWKS(ctx context.Context, tokenString string) (*User, error) {
@@ -215,7 +223,7 @@ func verifyTokenWithAuthServer(ctx context.Context, tokenString string) (*User, 
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 	req.Header.Set("apikey", authAPIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify token with Supabase Auth: %w", err)
 	}

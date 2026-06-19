@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-
-	"github.com/jackc/pgx/v5"
 
 	"go-gateway/internal/repository"
 )
@@ -45,20 +42,16 @@ func (s *RedeemService) Redeem(ctx context.Context, userID, code string) (*Redee
 }
 
 func redeemError(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrInvalidCode
-	}
-	message := err.Error()
 	switch {
-	case strings.Contains(message, "invalid_code"):
+	case errors.Is(err, repository.ErrInvalidCode):
 		return ErrInvalidCode
-	case strings.Contains(message, "code_disabled"):
+	case errors.Is(err, repository.ErrCodeDisabled):
 		return ErrCodeDisabled
-	case strings.Contains(message, "code_expired"):
+	case errors.Is(err, repository.ErrCodeExpired):
 		return ErrCodeExpired
-	case strings.Contains(message, "code_already_redeemed"):
+	case errors.Is(err, repository.ErrCodeAlreadyRedeemed):
 		return ErrCodeAlreadyRedeemed
-	case strings.Contains(message, "code_exhausted"):
+	case errors.Is(err, repository.ErrCodeExhausted):
 		return ErrCodeExhausted
 	default:
 		return fmt.Errorf("failed to redeem credit code: %w", err)

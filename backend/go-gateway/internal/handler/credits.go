@@ -142,10 +142,12 @@ func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, message, businessErr := redeemErrorResponse(err)
 		body := map[string]string{"error": message}
-		if idemKey != "" && h.idempotencySvc != nil && businessErr {
-			h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "credit_redeem", int16(status), body, "")
-		} else if idemKey != "" && h.idempotencySvc != nil {
-			h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "credit_redeem")
+		if idemKey != "" && h.idempotencySvc != nil {
+			if businessErr && status < 500 {
+				h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "credit_redeem", int16(status), body, "")
+			} else {
+				h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "credit_redeem")
+			}
 		}
 		response.Error(w, status, message)
 		return

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +24,8 @@ var ErrInsufficientCredits = errors.New("insufficient credits")
 func NewCreditRepository(pool *pgxpool.Pool) *CreditRepository {
 	return &CreditRepository{pool: pool}
 }
+
+const plpgsqlRaiseExceptionSQLState = "P0001"
 
 // UserBalance represents a user's credit balance record
 type UserBalance struct {
@@ -83,8 +85,12 @@ func marshalMetadata(metadata map[string]any) (string, error) {
 	return string(data), nil
 }
 
-func isCreditError(err error, code string) bool {
-	return err != nil && strings.Contains(err.Error(), code)
+func isCreditError(err error, message string) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == plpgsqlRaiseExceptionSQLState && pgErr.Message == message
 }
 
 // ReserveCredits reserves credits for image generation
