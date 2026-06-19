@@ -35,8 +35,8 @@ func TestAuthMiddlewareValidatesJWTWithJWKS(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resetJWKSForTest(server.URL)
-	defer resetJWKSForTest("")
+	resetAuthForTest(server.URL, "", "")
+	defer resetAuthForTest("", "", "")
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"sub":   "user_123",
@@ -72,10 +72,58 @@ func TestAuthMiddlewareValidatesJWTWithJWKS(t *testing.T) {
 	}
 }
 
-func resetJWKSForTest(url string) {
+func TestAuthMiddlewareFallsBackToSupabaseAuthUser(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/v1/user" {
+			t.Fatalf("unexpected auth path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer legacy-token" {
+			t.Fatalf("unexpected authorization header: %s", got)
+		}
+		if got := r.Header.Get("apikey"); got != "publishable-key" {
+			t.Fatalf("unexpected apikey header: %s", got)
+		}
+		if err := json.NewEncoder(w).Encode(map[string]string{
+			"id":    "user_456",
+			"email": "legacy@example.com",
+			"role":  "authenticated",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer authServer.Close()
+
+	resetAuthForTest("http://127.0.0.1:1/jwks", authServer.URL+"/auth/v1/user", "publishable-key")
+	defer resetAuthForTest("", "", "")
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := GetUserFromRequest(r)
+		if user == nil {
+			t.Fatal("expected authenticated user")
+		}
+		if user.ID != "user_456" || user.Email != "legacy@example.com" || user.Role != "authenticated" {
+			t.Fatalf("unexpected user: %+v", user)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer legacy-token")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func resetAuthForTest(jwks, userURL, apiKey string) {
 	jwksMu.Lock()
 	defer jwksMu.Unlock()
-	jwksURL = url
+	jwksURL = jwks
+	authUserURL = userURL
+	authAPIKey = apiKey
 	jwksExpiresAt = time.Time{}
 	jwksKeys = nil
 }

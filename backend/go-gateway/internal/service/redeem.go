@@ -2,125 +2,65 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"log"
-	"time"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"go-gateway/internal/repository"
 )
 
+var (
+	ErrInvalidCode         = errors.New("invalid_code")
+	ErrCodeDisabled        = errors.New("code_disabled")
+	ErrCodeExpired         = errors.New("code_expired")
+	ErrCodeAlreadyRedeemed = errors.New("code_already_redeemed")
+	ErrCodeExhausted       = errors.New("code_exhausted")
+)
+
+// RedeemService consumes credit codes through the same Supabase RPC used by Node.
 type RedeemService struct {
-	repo      *repository.RedeemRepository
-	creditSvc *CreditService
+	repo *repository.RedeemRepository
 }
 
-func NewRedeemService(repo *repository.RedeemRepository, creditSvc *CreditService) *RedeemService {
-	return &RedeemService{
-		repo:      repo,
-		creditSvc: creditSvc,
-	}
+func NewRedeemService(repo *repository.RedeemRepository) *RedeemService {
+	return &RedeemService{repo: repo}
 }
 
-// RedeemCode represents a redemption code
-type RedeemCode = repository.RedeemCode
-
-// RedeemResult represents the result of a redemption
 type RedeemResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Credits int    `json:"credits,omitempty"`
+	Balance         float64 `json:"balance"`
+	RedeemedCredits int     `json:"redeemedCredits"`
 }
 
-// GenerateCode generates a new redemption code
-func (s *RedeemService) GenerateCode(ctx context.Context, credits int, expiresAt time.Time) (*RedeemCode, error) {
-	code, err := generateSecureCode(16)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate code: %w", err)
-	}
-
-	redeemCode := &RedeemCode{
-		Code:      code,
-		Credits:   credits,
-		ExpiresAt: expiresAt,
-		CreatedAt: time.Now(),
-	}
-
-	if err := s.repo.Create(ctx, redeemCode); err != nil {
-		return nil, fmt.Errorf("failed to create code: %w", err)
-	}
-
-	return redeemCode, nil
-}
-
-// Redeem consumes a redemption code and credits the user's account
 func (s *RedeemService) Redeem(ctx context.Context, userID, code string) (*RedeemResult, error) {
-	// Find the code
-	redeemCode, err := s.repo.FindByCode(ctx, code)
+	result, err := s.repo.Redeem(ctx, userID, code)
 	if err != nil {
-		return &RedeemResult{
-			Success: false,
-			Message: "Invalid redemption code",
-		}, nil
+		return nil, redeemError(err)
 	}
-	if redeemCode == nil {
-		return &RedeemResult{
-			Success: false,
-			Message: "Invalid redemption code",
-		}, nil
-	}
-
-	// Check if expired
-	if time.Now().After(redeemCode.ExpiresAt) {
-		return &RedeemResult{
-			Success: false,
-			Message: "This code has expired",
-		}, nil
-	}
-
-	// Check if already used
-	if redeemCode.UsedBy != nil {
-		return &RedeemResult{
-			Success: false,
-			Message: "This code has already been used",
-		}, nil
-	}
-
-	// Mark as used (atomic: WHERE used_by IS NULL prevents double-spend)
-	rowsAffected, err := s.repo.MarkAsUsed(ctx, redeemCode.ID, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to mark code as used: %w", err)
-	}
-	if rowsAffected == 0 {
-		// Another concurrent request already consumed this code
-		return &RedeemResult{
-			Success: false,
-			Message: "This code has already been used",
-		}, nil
-	}
-
-	// Credit the user's account
-	if err := s.creditSvc.AddCredits(ctx, userID, redeemCode.Credits, "redeem", redeemCode.ID); err != nil {
-		// Rollback the mark as used
-		if rollbackErr := s.repo.MarkAsUnused(ctx, redeemCode.ID); rollbackErr != nil {
-			log.Printf("[redeem] failed to rollback code usage for %s: %v", redeemCode.ID, rollbackErr)
-		}
-		return nil, fmt.Errorf("failed to credit user: %w", err)
-	}
-
 	return &RedeemResult{
-		Success: true,
-		Message: fmt.Sprintf("Successfully redeemed %d credits", redeemCode.Credits),
-		Credits: redeemCode.Credits,
+		Balance:         result.Balance,
+		RedeemedCredits: result.Credits,
 	}, nil
 }
 
-// generateSecureCode generates a cryptographically secure random code
-func generateSecureCode(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+func redeemError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidCode
 	}
-	return hex.EncodeToString(bytes)[:length], nil
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "invalid_code"):
+		return ErrInvalidCode
+	case strings.Contains(message, "code_disabled"):
+		return ErrCodeDisabled
+	case strings.Contains(message, "code_expired"):
+		return ErrCodeExpired
+	case strings.Contains(message, "code_already_redeemed"):
+		return ErrCodeAlreadyRedeemed
+	case strings.Contains(message, "code_exhausted"):
+		return ErrCodeExhausted
+	default:
+		return fmt.Errorf("failed to redeem credit code: %w", err)
+	}
 }

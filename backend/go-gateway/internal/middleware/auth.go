@@ -53,8 +53,16 @@ type jwksResponse struct {
 	Keys []jwksKey `json:"keys"`
 }
 
+type supabaseUserResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
 var (
 	jwksURL       string
+	authUserURL   string
+	authAPIKey    string
 	jwksMu        sync.Mutex
 	jwksExpiresAt time.Time
 	jwksKeys      map[string]any
@@ -65,20 +73,44 @@ var (
 // In production, a JWKS URL is required.
 func Init() {
 	jwksURL = config.SupabaseJWKSURL
+	authUserURL = authUserURLFromSupabaseURL(config.SupabaseURL)
+	authAPIKey = firstNonEmpty(config.SupabasePublishableKey, config.SupabaseServiceRoleKey)
 
-	if jwksURL == "" {
+	if jwksURL == "" && authUserURL == "" {
 		if isProduction() {
 			log.Fatal("FATAL: SUPABASE_URL or SUPABASE_JWKS_URL is required in production for JWT verification.")
 		}
-		log.Println("WARNING: Supabase JWKS URL not configured — JWT verification disabled, all requests will be unauthenticated")
+		log.Println("WARNING: Supabase auth verification not configured — all requests will be unauthenticated")
 	} else {
-		log.Printf("Supabase JWKS verification configured: %s", jwksURL)
+		if jwksURL != "" {
+			log.Printf("Supabase JWKS verification configured: %s", jwksURL)
+		}
+		if authUserURL != "" {
+			log.Printf("Supabase Auth user verification fallback configured: %s", authUserURL)
+		}
 	}
 }
 
 // isProduction returns true when the configured app environment is production.
 func isProduction() bool {
 	return config.IsProduction()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func authUserURLFromSupabaseURL(value string) string {
+	base := strings.TrimRight(strings.TrimSpace(value), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/auth/v1/user"
 }
 
 // AuthMiddleware validates Supabase JWT tokens using Supabase JWKS public keys.
@@ -104,59 +136,103 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// If no JWKS URL is configured, skip verification (development only — Init() blocks this in production)
-		if jwksURL == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Parse and verify JWT with Supabase asymmetric signing keys.
-		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
-			switch t.Method.(type) {
-			case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
-			default:
-				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-			}
-
-			kid, _ := t.Header["kid"].(string)
-			if kid == "" {
-				return nil, fmt.Errorf("missing JWT key id")
-			}
-			return jwksPublicKey(r.Context(), kid)
-		})
-
-		if err != nil || !token.Valid {
-			// Token was provided but is invalid or expired — return 401
+		user, err := verifyBearerToken(r.Context(), tokenString)
+		if err != nil || user == nil || user.ID == "" {
 			response.Error(w, http.StatusUnauthorized, "token 无效或已过期，请重新登录。")
 			return
-		}
-
-		// Extract claims
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			response.Error(w, http.StatusUnauthorized, "token 格式无效。")
-			return
-		}
-
-		// Extract user ID from "sub" claim
-		sub, _ := claims["sub"].(string)
-		if sub == "" {
-			response.Error(w, http.StatusUnauthorized, "token 缺少用户标识。")
-			return
-		}
-
-		user := &User{ID: sub}
-
-		if email, ok := claims["email"].(string); ok {
-			user.Email = email
-		}
-		if role, ok := claims["role"].(string); ok {
-			user.Role = role
 		}
 
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func verifyBearerToken(ctx context.Context, tokenString string) (*User, error) {
+	if jwksURL != "" {
+		user, err := verifyTokenWithJWKS(ctx, tokenString)
+		if err == nil {
+			return user, nil
+		}
+		log.Printf("[auth] JWKS verification failed, trying Supabase Auth fallback: %v", err)
+	}
+
+	if authUserURL != "" && authAPIKey != "" {
+		return verifyTokenWithAuthServer(ctx, tokenString)
+	}
+
+	return nil, fmt.Errorf("Supabase auth verification is not configured")
+}
+
+func verifyTokenWithJWKS(ctx context.Context, tokenString string) (*User, error) {
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
+		switch t.Method.(type) {
+		case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+
+		kid, _ := t.Header["kid"].(string)
+		if kid == "" {
+			return nil, fmt.Errorf("missing JWT key id")
+		}
+		return jwksPublicKey(ctx, kid)
+	})
+	if err != nil || !token.Valid {
+		if err == nil {
+			err = fmt.Errorf("invalid token")
+		}
+		return nil, err
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("token claims are invalid")
+	}
+
+	sub, _ := claims["sub"].(string)
+	if sub == "" {
+		return nil, fmt.Errorf("token is missing subject")
+	}
+
+	user := &User{ID: sub}
+	if email, ok := claims["email"].(string); ok {
+		user.Email = email
+	}
+	if role, ok := claims["role"].(string); ok {
+		user.Role = role
+	}
+	return user, nil
+}
+
+func verifyTokenWithAuthServer(ctx context.Context, tokenString string) (*User, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, authUserURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+	req.Header.Set("apikey", authAPIKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify token with Supabase Auth: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Supabase Auth token verification returned status %d", resp.StatusCode)
+	}
+
+	var user supabaseUserResponse
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, fmt.Errorf("failed to decode Supabase Auth user: %w", err)
+	}
+	if user.ID == "" {
+		return nil, fmt.Errorf("Supabase Auth user response is missing id")
+	}
+	return &User{ID: user.ID, Email: user.Email, Role: user.Role}, nil
 }
 
 func jwksPublicKey(ctx context.Context, kid string) (any, error) {
