@@ -406,24 +406,48 @@ function parseSizeToBytes(size: string | null): number {
   }
 }
 
-export async function getAdminImageStorageOverview(): Promise<AdminImageStorageOverview> {
+function storageLocationFromRpc(value: unknown): AdminImageStorageStat['location'] {
+  const location = String(value || 'unknown')
+  return location === 'cos' || location === 'supabase' || location === 'data'
+    ? location
+    : 'unknown'
+}
+
+function storageStatFromRows(rows: Array<Record<string, unknown>>): AdminImageStorageStat[] {
+  const stats = new Map<AdminImageStorageStat['location'], AdminImageStorageStat>()
+
+  for (const row of rows) {
+    const location = storageLocationFromPath(stringField(row, 'storage_path')) || 'supabase'
+    const current = stats.get(location) || {
+      location,
+      imageCount: 0,
+      totalBytes: 0,
+      averageBytes: 0,
+      totalCreditCost: 0,
+    }
+    current.imageCount += 1
+    current.totalBytes += parseSizeToBytes(stringField(row, 'size'))
+    current.totalCreditCost = Math.round((current.totalCreditCost + normalizedCreditAmount(row.credit_cost)) * 100) / 100
+    stats.set(location, current)
+  }
+
+  return Array.from(stats.values()).map(stat => ({
+    ...stat,
+    averageBytes: stat.imageCount > 0 ? Math.round(stat.totalBytes / stat.imageCount) : 0,
+  }))
+}
+
+async function storageOverviewFromRows(): Promise<AdminImageStorageStat[]> {
   const client = requireAdminImageClient()
-  const { data: statsRows, error } = await client
-    .rpc('admin_image_storage_overview')
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select('storage_path,size,credit_cost')
 
   if (error) throw error
+  return storageStatFromRows((data || []) as unknown as Array<Record<string, unknown>>)
+}
 
-  const rows = (statsRows || []) as unknown as Array<Record<string, unknown>>
-  const byLocation: AdminImageStorageStat[] = rows.map(row => ({
-    location: (String(row.location || 'unknown')) as AdminImageStorageStat['location'],
-    imageCount: Number(row.image_count || 0),
-    totalBytes: Number(row.total_bytes || 0),
-    averageBytes: Number(row.image_count || 0) > 0
-      ? Math.round(Number(row.total_bytes || 0) / Number(row.image_count || 1))
-      : 0,
-    totalCreditCost: Math.round(Number(row.total_credit_cost || 0) * 100) / 100,
-  }))
-
+function storageOverviewResponse(byLocation: AdminImageStorageStat[]): AdminImageStorageOverview {
   byLocation.sort((a, b) => b.totalBytes - a.totalBytes)
 
   const totalImages = byLocation.reduce((sum, stat) => sum + stat.imageCount, 0)
@@ -437,4 +461,28 @@ export async function getAdminImageStorageOverview(): Promise<AdminImageStorageO
     totalCreditCost: Math.round(totalCreditCost * 100) / 100,
     byLocation,
   }
+}
+
+export async function getAdminImageStorageOverview(): Promise<AdminImageStorageOverview> {
+  const client = requireAdminImageClient()
+  const { data: statsRows, error } = await client
+    .rpc('admin_image_storage_overview')
+
+  if (error) {
+    console.warn('[admin-images] storage overview RPC failed; falling back to table scan', error)
+    return storageOverviewResponse(await storageOverviewFromRows())
+  }
+
+  const rows = (statsRows || []) as unknown as Array<Record<string, unknown>>
+  const byLocation: AdminImageStorageStat[] = rows.map(row => ({
+    location: storageLocationFromRpc(row.location),
+    imageCount: Number(row.image_count || 0),
+    totalBytes: Number(row.total_bytes || 0),
+    averageBytes: Number(row.image_count || 0) > 0
+      ? Math.round(Number(row.total_bytes || 0) / Number(row.image_count || 1))
+      : 0,
+    totalCreditCost: Math.round(Number(row.total_credit_cost || 0) * 100) / 100,
+  }))
+
+  return storageOverviewResponse(byLocation)
 }
