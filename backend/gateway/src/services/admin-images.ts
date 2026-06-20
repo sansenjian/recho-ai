@@ -8,6 +8,7 @@ const IMAGE_HISTORY_TABLE = 'image_generations'
 const DEFAULT_LIMIT = 24
 const MAX_LIMIT = 60
 const MAX_BULK_IDS = 60
+const STORAGE_OVERVIEW_FALLBACK_LIMIT = 10_000
 const ADMIN_IMAGE_COLUMNS = [
   'id',
   'user_id',
@@ -427,13 +428,14 @@ function storageStatFromRows(rows: Array<Record<string, unknown>>): AdminImageSt
     }
     current.imageCount += 1
     current.totalBytes += parseSizeToBytes(stringField(row, 'size'))
-    current.totalCreditCost = Math.round((current.totalCreditCost + normalizedCreditAmount(row.credit_cost)) * 100) / 100
+    current.totalCreditCost += normalizedCreditAmount(row.credit_cost)
     stats.set(location, current)
   }
 
   return Array.from(stats.values()).map(stat => ({
     ...stat,
     averageBytes: stat.imageCount > 0 ? Math.round(stat.totalBytes / stat.imageCount) : 0,
+    totalCreditCost: Math.round(stat.totalCreditCost * 100) / 100,
   }))
 }
 
@@ -442,6 +444,7 @@ async function storageOverviewFromRows(): Promise<AdminImageStorageStat[]> {
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
     .select('storage_path,size,credit_cost')
+    .limit(STORAGE_OVERVIEW_FALLBACK_LIMIT)
 
   if (error) throw error
   return storageStatFromRows((data || []) as unknown as Array<Record<string, unknown>>)

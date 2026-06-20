@@ -7,6 +7,7 @@ let removedStoragePaths: Array<string | null | undefined> = []
 let storageRemoveError: Error | null = null
 let rpcRows: Array<Record<string, unknown>> = []
 let rpcError: Error | null = null
+let fallbackLimit: number | null = null
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
@@ -49,7 +50,10 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
       const query = {
         select: vi.fn(() => query),
         order: vi.fn(() => query),
-        limit: vi.fn(() => Promise.resolve({ data: resultRows, error: null })),
+        limit: vi.fn((value?: number) => {
+          fallbackLimit = typeof value === 'number' ? value : fallbackLimit
+          return Promise.resolve({ data: resultRows, error: null })
+        }),
         eq: vi.fn((key: string, value: unknown) => {
           applyFilter(key, [value])
           resultRows = resultRows.filter(row => {
@@ -104,6 +108,7 @@ describe('admin image helpers', () => {
     storageRemoveError = null
     rpcRows = []
     rpcError = null
+    fallbackLimit = null
     vi.resetModules()
   })
 
@@ -372,22 +377,29 @@ describe('admin image helpers', () => {
         id: 'img_3',
         storage_path: null,
         size: '256 bytes',
-        credit_cost: 0,
+        credit_cost: 0.105,
+      },
+      {
+        id: 'img_4',
+        storage_path: null,
+        size: null,
+        credit_cost: 0.105,
       },
     ]
 
     const overview = await getAdminImageStorageOverview()
 
-    expect(overview.totalImages).toBe(3)
+    expect(fallbackLimit).toBe(10_000)
+    expect(overview.totalImages).toBe(4)
     expect(overview.totalBytes).toBe(1573120)
-    expect(overview.totalCreditCost).toBe(1.75)
+    expect(overview.totalCreditCost).toBe(1.97)
     expect(overview.byLocation).toEqual([
       {
         location: 'supabase',
-        imageCount: 2,
+        imageCount: 3,
         totalBytes: 1048832,
-        averageBytes: 524416,
-        totalCreditCost: 1.25,
+        averageBytes: 349611,
+        totalCreditCost: 1.47,
       },
       {
         location: 'cos',
