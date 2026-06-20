@@ -97,6 +97,9 @@ func TestChatReserveFailureReturnsPaymentRequiredWhenBalanceIsTooLow(t *testing.
 	if len(creditSvc.reserveCalls) != 1 {
 		t.Fatalf("expected 1 reserve call, got %d", len(creditSvc.reserveCalls))
 	}
+	if len(creditSvc.refundCalls) != 0 {
+		t.Fatalf("expected 0 refund calls, got %d", len(creditSvc.refundCalls))
+	}
 }
 
 func TestChatReserveFailureReturnsServiceUnavailableWhenBalanceCoversCost(t *testing.T) {
@@ -219,6 +222,9 @@ func TestChatNonStreamReservesAndRefundsCreditsOnChatError(t *testing.T) {
 	}
 	if len(creditSvc.refundCalls) != 1 {
 		t.Fatalf("expected 1 refund call, got %d", len(creditSvc.refundCalls))
+	}
+	if creditSvc.refundCalls[0] != creditSvc.reserveCalls[0] {
+		t.Fatalf("expected refund amount %.2f, got %.2f", creditSvc.reserveCalls[0], creditSvc.refundCalls[0])
 	}
 }
 
