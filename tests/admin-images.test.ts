@@ -5,6 +5,9 @@ let updatedVisibility: string | null = null
 let orFilter: string | null = null
 let removedStoragePaths: Array<string | null | undefined> = []
 let storageRemoveError: Error | null = null
+let rpcRows: Array<Record<string, unknown>> = []
+let rpcError: Error | null = null
+let fallbackLimit: number | null = null
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
   imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
@@ -24,6 +27,7 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         })),
       },
     },
+    rpc: vi.fn(async () => ({ data: rpcRows, error: rpcError })),
     from: () => {
       let pendingPatch: Record<string, unknown> | null = null
       let deleting = false
@@ -46,7 +50,10 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
       const query = {
         select: vi.fn(() => query),
         order: vi.fn(() => query),
-        limit: vi.fn(() => Promise.resolve({ data: resultRows, error: null })),
+        limit: vi.fn((value?: number) => {
+          fallbackLimit = typeof value === 'number' ? value : fallbackLimit
+          return Promise.resolve({ data: resultRows, error: null })
+        }),
         eq: vi.fn((key: string, value: unknown) => {
           applyFilter(key, [value])
           resultRows = resultRows.filter(row => {
@@ -99,6 +106,9 @@ describe('admin image helpers', () => {
     orFilter = null
     removedStoragePaths = []
     storageRemoveError = null
+    rpcRows = []
+    rpcError = null
+    fallbackLimit = null
     vi.resetModules()
   })
 
@@ -345,5 +355,59 @@ describe('admin image helpers', () => {
 
     expect(removedStoragePaths).toEqual(['generated/img_1.webp', null, null])
     expect(rows).toEqual([])
+  })
+
+  it('falls back to image rows when storage overview RPC is unavailable', async () => {
+    const { getAdminImageStorageOverview } = await import('../backend/gateway/src/services/admin-images')
+    rpcError = new Error('function admin_image_storage_overview does not exist')
+    rows = [
+      {
+        id: 'img_1',
+        storage_path: 'generated/img_1.webp',
+        size: '1 MB',
+        credit_cost: 1.25,
+      },
+      {
+        id: 'img_2',
+        storage_path: 'cos://generated/img_2.webp',
+        size: '512 KB',
+        credit_cost: 0.5,
+      },
+      {
+        id: 'img_3',
+        storage_path: null,
+        size: '256 bytes',
+        credit_cost: 0.105,
+      },
+      {
+        id: 'img_4',
+        storage_path: null,
+        size: null,
+        credit_cost: 0.105,
+      },
+    ]
+
+    const overview = await getAdminImageStorageOverview()
+
+    expect(fallbackLimit).toBe(10_000)
+    expect(overview.totalImages).toBe(4)
+    expect(overview.totalBytes).toBe(1573120)
+    expect(overview.totalCreditCost).toBe(1.97)
+    expect(overview.byLocation).toEqual([
+      {
+        location: 'supabase',
+        imageCount: 3,
+        totalBytes: 1048832,
+        averageBytes: 349611,
+        totalCreditCost: 1.47,
+      },
+      {
+        location: 'cos',
+        imageCount: 1,
+        totalBytes: 524288,
+        averageBytes: 524288,
+        totalCreditCost: 0.5,
+      },
+    ])
   })
 })
