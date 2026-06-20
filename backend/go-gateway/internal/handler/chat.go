@@ -188,7 +188,9 @@ func (h *ChatHandler) handleNonStream(ctx context.Context, w http.ResponseWriter
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("[chat] failed to copy non-stream response: %v", err)
+	}
 }
 
 func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte, txID string, creditCost float64) {
@@ -197,7 +199,9 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 	if err != nil {
 		// Refund on error (using the original transaction ID for linked refund)
 		if h.creditSvc != nil && txID != "" {
-			h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_error")
+			if _, refundErr := h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_error"); refundErr != nil {
+				log.Printf("[chat] failed to refund credits after chat error: %v", refundErr)
+			}
 		}
 		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("Chat service error: %v", err))
 		return

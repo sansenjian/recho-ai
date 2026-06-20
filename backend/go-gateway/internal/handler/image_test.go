@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"go-gateway/internal/config"
@@ -17,8 +16,8 @@ import (
 
 type stubImageCreditService struct {
 	reserveCalls []float64
-	refundCalls   []float64
-	balance       float64
+	refundCalls  []float64
+	balance      float64
 }
 
 func (s *stubImageCreditService) ReserveCredits(ctx context.Context, userID string, imageCount int) (string, float64, float64, float64, error) {
@@ -97,7 +96,6 @@ func TestImageGenerateMarksIdempotencyFailedWhenHistorySaveFails(t *testing.T) {
 	idemSvc := &stubImageIdempotencyService{}
 	h := NewImageHandler(creditSvc, storageSvc, idemSvc)
 
-	var mu sync.Mutex
 	origBaseURL := config.ImageGenBaseURL
 	origAPIKey := config.ImageGenAPIKey
 	defer func() {
@@ -106,13 +104,15 @@ func TestImageGenerateMarksIdempotencyFailedWhenHistorySaveFails(t *testing.T) {
 	}()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
 		if r.Method != http.MethodPost {
-			t.Fatalf("unexpected method: %s", r.Method)
+			t.Errorf("unexpected method: %s", r.Method)
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+			return
 		}
 		if r.URL.Path != "/images/generations" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"url":"https://example.com/image.png","revised_prompt":"revised"}]}`))
