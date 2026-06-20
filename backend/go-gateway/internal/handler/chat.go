@@ -16,13 +16,25 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type chatService interface {
+	Chat(ctx context.Context, model string, body []byte) (*http.Response, error)
+	GetCreditCost(model string) int
+	GetChatHistory(userID string) ([]service.ChatHistoryItem, error)
+}
+
+type chatCreditService interface {
+	ReserveAmount(ctx context.Context, userID string, amount float64, metadata map[string]any) (transactionID string, newBalance float64, err error)
+	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
+	GetBalance(ctx context.Context, userID string) (float64, error)
+}
+
 type ChatHandler struct {
-	chatService *service.ChatService
-	creditSvc   *service.CreditService
+	chatService chatService
+	creditSvc   chatCreditService
 	analysisURL string
 }
 
-func NewChatHandler(chatSvc *service.ChatService, creditSvc *service.CreditService, analysisURL string) *ChatHandler {
+func NewChatHandler(chatSvc chatService, creditSvc chatCreditService, analysisURL string) *ChatHandler {
 	return &ChatHandler{
 		chatService: chatSvc,
 		creditSvc:   creditSvc,
@@ -124,49 +136,62 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Call chat service
-	if stream {
-		h.handleStream(r.Context(), w, user.ID, req.Model, body)
-	} else {
-		h.handleNonStream(r.Context(), w, user.ID, req.Model, body)
-	}
-}
-
-func (h *ChatHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte) {
-	resp, err := h.chatService.Chat(ctx, model, body)
-	if err != nil {
-		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("Chat service error: %v", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte) {
-	// Reserve credits before streaming (model-specific cost)
-	creditCost := float64(h.chatService.GetCreditCost(model))
+	creditCost := float64(h.chatService.GetCreditCost(req.Model))
 	var txID string
-	if h.creditSvc != nil {
-		id, _, err := h.creditSvc.ReserveAmount(ctx, userID, creditCost, map[string]any{
+	if h.creditSvc != nil && creditCost > 0 {
+		id, _, err := h.creditSvc.ReserveAmount(r.Context(), user.ID, creditCost, map[string]any{
 			"source": "chat",
-			"model":  model,
+			"model":  req.Model,
 		})
 		if err != nil {
-			balance, _ := h.creditSvc.GetBalance(ctx, userID)
+			balance, _ := h.creditSvc.GetBalance(r.Context(), user.ID)
 			if balance < creditCost {
 				response.Error(w, http.StatusPaymentRequired, fmt.Sprintf("Insufficient credits. Required: %.2f, Available: %.2f", creditCost, balance))
 				return
 			}
 			response.Error(w, http.StatusServiceUnavailable, "Credit service unavailable")
 			return
-		} else {
-			txID = id
 		}
+		txID = id
 	}
 
+	// Call chat service
+	if stream {
+		h.handleStream(r.Context(), w, user.ID, req.Model, body, txID, creditCost)
+	} else {
+		h.handleNonStream(r.Context(), w, user.ID, req.Model, body, txID, creditCost)
+	}
+}
+
+func (h *ChatHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte, txID string, creditCost float64) {
+	resp, err := h.chatService.Chat(ctx, model, body)
+	if err != nil {
+		if h.creditSvc != nil && txID != "" {
+			if _, refundErr := h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_error"); refundErr != nil {
+				log.Printf("[chat] failed to refund credits after chat error: %v", refundErr)
+			}
+		}
+		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("Chat service error: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(resp.Body)
+		if h.creditSvc != nil && txID != "" {
+			if _, refundErr := h.creditSvc.RefundCredits(ctx, userID, txID, creditCost, "chat_upstream_error"); refundErr != nil {
+				log.Printf("[chat] failed to refund credits after upstream status %d: %v", resp.StatusCode, refundErr)
+			}
+		}
+		response.Error(w, resp.StatusCode, fmt.Sprintf("Chat upstream error: %s", string(respBody)))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, userID, model string, body []byte, txID string, creditCost float64) {
 	// Call upstream chat API with streaming
 	resp, err := h.chatService.Chat(ctx, model, body)
 	if err != nil {

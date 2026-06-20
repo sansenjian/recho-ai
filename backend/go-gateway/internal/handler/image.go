@@ -28,19 +28,43 @@ import (
 	"go-gateway/internal/service"
 )
 
+type imageCreditService interface {
+	ReserveCredits(ctx context.Context, userID string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
+	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
+	GetCreditCost(imageCount int) (costPerImage, totalCost float64)
+}
+
+type imageStorageService interface {
+	StoreFromURL(ctx context.Context, url string) (*service.StoredImage, error)
+	StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
+	StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
+	DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
+	SaveImageHistory(ctx context.Context, item *service.ImageHistoryItem, userID string) error
+	ListImageHistory(ctx context.Context, userID, scope string, limit, offset int) (*service.ImageHistory, error)
+	GetImageHistory(ctx context.Context, id, userID, scope string) (*service.ImageHistoryItem, error)
+	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
+	ClearImageHistory(ctx context.Context, userID string) (int64, error)
+}
+
+type imageIdempotencyService interface {
+	Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error)
+	Fail(ctx context.Context, userID, idemKey, scope string)
+	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string)
+}
+
 // ImageHandler handles image-related endpoints
 type ImageHandler struct {
-	creditService  *service.CreditService
-	storageService *service.StorageService
-	idempotencySvc *service.IdempotencyService // optional, nil disables idempotency
+	creditService  imageCreditService
+	storageService imageStorageService
+	idempotencySvc imageIdempotencyService // optional, nil disables idempotency
 }
 
 // NewImageHandler creates a new image handler.
 // idempotencySvc may be nil to disable idempotency checks.
 func NewImageHandler(
-	creditService *service.CreditService,
-	storageService *service.StorageService,
-	idempotencySvc *service.IdempotencyService,
+	creditService imageCreditService,
+	storageService imageStorageService,
+	idempotencySvc imageIdempotencyService,
 ) *ImageHandler {
 	return &ImageHandler{
 		creditService:  creditService,
@@ -335,6 +359,9 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 					_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
 					if refundErr != nil {
 						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
+					}
+					if idemKey != "" && user != nil && h.idempotencySvc != nil {
+						h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
 					}
 					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
 					return

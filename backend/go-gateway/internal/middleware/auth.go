@@ -423,6 +423,14 @@ func GetUserFromContext(ctx context.Context) *User {
 	return user
 }
 
+// WithUser stores an authenticated user in a context.
+func WithUser(ctx context.Context, user *User) context.Context {
+	if user == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, userContextKey, user)
+}
+
 // GetUserFromRequest extracts user from http.Request context
 func GetUserFromRequest(r *http.Request) *User {
 	return GetUserFromContext(r.Context())
