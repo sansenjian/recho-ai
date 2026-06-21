@@ -2,12 +2,13 @@ import { Router, Request, Response } from 'express'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
-import { recordImageGenerationAttempt } from '../services/image-attempts.js'
+import { recordImageGenerationAttempt, type ImageGenerationAttempt } from '../services/image-attempts.js'
 import {
   firstImageID,
   imageAttemptErrorType,
   parseImageAttemptResponseJSON,
   responseErrorMessage,
+  shouldBufferImageAttemptBody,
 } from '../services/go-sidecar-image-attempt.js'
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
@@ -69,6 +70,20 @@ async function requestUserId(req: Request) {
   }
 }
 
+async function imageAttemptBaseFields(
+  req: Request,
+  startedAt: number,
+): Promise<Pick<ImageGenerationAttempt, 'userId' | 'provider' | 'latencyMs' | 'requestId' | 'requestIp' | 'requestUserAgent'>> {
+  return {
+    userId: await requestUserId(req),
+    provider: 'go-sidecar',
+    latencyMs: Date.now() - startedAt,
+    requestId: req.get('x-request-id') || null,
+    requestIp: requestIp(req),
+    requestUserAgent: requestUserAgent(req),
+  }
+}
+
 async function recordProxiedImageAttempt(
   req: Request,
   status: number,
@@ -79,32 +94,45 @@ async function recordProxiedImageAttempt(
   const succeeded = status >= 200 && status < 300
 
   await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
     generationId: succeeded ? firstImageID(parsed) : null,
-    userId: await requestUserId(req),
-    provider: 'go-sidecar',
     status: succeeded ? 'succeeded' : 'failed',
-    latencyMs: Date.now() - startedAt,
     errorType: succeeded ? null : imageAttemptErrorType(status),
     errorMessage: succeeded ? null : safeErrorDetail(responseErrorMessage(parsed, responseBody), 'Go image generation failed'),
     httpStatus: status,
-    requestId: req.get('x-request-id') || null,
-    requestIp: requestIp(req),
-    requestUserAgent: requestUserAgent(req),
   })
 }
 
 async function recordProxyFailure(req: Request, err: unknown, status: number, startedAt: number) {
   await recordImageGenerationAttempt({
-    userId: await requestUserId(req),
-    provider: 'go-sidecar',
+    ...await imageAttemptBaseFields(req, startedAt),
     status: 'failed',
-    latencyMs: Date.now() - startedAt,
     errorType: status === 504 ? 'timeout' : 'provider',
     errorMessage: safeErrorDetail(err, 'Go image service is temporarily unavailable.'),
     httpStatus: status,
-    requestId: req.get('x-request-id') || null,
-    requestIp: requestIp(req),
-    requestUserAgent: requestUserAgent(req),
+  })
+}
+
+async function recordUpstreamEmptyBody(req: Request, status: number, startedAt: number) {
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    generationId: null,
+    status: 'failed',
+    errorType: 'upstream_empty_body',
+    errorMessage: `Upstream returned status ${status} with an empty body.`,
+    httpStatus: status,
+  })
+}
+
+async function recordStreamedImageAttempt(req: Request, status: number, startedAt: number) {
+  const succeeded = status >= 200 && status < 300
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    generationId: null,
+    status: succeeded ? 'succeeded' : 'failed',
+    errorType: succeeded ? null : imageAttemptErrorType(status),
+    errorMessage: succeeded ? null : `Go image generation returned status ${status}; response body was streamed without buffering.`,
+    httpStatus: status,
   })
 }
 
@@ -137,8 +165,8 @@ router.use(async (req: Request, res: Response, next) => {
 
     if (!upstream.body) {
       if (trackImageAttempt) {
-        void recordProxiedImageAttempt(req, upstream.status, Buffer.alloc(0), startedAt).catch((err) => {
-          console.warn('[go-sidecar] image attempt record skipped:', safeErrorDetail(err))
+        void recordUpstreamEmptyBody(req, upstream.status, startedAt).catch((err) => {
+          console.warn('[go-sidecar] image attempt anomaly record skipped:', safeErrorDetail(err))
         })
       }
       res.end()
@@ -146,6 +174,15 @@ router.use(async (req: Request, res: Response, next) => {
     }
 
     if (trackImageAttempt) {
+      if (!shouldBufferImageAttemptBody(upstream.headers.get('content-type'), upstream.headers.get('content-length'))) {
+        void recordStreamedImageAttempt(req, upstream.status, startedAt).catch((err) => {
+          console.warn('[go-sidecar] streamed image attempt record skipped:', safeErrorDetail(err))
+        })
+        const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+        await pipeline(responseStream, res)
+        return
+      }
+
       const responseBody = Buffer.from(await upstream.arrayBuffer())
       void recordProxiedImageAttempt(req, upstream.status, responseBody, startedAt).catch((err) => {
         console.warn('[go-sidecar] image attempt record skipped:', safeErrorDetail(err))

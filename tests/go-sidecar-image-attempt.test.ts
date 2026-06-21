@@ -4,6 +4,7 @@ import {
   imageAttemptErrorType,
   parseImageAttemptResponseJSON,
   responseErrorMessage,
+  shouldBufferImageAttemptBody,
 } from '../backend/gateway/src/services/go-sidecar-image-attempt'
 
 describe('go sidecar image attempt helpers', () => {
@@ -30,9 +31,20 @@ describe('go sidecar image attempt helpers', () => {
     expect(parseImageAttemptResponseJSON(Buffer.from('not json'))).toBeNull()
   })
 
+  it('only buffers clearly small JSON image responses', () => {
+    expect(shouldBufferImageAttemptBody('application/json', '1024')).toBe(true)
+    expect(shouldBufferImageAttemptBody('application/problem+json; charset=utf-8', '1024')).toBe(true)
+    expect(shouldBufferImageAttemptBody('application/json', String(1024 * 1024 + 1))).toBe(false)
+    expect(shouldBufferImageAttemptBody('application/json', null)).toBe(false)
+    expect(shouldBufferImageAttemptBody('image/png', '1024')).toBe(false)
+    expect(shouldBufferImageAttemptBody('application/json', 'not-a-number')).toBe(false)
+  })
+
   it('extracts useful error messages from failed Go responses', () => {
     expect(responseErrorMessage({ error: '额度不足。' }, Buffer.from(''))).toBe('额度不足。')
     expect(responseErrorMessage({ message: 'provider failed' }, Buffer.from(''))).toBe('provider failed')
+    expect(responseErrorMessage({ error: { code: 'bad_request' }, message: 'top-level provider message' }, Buffer.from('')))
+      .toBe('top-level provider message')
     expect(responseErrorMessage({ error: { message: 'nested provider failure' } }, Buffer.from(''))).toBe('nested provider failure')
     expect(responseErrorMessage(null, Buffer.from('plain upstream failure'))).toBe('plain upstream failure')
     expect(responseErrorMessage(null, Buffer.from(''))).toBe('Go image generation failed')
