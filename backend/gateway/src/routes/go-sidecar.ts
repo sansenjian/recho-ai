@@ -2,6 +2,17 @@ import { Router, Request, Response } from 'express'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
+import { recordImageGenerationAttempt, type ImageGenerationAttempt } from '../services/image-attempts.js'
+import {
+  firstImageID,
+  imageAttemptErrorType,
+  parseImageAttemptResponseJSON,
+  responseErrorMessage,
+  shouldBufferImageAttemptBody,
+} from '../services/go-sidecar-image-attempt.js'
+import { getRequestUserId } from '../services/request-auth.js'
+import { requestIp, requestUserAgent } from '../services/request-ip.js'
+import { safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
 const GO_GATEWAY_BASE_URL = (process.env.GO_GATEWAY_BASE_URL || '').replace(/\/+$/, '')
@@ -46,6 +57,85 @@ function requestBody(req: Request) {
   return req
 }
 
+function isImageGenerateRequest(req: Request) {
+  return req.method === 'POST' && /^\/image\/generate(?:\/|$)/.test(req.path)
+}
+
+async function requestUserId(req: Request) {
+  try {
+    return await getRequestUserId(req)
+  } catch (err) {
+    console.warn('[go-sidecar] failed to resolve user for image attempt:', safeErrorDetail(err))
+    return null
+  }
+}
+
+async function imageAttemptBaseFields(
+  req: Request,
+  startedAt: number,
+): Promise<Pick<ImageGenerationAttempt, 'userId' | 'provider' | 'latencyMs' | 'requestId' | 'requestIp' | 'requestUserAgent'>> {
+  return {
+    userId: await requestUserId(req),
+    provider: 'go-sidecar',
+    latencyMs: Date.now() - startedAt,
+    requestId: req.get('x-request-id') || null,
+    requestIp: requestIp(req),
+    requestUserAgent: requestUserAgent(req),
+  }
+}
+
+async function recordProxiedImageAttempt(
+  req: Request,
+  status: number,
+  responseBody: Buffer,
+  startedAt: number,
+) {
+  const parsed = parseImageAttemptResponseJSON(responseBody)
+  const succeeded = status >= 200 && status < 300
+
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    generationId: succeeded ? firstImageID(parsed) : null,
+    status: succeeded ? 'succeeded' : 'failed',
+    errorType: succeeded ? null : imageAttemptErrorType(status),
+    errorMessage: succeeded ? null : safeErrorDetail(responseErrorMessage(parsed, responseBody), 'Go image generation failed'),
+    httpStatus: status,
+  })
+}
+
+async function recordProxyFailure(req: Request, err: unknown, status: number, startedAt: number) {
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    status: 'failed',
+    errorType: status === 504 ? 'timeout' : 'provider',
+    errorMessage: safeErrorDetail(err, 'Go image service is temporarily unavailable.'),
+    httpStatus: status,
+  })
+}
+
+async function recordUpstreamEmptyBody(req: Request, status: number, startedAt: number) {
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    generationId: null,
+    status: 'failed',
+    errorType: 'upstream_empty_body',
+    errorMessage: `Upstream returned status ${status} with an empty body.`,
+    httpStatus: status,
+  })
+}
+
+async function recordStreamedImageAttempt(req: Request, status: number, startedAt: number) {
+  const succeeded = status >= 200 && status < 300
+  await recordImageGenerationAttempt({
+    ...await imageAttemptBaseFields(req, startedAt),
+    generationId: null,
+    status: succeeded ? 'succeeded' : 'failed',
+    errorType: succeeded ? null : imageAttemptErrorType(status),
+    errorMessage: succeeded ? null : `Go image generation returned status ${status}; response body was streamed without buffering.`,
+    httpStatus: status,
+  })
+}
+
 router.use(async (req: Request, res: Response, next) => {
   if (!shouldProxy(req.path)) {
     next()
@@ -55,6 +145,8 @@ router.use(async (req: Request, res: Response, next) => {
   const body = requestBody(req)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
+  const startedAt = Date.now()
+  const trackImageAttempt = isImageGenerateRequest(req)
 
   try {
     const upstream = await fetch(requestUrl(req), {
@@ -72,7 +164,30 @@ router.use(async (req: Request, res: Response, next) => {
     })
 
     if (!upstream.body) {
+      if (trackImageAttempt) {
+        void recordUpstreamEmptyBody(req, upstream.status, startedAt).catch((err) => {
+          console.warn('[go-sidecar] image attempt anomaly record skipped:', safeErrorDetail(err))
+        })
+      }
       res.end()
+      return
+    }
+
+    if (trackImageAttempt) {
+      if (!shouldBufferImageAttemptBody(upstream.headers.get('content-type'), upstream.headers.get('content-length'))) {
+        void recordStreamedImageAttempt(req, upstream.status, startedAt).catch((err) => {
+          console.warn('[go-sidecar] streamed image attempt record skipped:', safeErrorDetail(err))
+        })
+        const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+        await pipeline(responseStream, res)
+        return
+      }
+
+      const responseBody = Buffer.from(await upstream.arrayBuffer())
+      void recordProxiedImageAttempt(req, upstream.status, responseBody, startedAt).catch((err) => {
+        console.warn('[go-sidecar] image attempt record skipped:', safeErrorDetail(err))
+      })
+      res.send(responseBody)
       return
     }
 
@@ -80,8 +195,14 @@ router.use(async (req: Request, res: Response, next) => {
     await pipeline(responseStream, res)
   } catch (err: any) {
     console.error('[go-sidecar] proxy failed:', err?.message || err)
+    const status = err?.name === 'AbortError' ? 504 : 502
+    if (trackImageAttempt) {
+      void recordProxyFailure(req, err, status, startedAt).catch((recordErr) => {
+        console.warn('[go-sidecar] image attempt failure record skipped:', safeErrorDetail(recordErr))
+      })
+    }
     if (!res.headersSent) {
-      res.status(err?.name === 'AbortError' ? 504 : 502).json({ error: 'Go image service is temporarily unavailable.' })
+      res.status(status).json({ error: 'Go image service is temporarily unavailable.' })
     }
   } finally {
     clearTimeout(timeout)
