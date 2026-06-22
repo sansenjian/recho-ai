@@ -48,6 +48,11 @@ const currentModelStatusLabel = computed(() => {
   return props.currentModel?.level || '可用'
 })
 
+const compactModelLabel = computed(() => {
+  const label = props.currentModel?.label || '模型'
+  return label.replace(/^DeepSeek\s+/, '').replace(/\s+Flash$/, ' Flash')
+})
+
 function modelStatusLabel(model: ModelOption) {
   if (model.status === 'recommended') return '推荐'
   if (model.status === 'slow') return '较慢'
@@ -156,667 +161,643 @@ function selectModel(m: ModelOption) {
 </script>
 
 <template>
-  <footer class="chat-footer">
-    <!-- active skill tag -->
-    <div v-if="activeSkill" class="skill-tag-row">
-      <div class="skill-tag">
-        <span class="skill-tag-label">/{{ activeSkill }}</span>
-        <button class="skill-tag-close" @click="dismissSkill">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-    </div>
-    <!-- Pending images preview -->
-    <div v-if="pendingImages && pendingImages.length > 0" class="pending-images">
-      <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-img-wrap">
-        <img :src="img" class="pending-img" />
-        <button class="pending-img-remove" @click="emit('removeImage', idx)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-    </div>
-    <div class="composer-toolbar">
-      <div class="toolbar-left">
-        <button
-          class="model-selector"
-          type="button"
-          :aria-expanded="showModelDropdown"
-          aria-haspopup="listbox"
-          @click="showModelDropdown = !showModelDropdown"
-        >
-          <span class="model-selector-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-              <path d="M12 2a4 4 0 0 1 4 4v1h1a4 4 0 0 1 0 8h-1v1a4 4 0 0 1-8 0v-1H7a4 4 0 0 1 0-8h1V6a4 4 0 0 1 4-4Z" />
-              <path d="M9 9h6v6H9z" />
-            </svg>
-          </span>
-          <span class="model-selector-text">
-            <span class="model-selector-label">模型</span>
-            <span class="model-selector-name">{{ currentModel?.label }}</span>
-          </span>
-          <span class="model-selector-status" :class="currentModel?.status">{{ currentModelStatusLabel }}</span>
-          <svg class="chevron" viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </button>
-        <div v-if="showModelDropdown" class="model-dropdown" role="listbox">
-          <button
-            v-for="m in models"
-            :key="m.id"
-            class="model-option"
-            :class="{ active: m.id === currentModel?.id }"
-            type="button"
-            role="option"
-            :aria-selected="m.id === currentModel?.id"
-            @click.stop="selectModel(m)"
-          >
-            <span class="model-option-main">
-              <span class="model-option-name">{{ m.label }}</span>
-              <span class="model-option-provider">{{ m.provider }}</span>
-            </span>
-            <span class="model-option-hint">{{ m.hint }}</span>
-            <span class="model-option-level" :class="m.status">{{ modelStatusLabel(m) }}</span>
-          </button>
+  <footer class="composer-footer">
+    <div class="composer-shell">
+      <div class="composer-input-wrap">
+        <div v-if="pendingImages && pendingImages.length > 0" class="pending-images">
+          <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-image">
+            <img :src="img" alt="" />
+            <button type="button" title="移除图片" @click="emit('removeImage', idx)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
-      <div class="toolbar-right">
-        <span class="footer-link">云端工具</span>
-      </div>
-    </div>
 
-    <div class="input-container">
-      <textarea
-        v-model="inputValue"
-        class="chat-input"
-        :placeholder="activeSkill ? '输入消息...' : '输入 / 作为命令'"
-        rows="1"
-        :disabled="isLoading"
-        @keydown="handleKeydown"
-        @input="onInput"
-      />
-      <!-- skill suggestions dropdown -->
-      <div v-if="showSkillMenu && filteredSkills.length > 0" class="skill-dropdown">
-        <div
-          v-for="(s, idx) in filteredSkills"
-          :key="s.name"
-          class="skill-option"
-          :class="{ highlighted: idx === skillHighlight }"
-          @click="pickSkill(s)"
-          @mouseenter="skillHighlight = idx"
-        >
-          <span class="skill-option-icon">
-            <svg v-if="s.icon === 'languages'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M5 8h10" />
-              <path d="M8 4v4" />
-              <path d="M3 12c3.5 0 6.5-2.5 7.5-6" />
-              <path d="M7 12c1.3 1.6 3 2.7 5 3.2" />
-              <path d="M14 20l4-9 4 9" />
-              <path d="M16 16h4" />
-            </svg>
-            <svg v-else-if="s.icon === 'code'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M8 9l-4 3 4 3" />
-              <path d="M16 9l4 3-4 3" />
-              <path d="M13 5l-2 14" />
-            </svg>
-            <svg v-else-if="s.icon === 'file-text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <path d="M8 13h8" />
-              <path d="M8 17h6" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20l-3.5-3.5" />
-            </svg>
-          </span>
-          <div class="skill-option-info">
-            <span class="skill-option-name">/{{ s.name }}</span>
-            <span class="skill-option-desc">{{ s.description }}</span>
+        <textarea
+          v-model="inputValue"
+          class="chat-input"
+          :placeholder="activeSkill ? '输入消息...' : '要求后续变更'"
+          rows="1"
+          :disabled="isLoading"
+          @keydown="handleKeydown"
+          @input="onInput"
+        />
+
+        <div v-if="showSkillMenu && filteredSkills.length > 0" class="skill-menu">
+          <div
+            v-for="(s, idx) in filteredSkills"
+            :key="s.name"
+            class="skill-option"
+            :class="{ active: idx === skillHighlight }"
+            @click="pickSkill(s)"
+            @mouseenter="skillHighlight = idx"
+          >
+            <span class="skill-icon">
+              <svg v-if="s.icon === 'languages'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                <path d="M5 8h10" /><path d="M8 4v4" /><path d="M3 12c3.5 0 6.5-2.5 7.5-6" /><path d="M7 12c1.3 1.6 3 2.7 5 3.2" /><path d="M14 20l4-9 4 9" /><path d="M16 16h4" />
+              </svg>
+              <svg v-else-if="s.icon === 'code'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                <path d="M8 9l-4 3 4 3" /><path d="M16 9l4 3-4 3" /><path d="M13 5l-2 14" />
+              </svg>
+              <svg v-else-if="s.icon === 'file-text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h6" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+              </svg>
+            </span>
+            <span class="skill-copy">
+              <strong>/{{ s.name }}</strong>
+              <small>{{ s.description }}</small>
+            </span>
           </div>
         </div>
       </div>
-      <div class="input-actions">
-        <button class="input-icon-btn" title="上传图片" @click="emit('upload')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
-        </button>
-        <button
-          v-if="isLoading"
-          class="stop-btn"
-          title="Stop"
-          @click="emit('stop')"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-            <rect x="6" y="6" width="12" height="12" rx="2" />
-          </svg>
-        </button>
-        <button
-          v-else
-          class="send-btn"
-          :class="{ active: inputValue.trim() }"
-          :disabled="!inputValue.trim()"
-          @click="handleSubmit"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-          </svg>
-        </button>
-      </div>
-    </div>
-    <div class="footer-bar">
-      <div class="footer-left">
-        <span class="footer-link">输入 / 选择技能</span>
-      </div>
-      <div class="footer-right">
-        <span class="footer-link">{{ currentModel?.id }}</span>
+
+      <div class="composer-bottom-row">
+        <div class="composer-actions left">
+          <button class="composer-icon-button plus" type="button" title="上传图片" @click="emit('upload')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="19" height="19">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="composer-actions right">
+          <div class="model-picker">
+            <button
+              class="model-selector-btn"
+              type="button"
+              :aria-expanded="showModelDropdown"
+              aria-haspopup="listbox"
+              @click="showModelDropdown = !showModelDropdown"
+            >
+              <span class="model-name">{{ compactModelLabel }}</span>
+              <svg class="model-chevron" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </button>
+
+            <div v-if="showModelDropdown" class="model-dropdown">
+              <div class="model-dropdown-title">模型</div>
+              <button
+                v-for="m in models"
+                :key="m.id"
+                class="model-option"
+                :class="{ active: m.id === currentModel?.id }"
+                type="button"
+                role="option"
+                :aria-selected="m.id === currentModel?.id"
+                @click.stop="selectModel(m)"
+              >
+                <span class="model-option-main">
+                  <span>{{ m.label }}</span>
+                  <small>{{ m.provider }}</small>
+                </span>
+                <span class="model-option-hint">{{ m.hint }}</span>
+                <span class="model-check" aria-hidden="true">
+                  <svg v-if="m.id === currentModel?.id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                </span>
+              </button>
+            </div>
+          </div>
+          <button
+            v-if="isLoading"
+            class="composer-submit stop"
+            type="button"
+            title="停止"
+            @click="emit('stop')"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+          <button
+            v-else
+            class="composer-submit"
+            :class="{ ready: inputValue.trim() }"
+            :disabled="!inputValue.trim()"
+            type="button"
+            title="发送"
+            @click="handleSubmit"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </footer>
 </template>
 
 <style scoped>
-.chat-footer {
-  padding: 12px 24px 16px;
-  background: linear-gradient(180deg, rgba(255,255,255,0), var(--surface) 22%);
-  border-top: 1px solid var(--border);
+.composer-footer {
   flex-shrink: 0;
+  padding: 12px 20px 16px;
+  border-top: 0;
+  background: hsl(var(--background) / 0.96);
+  backdrop-filter: blur(14px);
 }
 
-.composer-toolbar {
-  max-width: 720px;
-  margin: 0 auto 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.composer-shell {
   position: relative;
-}
-
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  min-width: 0;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  overflow: visible;
+  border: 1px solid hsl(var(--border));
+  border-bottom-color: transparent;
+  border-radius: 24px;
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-sm), 0 12px 30px hsl(var(--foreground) / 0.04);
 }
 
 .pending-images {
-  max-width: 720px;
-  margin: 0 auto 8px;
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px 0;
 }
 
-.pending-img-wrap {
+.pending-image {
   position: relative;
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
+  width: 58px;
+  height: 58px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--muted));
 }
 
-.pending-img {
+.pending-image img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.pending-img-remove {
+.pending-image button {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.pending-img-remove:hover {
-  background: rgba(0, 0, 0, 0.7);
-}
-
-/* skill tag */
-.skill-tag-row {
-  max-width: 720px;
-  margin: 0 auto 8px;
-}
-
-.skill-tag {
+  top: 4px;
+  right: 4px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  background: hsl(var(--background) / 0.9);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.composer-model-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 7px 12px;
+  border-bottom: 0;
+  background: hsl(var(--background));
+}
+
+.model-selector-btn {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
-  padding: 4px 10px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent);
-  border-radius: 16px;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-md, 7px);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.model-picker {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.model-selector-btn:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.model-selector-btn:hover .model-name,
+.model-selector-btn:hover .model-chevron,
+.model-selector-btn[aria-expanded="true"] .model-name,
+.model-selector-btn[aria-expanded="true"] .model-chevron {
+  color: hsl(var(--foreground));
+}
+
+.model-icon,
+.skill-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--foreground));
+}
+
+.model-prefix {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
 }
 
-.skill-tag-label {
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.skill-tag-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.skill-tag-close:hover {
-  background: rgba(22, 163, 74, 0.16);
-}
-
-/* skill dropdown */
-.skill-dropdown {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-md);
-  padding: 4px;
-  z-index: 100;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.skill-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.skill-option:hover,
-.skill-option.highlighted {
-  background: var(--hover-bg);
-}
-
-.skill-option-icon {
-  font-size: 16px;
-  width: 24px;
-  text-align: center;
-}
-
-.skill-option-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.skill-option-name {
+.model-name {
+  min-width: 0;
+  overflow: hidden;
+  color: currentColor;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.skill-option-desc {
+.model-status,
+.model-option-status {
+  flex: 0 0 auto;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.model-check {
+  display: inline-flex;
+  width: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+}
+
+.model-status.slow,
+.model-option-status.slow {
+  color: hsl(var(--muted-foreground));
+}
+
+.model-chevron {
+  flex: 0 0 auto;
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.model-dropdown,
+.skill-menu {
+  position: absolute;
+  z-index: 50;
+  overflow: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  background: hsl(var(--popover));
+  box-shadow: 0 18px 60px hsl(var(--foreground) / 0.14), var(--shadow-sm);
+}
+
+.model-dropdown {
+  bottom: calc(100% + 12px);
+  right: 0;
+  width: min(300px, calc(100vw - 32px));
+  max-height: 320px;
+  padding: 10px 6px;
+}
+
+.model-dropdown-title {
+  padding: 4px 14px 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.model-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.model-option:hover,
+.model-option.active,
+.skill-option:hover,
+.skill-option.active {
+  background: hsl(var(--muted));
+}
+
+.model-option-main,
+.skill-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-option-main span,
+.skill-copy strong {
+  overflow: hidden;
+  color: hsl(var(--foreground));
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option-main small,
+.skill-copy small,
+.model-option-hint {
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
   font-size: 11px;
-  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.input-container {
-  max-width: 720px;
-  margin: 0 auto 8px;
+.model-option-main {
+  flex: 1 1 auto;
+}
+
+.model-option-main small {
+  display: none;
+}
+
+.model-option-hint {
+  display: none;
+}
+
+.composer-input-wrap {
   position: relative;
 }
 
 .chat-input {
   width: 100%;
-  padding: 13px 58px 13px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--input-bg);
-  font-size: 14px;
+  min-height: 76px;
+  max-height: 210px;
+  padding: 22px 20px 8px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--foreground));
   font-family: inherit;
+  font-size: 18px;
   line-height: 1.5;
-  color: var(--text-primary);
-  resize: none;
   outline: none;
-  transition: border-color 0.15s, background 0.15s;
-  max-height: 200px;
-  min-height: 48px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), var(--shadow-sm);
+  resize: none;
 }
 
 .chat-input:disabled {
-  opacity: 0.6;
   cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .chat-input::placeholder {
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
 }
 
-.chat-input:focus {
-  border-color: var(--accent);
-  background: #fff;
+.skill-menu {
+  right: -1px;
+  bottom: calc(100% + 13px);
+  left: -1px;
+  max-height: min(430px, calc(100vh - 230px));
+  padding: 7px;
+  border-radius: 21px;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.22) transparent;
+  scrollbar-width: thin;
 }
 
-.input-actions {
-  position: absolute;
-  right: 12px;
-  bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.skill-menu::-webkit-scrollbar {
+  width: 10px;
 }
 
-.input-icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
+.skill-menu::-webkit-scrollbar-track {
   background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s;
 }
 
-.input-icon-btn:hover {
-  background: var(--hover-bg);
+.skill-menu::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.22);
+  background-clip: padding-box;
 }
 
-.send-btn {
+.skill-option {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
+  min-height: 42px;
+  gap: 12px;
+  padding: 7px 14px;
+  border-radius: 14px;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
 }
 
-.send-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+.skill-icon {
+  width: 26px;
+  color: hsl(var(--muted-foreground));
 }
 
-.send-btn:not(:disabled):hover {
-  background: var(--accent-strong);
+.skill-copy {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 9px;
 }
 
-.stop-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: #ef4444;
-  color: #fff;
-  cursor: pointer;
-  transition: opacity 0.15s;
+.skill-copy strong {
+  flex: 0 0 auto;
+  font-size: 16px;
+  font-weight: 600;
 }
 
-.stop-btn:hover {
-  opacity: 0.85;
+.skill-copy small {
+  flex: 1 1 auto;
+  font-size: 15px;
+  line-height: 1.35;
 }
 
-.footer-bar {
-  max-width: 720px;
-  margin: 0 auto;
+.composer-bottom-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 4px;
+  gap: 8px;
+  padding: 6px 10px 10px 14px;
+  border-top: 0;
+  border-bottom: 0;
 }
 
-.footer-left {
+.composer-meta {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
 }
 
-.footer-link {
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 0.15s;
+.model-id {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.footer-link:hover {
-  color: var(--text-primary);
-}
-
-.footer-right {
+.composer-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
 }
 
-.model-selector {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  max-width: min(520px, 100%);
-  padding: 5px 8px 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+.composer-actions.left {
+  min-width: 0;
 }
 
-.model-selector:hover {
-  border-color: rgba(22, 163, 74, 0.34);
-  background: #fbfffc;
+.composer-actions.right {
+  justify-content: flex-end;
 }
 
-.model-selector-icon {
+.composer-icon-button,
+.composer-submit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  color: var(--accent);
-}
-
-.model-selector-text {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.model-selector-label {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.model-selector-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-selector-status {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--input-bg);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.model-selector-status.recommended,
-.model-option-level.recommended {
-  background: rgba(16, 185, 129, 0.1);
-  color: #047857;
-}
-
-.model-selector-status.slow,
-.model-option-level.slow {
-  background: rgba(245, 158, 11, 0.12);
-  color: #92400e;
-}
-
-.model-selector .chevron {
-  color: var(--text-secondary);
-  transition: transform 0.15s;
-}
-
-.model-dropdown {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-md);
-  padding: 8px;
-  width: min(420px, calc(100vw - 48px));
-  z-index: 100;
-}
-
-.model-option {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-md, 7px);
   cursor: pointer;
   font-family: inherit;
-  text-align: left;
-  transition: background 0.15s;
+  transition: background 150ms ease, color 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
 }
 
-.model-option:hover {
-  background: var(--hover-bg);
+.composer-icon-button {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
 }
 
-.model-option.active {
-  background: var(--accent-soft);
+.composer-icon-button.plus {
+  width: 32px;
+  height: 32px;
+  color: hsl(var(--muted-foreground));
 }
 
-.model-option-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 150px;
-  min-width: 0;
+.composer-icon-button:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
 }
 
-.model-option-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-option-provider {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.model-option-hint {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-option-level {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  padding: 2px 6px;
-  background: var(--input-bg);
+.composer-submit {
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: var(--shadow-sm);
+}
+
+.composer-submit.ready {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.composer-submit:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.composer-submit.stop {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
+.composer-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 @media (max-width: 640px) {
-  .composer-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 6px;
+  .composer-footer {
+    padding: 8px 10px 10px;
   }
 
-  .toolbar-right {
+  .composer-shell {
+    border-radius: 11px;
+  }
+
+  .composer-model-row {
+    min-height: 40px;
+    padding: 6px 10px;
+  }
+
+  .model-prefix {
     display: none;
   }
 
-  .model-selector {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .model-selector-text {
-    flex: 1;
+  .model-name {
+    max-width: 180px;
+    font-size: 13px;
   }
 
   .model-dropdown {
-    width: 100%;
+    right: -48px;
+    width: min(300px, calc(100vw - 20px));
   }
 
-  .model-option {
-    align-items: flex-start;
-    flex-wrap: wrap;
+  .chat-input {
+    min-height: 54px;
+    padding: 14px 12px 8px;
+    font-size: 15px;
   }
 
-  .model-option-main {
-    width: calc(100% - 56px);
+  .composer-bottom-row {
+    align-items: flex-end;
+    padding: 5px 7px 7px 9px;
   }
 
-  .model-option-hint {
-    flex-basis: 100%;
-    padding-left: 0;
+  .composer-icon-button,
+  .model-selector-btn {
+    height: 30px;
+  }
+
+  .composer-icon-button.plus {
+    width: 30px;
+    height: 30px;
+  }
+
+  .model-id {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .model-name {
+    max-width: 138px;
+  }
+
+  .model-status {
+    font-size: 11px;
+  }
+
+  .composer-meta {
+    font-size: 11px;
   }
 }
 </style>

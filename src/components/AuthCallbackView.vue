@@ -131,7 +131,7 @@ onUnmounted(() => {
   display: grid;
   gap: 16px;
   padding: 28px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: var(--surface-raised);
   box-shadow: var(--shadow-md);
@@ -140,7 +140,7 @@ onUnmounted(() => {
 .auth-callback-status {
   width: max-content;
   padding: 4px 9px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 999px;
   background: var(--surface-soft);
   color: var(--text-secondary);
@@ -180,9 +180,9 @@ onUnmounted(() => {
 .auth-callback-primary {
   min-height: 40px;
   padding: 0 16px;
-  border: 1px solid var(--accent);
+  border: 1px solid hsl(var(--primary));
   border-radius: 7px;
-  background: var(--accent);
+  background: hsl(var(--primary));
   color: #fff;
   font-size: 13px;
   font-weight: 900;

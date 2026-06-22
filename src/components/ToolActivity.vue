@@ -80,310 +80,124 @@ function isTerminalError(status?: string) {
 </script>
 
 <template>
-  <section v-if="tools.length > 0" class="tool-activity" :class="{ embedded }">
-    <button class="tool-activity-header" type="button" @click="expanded = !expanded">
-      <span class="tool-activity-rail">
-        <span class="tool-activity-pulse" :class="{ idle: !hasRunningTools }" />
+  <section
+    v-if="tools.length > 0"
+    class="border border-border rounded-md bg-card shadow-sm overflow-hidden mb-3.5"
+    :class="{ 'mt-0 ml-0': embedded, 'ml-8 max-md:ml-0': !embedded }"
+  >
+    <!-- Header -->
+    <button
+      type="button"
+      class="flex items-start w-full min-h-[36px] px-2.5 py-2 border-0 bg-transparent text-muted-foreground font-inherit cursor-pointer text-left hover:bg-accent/50 transition-colors"
+      @click="expanded = !expanded"
+    >
+      <!-- Rail + pulse dot -->
+      <span class="w-5 flex-shrink-0 inline-flex justify-center">
+        <span
+          class="w-[7px] h-[7px] rounded-full mt-[5px] shrink-0"
+          :class="{
+            'bg-primary animate-pulse': hasRunningTools,
+            'bg-muted-foreground': !hasRunningTools,
+          }"
+        />
       </span>
-      <span class="tool-activity-copy">
-        <span class="tool-activity-row">
-          <span class="tool-activity-title">{{ hasRunningTools ? '工具调用中' : '工具调用完成' }}</span>
-          <span class="tool-activity-count">{{ tools.length }}</span>
+      <!-- Copy -->
+      <span class="min-w-0 flex-1 flex flex-col gap-0.5">
+        <span class="flex items-center gap-1.5">
+          <span class="text-[11px] font-semibold text-foreground">
+            {{ hasRunningTools ? '工具调用中' : '工具调用完成' }}
+          </span>
+          <span class="min-w-[20px] h-[18px] px-[5px] rounded-full bg-secondary text-muted-foreground text-[10px] font-semibold inline-flex items-center justify-center ring-1 ring-border/60">
+            {{ tools.length }}
+          </span>
         </span>
-        <span class="tool-activity-subtitle">
+        <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground">
           {{ hasRunningTools ? `运行中 ${runningCount} 个` : title }}
         </span>
       </span>
-      <svg class="tool-activity-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+      <!-- Chevron -->
+      <svg class="shrink-0 mt-0.5 text-muted-foreground/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
         <polyline v-if="expanded" points="6 9 12 15 18 9" />
         <polyline v-else points="9 6 15 12 9 18" />
       </svg>
     </button>
 
-    <div v-if="expanded" class="tool-activity-body">
-      <article v-for="tool in tools" :key="tool.id" class="tool-card" :class="{ running: tool.status === 'running', failed: isTerminalError(tool.status) }">
-        <div class="tool-card-main">
-          <span class="tool-icon">
-            <svg v-if="tool.status === 'done'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <svg v-else-if="isTerminalError(tool.status)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
-              <circle cx="12" cy="12" r="9" />
-              <line x1="12" y1="7" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12" y2="17" />
-            </svg>
-            <svg v-else class="tool-spin" viewBox="0 0 24 24" width="14" height="14">
-              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="28 72" stroke-linecap="round" />
-            </svg>
-          </span>
-          <div class="tool-card-copy">
-            <div class="tool-card-topline">
-              <span class="tool-name">{{ toolLabel(tool.name) }}</span>
-              <span class="tool-status" :class="{ failed: isTerminalError(tool.status) }">{{ statusLabel(tool.status) }}</span>
-              <span class="tool-duration">{{ formatDuration(tool) }}</span>
-            </div>
-            <div class="tool-args" :title="JSON.stringify(tool.arguments, null, 2)">
-              {{ compactJson(tool.arguments) }}
-            </div>
-            <div v-if="previewResult(tool.result)" class="tool-result">
-              {{ previewResult(tool.result) }}
+    <!-- Body -->
+    <div v-if="expanded" class="border-t border-border bg-muted/40 px-2.5 pb-2.5">
+      <div class="relative ml-2 pl-4">
+        <!-- Timeline dashed line -->
+        <div class="absolute left-0 top-0 bottom-0 border-l border-dashed border-border" />
+
+        <article
+          v-for="(tool, idx) in tools"
+          :key="tool.id"
+          class="relative mb-1.5 last:mb-0"
+        >
+          <div
+            class="rounded-md bg-card flex gap-2 px-2.5 py-2 ring-1 transition-shadow"
+            :class="{
+              'ring-primary/25': tool.status === 'running',
+              'ring-amber-400/35': isTerminalError(tool.status),
+              'ring-border': tool.status === 'done' && !isTerminalError(tool.status),
+            }"
+          >
+            <!-- Icon -->
+            <span
+              class="w-4 h-4 mt-px shrink-0 inline-flex items-center justify-center"
+              :class="{
+                'text-primary': tool.status === 'running' || tool.status === 'done',
+                'text-amber-600': isTerminalError(tool.status),
+              }"
+            >
+              <svg v-if="tool.status === 'done'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <svg v-else-if="isTerminalError(tool.status)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
+                <circle cx="12" cy="12" r="9" />
+                <line x1="12" y1="7" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12" y2="17" />
+              </svg>
+              <svg v-else class="tool-spin" viewBox="0 0 24 24" width="13" height="13">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="28 72" stroke-linecap="round" />
+              </svg>
+            </span>
+            <!-- Content -->
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="font-mono text-[11px] font-semibold text-foreground truncate">{{ toolLabel(tool.name) }}</span>
+                <span
+                  class="shrink-0 px-1.5 py-px rounded-full text-[10px] font-semibold"
+                  :class="isTerminalError(tool.status)
+                    ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:ring-amber-800'
+                    : 'text-muted-foreground ring-1 ring-border/60'"
+                >{{ statusLabel(tool.status) }}</span>
+                <span class="ml-auto text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{{ formatDuration(tool) }}</span>
+              </div>
+              <div
+                class="mt-0.5 font-mono text-[10px] text-muted-foreground leading-snug truncate"
+                :title="JSON.stringify(tool.arguments, null, 2)"
+              >
+                {{ compactJson(tool.arguments) }}
+              </div>
+              <div
+                v-if="previewResult(tool.result)"
+                class="mt-0.5 text-[10px] text-muted-foreground/80 leading-snug line-clamp-2"
+              >
+                {{ previewResult(tool.result) }}
+              </div>
             </div>
           </div>
-        </div>
-      </article>
+        </article>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.tool-activity {
-  margin: 4px 0 16px 40px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-
-.tool-activity.embedded {
-  margin-top: 0;
-}
-
-.tool-activity-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  width: 100%;
-  min-height: 40px;
-  padding: 9px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.tool-activity-header:hover {
-  background: var(--hover-bg);
-}
-
-.tool-activity-rail {
-  width: 22px;
-  flex: 0 0 22px;
-  display: inline-flex;
-  justify-content: center;
-}
-
-.tool-activity-copy {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.tool-activity-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tool-activity-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.tool-activity-subtitle {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.tool-activity-count {
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tool-activity-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-top: 6px;
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.tool-activity-pulse.idle {
-  background: var(--text-secondary);
-  animation: none;
-}
-
-.tool-activity-chevron {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--text-muted);
-}
-
-.tool-activity-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 12px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.tool-card {
-  position: relative;
-  margin-left: 10px;
-  padding-left: 18px;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.tool-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: -6px;
-  border-left: 1px dashed var(--border-strong);
-}
-
-.tool-card:last-child::before {
-  bottom: 10px;
-}
-
-.tool-card-main {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--shadow-sm);
-  display: flex;
-  gap: 9px;
-  padding: 9px 10px;
-}
-
-.tool-card.running .tool-card-main {
-  border-color: rgba(22, 163, 74, 0.34);
-}
-
-.tool-card.failed .tool-card-main {
-  border-color: rgba(245, 158, 11, 0.42);
-}
-
-.tool-icon {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  color: var(--accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.running .tool-icon {
-  color: var(--accent);
-}
-
-.failed .tool-icon {
-  color: #d97706;
-}
-
-.tool-card-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.tool-card-topline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tool-name {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.tool-status {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.tool-status.failed {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #92400e;
-}
-
-.tool-duration {
-  margin-left: auto;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.tool-args,
-.tool-result {
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.tool-args {
-  white-space: nowrap;
-  font-family: var(--font-mono);
-}
-
-.tool-result {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
 .tool-spin {
   animation: spin 1s linear infinite;
 }
-
 @keyframes spin {
   to { transform: rotate(360deg); }
-}
-
-@keyframes pulse {
-  50% { opacity: 0.35; }
-}
-
-@media (max-width: 768px) {
-  .tool-activity {
-    margin-left: 0;
-  }
 }
 </style>

@@ -2,6 +2,18 @@
 import { computed } from 'vue'
 import type { AgentModeOption, Message } from '../types'
 import ContextMeter from './ContextMeter.vue'
+import { Button } from '@/components/ui/button'
+import {
+  Menu,
+  X,
+  Plus,
+  PanelLeft,
+  Image,
+  MessageSquare,
+  Settings,
+  Zap,
+} from '@lucide/vue'
+import { cn } from '@/lib/utils'
 
 const props = defineProps<{
   showSidebar: boolean
@@ -14,12 +26,16 @@ const props = defineProps<{
   authLoading: boolean
 }>()
 
-const statusLabel = computed(() => props.showImagePanel ? 'Image' : props.agentMode.label)
+const authLabel = computed(() => {
+  if (!props.authEmail) return '登录'
+  return props.authEmail.split('@')[0] || props.authEmail
+})
 
 defineEmits<{
   toggleSidebar: []
   toggleAgentPanel: []
   toggleImagePanel: []
+  openImage: []
   newChat: []
   toggleSettings: []
   openAuth: []
@@ -27,287 +43,274 @@ defineEmits<{
 </script>
 
 <template>
-  <header class="chat-header">
-    <div class="header-left">
-      <button v-if="!showImagePanel" class="sidebar-toggle" title="History" @click="$emit('toggleSidebar')">
-        <svg v-if="!showSidebar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="18" height="18">
-          <line x1="4" y1="6" x2="20" y2="6" />
-          <line x1="4" y1="12" x2="20" y2="12" />
-          <line x1="4" y1="18" x2="20" y2="18" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="18" height="18">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-      <button v-if="!showImagePanel" class="project-selector" @click="$emit('newChat')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-        <span class="project-name">New Chat</span>
-      </button>
-      <div class="agent-status">
-        <span class="status-pill">{{ statusLabel }}</span>
+  <header
+    class="app-topbar sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/95 px-2 backdrop-blur-xl sm:gap-4 sm:px-4 lg:px-6"
+  >
+    <div class="topbar-primary flex min-w-0 items-center gap-2 sm:gap-3">
+      <Button
+        v-if="!showImagePanel"
+        variant="ghost"
+        size="icon"
+        class="h-8 w-8 shrink-0"
+        title="历史"
+        @click="$emit('toggleSidebar')"
+      >
+        <X v-if="showSidebar" class="h-4 w-4" />
+        <Menu v-else class="h-4 w-4" />
+      </Button>
+
+      <div class="brand-lockup flex shrink-0 items-center gap-2 text-foreground">
+        <Zap class="h-5 w-5" />
+        <span class="hidden text-sm font-semibold tracking-[-0.24px] sm:inline">Recho</span>
+      </div>
+
+      <div
+        class="workspace-switcher"
+        aria-label="工作区切换"
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          class="workspace-switcher-button"
+          :class="cn(
+            !showImagePanel
+              ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
+              : 'text-muted-foreground hover:bg-background hover:text-foreground',
+          )"
+          :aria-pressed="!showImagePanel"
+          @click="!showImagePanel ? undefined : $emit('toggleImagePanel')"
+        >
+          <MessageSquare class="h-3.5 w-3.5" />
+          <span>对话</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="workspace-switcher-button"
+          :class="cn(
+            showImagePanel
+              ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
+              : 'text-muted-foreground hover:bg-background hover:text-foreground',
+          )"
+          :aria-pressed="showImagePanel"
+          @click="$emit('openImage')"
+        >
+          <Image class="h-3.5 w-3.5" />
+          <span>画布</span>
+        </Button>
+      </div>
+
+      <div v-if="!showImagePanel" class="hidden xl:block">
         <ContextMeter :messages="messages" />
       </div>
     </div>
-    <div class="header-center">
-      <span class="brand-mark">Recho</span>
-      <span class="brand-divider" />
-      <span class="brand-context">{{ agentMode.hint }}</span>
-    </div>
-    <div class="header-right">
-      <button
-        class="icon-btn"
-        :class="{ active: showAgentPanel }"
-        title="Agent Panel"
+
+    <div class="flex min-w-0 items-center gap-1.5">
+      <Button
+        v-if="!showImagePanel"
+        variant="outline"
+        size="sm"
+        class="new-chat-button h-8 shrink-0 gap-1.5 px-2.5 text-xs font-medium"
+        title="新对话"
+        @click="$emit('newChat')"
+      >
+        <Plus class="h-3.5 w-3.5" />
+        <span class="new-chat-label">新对话</span>
+      </Button>
+
+      <Button
+        v-if="!showImagePanel"
+        variant="ghost"
+        size="icon"
+        class="h-8 w-8 shrink-0"
+        title="代理面板"
+        :class="cn(showAgentPanel && 'bg-accent text-accent-foreground')"
         @click="$emit('toggleAgentPanel')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <line x1="9" y1="3" x2="9" y2="21" />
-        </svg>
-      </button>
-      <button
-        class="icon-btn"
-        :class="{ active: showImagePanel }"
-        title="Image Canvas"
-        @click="$emit('toggleImagePanel')"
+        <PanelLeft class="h-4 w-4" />
+      </Button>
+
+      <Button
+        v-if="!showImagePanel"
+        variant="ghost"
+        size="icon"
+        class="h-8 w-8 shrink-0"
+        title="系统提示词"
+        @click="$emit('toggleSettings')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-          <rect x="2" y="2" width="20" height="20" rx="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <polyline points="21 15 16 10 5 21" />
-        </svg>
-      </button>
-      <button v-if="!showImagePanel" class="icon-btn" title="System Prompt" @click="$emit('toggleSettings')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-        </svg>
-      </button>
-      <button class="auth-button" type="button" :disabled="authLoading" @click="$emit('openAuth')">
-        <span class="auth-dot" :class="{ signed: authEmail, loading: !authReady || authLoading }" />
-        <span>{{ authEmail || '登录' }}</span>
-      </button>
+        <Settings class="h-4 w-4" />
+      </Button>
+
+      <Button
+        variant="outline"
+        size="sm"
+        class="auth-chip"
+        :disabled="authLoading"
+        :title="authEmail || '登录'"
+        @click="$emit('openAuth')"
+      >
+        <span
+          class="auth-chip-dot"
+          :class="{
+            'bg-muted-foreground': !authEmail && authReady && !authLoading,
+            'bg-foreground': !!authEmail,
+            'bg-amber-500': (!authReady || authLoading),
+          }"
+        />
+        <span class="auth-chip-label">{{ authLabel }}</span>
+      </Button>
     </div>
   </header>
 </template>
 
 <style scoped>
-.chat-header {
+.app-topbar {
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+  padding-inline: 16px;
+}
+
+.topbar-primary {
+  flex: 1 1 auto;
+}
+
+.workspace-switcher {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 58px;
-  padding: 10px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--header-bg);
-  backdrop-filter: blur(14px);
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 30;
-}
-
-.header-left {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.sidebar-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.sidebar-toggle:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: var(--border);
-}
-
-.project-selector {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 6px 11px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted) / 0.7);
   box-shadow: var(--shadow-sm);
 }
 
-.project-selector:hover {
-  background: var(--hover-bg);
-  border-color: var(--border-strong);
-}
-
-.project-name {
-  font-weight: 600;
-}
-
-.agent-status {
-  display: flex;
-  align-items: center;
+.workspace-switcher-button {
+  min-width: 68px;
+  height: 28px;
   gap: 6px;
-}
-
-.header-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.brand-mark {
-  color: var(--text-primary);
+  padding: 0 12px;
+  border-radius: var(--radius-md, 7px);
   font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  line-height: 1;
 }
 
-.brand-divider {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-}
-
-.brand-context {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid rgba(22, 163, 74, 0.26);
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.icon-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: var(--border);
-}
-
-.icon-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: rgba(22, 163, 74, 0.24);
-}
-
-.auth-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 178px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.auth-button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
-.auth-button:disabled {
-  opacity: 0.58;
-  cursor: default;
-}
-
-.auth-button span:last-child {
+.auth-chip {
+  width: 132px;
+  max-width: 132px;
   min-width: 0;
+  flex: 0 1 132px;
+  justify-content: flex-start;
+  gap: 7px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 0 10px;
 }
 
-.auth-dot {
-  width: 8px;
-  height: 8px;
+.auth-chip-dot {
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
   border-radius: 999px;
-  background: var(--text-muted);
 }
 
-.auth-dot.signed {
-  background: var(--accent);
+.auth-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.auth-dot.loading {
-  background: #f59e0b;
+@media (max-width: 1024px) {
+  .auth-chip {
+    width: 112px;
+    max-width: 112px;
+    flex-basis: 112px;
+    gap: 7px;
+    padding: 0 9px;
+  }
 }
 
-@media (max-width: 880px) {
-  .header-center {
+@media (max-width: 900px) {
+  .new-chat-button {
+    width: 32px;
+    padding: 0;
+  }
+
+  .new-chat-label {
     display: none;
   }
 }
 
-@media (max-width: 560px) {
-  .agent-status {
+@media (max-width: 640px) {
+  .app-topbar {
+    gap: 8px;
+    padding-inline: 10px;
+  }
+
+  .workspace-switcher {
+    padding: 4px;
+  }
+
+  .workspace-switcher-button {
+    min-width: 64px;
+    padding: 0 9px;
+    font-size: 12px;
+  }
+
+  .auth-chip {
+    width: 104px;
+    max-width: 104px;
+    flex-basis: 104px;
+    justify-content: flex-start;
+    padding: 0 9px;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-lockup {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-topbar {
+    padding-inline: 8px;
+  }
+
+  .topbar-primary {
+    gap: 6px;
+  }
+
+  .workspace-switcher {
+    gap: 3px;
+    padding: 3px;
+  }
+
+  .workspace-switcher-button {
+    min-width: 54px;
+    gap: 4px;
+    padding: 0 6px;
+  }
+
+  .auth-chip {
+    width: 96px;
+    max-width: 96px;
+    flex-basis: 96px;
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 380px) {
+  .new-chat-button {
     display: none;
   }
 
-  .project-name {
-    display: none;
+  .auth-chip {
+    width: 92px;
+    max-width: 92px;
+    flex-basis: 92px;
   }
 }
 </style>

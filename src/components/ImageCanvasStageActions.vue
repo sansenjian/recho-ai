@@ -117,10 +117,10 @@ function handleCanvasImport(event: Event) {
   align-items: center;
   gap: 7px;
   padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--shadow-md);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--background) / 0.95);
+  box-shadow: var(--shadow-sm);
   backdrop-filter: blur(12px);
 }
 
@@ -135,20 +135,20 @@ function handleCanvasImport(event: Event) {
   width: 34px;
   height: 34px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 7px);
   background: transparent;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
 }
 
 .tool-button:hover {
-  border-color: var(--border);
-  background: var(--hover-bg);
-  color: var(--text-primary);
+  border-color: hsl(var(--border));
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
 }
 
 .tool-button.danger:hover {
-  color: var(--danger);
+  color: hsl(var(--destructive));
 }
 
 .canvas-file-input {
@@ -162,9 +162,9 @@ function handleCanvasImport(event: Event) {
   min-width: 36px;
   height: 24px;
   padding: 0 7px;
-  border-radius: 999px;
-  background: #111827;
-  color: #fff;
+  border-radius: var(--radius-sm, 6px);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 12px;
   font-weight: 900;
 }
@@ -199,10 +199,10 @@ function handleCanvasImport(event: Event) {
     min-width: 68px;
     min-height: 40px;
     padding: 0 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #fff;
-    color: var(--text-primary);
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius-md, 7px);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
     font-size: 12px;
     font-weight: 900;
     white-space: nowrap;
@@ -210,9 +210,9 @@ function handleCanvasImport(event: Event) {
 
   .mobile-create-bar button.primary {
     min-width: 76px;
-    border-color: #111827;
-    background: #111827;
-    color: #fff;
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
   }
 
   .mobile-create-icon {

@@ -446,7 +446,7 @@ function emitTextContent(event: Event) {
   display: flex;
   box-sizing: border-box;
   flex-direction: column;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.09);
@@ -470,7 +470,7 @@ function emitTextContent(event: Event) {
   gap: 8px;
   min-height: 36px;
   padding: 0 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   border-radius: 8px 8px 0 0;
   background: #fff;
   cursor: grab;
@@ -561,7 +561,7 @@ function emitTextContent(event: Event) {
   min-height: 26px;
   margin: 0 2px;
   padding: 2px 6px 2px 3px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 7px;
   background: #fff;
   color: var(--text-primary);
@@ -643,7 +643,7 @@ function emitTextContent(event: Event) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: #fff;
   color: var(--text-secondary);
@@ -672,7 +672,7 @@ function emitTextContent(event: Event) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
   color: var(--text-secondary);
@@ -722,8 +722,8 @@ function emitTextContent(event: Event) {
   flex: 0 0 auto;
   padding: 3px 6px;
   border-radius: 6px;
-  background: rgba(14, 165, 233, 0.1);
-  color: #0369a1;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
   font-size: 10px;
   font-weight: 900;
 }
@@ -731,7 +731,7 @@ function emitTextContent(event: Event) {
 .image-output-note {
   width: 100%;
   height: 28px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   padding: 0 8px;
   background: #fff;
@@ -742,8 +742,8 @@ function emitTextContent(event: Event) {
 }
 
 .image-output-note:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12);
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.14);
 }
 
 .image-output-note::placeholder {
@@ -760,7 +760,7 @@ function emitTextContent(event: Event) {
 
 .image-node-actions button {
   min-height: 28px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   background: #fff;
   color: var(--text-primary);
@@ -854,8 +854,8 @@ function emitTextContent(event: Event) {
 }
 
 .node-handle.connected {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: hsl(var(--foreground));
+  border-color: hsl(var(--foreground));
 }
 
 .generation-body {
@@ -885,7 +885,7 @@ function emitTextContent(event: Event) {
   gap: 6px;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
   background: rgba(255, 255, 255, 0.98);
 }
 
@@ -896,7 +896,7 @@ function emitTextContent(event: Event) {
   gap: 3px;
   max-height: 184px;
   padding: 5px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
@@ -957,7 +957,7 @@ function emitTextContent(event: Event) {
 }
 
 .linked-block {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 7px;
   background: #fbfcfe;
   padding: 8px;
@@ -988,7 +988,7 @@ function emitTextContent(event: Event) {
   flex: 0 0 auto;
   min-height: 116px;
   padding: 9px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 7px;
   background: #fff;
   font-size: 12px;
@@ -1080,7 +1080,7 @@ function emitTextContent(event: Event) {
 
 .segmented button {
   min-height: 36px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 7px;
   background: #fff;
   color: var(--text-secondary);

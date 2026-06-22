@@ -75,10 +75,10 @@ function handleZoomInput(event: Event) {
   align-items: center;
   gap: 7px;
   padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--shadow-md);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--background) / 0.95);
+  box-shadow: var(--shadow-sm);
   backdrop-filter: blur(12px);
 }
 
@@ -89,32 +89,32 @@ function handleZoomInput(event: Event) {
   width: 34px;
   height: 34px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 7px);
   background: transparent;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
 }
 
 .tool-button:hover {
-  border-color: var(--border);
-  background: var(--hover-bg);
-  color: var(--text-primary);
+  border-color: hsl(var(--border));
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
 }
 
 .tool-button.active {
-  background: #050505;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 .toolbar-divider {
   width: 1px;
   height: 22px;
-  background: var(--border);
+  background: hsl(var(--border));
 }
 
 .zoom-range {
   width: 92px;
-  accent-color: #111827;
+  accent-color: hsl(var(--primary));
 }
 
 .zoom-pill {
@@ -124,9 +124,9 @@ function handleZoomInput(event: Event) {
   min-width: 36px;
   height: 24px;
   padding: 0 7px;
-  border-radius: 999px;
-  background: #111827;
-  color: #fff;
+  border-radius: var(--radius-sm, 6px);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 12px;
   font-weight: 900;
 }

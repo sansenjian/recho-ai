@@ -86,7 +86,7 @@ const emit = defineEmits<{
   z-index: 30;
   width: 176px;
   padding: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);

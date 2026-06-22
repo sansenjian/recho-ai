@@ -37,188 +37,73 @@ watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], asyn
 </script>
 
 <template>
-  <section v-if="normalized || hasPlaceholder || isWaitingForThinking" class="thinking-activity" :class="{ embedded, placeholder: hasPlaceholder || isWaitingForThinking }">
-    <button class="thinking-header" type="button" @click="expanded = !expanded">
-      <span class="thinking-rail">
-        <span class="thinking-dot" :class="{ active, cancelled: status === 'cancelled' }" />
+  <section
+    v-if="normalized || hasPlaceholder || isWaitingForThinking"
+    class="border border-border rounded-md bg-card shadow-sm overflow-hidden mb-1.5"
+    :class="{ 'ml-0': embedded, 'ml-8': !embedded }"
+  >
+    <!-- Header -->
+    <button
+      type="button"
+      class="flex items-start w-full min-h-[36px] px-2.5 py-2 border-0 bg-transparent text-muted-foreground font-inherit cursor-pointer text-left hover:bg-accent/50 transition-colors"
+      @click="expanded = !expanded"
+    >
+      <!-- Rail + dot -->
+      <span class="relative w-5 flex-shrink-0 inline-flex justify-center">
+        <span
+          class="w-2 h-2 rounded-full mt-1.5 shrink-0"
+          :class="{
+            'bg-muted-foreground': !active && status !== 'cancelled',
+            'bg-primary animate-pulse': active,
+            'bg-amber-500': status === 'cancelled',
+          }"
+        />
       </span>
-      <span class="thinking-copy">
-        <span class="thinking-row">
-          <span class="thinking-title">{{ status === 'running' ? '思考中' : '思考已完成' }}</span>
-          <span v-if="status === 'cancelled'" class="thinking-status">已停止</span>
+      <!-- Copy -->
+      <span class="min-w-0 flex-1 flex flex-col gap-0.5">
+        <span class="flex items-center gap-1.5">
+          <span class="shrink-0 text-[11px] font-semibold text-foreground">
+            {{ status === 'running' ? '思考中' : '思考已完成' }}
+          </span>
+          <span
+            v-if="status === 'cancelled'"
+            class="shrink-0 px-1.5 py-px border border-amber-200 rounded-full bg-amber-50 text-amber-700 text-[10px] font-semibold dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400"
+          >
+            已停止
+          </span>
         </span>
-        <span v-if="!expanded" class="thinking-preview">{{ hasPlaceholder ? '模型未返回可展示的思考文本' : isWaitingForThinking ? '正在等待模型返回可展示思考内容' : preview }}</span>
+        <span
+          v-if="!expanded"
+          class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground"
+        >
+          {{ hasPlaceholder ? '模型未返回可展示的思考文本' : isWaitingForThinking ? '正在等待模型返回可展示思考内容' : preview }}
+        </span>
       </span>
-      <svg class="thinking-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+      <!-- Chevron -->
+      <svg class="shrink-0 mt-0.5 text-muted-foreground/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
         <polyline v-if="expanded" points="6 9 12 15 18 9" />
         <polyline v-else points="9 6 15 12 9 18" />
       </svg>
     </button>
 
-    <div v-if="expanded" class="thinking-body">
-      <div class="thinking-timeline">
-        <div v-if="isWaitingForThinking" class="thinking-placeholder">正在等待模型返回可展示思考内容。</div>
-        <div v-else-if="hasPlaceholder" class="thinking-placeholder">模型本轮执行了思考流程，但没有返回可展示的思考文本。</div>
-        <div v-else ref="contentEl" class="thinking-content">{{ normalized }}</div>
+    <!-- Body -->
+    <div v-if="expanded" class="border-t border-border bg-muted/40 px-2.5 pb-2.5">
+      <div class="relative ml-2.5 pl-4">
+        <!-- Timeline line -->
+        <div class="absolute left-0 top-0 bottom-0 border-l border-dashed border-border" />
+
+        <div v-if="isWaitingForThinking" class="pt-2 text-muted-foreground text-[11px] leading-relaxed">
+          正在等待模型返回可展示思考内容。
+        </div>
+        <div v-else-if="hasPlaceholder" class="pt-2 text-muted-foreground text-[11px] leading-relaxed">
+          模型本轮执行了思考流程，但没有返回可展示的思考文本。
+        </div>
+        <div
+          v-else
+          ref="contentEl"
+          class="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground font-mono max-h-[260px] overflow-y-auto pt-2"
+        >{{ normalized }}</div>
       </div>
     </div>
   </section>
 </template>
-
-<style scoped>
-.thinking-activity {
-  margin: 0 0 8px 40px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-
-.thinking-activity.embedded {
-  margin-left: 0;
-}
-
-.thinking-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  width: 100%;
-  min-height: 40px;
-  padding: 9px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.thinking-header:hover {
-  background: var(--hover-bg);
-}
-
-.thinking-rail {
-  position: relative;
-  width: 22px;
-  flex: 0 0 22px;
-  display: inline-flex;
-  justify-content: center;
-}
-
-.thinking-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-secondary);
-  flex-shrink: 0;
-  margin-top: 6px;
-}
-
-.thinking-dot.active {
-  background: var(--accent);
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.thinking-dot.cancelled {
-  background: #f59e0b;
-  animation: none;
-}
-
-.thinking-copy {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.thinking-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.thinking-title {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.thinking-status {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border: 1px solid #fde68a;
-  border-radius: 999px;
-  background: #fffbeb;
-  color: #92400e;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.thinking-preview {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.thinking-chevron {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--text-muted);
-}
-
-.thinking-body {
-  border-top: 1px solid var(--border);
-  padding: 0 12px 12px;
-  background: #fbfdff;
-}
-
-.thinking-placeholder {
-  padding-top: 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.thinking-timeline {
-  position: relative;
-  margin-left: 10px;
-  padding-left: 18px;
-}
-
-.thinking-timeline::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  border-left: 1px dashed var(--border-strong);
-}
-
-.thinking-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  max-height: 260px;
-  overflow-y: auto;
-  padding-top: 10px;
-}
-
-@keyframes pulse {
-  50% { opacity: 0.35; }
-}
-
-@media (max-width: 768px) {
-  .thinking-activity {
-    margin-left: 0;
-  }
-}
-</style>

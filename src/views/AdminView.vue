@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AdminImageAttemptsPanel from '../components/admin/AdminImageAttemptsPanel.vue'
 import AdminImagesPanel from '../components/admin/AdminImagesPanel.vue'
 import { apiUrl } from '../lib/api-base'
@@ -36,12 +37,36 @@ import {
   normalizeCreditBalance,
 } from '../utils/credit-format'
 
+const { t, locale } = useI18n()
+
 const {
   user,
   userEmail,
   isAuthReady,
   initAuth,
 } = useAuthSession()
+
+// --- Sidebar & UI State ---
+const activeView = ref('overview')
+const sidebarCollapsed = ref(false)
+const isDark = ref(false)
+
+function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
+function toggleTheme() {
+  isDark.value = !isDark.value
+  document.documentElement.classList.toggle('dark', isDark.value)
+}
+function toggleLocale() { locale.value = locale.value === 'zh' ? 'en' : 'zh' }
+
+const navItems = [
+  { id: 'overview', labelKey: 'nav.overview', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1' },
+  { id: 'credits', labelKey: 'nav.credits', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+  { id: 'images', labelKey: 'nav.images', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+  { id: 'monitor', labelKey: 'nav.monitor', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+  { id: 'system', labelKey: 'nav.system', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
+  { id: 'announcements', labelKey: 'nav.announcements', icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z' },
+  { id: 'settings', labelKey: 'nav.settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+]
 
 const adminChecked = ref(false)
 const isAdmin = ref(false)
@@ -151,14 +176,14 @@ const settingsPricePreview = computed(() => [
 
 const imageCostConfidenceLabel = computed(() => {
   const confidence = overview.value?.imageCost?.confidence || 'none'
-  if (confidence === 'high') return '高'
-  if (confidence === 'medium') return '中'
-  if (confidence === 'low') return '低'
-  return '无样本'
+  if (confidence === 'high') return t('overview.confidenceHigh')
+  if (confidence === 'medium') return t('overview.confidenceMedium')
+  if (confidence === 'low') return t('overview.confidenceLow')
+  return t('overview.confidenceNone')
 })
 
 const selectedUserTitle = computed(() => {
-  if (!selectedUser.value) return '未选择用户'
+  if (!selectedUser.value) return t('credits.noUserSelected')
   return selectedUser.value.email || shortId(selectedUser.value.userId)
 })
 
@@ -174,20 +199,20 @@ const overviewNetChange = computed(() => {
 })
 
 const overviewGeneratedAt = computed(() => {
-  if (!overview.value) return '等待刷新'
-  return `更新 ${dateTime(overview.value.generatedAt)}`
+  if (!overview.value) return t('overview.waiting')
+  return `${t('overview.updatedAt')} ${dateTime(overview.value.generatedAt)}`
 })
 
 const systemGeneratedAt = computed(() => {
-  if (!systemStatus.value) return '等待检查'
-  return `检查 ${dateTime(systemStatus.value.generatedAt)}`
+  if (!systemStatus.value) return t('system.waiting')
+  return `${t('system.checkedAt')} ${dateTime(systemStatus.value.generatedAt)}`
 })
 
 const systemStatusLabel = computed(() => {
-  if (!systemStatus.value) return '待检查'
-  if (systemStatus.value.status === 'ok') return '正常'
-  if (systemStatus.value.status === 'warning') return '有告警'
-  return '需处理'
+  if (!systemStatus.value) return t('system.statusPending')
+  if (systemStatus.value.status === 'ok') return t('system.statusOk')
+  if (systemStatus.value.status === 'warning') return t('system.statusWarning')
+  return t('system.statusError')
 })
 
 const adminRuleTotal = computed(() => adminAccess.value
@@ -216,17 +241,16 @@ function csvCell(value: string) {
 }
 
 function codeStatus(code: AdminCode) {
-  if (code.disabledAt) return '已停用'
-  if (code.expiresAt && new Date(code.expiresAt).getTime() <= Date.now()) return '已过期'
-  if (code.redeemedCount >= code.maxRedemptions) return '已用完'
-  return '可用'
+  if (code.disabledAt) return t('credits.codeStatus.disabled')
+  if (code.expiresAt && new Date(code.expiresAt).getTime() <= Date.now()) return t('credits.codeStatus.expired')
+  if (code.redeemedCount >= code.maxRedemptions) return t('credits.codeStatus.exhausted')
+  return t('credits.codeStatus.available')
 }
 
 function transactionReason(reason: string) {
-  if (reason === 'redemption') return '兑换'
-  if (reason === 'image_generation') return '生图'
-  if (reason === 'refund') return '退款'
-  if (reason === 'admin_adjustment') return '后台调整'
+  const key = `credits.transactionReason.${reason}` as const
+  const translated = t(key)
+  if (translated !== key) return translated
   return reason
 }
 
@@ -272,17 +296,17 @@ function adminRuleIdentity(rule: AdminUserRule) {
 }
 
 function adminRuleSource(rule: AdminUserRule) {
-  return rule.source === 'env' ? '环境变量' : '数据库'
+  return rule.source === 'env' ? t('settings.sourceEnv') : t('settings.sourceDb')
 }
 
 function adminRuleRoleLabel(rule: AdminUserRule) {
-  return rule.source === 'env' || rule.role === 'senior' ? '高级管理员' : '运营'
+  return rule.source === 'env' || rule.role === 'senior' ? t('settings.seniorAdmin') : t('settings.operator')
 }
 
 function announcementStatusLabel(status: AdminAnnouncement['status']) {
-  if (status === 'published') return '已发布'
-  if (status === 'archived') return '已下线'
-  return '草稿'
+  if (status === 'published') return t('announcements.statusPublished')
+  if (status === 'archived') return t('announcements.statusArchived')
+  return t('announcements.statusDraft')
 }
 
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -514,10 +538,10 @@ function formatByteSize(bytes: number) {
 }
 
 function storageLocationLabel(location: AdminImageStorageStat['location']) {
-  if (location === 'cos') return '腾讯云 COS'
-  if (location === 'supabase') return 'Supabase'
-  if (location === 'data') return '内联数据'
-  return '未知'
+  if (location === 'cos') return t('images.cos')
+  if (location === 'supabase') return t('images.supabase')
+  if (location === 'data') return t('images.data')
+  return t('images.unknown')
 }
 
 async function refreshAttempts() {
@@ -569,7 +593,7 @@ function applyImageUpdates(updatedImages: AdminImageItem[]) {
 async function setImageVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
   if (adminMode.value !== 'manage') return
   if (visibility === 'public' && image.fundingSource === 'credit') return
-  if (visibility === 'private' && !window.confirm('确认从作品广场隐藏这张图片？')) return
+  if (visibility === 'private' && !window.confirm(t('images.confirmHide'))) return
 
   imageActionId.value = image.id
   errorMessage.value = ''
@@ -583,7 +607,7 @@ async function setImageVisibility(image: AdminImageItem, visibility: AdminImageI
       },
     )
     applyImageUpdates([data.image])
-    noticeMessage.value = visibility === 'private' ? '作品已隐藏' : '作品已恢复公开'
+    noticeMessage.value = visibility === 'private' ? t('images.hidden') : t('images.restored')
   } catch (error) {
     setError(error)
   } finally {
@@ -594,7 +618,7 @@ async function setImageVisibility(image: AdminImageItem, visibility: AdminImageI
 async function bulkArchiveImages() {
   if (adminMode.value !== 'manage') return
   if (!selectedImageIds.value.length) return
-  if (!window.confirm(`确认归档 ${selectedImageIds.value.length} 张图片？`)) return
+  if (!window.confirm(t('images.confirmArchive', { count: selectedImageIds.value.length }))) return
 
   imageBulkLoading.value = true
   errorMessage.value = ''
@@ -605,7 +629,7 @@ async function bulkArchiveImages() {
       body: JSON.stringify({ ids: selectedImageIds.value }),
     })
     applyImageUpdates(data.images)
-    noticeMessage.value = `已归档 ${data.images.length} 张图片`
+    noticeMessage.value = `${t('images.archived')} ${data.images.length}`
   } catch (error) {
     setError(error)
   } finally {
@@ -616,7 +640,7 @@ async function bulkArchiveImages() {
 async function bulkDeleteImages() {
   if (adminMode.value !== 'manage') return
   if (!selectedImageIds.value.length) return
-  if (!window.confirm(`确认删除 ${selectedImageIds.value.length} 张图片？此操作不可撤销。`)) return
+  if (!window.confirm(t('images.confirmDelete', { count: selectedImageIds.value.length }))) return
 
   imageBulkLoading.value = true
   errorMessage.value = ''
@@ -630,7 +654,7 @@ async function bulkDeleteImages() {
     const deletedIds = new Set(data.deletedIds.length ? data.deletedIds : Array.from(deletingIds))
     adminImages.value = adminImages.value.filter(image => !deletedIds.has(image.id))
     selectedImageIds.value = []
-    noticeMessage.value = `已删除 ${data.deletedCount} 张图片`
+    noticeMessage.value = `${t('images.deleted')} ${data.deletedCount}`
   } catch (error) {
     setError(error)
   } finally {
@@ -640,7 +664,7 @@ async function bulkDeleteImages() {
 
 async function createAnnouncement() {
   if (!announcementForm.value.title.trim() || !announcementForm.value.body.trim()) {
-    errorMessage.value = '请输入公告标题和内容。'
+    errorMessage.value = t('feedback.enterTitle')
     return
   }
 
@@ -658,7 +682,7 @@ async function createAnnouncement() {
     })
     announcements.value = [data.announcement, ...announcements.value.filter(item => item.id !== data.announcement.id)]
     announcementForm.value = { title: '', body: '' }
-    noticeMessage.value = '公告已发布'
+    noticeMessage.value = t('announcements.published')
     await refreshSystem()
   } catch (error) {
     setError(error)
@@ -677,7 +701,7 @@ async function setAnnouncementStatus(announcement: AdminAnnouncement, status: Ad
       body: JSON.stringify({ status }),
     })
     announcements.value = announcements.value.map(item => item.id === data.announcement.id ? data.announcement : item)
-    noticeMessage.value = status === 'published' ? '公告已发布' : '公告已下线'
+    noticeMessage.value = status === 'published' ? t('announcements.published') : t('announcements.archived')
   } catch (error) {
     setError(error)
   } finally {
@@ -705,7 +729,7 @@ async function submitAdjustment() {
     transactions.value = data.transactions
     users.value = users.value.map(item => item.userId === data.user.userId ? data.user : item)
     adjustNote.value = ''
-    noticeMessage.value = '额度已调整'
+    noticeMessage.value = t('feedback.creditsAdjusted')
     await Promise.all([refreshOverview(), refreshLedger()])
   } catch (error) {
     setError(error)
@@ -732,7 +756,7 @@ async function createCodes() {
       }),
     })
     createdCodes.value = data.codes
-    noticeMessage.value = `已生成 ${data.codes.length} 个兑换码`
+    noticeMessage.value = t('feedback.codesGenerated', { count: data.codes.length })
     await Promise.all([refreshCodes(), refreshOverview()])
   } catch (error) {
     setError(error)
@@ -759,7 +783,7 @@ async function viewCodeRedemptions(code: AdminCode) {
 }
 
 async function setCodeDisabled(code: AdminCode, disabled: boolean) {
-  if (disabled && !window.confirm('确认停用这个兑换码？')) return
+  if (disabled && !window.confirm(t('feedback.confirmDisableCode'))) return
   actionLoading.value = true
   errorMessage.value = ''
   try {
@@ -769,7 +793,7 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
     })
     codes.value = codes.value.map(item => item.id === data.code.id ? data.code : item)
     if (selectedCode.value?.id === data.code.id) selectedCode.value = data.code
-    noticeMessage.value = disabled ? '兑换码已停用' : '兑换码已恢复'
+    noticeMessage.value = disabled ? t('feedback.codeDisabled') : t('feedback.codeRestored')
     await refreshOverview()
   } catch (error) {
     setError(error)
@@ -780,11 +804,11 @@ async function setCodeDisabled(code: AdminCode, disabled: boolean) {
 
 async function createAdminRule() {
   if (!canManageAdminUsers.value) {
-    errorMessage.value = '只有高级管理员可以设置后台管理员。'
+    errorMessage.value = t('settings.onlySeniorCanManage')
     return
   }
   if (!adminUserForm.value.userId.trim() && !adminUserForm.value.email.trim()) {
-    errorMessage.value = '请输入用户 ID 或邮箱。'
+    errorMessage.value = t('feedback.enterUserIdOrEmail')
     return
   }
 
@@ -806,7 +830,7 @@ async function createAdminRule() {
     adminUserRules.value = data.adminUsers
     adminAccess.value = data.adminAccess
     adminUserForm.value = { userId: '', email: '', note: '' }
-    noticeMessage.value = '管理员规则已添加'
+    noticeMessage.value = t('settings.ruleAdded')
     await refreshSystem()
   } catch (error) {
     setError(error)
@@ -818,10 +842,10 @@ async function createAdminRule() {
 async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   if (rule.source !== 'database') return
   if (!canManageAdminUsers.value) {
-    errorMessage.value = '只有高级管理员可以设置后台管理员。'
+    errorMessage.value = t('settings.onlySeniorCanManage')
     return
   }
-  if (!enabled && !window.confirm('确认停用这个后台管理员规则？')) return
+  if (!enabled && !window.confirm(t('settings.confirmDisableRule'))) return
 
   adminRuleActionId.value = rule.id
   errorMessage.value = ''
@@ -836,7 +860,7 @@ async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
     })
     adminUserRules.value = data.adminUsers
     adminAccess.value = data.adminAccess
-    noticeMessage.value = enabled ? '管理员规则已启用' : '管理员规则已停用'
+    noticeMessage.value = enabled ? t('settings.ruleEnabled') : t('settings.ruleDisabled')
     await refreshSystem()
   } catch (error) {
     setError(error)
@@ -849,21 +873,21 @@ async function copyCreatedCsv() {
   if (!createdCodes.value.length) return
   try {
     await navigator.clipboard.writeText(createdCsv.value)
-    noticeMessage.value = 'CSV 已复制'
+    noticeMessage.value = t('feedback.csvCopied')
   } catch (error) {
-    setError(error, '复制失败，请手动选择内容。')
+    setError(error, t('feedback.copyFailed'))
   }
 }
 
 function downloadCreatedCsv() {
   if (!createdCodes.value.length) return
   const blob = new Blob([`${createdCsv.value}\n`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
+  const downloadUrl = URL.createObjectURL(blob)
   const link = document.createElement('a')
-  link.href = url
+  link.href = downloadUrl
   link.download = `recho-credit-codes-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
   link.click()
-  URL.revokeObjectURL(url)
+  URL.revokeObjectURL(downloadUrl)
 }
 
 onMounted(async () => {
@@ -887,923 +911,1214 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="admin-page">
-    <header class="admin-header">
-      <div>
-        <span class="admin-eyebrow">Recho Admin</span>
-        <h1>额度后台</h1>
+  <div class="admin-root" :class="{ dark: isDark }">
+    <!-- Sidebar -->
+    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <div class="sidebar-header">
+        <div class="brand">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <span v-show="!sidebarCollapsed" class="brand-text">Recho Admin</span>
+        </div>
+        <button class="sidebar-toggle" @click="toggleSidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
+            <path v-if="!sidebarCollapsed" d="M15 19l-7-7 7-7" />
+            <path v-else d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
-      <nav class="admin-nav" aria-label="后台导航">
-        <RouterLink to="/image">画布</RouterLink>
-        <RouterLink to="/works">作品</RouterLink>
+
+      <nav class="sidebar-nav">
+        <button
+          v-for="item in navItems"
+          :key="item.id"
+          class="nav-item"
+          :class="{ active: activeView === item.id }"
+          @click="activeView = item.id"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20">
+            <path :d="item.icon" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span v-show="!sidebarCollapsed" class="nav-label">{{ t(item.labelKey) }}</span>
+        </button>
       </nav>
-    </header>
 
-    <section v-if="!isAuthReady || !adminChecked" class="admin-state">
-      <span class="spinner" />
-      <strong>正在检查权限</strong>
-    </section>
-
-    <section v-else-if="!user" class="admin-state">
-      <strong>请先登录</strong>
-      <RouterLink to="/image">返回登录</RouterLink>
-    </section>
-
-    <section v-else-if="!isAdmin" class="admin-state">
-      <strong>{{ errorMessage || '当前账号没有后台权限。' }}</strong>
-      <span>{{ userEmail }}</span>
-    </section>
-
-    <template v-else>
-      <div class="admin-mode-switch" role="group" aria-label="后台模式">
-        <button
-          type="button"
-          :class="{ active: adminMode === 'visual' }"
-          :aria-pressed="adminMode === 'visual'"
-          @click="adminMode = 'visual'"
-        >
-          可视化后台
+      <div class="sidebar-footer">
+        <button class="sidebar-action" @click="toggleLocale">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
+            <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          <span v-show="!sidebarCollapsed">{{ locale === 'zh' ? '中文' : 'EN' }}</span>
         </button>
-        <button
-          type="button"
-          :class="{ active: adminMode === 'manage' }"
-          :aria-pressed="adminMode === 'manage'"
-          @click="adminMode = 'manage'"
-        >
-          管理后台
+        <button class="sidebar-action" @click="toggleTheme">
+          <svg v-if="!isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
+            <circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+          </svg>
+          <span v-show="!sidebarCollapsed">{{ isDark ? t('common.lightMode') : t('common.darkMode') }}</span>
         </button>
+        <div class="sidebar-links" v-show="!sidebarCollapsed">
+          <RouterLink to="/image" class="ext-link">{{ t('nav.canvas') }}</RouterLink>
+          <RouterLink to="/works" class="ext-link">{{ t('nav.works') }}</RouterLink>
+        </div>
+        <div v-if="user && !sidebarCollapsed" class="user-badge">
+          <div class="user-avatar">{{ (userEmail || 'A').charAt(0).toUpperCase() }}</div>
+          <div class="user-detail">
+            <span class="user-email">{{ userEmail || 'Admin' }}</span>
+            <span class="user-role">{{ currentAdminRole === 'senior' ? t('settings.seniorAdmin') : t('settings.operator') }}</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Area -->
+    <div class="main-area">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">{{ t(`nav.${activeView}`) }}</h1>
+          <div class="mode-switch" role="group">
+            <button :class="{ active: adminMode === 'visual' }" @click="adminMode = 'visual'">{{ t('mode.visual') }}</button>
+            <button :class="{ active: adminMode === 'manage' }" @click="adminMode = 'manage'">{{ t('mode.manage') }}</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Auth States -->
+      <div v-if="!isAuthReady || !adminChecked" class="auth-state">
+        <span class="spinner" />
+        <strong>{{ t('auth.checking') }}</strong>
       </div>
 
-      <div class="admin-feedback" aria-live="polite">
-        <p v-if="errorMessage" class="admin-message error">{{ errorMessage }}</p>
-        <p v-if="noticeMessage" class="admin-message success">{{ noticeMessage }}</p>
+      <div v-else-if="!user" class="auth-state">
+        <strong>{{ t('auth.loginRequired') }}</strong>
+        <RouterLink to="/image" class="btn-secondary">{{ t('auth.loginLink') }}</RouterLink>
       </div>
 
-      <template v-if="adminMode === 'visual'">
-        <section class="overview-panel" aria-label="额度总览">
-        <div class="overview-header">
-          <div>
-            <span>总览</span>
-            <strong>{{ overviewGeneratedAt }}</strong>
-          </div>
-          <button type="button" :disabled="overviewLoading" @click="refreshOverview">刷新</button>
-        </div>
-        <div class="overview-grid">
-          <div>
-            <span>总余额</span>
-            <strong>{{ creditAmount(overview?.users.totalBalance) }}</strong>
-          </div>
-          <div>
-            <span>累计兑换</span>
-            <strong>{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
-          </div>
-          <div>
-            <span>累计消耗</span>
-            <strong>{{ creditAmount(overview?.users.totalSpent) }}</strong>
-          </div>
-          <div>
-            <span>生图价格/张</span>
-            <strong>{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
-          </div>
-          <div>
-            <span>兑换码可用</span>
-            <strong>{{ overviewCodeHealth }}</strong>
-          </div>
-          <div>
-            <span>已兑换码额度</span>
-            <strong>{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
-          </div>
-          <div>
-            <span>7 天流水</span>
-            <strong>{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
-          </div>
-          <div>
-            <span>7 天消耗</span>
-            <strong>{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
-          </div>
-          <div>
-            <span>7 天净变化</span>
-            <strong :class="overviewNetChange >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(overviewNetChange) }}</strong>
-          </div>
-        </div>
-        <div class="image-cost-panel" aria-label="可视化生图成本">
-          <div class="image-cost-header">
-            <div>
-              <span>可视化生图成本</span>
-              <strong>¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small>/张</small></strong>
-            </div>
-            <span>按量计费 · 置信度 {{ imageCostConfidenceLabel }}</span>
-          </div>
-          <div class="image-cost-grid">
-            <div>
-              <span>COS 存储/张</span>
-              <strong>¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
-            </div>
-            <div>
-              <span>COS 流量/张</span>
-              <strong>¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
-            </div>
-            <div>
-              <span>Supabase 存储/张</span>
-              <strong>¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
-            </div>
-            <div>
-              <span>Supabase 流量/张</span>
-              <strong>¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
-            </div>
-            <div>
-              <span>预估月成本</span>
-              <strong>¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
-            </div>
-            <div>
-              <span>样本</span>
-              <strong>{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} Supabase</strong>
-            </div>
-          </div>
-        </div>
-      </section>
+      <div v-else-if="!isAdmin" class="auth-state">
+        <strong>{{ errorMessage || t('auth.noAccess') }}</strong>
+        <span class="text-muted">{{ userEmail }}</span>
+      </div>
 
-      <section class="admin-panel system-panel" aria-label="系统状态">
-        <div class="panel-header system-header">
-          <div>
-            <span>系统状态</span>
-            <strong>{{ systemGeneratedAt }}</strong>
-          </div>
-          <div class="system-controls">
-            <span :class="['system-status-pill', systemStatus?.status || 'warning']">{{ systemStatusLabel }}</span>
-            <button type="button" :disabled="systemLoading" @click="refreshSystem">刷新</button>
-          </div>
+      <!-- Content -->
+      <main v-else class="content">
+        <!-- Feedback Messages -->
+        <div class="feedback" aria-live="polite">
+          <p v-if="errorMessage" class="feedback-msg error">{{ errorMessage }}</p>
+          <p v-if="noticeMessage" class="feedback-msg success">{{ noticeMessage }}</p>
         </div>
-        <div class="system-grid">
-          <div>
-            <span>Supabase 后端</span>
-            <strong :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'positive' : 'negative') : ''">
-              {{ systemStatus ? (systemStatus.config.supabase.adminConfigured ? '就绪' : '未就绪') : '-' }}
-            </strong>
-          </div>
-          <div>
-            <span>生图服务</span>
-            <strong :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'positive' : 'negative') : ''">
-              {{ systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? '就绪' : '未就绪') : '-' }}
-            </strong>
-          </div>
-          <div>
-            <span>管理员规则</span>
-            <strong>{{ systemStatus ? systemStatus.config.adminUsers.databaseCount + systemStatus.config.adminUsers.envUserIdCount + systemStatus.config.adminUsers.envEmailCount : '-' }}</strong>
-          </div>
-          <div>
-            <span>生图监控</span>
-            <strong>{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? '开启' : '关闭') : '-' }}</strong>
-          </div>
-          <div>
-            <span>生图价格/张</span>
-            <strong>{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
-          </div>
-        </div>
-        <div class="storage-stats-grid">
-          <div>
-            <span>腾讯云 COS</span>
-            <strong>{{ overview?.imageCost?.cosImageCount ?? 0 }} 张</strong>
-            <span class="storage-sub">平均 {{ (overview?.imageCost?.averageStoredMb ?? 0).toFixed(2) }} MB/张</span>
-          </div>
-          <div>
-            <span>Supabase 存储</span>
-            <strong>{{ overview?.imageCost?.supabaseImageCount ?? 0 }} 张</strong>
-            <span class="storage-sub">样本 {{ overview?.imageCost?.sampleDays ?? 0 }} 天</span>
-          </div>
-          <div>
-            <span>预估月成本</span>
-            <strong>¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
-            <span class="storage-sub">置信度 {{ imageCostConfidenceLabel }}</span>
-          </div>
-          <div>
-            <span>总图片数</span>
-            <strong>{{ (overview?.imageCost?.cosImageCount ?? 0) + (overview?.imageCost?.supabaseImageCount ?? 0) }} 张</strong>
-            <span class="storage-sub">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}/张</span>
-          </div>
-        </div>
-        <div class="system-warnings">
-          <span v-for="warning in systemStatus?.warnings || []" :key="warning">{{ warning }}</span>
-          <span v-if="systemStatus && !systemStatus.warnings.length">无告警</span>
-          <span v-else-if="!systemStatus">等待检查</span>
-        </div>
-        <div class="table-wrap system-table-wrap">
-          <table class="system-table">
-            <thead>
-              <tr>
-                <th>模块</th>
-                <th>状态</th>
-                <th>记录数</th>
-                <th>信息</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="table in systemStatus?.data.tables || []" :key="table.key">
-                <td>{{ table.label }}</td>
-                <td :class="table.status === 'ok' ? 'positive' : 'negative'">{{ tableStatusLabel(table.status) }}</td>
-                <td>{{ table.count ?? '-' }}</td>
-                <td>{{ table.message }}</td>
-              </tr>
-              <tr v-if="!(systemStatus?.data.tables || []).length">
-                <td colspan="4">暂无检查结果</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        </section>
 
-        <AdminImageAttemptsPanel
-          v-model:status-filter="attemptStatusFilter"
-          v-model:user-filter="attemptUserFilter"
-          v-model:error-type-filter="attemptErrorTypeFilter"
-          v-model:http-status-filter="attemptHttpStatusFilter"
-          v-model:hours-filter="attemptHoursFilter"
-          :attempts="imageAttempts"
-          :overview="imageAttemptOverview"
-          :loading="attemptsLoading"
-          @refresh="refreshAttempts"
-        />
-      </template>
-
-      <template v-else>
-        <section class="admin-grid settings-grid" aria-label="运行时配置">
-        <div class="admin-panel settings-panel">
-          <div class="panel-header">
-            <div>
-              <span>运行时配置</span>
-              <strong>{{ appSettings ? '已加载' : '等待加载' }}</strong>
+        <!-- ===== OVERVIEW ===== -->
+        <section v-if="activeView === 'overview'" class="view-section">
+          <!-- KPI Grid -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('overview.title') }}</h2>
+                <span class="card-subtitle">{{ overviewGeneratedAt }}</span>
+              </div>
+              <button class="btn-secondary" :disabled="overviewLoading" @click="refreshOverview">{{ t('common.refresh') }}</button>
             </div>
-            <button type="button" :disabled="settingsLoading" @click="refreshSettings">刷新</button>
-          </div>
-
-          <form class="settings-form" @submit.prevent="saveSettings">
-            <div class="cost-setting">
-              <label>
-                <span>生图价格/张</span>
-                <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required>
-              </label>
-              <div class="cost-preview" aria-label="生图扣费预估">
-                <span v-for="item in settingsPricePreview" :key="item.label">{{ item.label }} {{ item.value }} 额度</span>
+            <div class="kpi-grid">
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.totalBalance') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.users.totalBalance) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.totalRedeemed') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.totalSpent') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.users.totalSpent) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.imageCostPerImage') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.availableCodes') }}</span>
+                <strong class="kpi-value">{{ overviewCodeHealth }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.redeemedCodeCredits') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.weeklyTxns') }}</span>
+                <strong class="kpi-value">{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.weeklySpend') }}</span>
+                <strong class="kpi-value">{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.weeklyNet') }}</span>
+                <strong class="kpi-value" :class="overviewNetChange >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(overviewNetChange) }}</strong>
               </div>
             </div>
-            <label>
-              <span>响应模型</span>
-              <input v-model.trim="settingsForm.imageResponsesModel" type="text">
-            </label>
-            <label>
-              <span>生图模型</span>
-              <input v-model.trim="settingsForm.imageResponsesImageModel" type="text">
-            </label>
-            <label class="check-row">
-              <input v-model="settingsForm.imageAnalyticsEnabled" type="checkbox">
-              <span>分析记录</span>
-            </label>
-            <label class="check-row">
-              <input v-model="settingsForm.imageEventsEnabled" type="checkbox">
-              <span>前端事件</span>
-            </label>
-            <label class="check-row">
-              <input v-model="settingsForm.canvasContextEnabled" type="checkbox">
-              <span>画布上下文</span>
-            </label>
-            <label class="check-row">
-              <input v-model="settingsForm.freeGenerationEnabled" type="checkbox">
-              <span>免费生成回退</span>
-            </label>
-            <label class="check-row">
-              <input v-model="settingsForm.guestGenerationEnabled" type="checkbox">
-              <span>游客生成</span>
-            </label>
-            <button type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? '保存中' : '保存配置' }}</button>
-          </form>
-        </div>
+          </div>
 
-        <div class="admin-panel admin-users-panel">
-          <div class="panel-header">
-            <div>
-              <span>后台管理员</span>
-              <strong>{{ adminRuleTotal }}</strong>
+          <!-- Image Cost Panel -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('overview.imageCost') }}</h2>
+                <span class="card-subtitle">{{ t('overview.payAsYouGo') }} · {{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
+              </div>
+              <span class="cost-big">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small>{{ t('overview.imageCostUnit') }}</small></span>
             </div>
-            <button type="button" :disabled="settingsLoading" @click="refreshSettings">刷新</button>
-          </div>
-
-          <form v-if="canManageAdminUsers" class="admin-user-form" @submit.prevent="createAdminRule">
-            <label>
-              <span>用户 ID</span>
-              <input v-model.trim="adminUserForm.userId" type="text">
-            </label>
-            <label>
-              <span>邮箱</span>
-              <input v-model.trim="adminUserForm.email" type="email">
-            </label>
-            <label class="wide">
-              <span>备注</span>
-              <input v-model.trim="adminUserForm.note" type="text">
-            </label>
-            <button type="submit" :disabled="actionLoading">添加</button>
-          </form>
-          <p v-else class="panel-note">运营账号不能设置后台管理员。</p>
-
-          <div class="table-wrap">
-            <table class="admin-rule-table">
-              <thead>
-                <tr>
-                  <th>账号</th>
-                  <th>等级</th>
-                  <th>来源</th>
-                  <th>状态</th>
-                  <th>更新</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="rule in adminUserRules" :key="rule.id">
-                  <td>{{ adminRuleIdentity(rule) }}</td>
-                  <td>{{ adminRuleRoleLabel(rule) }}</td>
-                  <td>{{ adminRuleSource(rule) }}</td>
-                  <td :class="rule.enabled ? 'positive' : 'negative'">{{ rule.enabled ? '启用' : '停用' }}</td>
-                  <td>{{ dateTime(rule.updatedAt) }}</td>
-                  <td>
-                    <button
-                      type="button"
-                      class="table-action"
-                      :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id"
-                      @click="setAdminRuleEnabled(rule, !rule.enabled)"
-                    >
-                      {{ rule.enabled ? '停用' : '启用' }}
-                    </button>
-                  </td>
-                </tr>
-                <tr v-if="!adminUserRules.length">
-                  <td colspan="6">暂无管理员规则</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="admin-panel announcements-panel" aria-label="公告管理">
-        <div class="panel-header announcement-header">
-          <div>
-            <span>公告管理</span>
-            <strong>{{ announcements.length }}</strong>
-          </div>
-          <button type="button" :disabled="announcementsLoading" @click="refreshAnnouncements">刷新</button>
-        </div>
-
-        <form class="announcement-form" @submit.prevent="createAnnouncement">
-          <label>
-            <span>标题</span>
-            <input v-model.trim="announcementForm.title" type="text" maxlength="120" required>
-          </label>
-          <label class="wide">
-            <span>内容</span>
-            <textarea v-model.trim="announcementForm.body" rows="4" maxlength="4000" required />
-          </label>
-          <button type="submit" :disabled="actionLoading">发布公告</button>
-        </form>
-
-        <div class="table-wrap announcement-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>更新</th>
-                <th>状态</th>
-                <th>标题</th>
-                <th>内容</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="announcement in announcements" :key="announcement.id">
-                <td>{{ dateTime(announcement.updatedAt) }}</td>
-                <td :class="announcement.status === 'published' ? 'positive' : 'negative'">
-                  {{ announcementStatusLabel(announcement.status) }}
-                </td>
-                <td>{{ announcement.title }}</td>
-                <td class="announcement-body-cell">{{ announcement.body }}</td>
-                <td>
-                  <div class="code-actions">
-                    <button
-                      v-if="announcement.status !== 'published'"
-                      type="button"
-                      class="table-action"
-                      :disabled="announcementActionId === announcement.id"
-                      @click="setAnnouncementStatus(announcement, 'published')"
-                    >
-                      发布
-                    </button>
-                    <button
-                      v-if="announcement.status !== 'archived'"
-                      type="button"
-                      class="table-action"
-                      :disabled="announcementActionId === announcement.id"
-                      @click="setAnnouncementStatus(announcement, 'archived')"
-                    >
-                      下线
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="!announcements.length">
-                <td colspan="5">暂无公告</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="admin-panel ledger-panel" aria-label="最近额度流水">
-        <div class="panel-header ledger-header">
-          <div>
-            <span>最近流水</span>
-            <strong>{{ ledgerTransactions.length }}</strong>
-          </div>
-          <div class="ledger-controls">
-            <select v-model="ledgerReason" :disabled="ledgerLoading" @change="refreshLedger">
-              <option value="">全部类型</option>
-              <option value="redemption">兑换</option>
-              <option value="image_generation">生图</option>
-              <option value="refund">退款</option>
-              <option value="admin_adjustment">后台调整</option>
-            </select>
-            <select v-model="ledgerHours" :disabled="ledgerLoading" @change="refreshLedger">
-              <option value="24">24小时内</option>
-              <option value="168">7天内</option>
-              <option value="720">30天内</option>
-              <option value="">全部</option>
-            </select>
-            <input v-model="ledgerUserId" type="search" placeholder="用户 ID" :disabled="ledgerLoading" @keyup.enter="refreshLedger">
-            <button type="button" :disabled="ledgerLoading" @click="refreshLedger">刷新</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>用户</th>
-                <th>类型</th>
-                <th>变动</th>
-                <th>余额</th>
-                <th>详情</th>
-                <th>备注</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="tx in ledgerTransactions" :key="tx.id">
-                <td>{{ dateTime(tx.createdAt) }}</td>
-                <td>{{ tx.email || shortId(tx.userId) }}</td>
-                <td>{{ transactionReason(tx.reason) }}</td>
-                <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
-                <td>{{ creditAmount(tx.balanceAfter) }}</td>
-                <td>{{ ledgerDetails(tx) }}</td>
-                <td>{{ tx.note || '-' }}</td>
-              </tr>
-              <tr v-if="!ledgerTransactions.length">
-                <td colspan="7">暂无流水</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <AdminImagesPanel
-        v-model:selected-ids="selectedImageIds"
-        v-model:visibility-filter="imageVisibilityFilter"
-        v-model:funding-filter="imageFundingFilter"
-        v-model:user-filter="imageUserFilter"
-        v-model:query="imageQuery"
-        :images="adminImages"
-        :loading="imagesLoading"
-        :bulk-loading="imageBulkLoading"
-        :action-id="imageActionId"
-        @refresh="refreshImages"
-        @set-visibility="setImageVisibility"
-        @bulk-archive="bulkArchiveImages"
-        @bulk-delete="bulkDeleteImages"
-      />
-
-      <section class="admin-panel storage-overview-panel" aria-label="存储流量统计">
-        <div class="panel-header">
-          <div>
-            <span>存储流量统计</span>
-            <strong>{{ storageOverview ? `${storageOverview.totalImages} 张图片 / ${formatByteSize(storageOverview.totalBytes)}` : '等待刷新' }}</strong>
-          </div>
-          <div>
-            <button type="button" :disabled="storageOverviewLoading" @click="refreshStorageOverview">刷新</button>
-          </div>
-        </div>
-        <div v-if="storageOverviewLoading" class="storage-detail">
-          <div class="storage-summary">
-            <div>
-              <span>正在统计...</span>
-            </div>
-          </div>
-        </div>
-        <table v-else-if="storageOverview" class="storage-detail">
-          <thead>
-            <tr>
-              <th>存储位置</th>
-              <th>图片数量</th>
-              <th>总大小</th>
-              <th>平均大小</th>
-              <th>总积分消耗</th>
-              <th>大小占比</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="stat in storageOverview.byLocation" :key="stat.location">
-              <td>{{ storageLocationLabel(stat.location) }}</td>
-              <td>{{ stat.imageCount }}</td>
-              <td>{{ formatByteSize(stat.totalBytes) }}</td>
-              <td>{{ formatByteSize(stat.averageBytes) }}</td>
-              <td>{{ formatCreditAmount(stat.totalCreditCost) }}</td>
-              <td>{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section class="admin-grid">
-        <div class="admin-panel users-panel">
-          <div class="panel-header">
-            <div>
-              <span>用户</span>
-              <strong>{{ users.length }}</strong>
-            </div>
-            <button type="button" :disabled="loading" @click="refreshUsers">刷新</button>
-          </div>
-          <form class="search-row" @submit.prevent="refreshUsers">
-            <input v-model.trim="userQuery" type="search" placeholder="邮箱或用户 ID">
-            <button type="submit" :disabled="loading">搜索</button>
-          </form>
-          <div class="user-list">
-            <button
-              v-for="item in users"
-              :key="item.userId"
-              type="button"
-              class="user-row"
-              :class="{ active: selectedUser?.userId === item.userId }"
-              @click="selectUser(item)"
-            >
-              <span>{{ item.email || shortId(item.userId) }}</span>
-              <strong>{{ creditAmount(item.balance) }}</strong>
-            </button>
-          </div>
-        </div>
-
-        <div class="admin-panel detail-panel">
-          <div class="panel-header">
-            <div>
-              <span>当前用户</span>
-              <strong>{{ selectedUserTitle }}</strong>
+            <div class="kpi-grid cols-6">
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.cosStoragePerImage') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.cosTrafficPerImage') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.supabaseStoragePerImage') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.supabaseTrafficPerImage') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.estimatedMonthlyCost') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('overview.sampleCount') }}</span>
+                <strong class="kpi-value sm">{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} SB</strong>
+              </div>
             </div>
           </div>
 
-          <div v-if="selectedUser" class="metric-grid">
-            <div>
-              <span>余额</span>
-              <strong>{{ creditAmount(selectedUser.balance) }}</strong>
-            </div>
-            <div>
-              <span>累计兑换</span>
-              <strong>{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
-            </div>
-            <div>
-              <span>累计消耗</span>
-              <strong>{{ creditAmount(selectedUser.totalSpent) }}</strong>
-            </div>
-            <div>
-              <span>更新</span>
-              <strong>{{ dateTime(selectedUser.updatedAt) }}</strong>
-            </div>
-          </div>
-
-          <form class="adjust-form" @submit.prevent="submitAdjustment">
-            <label>
-              <span>调整额度</span>
-              <input v-model.number="adjustAmount" type="number" step="1" placeholder="正数增加，负数扣除">
-            </label>
-            <label>
-              <span>备注</span>
-              <input v-model.trim="adjustNote" type="text" placeholder="内部备注">
-            </label>
-            <button type="submit" :disabled="actionLoading || !selectedUser || !adjustAmount">提交</button>
-          </form>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>类型</th>
-                  <th>变动</th>
-                  <th>余额</th>
-                  <th>备注</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="tx in transactions" :key="tx.id">
-                  <td>{{ dateTime(tx.created_at) }}</td>
-                  <td>{{ transactionReason(tx.reason) }}</td>
-                  <td :class="tx.amount >= 0 ? 'positive' : 'negative'">{{ signedCreditAmount(tx.amount) }}</td>
-                  <td>{{ creditAmount(tx.balance_after) }}</td>
-                  <td>{{ transactionNote(tx) }}</td>
-                </tr>
-                <tr v-if="!transactions.length">
-                  <td colspan="5">暂无流水</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="admin-grid codes-grid">
-        <div class="admin-panel">
-          <div class="panel-header">
-            <div>
-              <span>生成兑换码</span>
-              <strong>{{ codeForm.count }} 个</strong>
-            </div>
-          </div>
-
-          <form class="code-form" @submit.prevent="createCodes">
-            <label>
-              <span>前缀</span>
-              <input v-model.trim="codeForm.prefix" type="text">
-            </label>
-            <label>
-              <span>额度</span>
-              <input v-model.number="codeForm.credits" type="number" min="1" step="1">
-            </label>
-            <label>
-              <span>数量</span>
-              <input v-model.number="codeForm.count" type="number" min="1" max="100" step="1">
-            </label>
-            <label>
-              <span>可兑换次数</span>
-              <input v-model.number="codeForm.maxRedemptions" type="number" min="1" step="1">
-            </label>
-            <label>
-              <span>有效天数</span>
-              <input v-model.number="codeForm.days" type="number" min="1" step="1">
-            </label>
-            <label class="wide">
-              <span>备注</span>
-              <input v-model.trim="codeForm.note" type="text">
-            </label>
-            <button type="submit" :disabled="actionLoading">生成</button>
-          </form>
-
-          <div v-if="createdCodes.length" class="created-codes">
-            <div class="created-actions">
-              <strong>本次生成</strong>
-              <button type="button" @click="copyCreatedCsv">复制 CSV</button>
-              <button type="button" @click="downloadCreatedCsv">下载 CSV</button>
-            </div>
-            <textarea :value="createdCsv" readonly rows="6" />
-          </div>
-        </div>
-
-        <div class="admin-panel">
-          <div class="panel-header">
-            <div>
-              <span>兑换码</span>
-              <strong>{{ codes.length }}</strong>
-            </div>
-            <button type="button" :disabled="loading" @click="refreshCodes">刷新</button>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>创建</th>
-                  <th>额度</th>
-                  <th>使用</th>
-                  <th>状态</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="code in codes" :key="code.id">
-                  <td>{{ dateTime(code.createdAt) }}</td>
-                  <td>{{ code.credits }}</td>
-                  <td>{{ code.redeemedCount }} / {{ code.maxRedemptions }}</td>
-                  <td>{{ codeStatus(code) }}</td>
-                  <td>{{ code.note || '-' }}</td>
-                  <td>
-                    <div class="code-actions">
-                      <button
-                        type="button"
-                        class="table-action"
-                        :disabled="codeRedemptionsLoading && selectedCode?.id === code.id"
-                        @click="viewCodeRedemptions(code)"
-                      >
-                        明细
-                      </button>
-                    <button
-                      type="button"
-                      class="table-action"
-                      :disabled="actionLoading"
-                      @click="setCodeDisabled(code, !code.disabledAt)"
-                    >
-                      {{ code.disabledAt ? '恢复' : '停用' }}
-                    </button>
-                    </div>
-                  </td>
-                </tr>
-                <tr v-if="!codes.length">
-                  <td colspan="6">暂无兑换码</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="selectedCode" class="code-redemptions">
-            <div class="created-actions">
-              <strong>兑换明细</strong>
-              <span>{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
-              <button type="button" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode)">刷新</button>
+          <!-- Ledger -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('credits.ledger.title') }}</h2>
+                <span class="card-subtitle">{{ ledgerTransactions.length }}</span>
+              </div>
+              <div class="filter-group">
+                <select v-model="ledgerReason" :disabled="ledgerLoading" @change="refreshLedger">
+                  <option value="">{{ t('credits.ledger.allTypes') }}</option>
+                  <option value="redemption">{{ t('credits.transactionReason.redemption') }}</option>
+                  <option value="image_generation">{{ t('credits.transactionReason.image_generation') }}</option>
+                  <option value="refund">{{ t('credits.transactionReason.refund') }}</option>
+                  <option value="admin_adjustment">{{ t('credits.transactionReason.admin_adjustment') }}</option>
+                </select>
+                <select v-model="ledgerHours" :disabled="ledgerLoading" @change="refreshLedger">
+                  <option value="24">{{ t('credits.ledger.last24h') }}</option>
+                  <option value="168">{{ t('credits.ledger.last7d') }}</option>
+                  <option value="720">{{ t('credits.ledger.last30d') }}</option>
+                  <option value="">{{ t('credits.ledger.allTime') }}</option>
+                </select>
+                <input v-model="ledgerUserId" type="search" :placeholder="t('credits.ledger.userIdFilter')" :disabled="ledgerLoading" @keyup.enter="refreshLedger" class="input-sm" />
+                <button class="btn-secondary" :disabled="ledgerLoading" @click="refreshLedger">{{ t('common.refresh') }}</button>
+              </div>
             </div>
             <div class="table-wrap">
-              <table class="code-redemption-table">
+              <table>
                 <thead>
                   <tr>
-                    <th>时间</th>
-                    <th>用户</th>
-                    <th>额度</th>
-                    <th>余额</th>
-                    <th>流水</th>
+                    <th>{{ t('credits.table.time') }}</th>
+                    <th>{{ t('credits.table.user') }}</th>
+                    <th>{{ t('credits.table.type') }}</th>
+                    <th>{{ t('credits.table.change') }}</th>
+                    <th>{{ t('credits.table.balance') }}</th>
+                    <th>{{ t('credits.table.details') }}</th>
+                    <th>{{ t('credits.table.note') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="redemption in codeRedemptions" :key="redemption.id">
-                    <td>{{ dateTime(redemption.redeemedAt) }}</td>
-                    <td>{{ redemption.email || shortId(redemption.userId) }}</td>
-                    <td>{{ redemption.credits }}</td>
-                    <td>{{ redemption.balanceAfter ?? '-' }}</td>
-                    <td>{{ redemption.transactionId ? shortId(redemption.transactionId) : '-' }}</td>
+                  <tr v-for="tx in ledgerTransactions" :key="tx.id">
+                    <td class="text-caption">{{ dateTime(tx.createdAt) }}</td>
+                    <td>{{ tx.email || shortId(tx.userId) }}</td>
+                    <td><span class="badge">{{ transactionReason(tx.reason) }}</span></td>
+                    <td class="text-mono" :class="tx.amount >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                    <td class="text-mono">{{ creditAmount(tx.balanceAfter) }}</td>
+                    <td class="text-caption">{{ ledgerDetails(tx) }}</td>
+                    <td class="text-caption">{{ tx.note || '-' }}</td>
                   </tr>
-                  <tr v-if="!codeRedemptions.length">
-                    <td colspan="5">{{ codeRedemptionsLoading ? '正在加载' : '暂无兑换记录' }}</td>
+                  <tr v-if="!ledgerTransactions.length">
+                    <td colspan="7" class="empty-cell">{{ t('common.noData') }}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
         </section>
-      </template>
-    </template>
-  </main>
+
+        <!-- ===== CREDITS ===== -->
+        <section v-else-if="activeView === 'credits'" class="view-section">
+          <div class="two-col">
+            <!-- User List -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">{{ t('credits.users') }}</h2>
+                  <span class="card-subtitle">{{ users.length }}</span>
+                </div>
+                <button class="btn-secondary" :disabled="loading" @click="refreshUsers">{{ t('common.refresh') }}</button>
+              </div>
+              <form class="search-row" @submit.prevent="refreshUsers">
+                <input v-model.trim="userQuery" type="search" :placeholder="t('credits.searchUsers')" />
+                <button class="btn-secondary" type="submit" :disabled="loading">{{ t('common.search') }}</button>
+              </form>
+              <div class="user-list">
+                <button
+                  v-for="item in users"
+                  :key="item.userId"
+                  class="user-row"
+                  :class="{ active: selectedUser?.userId === item.userId }"
+                  @click="selectUser(item)"
+                >
+                  <span>{{ item.email || shortId(item.userId) }}</span>
+                  <strong class="text-mono">{{ creditAmount(item.balance) }}</strong>
+                </button>
+              </div>
+            </div>
+
+            <!-- User Detail -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">{{ t('credits.userDetail') }}</h2>
+                  <span class="card-subtitle">{{ selectedUserTitle }}</span>
+                </div>
+              </div>
+
+              <div v-if="selectedUser" class="kpi-grid cols-4">
+                <div class="kpi-item">
+                  <span class="kpi-label">{{ t('credits.balance') }}</span>
+                  <strong class="kpi-value">{{ creditAmount(selectedUser.balance) }}</strong>
+                </div>
+                <div class="kpi-item">
+                  <span class="kpi-label">{{ t('credits.totalRedeemed') }}</span>
+                  <strong class="kpi-value">{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
+                </div>
+                <div class="kpi-item">
+                  <span class="kpi-label">{{ t('credits.totalSpent') }}</span>
+                  <strong class="kpi-value">{{ creditAmount(selectedUser.totalSpent) }}</strong>
+                </div>
+                <div class="kpi-item">
+                  <span class="kpi-label">{{ t('common.updatedAt') }}</span>
+                  <strong class="kpi-value sm">{{ dateTime(selectedUser.updatedAt) }}</strong>
+                </div>
+              </div>
+
+              <form class="inline-form" @submit.prevent="submitAdjustment">
+                <input v-model.number="adjustAmount" type="number" step="1" :placeholder="t('credits.adjustPlaceholder')" class="input-sm" />
+                <input v-model.trim="adjustNote" type="text" :placeholder="t('credits.adjustNotePlaceholder')" class="input-sm" />
+                <button class="btn-primary" type="submit" :disabled="actionLoading || !selectedUser || !adjustAmount">{{ t('common.submit') }}</button>
+              </form>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{{ t('credits.table.time') }}</th>
+                      <th>{{ t('credits.table.type') }}</th>
+                      <th>{{ t('credits.table.change') }}</th>
+                      <th>{{ t('credits.table.balance') }}</th>
+                      <th>{{ t('credits.table.note') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="tx in transactions" :key="tx.id">
+                      <td class="text-caption">{{ dateTime(tx.created_at) }}</td>
+                      <td><span class="badge">{{ transactionReason(tx.reason) }}</span></td>
+                      <td class="text-mono" :class="tx.amount >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(tx.amount) }}</td>
+                      <td class="text-mono">{{ creditAmount(tx.balance_after) }}</td>
+                      <td class="text-caption">{{ transactionNote(tx) }}</td>
+                    </tr>
+                    <tr v-if="!transactions.length">
+                      <td colspan="5" class="empty-cell">{{ t('common.noData') }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Codes Section -->
+          <div class="two-col">
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">{{ t('credits.generateCodes') }}</h2>
+                <span class="card-subtitle">{{ codeForm.count }} {{ t('credits.codeCount') }}</span>
+              </div>
+              <form class="form-grid cols-3" @submit.prevent="createCodes">
+                <label class="form-field">
+                  <span class="form-label">{{ t('credits.prefix') }}</span>
+                  <input v-model.trim="codeForm.prefix" type="text" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('credits.creditsPerCode') }}</span>
+                  <input v-model.number="codeForm.credits" type="number" min="1" step="1" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('credits.quantity') }}</span>
+                  <input v-model.number="codeForm.count" type="number" min="1" max="100" step="1" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('credits.maxRedemptions') }}</span>
+                  <input v-model.number="codeForm.maxRedemptions" type="number" min="1" step="1" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('credits.validDays') }}</span>
+                  <input v-model.number="codeForm.days" type="number" min="1" step="1" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('common.note') }}</span>
+                  <input v-model.trim="codeForm.note" type="text" />
+                </label>
+                <div class="form-actions">
+                  <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('common.generate') }}</button>
+                </div>
+              </form>
+
+              <div v-if="createdCodes.length" class="created-output">
+                <div class="created-actions">
+                  <strong>{{ t('credits.thisBatch') }}</strong>
+                  <button class="btn-ghost" @click="copyCreatedCsv">{{ t('credits.copyCsv') }}</button>
+                  <button class="btn-ghost" @click="downloadCreatedCsv">{{ t('credits.downloadCsv') }}</button>
+                </div>
+                <textarea :value="createdCsv" readonly rows="6" />
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">{{ t('credits.codes') }}</h2>
+                  <span class="card-subtitle">{{ codes.length }}</span>
+                </div>
+                <button class="btn-secondary" :disabled="loading" @click="refreshCodes">{{ t('common.refresh') }}</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{{ t('credits.table.created') }}</th>
+                      <th>{{ t('credits.table.credits') }}</th>
+                      <th>{{ t('credits.table.usage') }}</th>
+                      <th>{{ t('credits.table.status') }}</th>
+                      <th>{{ t('credits.table.note') }}</th>
+                      <th>{{ t('credits.table.actions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="code in codes" :key="code.id">
+                      <td class="text-caption">{{ dateTime(code.createdAt) }}</td>
+                      <td class="text-mono">{{ code.credits }}</td>
+                      <td class="text-mono">{{ code.redeemedCount }} / {{ code.maxRedemptions }}</td>
+                      <td><span class="badge" :class="{ positive: codeStatus(code) === t('credits.codeStatus.available'), negative: codeStatus(code) !== t('credits.codeStatus.available') }">{{ codeStatus(code) }}</span></td>
+                      <td class="text-caption">{{ code.note || '-' }}</td>
+                      <td>
+                        <div class="action-group">
+                          <button class="btn-ghost" :disabled="codeRedemptionsLoading && selectedCode?.id === code.id" @click="viewCodeRedemptions(code)">{{ t('common.details') }}</button>
+                          <button class="btn-ghost" :disabled="actionLoading" @click="setCodeDisabled(code, !code.disabledAt)">{{ code.disabledAt ? t('common.restore') : t('common.disable') }}</button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr v-if="!codes.length">
+                      <td colspan="6" class="empty-cell">{{ t('common.noData') }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-if="selectedCode" class="created-output">
+                <div class="created-actions">
+                  <strong>{{ t('credits.codeRedemptions') }}</strong>
+                  <span class="text-muted">{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
+                  <button class="btn-ghost" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode!)">{{ t('common.refresh') }}</button>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{{ t('credits.table.time') }}</th>
+                        <th>{{ t('credits.table.user') }}</th>
+                        <th>{{ t('credits.table.credits') }}</th>
+                        <th>{{ t('credits.table.balance') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="r in codeRedemptions" :key="r.id">
+                        <td class="text-caption">{{ dateTime(r.redeemedAt) }}</td>
+                        <td>{{ r.email || shortId(r.userId) }}</td>
+                        <td class="text-mono">{{ r.credits }}</td>
+                        <td class="text-mono">{{ r.balanceAfter ?? '-' }}</td>
+                      </tr>
+                      <tr v-if="!codeRedemptions.length">
+                        <td colspan="4" class="empty-cell">{{ codeRedemptionsLoading ? t('common.loading') : t('common.noData') }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== IMAGES ===== -->
+        <section v-else-if="activeView === 'images'" class="view-section">
+          <AdminImagesPanel
+            v-model:selected-ids="selectedImageIds"
+            v-model:visibility-filter="imageVisibilityFilter"
+            v-model:funding-filter="imageFundingFilter"
+            v-model:user-filter="imageUserFilter"
+            v-model:query="imageQuery"
+            :images="adminImages"
+            :loading="imagesLoading"
+            :bulk-loading="imageBulkLoading"
+            :action-id="imageActionId"
+            @refresh="refreshImages"
+            @set-visibility="setImageVisibility"
+            @bulk-archive="bulkArchiveImages"
+            @bulk-delete="bulkDeleteImages"
+          />
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('images.storageOverview') }}</h2>
+                <span class="card-subtitle">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span>
+              </div>
+              <button class="btn-secondary" :disabled="storageOverviewLoading" @click="refreshStorageOverview">{{ t('common.refresh') }}</button>
+            </div>
+            <div v-if="storageOverviewLoading" class="empty-state">{{ t('images.statistics') }}</div>
+            <div v-else-if="storageOverview" class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{ t('images.storageLocation') }}</th>
+                    <th>{{ t('images.imageCount') }}</th>
+                    <th>{{ t('images.totalSize') }}</th>
+                    <th>{{ t('images.avgSize') }}</th>
+                    <th>{{ t('images.totalCredits') }}</th>
+                    <th>{{ t('images.sizePercent') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="stat in storageOverview.byLocation" :key="stat.location">
+                    <td>{{ storageLocationLabel(stat.location) }}</td>
+                    <td class="text-mono">{{ stat.imageCount }}</td>
+                    <td class="text-mono">{{ formatByteSize(stat.totalBytes) }}</td>
+                    <td class="text-mono">{{ formatByteSize(stat.averageBytes) }}</td>
+                    <td class="text-mono">{{ formatCreditAmount(stat.totalCreditCost) }}</td>
+                    <td>{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== MONITOR ===== -->
+        <section v-else-if="activeView === 'monitor'" class="view-section">
+          <AdminImageAttemptsPanel
+            v-model:status-filter="attemptStatusFilter"
+            v-model:user-filter="attemptUserFilter"
+            v-model:error-type-filter="attemptErrorTypeFilter"
+            v-model:http-status-filter="attemptHttpStatusFilter"
+            v-model:hours-filter="attemptHoursFilter"
+            :attempts="imageAttempts"
+            :overview="imageAttemptOverview"
+            :loading="attemptsLoading"
+            @refresh="refreshAttempts"
+          />
+        </section>
+
+        <!-- ===== SYSTEM ===== -->
+        <section v-else-if="activeView === 'system'" class="view-section">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('system.title') }}</h2>
+                <span class="card-subtitle">{{ systemGeneratedAt }}</span>
+              </div>
+              <div class="header-actions">
+                <span class="status-pill" :class="systemStatus?.status || 'warning'">{{ systemStatusLabel }}</span>
+                <button class="btn-secondary" :disabled="systemLoading" @click="refreshSystem">{{ t('common.refresh') }}</button>
+              </div>
+            </div>
+            <div class="kpi-grid cols-5">
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.supabaseBackend') }}</span>
+                <strong class="kpi-value sm" :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'text-positive' : 'text-negative') : ''">
+                  {{ systemStatus ? (systemStatus.config.supabase.adminConfigured ? t('system.ready') : t('system.notReady')) : '-' }}
+                </strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.imageService') }}</span>
+                <strong class="kpi-value sm" :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'text-positive' : 'text-negative') : ''">
+                  {{ systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? t('system.ready') : t('system.notReady')) : '-' }}
+                </strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.adminRules') }}</span>
+                <strong class="kpi-value sm">{{ systemStatus ? systemStatus.config.adminUsers.databaseCount + systemStatus.config.adminUsers.envUserIdCount + systemStatus.config.adminUsers.envEmailCount : '-' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.imageMonitor') }}</span>
+                <strong class="kpi-value sm">{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? t('system.enabled') : t('system.disabled')) : '-' }}</strong>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.imageCostPerImage') }}</span>
+                <strong class="kpi-value sm">{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
+              </div>
+            </div>
+
+            <!-- Storage Stats -->
+            <div class="section-divider" />
+            <h3 class="section-label">{{ t('system.storageStats') }}</h3>
+            <div class="kpi-grid cols-4">
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.cosStorage') }}</span>
+                <strong class="kpi-value sm">{{ overview?.imageCost?.cosImageCount ?? 0 }} 张</strong>
+                <span class="kpi-sub">{{ t('system.avgPerImage') }} {{ (overview?.imageCost?.averageStoredMb ?? 0).toFixed(2) }} MB</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.supabaseStorage') }}</span>
+                <strong class="kpi-value sm">{{ overview?.imageCost?.supabaseImageCount ?? 0 }} 张</strong>
+                <span class="kpi-sub">{{ t('system.sampleDays') }} {{ overview?.imageCost?.sampleDays ?? 0 }} 天</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.estimatedMonthlyCost') }}</span>
+                <strong class="kpi-value sm">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
+                <span class="kpi-sub">{{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-label">{{ t('system.totalImages') }}</span>
+                <strong class="kpi-value sm">{{ (overview?.imageCost?.cosImageCount ?? 0) + (overview?.imageCost?.supabaseImageCount ?? 0) }} 张</strong>
+                <span class="kpi-sub">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}/张</span>
+              </div>
+            </div>
+
+            <!-- Warnings -->
+            <div class="section-divider" />
+            <h3 class="section-label">{{ t('system.warnings') }}</h3>
+            <div class="warning-list">
+              <span v-for="warning in systemStatus?.warnings || []" :key="warning" class="warning-item">{{ warning }}</span>
+              <span v-if="systemStatus && !systemStatus.warnings.length" class="warning-item ok">{{ t('system.noWarnings') }}</span>
+              <span v-else-if="!systemStatus" class="warning-item">{{ t('system.waitingCheck') }}</span>
+            </div>
+
+            <!-- System Table -->
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{ t('system.table.module') }}</th>
+                    <th>{{ t('system.table.status') }}</th>
+                    <th>{{ t('system.table.records') }}</th>
+                    <th>{{ t('system.table.message') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="table in systemStatus?.data.tables || []" :key="table.key">
+                    <td>{{ table.label }}</td>
+                    <td :class="table.status === 'ok' ? 'text-positive' : 'text-negative'">{{ tableStatusLabel(table.status) }}</td>
+                    <td class="text-mono">{{ table.count ?? '-' }}</td>
+                    <td class="text-caption">{{ table.message }}</td>
+                  </tr>
+                  <tr v-if="!(systemStatus?.data.tables || []).length">
+                    <td colspan="4" class="empty-cell">{{ t('system.noResults') }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== ANNOUNCEMENTS ===== -->
+        <section v-else-if="activeView === 'announcements'" class="view-section">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">{{ t('announcements.title') }}</h2>
+                <span class="card-subtitle">{{ announcements.length }}</span>
+              </div>
+              <button class="btn-secondary" :disabled="announcementsLoading" @click="refreshAnnouncements">{{ t('common.refresh') }}</button>
+            </div>
+
+            <form class="announcement-form" @submit.prevent="createAnnouncement">
+              <label class="form-field">
+                <span class="form-label">{{ t('announcements.titleLabel') }}</span>
+                <input v-model.trim="announcementForm.title" type="text" maxlength="120" required />
+              </label>
+              <label class="form-field full">
+                <span class="form-label">{{ t('announcements.bodyLabel') }}</span>
+                <textarea v-model.trim="announcementForm.body" rows="4" maxlength="4000" required />
+              </label>
+              <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('announcements.publishBtn') }}</button>
+            </form>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{ t('announcements.table.updated') }}</th>
+                    <th>{{ t('announcements.table.status') }}</th>
+                    <th>{{ t('announcements.table.title') }}</th>
+                    <th>{{ t('announcements.table.body') }}</th>
+                    <th>{{ t('announcements.table.actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="ann in announcements" :key="ann.id">
+                    <td class="text-caption">{{ dateTime(ann.updatedAt) }}</td>
+                    <td><span class="badge" :class="ann.status === 'published' ? 'positive' : 'muted'">{{ announcementStatusLabel(ann.status) }}</span></td>
+                    <td class="text-title">{{ ann.title }}</td>
+                    <td class="ann-body-cell">{{ ann.body }}</td>
+                    <td>
+                      <div class="action-group">
+                        <button v-if="ann.status !== 'published'" class="btn-ghost" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'published')">{{ t('common.publish') }}</button>
+                        <button v-if="ann.status !== 'archived'" class="btn-ghost" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'archived')">{{ t('common.archive') }}</button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="!announcements.length">
+                    <td colspan="5" class="empty-cell">{{ t('common.noData') }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== SETTINGS ===== -->
+        <section v-else-if="activeView === 'settings'" class="view-section">
+          <div class="two-col">
+            <!-- Runtime Config -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">{{ t('settings.runtimeConfig') }}</h2>
+                  <span class="card-subtitle">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span>
+                </div>
+                <button class="btn-secondary" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</button>
+              </div>
+
+              <form class="settings-form" @submit.prevent="saveSettings">
+                <div class="form-field">
+                  <span class="form-label">{{ t('settings.imagePrice') }}</span>
+                  <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required />
+                  <div class="cost-preview">
+                    <span v-for="item in settingsPricePreview" :key="item.label" class="cost-chip">{{ item.label }} {{ item.value }} 额度</span>
+                  </div>
+                </div>
+                <label class="form-field">
+                  <span class="form-label">{{ t('settings.responseModel') }}</span>
+                  <input v-model.trim="settingsForm.imageResponsesModel" type="text" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">{{ t('settings.imageModel') }}</span>
+                  <input v-model.trim="settingsForm.imageResponsesImageModel" type="text" />
+                </label>
+                <label class="check-row">
+                  <input v-model="settingsForm.imageAnalyticsEnabled" type="checkbox" />
+                  <span>{{ t('settings.analytics') }}</span>
+                </label>
+                <label class="check-row">
+                  <input v-model="settingsForm.imageEventsEnabled" type="checkbox" />
+                  <span>{{ t('settings.frontendEvents') }}</span>
+                </label>
+                <label class="check-row">
+                  <input v-model="settingsForm.canvasContextEnabled" type="checkbox" />
+                  <span>{{ t('settings.canvasContext') }}</span>
+                </label>
+                <label class="check-row">
+                  <input v-model="settingsForm.freeGenerationEnabled" type="checkbox" />
+                  <span>{{ t('settings.freeGeneration') }}</span>
+                </label>
+                <label class="check-row">
+                  <input v-model="settingsForm.guestGenerationEnabled" type="checkbox" />
+                  <span>{{ t('settings.guestGeneration') }}</span>
+                </label>
+                <button class="btn-primary" type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}</button>
+              </form>
+            </div>
+
+            <!-- Admin Users -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">{{ t('settings.adminUsers') }}</h2>
+                  <span class="card-subtitle">{{ adminRuleTotal }}</span>
+                </div>
+                <button class="btn-secondary" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</button>
+              </div>
+
+              <form v-if="canManageAdminUsers" class="inline-form cols-4" @submit.prevent="createAdminRule">
+                <input v-model.trim="adminUserForm.userId" type="text" :placeholder="t('settings.adminUserId')" />
+                <input v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" />
+                <input v-model.trim="adminUserForm.note" type="text" :placeholder="t('settings.adminNote')" />
+                <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('common.add') }}</button>
+              </form>
+              <p v-else class="hint-text">{{ t('settings.noManagePermission') }}</p>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{{ t('settings.adminTable.account') }}</th>
+                      <th>{{ t('settings.adminTable.level') }}</th>
+                      <th>{{ t('settings.adminTable.source') }}</th>
+                      <th>{{ t('settings.adminTable.status') }}</th>
+                      <th>{{ t('settings.adminTable.updated') }}</th>
+                      <th>{{ t('settings.adminTable.actions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="rule in adminUserRules" :key="rule.id">
+                      <td>{{ adminRuleIdentity(rule) }}</td>
+                      <td><span class="badge">{{ adminRuleRoleLabel(rule) }}</span></td>
+                      <td class="text-caption">{{ adminRuleSource(rule) }}</td>
+                      <td :class="rule.enabled ? 'text-positive' : 'text-negative'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td>
+                      <td class="text-caption">{{ dateTime(rule.updatedAt) }}</td>
+                      <td>
+                        <button
+                          class="btn-ghost"
+                          :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id"
+                          @click="setAdminRuleEnabled(rule, !rule.enabled)"
+                        >
+                          {{ rule.enabled ? t('common.disable') : t('common.enable') }}
+                        </button>
+                      </td>
+                    </tr>
+                    <tr v-if="!adminUserRules.length">
+                      <td colspan="6" class="empty-cell">{{ t('settings.noRules') }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.admin-page {
-  min-height: 100vh;
-  padding: 22px;
-  background: var(--bg);
-  color: var(--text-primary);
+/* =====================================================
+   Recho AI Admin — Vercel-inspired Dashboard Design
+   ===================================================== */
+
+/* --- Seed Tokens (Light) --- */
+.admin-root {
+  --seed-bg: #ffffff;
+  --seed-fg: #171717;
+  --seed-primary: #0070f3;
+  --seed-surface: #ffffff;
+  --seed-surface-raised: #fafafa;
+  --seed-surface-sunken: #f5f5f5;
+  --seed-border: rgba(0, 0, 0, 0.08);
+  --seed-border-strong: #ebebeb;
+  --seed-muted: #666666;
+  --seed-success: #16a34a;
+  --seed-warning: #f5a623;
+  --seed-danger: #ee0000;
+  --seed-radius: 6px;
+  --seed-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --seed-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Derived tokens */
+  --fg: var(--seed-fg);
+  --fg-secondary: color-mix(in srgb, var(--seed-fg) 60%, transparent);
+  --fg-muted: var(--seed-muted);
+  --surface: var(--seed-surface);
+  --surface-raised: var(--seed-surface-raised);
+  --surface-sunken: var(--seed-surface-sunken);
+  --border: var(--seed-border);
+  --border-strong: var(--seed-border-strong);
+  --success: var(--seed-success);
+  --warning: var(--seed-warning);
+  --danger: var(--seed-danger);
+  --radius: var(--seed-radius);
+  --font: var(--seed-font);
+  --mono: var(--seed-mono);
+  --shadow-card: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04);
+  --shadow-elevated: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04), 0 8px 8px -8px rgba(0,0,0,0.04);
+  --transition: 150ms ease;
+  --sidebar-w: 240px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+
+  /* Backward-compatible aliases for child components */
+  --bg: var(--seed-bg);
+  --text-primary: var(--seed-fg);
+  --text-secondary: var(--seed-muted);
+  --text-muted: var(--seed-muted);
+  --text-link: var(--seed-primary);
+  --surface: var(--seed-surface);
+  --surface-soft: var(--seed-surface-sunken);
+  --surface-raised: var(--seed-surface-raised);
+  --border: var(--seed-border);
+  --border-strong: var(--seed-border-strong);
+  --input-bg: var(--seed-surface);
+  --header-bg: color-mix(in srgb, var(--seed-surface) 85%, transparent);
+  --bubble-bg: var(--seed-surface-sunken);
+  --hover-bg: var(--seed-surface-sunken);
+  --accent: var(--seed-success);
+  --accent-strong: var(--seed-success);
+  --accent-soft: color-mix(in srgb, var(--seed-success) 10%, transparent);
+  --info: var(--seed-primary);
+  --warn: var(--seed-warning);
+  --danger: var(--seed-danger);
+  --shadow-sm: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04), 0 8px 8px -8px rgba(0,0,0,0.04);
 }
 
-.admin-header {
+/* --- Dark Theme --- */
+.admin-root.dark {
+  --seed-bg: #000000;
+  --seed-fg: #ededed;
+  --seed-primary: #3291ff;
+  --seed-surface: #0a0a0a;
+  --seed-surface-raised: #111111;
+  --seed-surface-sunken: #080808;
+  --seed-border: rgba(255, 255, 255, 0.08);
+  --seed-border-strong: #262626;
+  --seed-muted: #888888;
+  --seed-success: #22c55e;
+  --seed-warning: #f5a623;
+  --seed-danger: #ff5b4f;
+  --shadow-card: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2);
+  --shadow-elevated: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2), 0 8px 8px -8px rgba(0,0,0,0.16);
+
+  /* Dark backward-compatible aliases */
+  --bg: var(--seed-bg);
+  --text-primary: var(--seed-fg);
+  --text-secondary: var(--seed-muted);
+  --text-muted: var(--seed-muted);
+  --text-link: var(--seed-primary);
+  --surface: var(--seed-surface);
+  --surface-soft: var(--seed-surface-sunken);
+  --surface-raised: var(--seed-surface-raised);
+  --border: var(--seed-border);
+  --border-strong: var(--seed-border-strong);
+  --input-bg: var(--seed-surface);
+  --header-bg: color-mix(in srgb, var(--seed-surface) 85%, transparent);
+  --bubble-bg: var(--seed-surface-sunken);
+  --hover-bg: var(--seed-surface-sunken);
+  --accent: var(--seed-success);
+  --accent-strong: var(--seed-success);
+  --accent-soft: color-mix(in srgb, var(--seed-success) 10%, transparent);
+  --info: var(--seed-primary);
+  --warn: var(--seed-warning);
+  --danger: var(--seed-danger);
+  --shadow-sm: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2);
+  --shadow-md: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2), 0 8px 8px -8px rgba(0,0,0,0.16);
+}
+
+/* --- Root Layout --- */
+.admin-root {
+  display: flex;
+  min-height: 100vh;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--seed-bg);
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--transition), color var(--transition);
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  z-index: 20;
+  transition: width var(--transition);
+  overflow: hidden;
+}
+
+.sidebar.collapsed {
+  width: var(--sidebar-w-collapsed);
+}
+
+.sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  max-width: 1360px;
-  margin: 0 auto 18px;
+  height: var(--topbar-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.admin-eyebrow,
-.overview-header span,
-.overview-grid span,
-.panel-header span,
-.metric-grid span,
-.adjust-form span,
-.code-form span,
-.settings-form span,
-.admin-user-form span,
-.announcement-form span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.admin-header h1 {
-  font-size: 28px;
-  line-height: 1.2;
-}
-
-.admin-nav {
+.brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
 }
 
-.admin-mode-switch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-width: 1360px;
-  margin: 0 auto 10px;
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--fg);
+  flex-shrink: 0;
 }
 
-.admin-mode-switch button {
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 800;
-  cursor: pointer;
+.brand-text {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
 }
 
-.admin-mode-switch button:hover {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
-.admin-mode-switch button.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.admin-nav a,
-.admin-state a,
-.overview-header button,
-.ledger-controls button,
-.image-controls button,
-.attempt-controls button,
-.panel-header button,
-.search-row button,
-.adjust-form button,
-.code-form button,
-.settings-form button,
-.admin-user-form button,
-.announcement-form button,
-.created-actions button,
-.table-action {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 800;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.admin-nav a:hover,
-.admin-state a:hover,
-.overview-header button:hover:not(:disabled),
-.ledger-controls button:hover:not(:disabled),
-.image-controls button:hover:not(:disabled),
-.attempt-controls button:hover:not(:disabled),
-.panel-header button:hover:not(:disabled),
-.search-row button:hover:not(:disabled),
-.adjust-form button:hover:not(:disabled),
-.code-form button:hover:not(:disabled),
-.settings-form button:hover:not(:disabled),
-.admin-user-form button:hover:not(:disabled),
-.announcement-form button:hover:not(:disabled),
-.created-actions button:hover,
-.table-action:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.admin-state {
+.sidebar-toggle {
   display: grid;
   place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  background: var(--surface-sunken);
+  color: var(--fg);
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  min-height: 360px;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 32px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--transition), color var(--transition);
+}
+
+.nav-item:hover {
+  background: var(--surface-sunken);
+  color: var(--fg);
+}
+
+.nav-item.active {
+  background: var(--surface-sunken);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.nav-item svg {
+  flex-shrink: 0;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.sidebar-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sidebar-action:hover {
+  background: var(--surface-sunken);
+  color: var(--fg);
+}
+
+.sidebar-links {
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.ext-link {
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.ext-link:hover {
+  color: var(--fg);
+}
+
+.user-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  flex-shrink: 0;
+}
+
+.user-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-email {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-role {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* --- Main Area --- */
+.main-area {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  transition: margin-left var(--transition);
+  min-width: 0;
+}
+
+.sidebar.collapsed ~ .main-area {
+  margin-left: var(--sidebar-w-collapsed);
+}
+
+/* --- Topbar --- */
+.topbar {
+  position: sticky;
+  top: 0;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.page-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.32px;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+
+.mode-switch button {
+  padding: 4px 12px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mode-switch button.active {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-card);
+}
+
+/* --- Auth States --- */
+.auth-state {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 400px;
   text-align: center;
 }
 
 .spinner {
-  width: 22px;
-  height: 22px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 999px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--seed-primary);
+  border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
@@ -1811,610 +2126,374 @@ button:disabled {
   to { transform: rotate(360deg); }
 }
 
-.admin-feedback {
-  max-width: 1360px;
-  min-height: 34px;
-  margin: 0 auto 10px;
+/* --- Content --- */
+.content {
+  padding: 24px;
+  max-width: 1400px;
 }
 
-.admin-message {
+.view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- Feedback --- */
+.feedback {
+  min-height: 0;
+}
+
+.feedback-msg {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
-  border-radius: 7px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--radius);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 500;
+  margin-bottom: 8px;
 }
 
-.admin-message.error {
-  background: rgba(220, 38, 38, 0.1);
+.feedback-msg.error {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
-.admin-message.success {
-  background: var(--accent-soft);
-  color: var(--accent);
+.feedback-msg.success {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
 }
 
-.overview-panel {
-  max-width: 1360px;
-  margin: 0 auto 14px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+/* --- Cards --- */
+.card {
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
 }
 
-.overview-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.overview-header strong {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 10px;
-}
-
-.overview-grid div {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.overview-grid strong {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 18px;
-}
-
-.image-cost-panel {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.image-cost-header {
+.card-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-.image-cost-header > span,
-.image-cost-grid span {
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.32px;
+}
+
+.card-subtitle {
   display: block;
-  color: var(--text-secondary);
+  margin-top: 2px;
   font-size: 12px;
-  font-weight: 800;
+  color: var(--fg-muted);
 }
 
-.image-cost-header strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 22px;
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.image-cost-grid {
+/* --- KPI Grid --- */
+.kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 10px;
-}
-
-.image-cost-grid div {
-  min-width: 0;
-  padding: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--border);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
-.image-cost-grid strong {
+.kpi-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.kpi-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+.kpi-grid.cols-6 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+.kpi-item {
+  padding: 12px 14px;
+  background: var(--surface);
+}
+
+.kpi-label {
   display: block;
-  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.kpi-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.48px;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 16px;
 }
 
-.admin-grid {
+.kpi-value.sm {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kpi-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.cost-big {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.96px;
+  white-space: nowrap;
+}
+
+.cost-big small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+/* --- Two Column Layout --- */
+.two-col {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 14px;
-  max-width: 1360px;
-  margin: 0 auto 14px;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: 16px;
 }
 
-.codes-grid {
-  grid-template-columns: minmax(360px, 0.8fr) minmax(0, 1.2fr);
-}
-
-.settings-grid {
-  grid-template-columns: minmax(360px, 0.95fr) minmax(0, 1.05fr);
-}
-
-.admin-panel {
-  min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.ledger-panel,
-.images-panel,
-.system-panel,
-.attempts-panel,
-.announcements-panel {
-  max-width: 1360px;
-  margin: 0 auto 14px;
-}
-
-.ledger-header,
-.image-header,
-.system-header,
-.attempt-header,
-.announcement-header {
-  align-items: flex-start;
-}
-
-.ledger-controls,
-.image-controls,
-.system-controls,
-.attempt-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.image-controls input {
-  width: 180px;
-  min-width: 140px;
-}
-
-.system-status-pill {
+/* --- Buttons --- */
+.btn-primary {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.system-status-pill.ok {
-  border-color: rgba(16, 185, 129, 0.3);
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--accent);
-}
-
-.system-status-pill.warning {
-  border-color: rgba(245, 158, 11, 0.32);
-  background: rgba(245, 158, 11, 0.1);
-  color: #b45309;
-}
-
-.system-status-pill.error {
-  border-color: rgba(239, 68, 68, 0.32);
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger);
-}
-
-.panel-header,
-.created-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.panel-header strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 18px;
-}
-
-.search-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-input,
-select,
-textarea {
-  width: 100%;
-  min-height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--input-bg);
-  color: var(--text-primary);
-  padding: 7px 9px;
-}
-
-select {
-  min-width: 130px;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--fg);
+  color: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  transition: opacity var(--transition);
+}
+
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.4; cursor: default; }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  transition: background var(--transition);
+}
+
+.btn-secondary:hover { background: var(--surface-sunken); }
+.btn-secondary:disabled { opacity: 0.4; cursor: default; }
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-ghost:hover { background: var(--surface-sunken); color: var(--fg); }
+.btn-ghost:disabled { opacity: 0.4; cursor: default; }
+
+button:disabled { cursor: default; }
+
+/* --- Inputs --- */
+input, select, textarea {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--transition);
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--seed-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--seed-primary) 20%, transparent);
+}
+
+.input-sm {
+  max-width: 140px;
+  min-height: 30px;
+  font-size: 12px;
 }
 
 textarea {
   resize: vertical;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
 }
 
-.user-list {
-  display: grid;
-  gap: 6px;
-  max-height: 470px;
-  overflow: auto;
+select {
+  cursor: pointer;
+  min-width: 100px;
 }
 
-.user-row {
+/* --- Filter Group --- */
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* --- Search Row --- */
+.search-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-  color: var(--text-primary);
-  text-align: left;
+  margin-bottom: 12px;
 }
 
-.user-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* --- Inline Form --- */
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
-.user-row.active {
-  border-color: rgba(37, 99, 235, 0.42);
-  background: rgba(37, 99, 235, 0.08);
-}
+.inline-form > * { flex: 1; min-width: 100px; }
+.inline-form > button { flex: 0 0 auto; }
 
-.metric-grid {
+/* --- Form Grid --- */
+.form-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
-.metric-grid div {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
+.form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.metric-grid strong {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 18px;
+.form-field.full { grid-column: 1 / -1; }
+
+.form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
 }
 
-.adjust-form,
-.code-form,
-.settings-form,
-.admin-user-form,
-.announcement-form {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
-  align-items: end;
-  gap: 10px;
-  margin-bottom: 14px;
+.form-actions {
+  display: flex;
+  align-items: flex-end;
 }
 
-.code-form {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
+/* --- Settings Form --- */
 .settings-form {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.cost-setting {
-  display: grid;
-  gap: 8px;
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  cursor: pointer;
+}
+
+.check-row input[type="checkbox"] {
+  width: auto;
+  min-height: auto;
+  box-shadow: none;
+}
+
+.check-row span {
+  font-size: 13px;
+  color: var(--fg);
 }
 
 .cost-preview {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 6px;
 }
 
-.cost-preview span {
-  min-height: 26px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.admin-user-form {
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
-}
-
-.code-form .wide,
-.admin-user-form .wide,
-.announcement-form .wide {
-  grid-column: span 2;
-}
-
-.announcement-form {
-  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr) auto;
-}
-
-.panel-note {
-  margin: 0 0 12px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.code-form button,
-.settings-form button,
-.admin-user-form button,
-.announcement-form button {
-  align-self: end;
-}
-
-.settings-form .check-row {
-  display: flex;
+.cost-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 7px 9px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 
-.settings-form .check-row input {
-  width: auto;
-  min-height: auto;
+/* --- Announcement Form --- */
+.announcement-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
-.settings-form .check-row span {
-  color: var(--text-primary);
-}
-
+/* --- Tables --- */
 .table-wrap {
   width: 100%;
-  overflow: auto;
+  overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.system-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.system-grid div {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.storage-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.storage-stats-grid > div {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.storage-stats-grid span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.storage-stats-grid strong {
-  display: block;
-  margin-top: 3px;
-  font-size: 16px;
-}
-
-.storage-stats-grid .storage-sub {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.system-grid span,
-.system-warnings span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.system-grid strong {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 18px;
-}
-
-.system-warnings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.system-warnings span {
-  min-height: 26px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.system-table {
-  min-width: 620px;
-}
-
-.admin-rule-table {
-  min-width: 680px;
-}
-
-.announcement-table-wrap table {
-  min-width: 860px;
-}
-
-.announcement-body-cell {
-  max-width: 520px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.image-table-wrap {
-  max-height: 560px;
-}
-
-.image-table {
-  min-width: 1080px;
-}
-
-.image-thumb {
-  display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.image-thumb.empty {
-  display: grid;
-  place-items: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.prompt-cell {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.table-muted {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.attempt-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.attempt-metrics div {
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.attempt-metrics span,
-.attempt-error-list span {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.attempt-metrics strong {
-  display: block;
-  margin-top: 3px;
-  font-size: 18px;
-}
-
-.attempt-error-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.attempt-error-list span {
-  min-height: 26px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.attempt-table {
-  min-width: 920px;
-}
-
-.attempt-error-cell {
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border-radius: var(--radius);
 }
 
 table {
@@ -2423,120 +2502,251 @@ table {
   font-size: 13px;
 }
 
-th,
-td {
-  padding: 9px 10px;
+th, td {
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: middle;
 }
 
 th {
-  background: var(--surface-soft);
-  color: var(--text-secondary);
+  background: var(--surface-sunken);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface-sunken); }
+
+.empty-cell {
+  text-align: center;
+  color: var(--fg-muted);
+  padding: 24px 12px;
+}
+
+.ann-body-cell {
+  max-width: 400px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: 12px;
-  font-weight: 800;
+  color: var(--fg-secondary);
 }
 
-tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.positive {
-  color: var(--accent);
-  font-weight: 800;
-}
-
-.negative {
-  color: var(--danger);
-  font-weight: 800;
-}
-
-.created-codes {
-  margin-top: 12px;
-}
-
-.code-redemptions {
-  margin-top: 12px;
-}
-
-.code-actions {
+/* --- User List --- */
+.user-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 480px;
+  overflow-y: auto;
 }
 
-.code-redemption-table {
-  min-width: 620px;
+.user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.user-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-sunken);
+}
+
+.user-row.active {
+  border-color: var(--seed-primary);
+  background: color-mix(in srgb, var(--seed-primary) 6%, transparent);
+}
+
+/* --- Badges --- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface-sunken);
+  color: var(--fg-secondary);
+  border: 1px solid var(--border);
+}
+
+.badge.positive {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 20%, transparent);
+}
+
+.badge.negative {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.badge.muted {
+  background: var(--surface-sunken);
+  color: var(--fg-muted);
+}
+
+/* --- Status Pill --- */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--fg-muted);
+}
+
+.status-pill.ok {
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+}
+
+.status-pill.warning {
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: #b45309;
+}
+
+.status-pill.error {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+/* --- Action Group --- */
+.action-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* --- Created Output --- */
+.created-output {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .created-actions {
-  justify-content: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
-@media (max-width: 980px) {
-  .admin-grid,
-  .codes-grid,
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .overview-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .attempt-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .system-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .storage-stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+/* --- Warning List --- */
+.warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
 }
 
-@media (max-width: 680px) {
-  .admin-page {
-    padding: 14px;
-  }
+.warning-item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
+  font-size: 12px;
+  color: var(--warning);
+}
 
-  .admin-header,
-  .adjust-form,
-  .code-form,
-  .settings-form,
-  .admin-user-form,
-  .announcement-form {
-    grid-template-columns: 1fr;
-  }
+.warning-item.ok {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success) 20%, transparent);
+  color: var(--success);
+}
 
-  .admin-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+/* --- Section Divider --- */
+.section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
+}
 
-  .metric-grid {
-    grid-template-columns: 1fr;
-  }
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
 
-  .overview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+/* --- Utility --- */
+.text-positive { color: var(--success) !important; font-weight: 600; }
+.text-negative { color: var(--danger) !important; font-weight: 600; }
+.text-muted { color: var(--fg-muted); }
+.text-caption { font-size: 12px; color: var(--fg-muted); }
+.text-mono { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.text-title { font-weight: 600; }
+.empty-state { padding: 24px; text-align: center; color: var(--fg-muted); }
+.hint-text { font-size: 13px; color: var(--fg-muted); margin-bottom: 12px; }
 
-  .attempt-metrics {
-    grid-template-columns: 1fr;
+/* --- Responsive --- */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: var(--sidebar-w-collapsed);
   }
+  .main-area {
+    margin-left: var(--sidebar-w-collapsed);
+  }
+  .sidebar .brand-text,
+  .sidebar .nav-label,
+  .sidebar .sidebar-action span,
+  .sidebar .sidebar-links,
+  .sidebar .user-badge {
+    display: none;
+  }
+  .two-col { grid-template-columns: 1fr; }
+  .kpi-grid.cols-4,
+  .kpi-grid.cols-5 { grid-template-columns: repeat(3, 1fr); }
+}
 
-  .code-form .wide,
-  .admin-user-form .wide,
-  .announcement-form .wide {
-    grid-column: auto;
-  }
+@media (max-width: 768px) {
+  .content { padding: 16px; }
+  .topbar { padding: 0 16px; }
+  .kpi-grid,
+  .kpi-grid.cols-4,
+  .kpi-grid.cols-5,
+  .kpi-grid.cols-6 { grid-template-columns: repeat(2, 1fr); }
+  .form-grid.cols-3 { grid-template-columns: 1fr; }
+  .inline-form { flex-direction: column; }
+  .inline-form > * { min-width: auto; }
+  .filter-group { flex-direction: column; align-items: stretch; }
+  .filter-group select, .filter-group input { max-width: none; }
 }
 </style>

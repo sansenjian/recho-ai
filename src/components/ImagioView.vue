@@ -291,7 +291,7 @@ async function handleGenerate() {
   flex: 1;
   height: 100%;
   min-height: 0;
-  background: #f6f8fb;
+  background: hsl(var(--secondary));
 }
 
 .imagio-main {
@@ -300,23 +300,29 @@ async function handleGenerate() {
   flex-direction: column;
   min-width: 0;
   overflow-y: auto;
-  padding: 24px;
+  padding: 24px 28px;
   min-height: 0;
 }
 
 .prompt-area {
-  margin-top: auto;
+  width: min(920px, 100%);
+  margin: 0 auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
 }
 
 .prompt-input {
   width: 100%;
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: #fff;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--background));
   font-size: 14px;
   line-height: 1.7;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   resize: vertical;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
@@ -324,12 +330,12 @@ async function handleGenerate() {
 }
 
 .prompt-input::placeholder {
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
 }
 
 .prompt-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
 }
 
 .prompt-input:disabled {
@@ -351,18 +357,18 @@ async function handleGenerate() {
   gap: 7px;
   min-height: 36px;
   padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-primary);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
 }
 
 .reference-add:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
+  border-color: hsl(var(--ring));
+  background: hsl(var(--accent));
 }
 
 .reference-add:disabled {
@@ -387,10 +393,10 @@ async function handleGenerate() {
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
   overflow: hidden;
-  background: #fff;
+  background: hsl(var(--card));
 }
 
 .reference-item img {
@@ -410,21 +416,21 @@ async function handleGenerate() {
   width: 20px;
   height: 20px;
   border: 0;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
+  border-radius: var(--radius-sm, 6px);
+  background: hsl(var(--foreground) / 0.76);
+  color: hsl(var(--background));
   cursor: pointer;
 }
 
 .reference-hint {
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
 }
 
 .reference-error {
   margin: 0 0 4px;
-  color: var(--danger);
+  color: hsl(var(--destructive));
   font-size: 12px;
   font-weight: 700;
 }
@@ -434,9 +440,9 @@ async function handleGenerate() {
   display: none;
   margin-top: 18px;
   padding: 16px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
 }
 
 .param-group {
@@ -450,7 +456,7 @@ async function handleGenerate() {
 .param-group label {
   display: block;
   margin-bottom: 8px;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
 }
@@ -464,10 +470,10 @@ async function handleGenerate() {
 .param-buttons button {
   min-height: 30px;
   padding: 4px 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--text-secondary);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
   font-family: inherit;
@@ -476,18 +482,18 @@ async function handleGenerate() {
 }
 
 .param-buttons button:hover {
-  border-color: var(--text-muted);
-  color: var(--text-primary);
+  border-color: hsl(var(--ring));
+  color: hsl(var(--foreground));
 }
 
 .param-buttons button.active {
-  background: #0b0f14;
-  color: #fff;
-  border-color: #0b0f14;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
 }
 
-/* Narrow viewport: show inline params */
-@media (max-width: 960px) {
+/* Match ImageCanvas settings-sidebar collapse breakpoint. */
+@media (max-width: 1180px) {
   .inline-params {
     display: block;
   }
@@ -505,7 +511,7 @@ async function handleGenerate() {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
 }
@@ -513,10 +519,10 @@ async function handleGenerate() {
 .generation-count button {
   min-height: 30px;
   padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-secondary);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -525,22 +531,22 @@ async function handleGenerate() {
 }
 
 .generation-count button:hover {
-  border-color: var(--text-muted);
-  color: var(--text-primary);
+  border-color: hsl(var(--ring));
+  color: hsl(var(--foreground));
 }
 
 .generation-count button.active {
-  background: #4b5563;
-  color: #fff;
-  border-color: #4b5563;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
 }
 
 .generation-count .count-fixed {
   min-height: 30px;
   padding: 4px 12px;
-  border-radius: 8px;
-  background: #eef1f4;
-  color: var(--text-muted);
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
 }
@@ -552,9 +558,9 @@ async function handleGenerate() {
   min-height: 44px;
   padding: 0 26px;
   border: 0;
-  border-radius: 12px;
-  background: #4b5563;
-  color: #fff;
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
@@ -563,7 +569,7 @@ async function handleGenerate() {
 }
 
 .generate-btn:hover:not(:disabled) {
-  background: #374151;
+  background: hsl(var(--primary) / 0.9);
 }
 
 .generate-btn:active:not(:disabled) {
@@ -573,5 +579,83 @@ async function handleGenerate() {
 .generate-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .imagio-main {
+    padding: 12px;
+  }
+
+  .prompt-area {
+    padding: 14px;
+  }
+
+  .reference-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .reference-add {
+    justify-content: center;
+    min-height: 40px;
+  }
+
+  .reference-list {
+    width: 100%;
+  }
+
+  .prompt-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .generation-count {
+    flex-wrap: wrap;
+  }
+
+  .generation-count span:first-child {
+    width: 100%;
+  }
+
+  .generation-count button,
+  .generation-count .count-fixed,
+  .generate-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .generate-btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 460px) {
+  .imagio-main {
+    padding: 8px;
+  }
+
+  .prompt-area {
+    padding: 12px;
+  }
+
+  .prompt-input {
+    min-height: 120px;
+    font-size: 13px;
+  }
+
+  .inline-params {
+    padding: 12px;
+  }
+
+  .param-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .param-buttons button {
+    min-width: 0;
+    padding: 4px 8px;
+  }
 }
 </style>
