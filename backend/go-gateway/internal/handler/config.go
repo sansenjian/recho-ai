@@ -1,17 +1,30 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"go-gateway/internal/config"
 	"go-gateway/internal/pkg/response"
+	"go-gateway/internal/service"
 )
 
-type ConfigHandler struct{}
+type appConfigProvider interface {
+	PublicConfig(ctx context.Context) (service.PublicAppConfig, error)
+}
 
-func NewConfigHandler() *ConfigHandler {
-	return &ConfigHandler{}
+type configLogger interface {
+	Printf(format string, v ...any)
+}
+
+type ConfigHandler struct {
+	appSettings appConfigProvider
+	logger      configLogger
+}
+
+func NewConfigHandler(appSettings appConfigProvider, logger configLogger) *ConfigHandler {
+	return &ConfigHandler{appSettings: appSettings, logger: logger}
 }
 
 func (h *ConfigHandler) Supabase(w http.ResponseWriter, r *http.Request) {
@@ -29,13 +42,18 @@ func (h *ConfigHandler) Supabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigHandler) App(w http.ResponseWriter, r *http.Request) {
-	response.JSON(w, http.StatusOK, map[string]any{
-		"imageEventsEnabled":     config.ImageEventsEnabled,
-		"canvasContextEnabled":   config.CanvasContextEnabled,
-		"guestGenerationEnabled": config.GuestGenerationEnabled,
-		"availableImageModels":   []any{},
-		"defaultImageModel":      config.ImageResponsesImageModel,
-	})
+	appConfig := service.DefaultPublicAppConfig()
+	if h.appSettings != nil {
+		next, err := h.appSettings.PublicConfig(r.Context())
+		if err != nil {
+			if h.logger != nil {
+				h.logger.Printf("Warning: failed to load app settings: %v", err)
+			}
+		} else {
+			appConfig = next
+		}
+	}
+	response.JSON(w, http.StatusOK, appConfig)
 }
 
 func (h *ConfigHandler) RegisterRoutes(r chi.Router) {
