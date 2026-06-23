@@ -16,11 +16,15 @@ const theme = ref<Theme>(getStoredTheme())
 
 function applyTheme(t: Theme) {
   const root = document.documentElement
+  root.classList.remove('light', 'dark')
   if (t === 'system') {
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     root.classList.toggle('dark', isDark)
+    root.classList.toggle('light', !isDark)
+  } else if (t === 'light') {
+    root.classList.add('light')
   } else {
-    root.classList.toggle('dark', t === 'dark')
+    root.classList.add('dark')
   }
 }
 

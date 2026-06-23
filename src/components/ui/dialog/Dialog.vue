@@ -21,8 +21,8 @@ function close() {
   emit('update:open', false)
 }
 
-function onOverlayClick(e: MouseEvent) {
-  if (e.target === e.currentTarget) close()
+function onOverlayClick() {
+  close()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -52,10 +52,9 @@ watch(isOpen, (val) => {
       <div
         v-if="isOpen"
         class="fixed inset-0 z-50 flex items-center justify-center p-4"
-        @click="onOverlayClick"
       >
         <!-- Overlay -->
-        <div class="fixed inset-0 bg-black/40 backdrop-blur-sm" />
+        <div class="fixed inset-0 bg-black/40 backdrop-blur-sm" @click="onOverlayClick" />
 
         <!-- Content -->
         <div

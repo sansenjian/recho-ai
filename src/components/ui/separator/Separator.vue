@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const delegatedProps = computed(() => {
-  const { class: _, ...otherProps } = props
+  const { class: _, orientation: _orientation, decorative: _decorative, ...otherProps } = props
   return otherProps
 })
 </script>
@@ -17,6 +17,7 @@ const delegatedProps = computed(() => {
 <template>
   <div
     v-bind="delegatedProps"
+    :aria-hidden="decorative ? true : undefined"
     :class="
       cn(
         'shrink-0 bg-border',

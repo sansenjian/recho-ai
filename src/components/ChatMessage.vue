@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 const props = defineProps<{
   msg: Message
   copyFeedback?: boolean
+  assistantIndex?: number
 }>()
 
 defineEmits<{
@@ -52,9 +53,9 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 <template>
   <!-- Assistant message — Card-style SaaS layout -->
   <div v-if="msg.role === 'assistant'" class="group flex gap-3 items-start">
-    <Avatar class="h-7 w-7 rounded-md bg-foreground shadow-sm mt-0.5 shrink-0">
-      <AvatarFallback class="rounded-md bg-foreground text-background text-[10px] font-mono font-bold">
-        AI
+    <Avatar class="h-7 w-7 rounded-md bg-primary shadow-sm mt-0.5 shrink-0">
+      <AvatarFallback class="rounded-md bg-primary text-primary-foreground text-[10px] font-mono font-bold">
+        {{ assistantIndex ?? 1 }}
       </AvatarFallback>
     </Avatar>
 

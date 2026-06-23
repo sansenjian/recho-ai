@@ -222,7 +222,7 @@ function onContextMenuBackdrop() {
         <!-- Group header -->
         <div
           class="group-header flex items-center gap-1 px-1.5 py-1 rounded-md cursor-pointer select-none transition-colors hover:bg-accent/50"
-          :class="{ '!cursor-default': section.groupId === '__ungrouped__', 'mt-2 pt-1 border-t border-border': section.groupId === '__ungrouped__' }"
+          :class="{ 'cursor-default!': section.groupId === '__ungrouped__', 'mt-2 pt-1 border-t border-border': section.groupId === '__ungrouped__' }"
           @click="toggleGroup(section.groupId!)"
           @contextmenu="onGroupContextMenu($event, section.groupId!)"
         >

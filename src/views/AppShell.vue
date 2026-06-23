@@ -83,6 +83,12 @@ const latestAssistantMessageId = computed(() => {
   return [...messages.value].reverse().find(msg => msg.role === 'assistant')?.id ?? null
 })
 
+function assistantMessageIndex(id: number) {
+  const assistantMessages = messages.value.filter(msg => msg.role === 'assistant')
+  const index = assistantMessages.findIndex(msg => msg.id === id)
+  return index >= 0 ? index + 1 : 1
+}
+
 const hasToolActivity = computed(() => {
   return activeToolCalls.value.length > 0 || completedToolCalls.value.length > 0
 })
@@ -573,6 +579,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
             <ChatMessage
               :msg="{ ...msg, timestamp: relativeTime(msg.timestamp) }"
               :copy-feedback="copyFeedbackId === msg.id"
+              :assistant-index="assistantMessageIndex(msg.id)"
               @copy="handleCopy(msg)"
               @retry="handleRetry(msg)"
             />

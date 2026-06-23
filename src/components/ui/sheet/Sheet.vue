@@ -23,8 +23,8 @@ function close() {
   emit('update:open', false)
 }
 
-function onOverlayClick(e: MouseEvent) {
-  if (e.target === e.currentTarget) close()
+function onOverlayClick() {
+  close()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -37,6 +37,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
+  if (isOpen.value) document.body.style.overflow = ''
 })
 
 watch(isOpen, (val) => {
@@ -45,7 +46,7 @@ watch(isOpen, (val) => {
   } else {
     document.body.style.overflow = ''
   }
-})
+}, { immediate: true })
 </script>
 
 <template>
@@ -54,10 +55,9 @@ watch(isOpen, (val) => {
       <div
         v-if="isOpen"
         class="fixed inset-0 z-50"
-        @click="onOverlayClick"
       >
         <!-- Overlay -->
-        <div class="fixed inset-0 bg-black/40 backdrop-blur-sm" />
+        <div class="fixed inset-0 bg-black/40 backdrop-blur-sm" @click="onOverlayClick" />
 
         <!-- Panel -->
         <div

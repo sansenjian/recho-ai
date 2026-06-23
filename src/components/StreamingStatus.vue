@@ -3,7 +3,6 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import type { ToolCall } from '../types/tools'
 import type { RunState } from '../types/tools'
 import { Badge } from '@/components/ui/badge'
-import { Sparkles } from '@lucide/vue'
 
 const props = defineProps<{
   isLoading: boolean
@@ -63,7 +62,10 @@ onUnmounted(() => {
     role="status"
     aria-live="polite"
   >
-    <Sparkles class="h-3 w-3 text-primary animate-pulse" />
+    <svg class="h-3 w-3 text-primary animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z" />
+      <path d="M19 15l.8 2.7L22 18.5l-2.2.8L19 22l-.8-2.7-2.2-.8 2.2-.8L19 15z" />
+    </svg>
     <span class="font-medium text-foreground">{{ label }}</span>
     <span v-if="elapsed" class="text-muted-foreground tabular-nums">{{ elapsed }}</span>
   </Badge>

@@ -9,6 +9,7 @@ const props = defineProps<{
 }>()
 
 const expanded = ref(true)
+const contentId = `tool-activity-${Math.random().toString(36).slice(2)}`
 
 const tools = computed(() => [
   ...props.completedToolCalls,
@@ -89,6 +90,8 @@ function isTerminalError(status?: string) {
     <button
       type="button"
       class="flex items-start w-full min-h-[36px] px-2.5 py-2 border-0 bg-transparent text-muted-foreground font-inherit cursor-pointer text-left hover:bg-accent/50 transition-colors"
+      :aria-controls="contentId"
+      :aria-expanded="expanded"
       @click="expanded = !expanded"
     >
       <!-- Rail + pulse dot -->
@@ -123,7 +126,7 @@ function isTerminalError(status?: string) {
     </button>
 
     <!-- Body -->
-    <div v-if="expanded" class="border-t border-border bg-muted/40 px-2.5 pb-2.5">
+    <div v-if="expanded" :id="contentId" class="border-t border-border bg-muted/40 px-2.5 pb-2.5">
       <div class="relative ml-2 pl-4">
         <!-- Timeline dashed line -->
         <div class="absolute left-0 top-0 bottom-0 border-l border-dashed border-border" />
