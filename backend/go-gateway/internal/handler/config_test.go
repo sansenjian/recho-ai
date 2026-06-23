@@ -32,7 +32,7 @@ func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 			}},
 			DefaultImageModel: "gpt-image-2",
 		},
-	})
+	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/app", nil)
 	res := httptest.NewRecorder()
@@ -56,7 +56,7 @@ func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 }
 
 func TestConfigAppFallsBackWithoutHardcodedModels(t *testing.T) {
-	h := NewConfigHandler(&stubAppConfigProvider{err: errors.New("database unavailable")})
+	h := NewConfigHandler(&stubAppConfigProvider{err: errors.New("database unavailable")}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/app", nil)
 	res := httptest.NewRecorder()

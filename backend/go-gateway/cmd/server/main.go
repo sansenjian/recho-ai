@@ -85,7 +85,7 @@ func main() {
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	configHandler := handler.NewConfigHandler(appSettingsService)
+	configHandler := handler.NewConfigHandler(appSettingsService, log.Default())
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
 	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)

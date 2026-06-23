@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,16 +14,17 @@ type appConfigProvider interface {
 	PublicConfig(ctx context.Context) (service.PublicAppConfig, error)
 }
 
-type ConfigHandler struct {
-	appSettings appConfigProvider
+type configLogger interface {
+	Printf(format string, v ...any)
 }
 
-func NewConfigHandler(appSettings ...appConfigProvider) *ConfigHandler {
-	var provider appConfigProvider
-	if len(appSettings) > 0 {
-		provider = appSettings[0]
-	}
-	return &ConfigHandler{appSettings: provider}
+type ConfigHandler struct {
+	appSettings appConfigProvider
+	logger      configLogger
+}
+
+func NewConfigHandler(appSettings appConfigProvider, logger configLogger) *ConfigHandler {
+	return &ConfigHandler{appSettings: appSettings, logger: logger}
 }
 
 func (h *ConfigHandler) Supabase(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +46,9 @@ func (h *ConfigHandler) App(w http.ResponseWriter, r *http.Request) {
 	if h.appSettings != nil {
 		next, err := h.appSettings.PublicConfig(r.Context())
 		if err != nil {
-			log.Printf("Warning: failed to load app settings: %v", err)
+			if h.logger != nil {
+				h.logger.Printf("Warning: failed to load app settings: %v", err)
+			}
 		} else {
 			appConfig = next
 		}
