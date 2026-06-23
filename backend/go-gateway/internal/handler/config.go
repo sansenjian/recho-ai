@@ -14,11 +14,6 @@ func NewConfigHandler() *ConfigHandler {
 	return &ConfigHandler{}
 }
 
-type imageModelOption struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
 func (h *ConfigHandler) Supabase(w http.ResponseWriter, r *http.Request) {
 	configured := config.SupabaseURL != "" && config.SupabasePublishableKey != ""
 	body := map[string]any{
@@ -34,36 +29,13 @@ func (h *ConfigHandler) Supabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigHandler) App(w http.ResponseWriter, r *http.Request) {
-	defaultImageModel := config.ImageResponsesImageModel
-	availableModels := []imageModelOption{
-		{ID: "gpt-image-1", Name: "GPT Image 1"},
-		{ID: "gpt-image-1-mini", Name: "GPT Image 1 Mini"},
-		{ID: "dall-e-3", Name: "DALL·E 3"},
-		{ID: "dall-e-2", Name: "DALL·E 2"},
-	}
-	if !hasImageModel(availableModels, defaultImageModel) {
-		availableModels = append(availableModels, imageModelOption{
-			ID:   defaultImageModel,
-			Name: defaultImageModel,
-		})
-	}
-
 	response.JSON(w, http.StatusOK, map[string]any{
 		"imageEventsEnabled":     config.ImageEventsEnabled,
 		"canvasContextEnabled":   config.CanvasContextEnabled,
 		"guestGenerationEnabled": config.GuestGenerationEnabled,
-		"availableImageModels":   availableModels,
-		"defaultImageModel":      defaultImageModel,
+		"availableImageModels":   []any{},
+		"defaultImageModel":      config.ImageResponsesImageModel,
 	})
-}
-
-func hasImageModel(models []imageModelOption, id string) bool {
-	for _, model := range models {
-		if model.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *ConfigHandler) RegisterRoutes(r chi.Router) {

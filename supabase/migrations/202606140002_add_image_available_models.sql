@@ -16,5 +16,5 @@ alter table public.app_settings add constraint app_settings_key_check check (
 
 insert into public.app_settings (key, value, description)
 values
-  ('available_image_models', '[{"id":"gpt-image-1","name":"GPT Image 1"},{"id":"gpt-image-1-mini","name":"GPT Image 1 Mini"},{"id":"dall-e-3","name":"DALL·E 3"},{"id":"dall-e-2","name":"DALL·E 2"}]'::jsonb, 'List of image models available for frontend selection.')
+  ('available_image_models', '[{"id":"gpt-image-2","name":"gpt-image-2"}]'::jsonb, 'List of image models available for frontend selection.')
 on conflict (key) do nothing;

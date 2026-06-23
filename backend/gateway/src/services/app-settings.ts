@@ -93,12 +93,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   canvasContextEnabled: CANVAS_CONTEXT_ENABLED,
   freeGenerationEnabled: FREE_GENERATION_ENABLED,
   guestGenerationEnabled: GUEST_GENERATION_ENABLED,
-  availableImageModels: [
-    { id: 'gpt-image-1', name: 'GPT Image 1' },
-    { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini' },
-    { id: 'dall-e-3', name: 'DALL·E 3' },
-    { id: 'dall-e-2', name: 'DALL·E 2' },
-  ],
+  availableImageModels: [],
 }
 
 const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
