@@ -62,12 +62,16 @@ func main() {
 	var creditService *service.CreditService
 	var redeemService *service.RedeemService
 	var idempotencyService *service.IdempotencyService
+	var appSettingsService *service.AppSettingsService
 	if creditRepo != nil {
 		creditService = service.NewCreditService(creditRepo)
 		redeemService = service.NewRedeemService(redeemRepo)
 	}
 	if idempotencyRepo != nil {
 		idempotencyService = service.NewIdempotencyService(idempotencyRepo)
+	}
+	if db != nil {
+		appSettingsService = service.NewAppSettingsService(db.Pool())
 	}
 
 	// Initialize storage service
@@ -81,7 +85,7 @@ func main() {
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	configHandler := handler.NewConfigHandler()
+	configHandler := handler.NewConfigHandler(appSettingsService)
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
 	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)
