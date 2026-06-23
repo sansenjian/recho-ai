@@ -172,42 +172,45 @@ function onContextMenuBackdrop() {
 </script>
 
 <template>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <span class="sidebar-title">History</span>
+  <aside class="chat-sidebar w-[240px] h-full flex flex-col shrink-0 relative">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+      <span class="text-[11px] font-semibold tracking-[0.04em] text-foreground uppercase">History</span>
       <button class="new-chat-btn" @click="createConversation()" title="New Chat">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15">
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
       </button>
     </div>
 
-    <div class="sidebar-search">
-      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
+    <!-- Search -->
+    <div class="flex items-center gap-1.5 px-2.5 py-2 mx-2 my-1.5 rounded-md bg-card ring-1 ring-border">
+      <svg class="shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
         <circle cx="11" cy="11" r="8" />
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
       <input
         v-model="searchQuery"
-        class="search-input"
+        class="flex-1 border-0 outline-0 bg-transparent text-[12px] font-[inherit] text-foreground placeholder:text-muted-foreground/60"
         placeholder="搜索会话..."
         @keydown.escape="searchQuery = ''"
       />
-      <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
+      <button v-if="searchQuery" class="flex items-center justify-center w-[18px] h-[18px] rounded-full bg-accent text-muted-foreground border-0 cursor-pointer shrink-0 hover:bg-accent/80 hover:text-foreground transition-colors" @click="searchQuery = ''">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="11" height="11">
           <line x1="18" y1="6" x2="6" y2="18" />
           <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
     </div>
 
-    <div class="sidebar-list">
+    <!-- Conversation list -->
+    <div class="flex-1 overflow-y-auto px-1.5 pb-1.5">
       <!-- Grouped sections -->
       <div
         v-for="section in groupedSections"
         :key="section.groupId ?? '__ungrouped__'"
-        class="group-section"
+        class="group-section mb-0.5 rounded-md transition-colors"
         :class="{
           'drag-over': dragOverGroupId === section.groupId,
           'is-ungrouped': section.groupId === '__ungrouped__',
@@ -218,90 +221,90 @@ function onContextMenuBackdrop() {
       >
         <!-- Group header -->
         <div
-          class="group-header"
-          :class="{ 'is-ungrouped': section.groupId === '__ungrouped__' }"
+          class="group-header flex items-center gap-1 px-1.5 py-1 rounded-md cursor-pointer select-none transition-colors hover:bg-accent/50"
+          :class="{ 'cursor-default!': section.groupId === '__ungrouped__', 'mt-2 pt-1 border-t border-border': section.groupId === '__ungrouped__' }"
           @click="toggleGroup(section.groupId!)"
           @contextmenu="onGroupContextMenu($event, section.groupId!)"
         >
           <svg
-            class="group-chevron"
-            :class="{ collapsed: !isExpanded(section.groupId!) }"
+            class="group-chevron shrink-0 text-muted-foreground transition-transform"
+            :class="{ '-rotate-90': !isExpanded(section.groupId!) }"
             viewBox="0 0 16 16"
             fill="currentColor"
-            width="12"
-            height="12"
+            width="11"
+            height="11"
           >
             <path d="M6 4l4 4-4 4" />
           </svg>
-          <span v-if="section.groupColor" class="group-dot" :style="{ background: section.groupColor }" />
-          <span v-if="renamingGroup === section.groupId" class="group-rename-input-wrapper" @click.stop>
+          <span v-if="section.groupColor" class="w-[7px] h-[7px] rounded-full shrink-0" :style="{ background: section.groupColor }" />
+          <span v-if="renamingGroup === section.groupId" class="flex-1 min-w-0" @click.stop>
             <input
               v-model="renameValue"
-              class="group-rename-input"
+              class="w-full rounded bg-card text-[10px] font-semibold font-[inherit] px-1.5 py-0.5 outline-0 text-foreground ring-1 ring-primary"
               @keydown.enter="confirmRename()"
               @keydown.escape="renamingGroup = null"
               @blur="confirmRename()"
               autofocus
             />
           </span>
-          <span v-else class="group-name">{{ section.groupName }}</span>
-          <span class="group-count">{{ section.convs.length }}</span>
+          <span v-else class="flex-1 min-w-0 text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.05em] truncate">{{ section.groupName }}</span>
+          <span class="text-[9px] text-muted-foreground/70 bg-accent px-1.5 py-px rounded-full shrink-0">{{ section.convs.length }}</span>
         </div>
 
         <!-- Conversations in group -->
-        <div v-if="isExpanded(section.groupId!)" class="group-conversations">
+        <div v-if="isExpanded(section.groupId!)" class="py-px pl-1.5">
           <div
             v-for="conv in section.convs"
             :key="conv.id"
             class="conv-item"
             :class="{ active: conv.id === activeConversationId }"
-            :style="section.groupColor ? { borderLeftColor: section.groupColor } : {}"
+            :style="section.groupColor && conv.id === activeConversationId ? { borderLeftColor: section.groupColor } : {}"
             draggable="true"
             @click="switchConversation(conv.id); emit('close')"
             @dragstart="onDragStart($event, conv.id)"
             @dragend="onDragEnd"
           >
-            <div class="conv-info">
-              <span class="conv-title">{{ conv.title }}</span>
-              <span class="conv-time">{{ conv.updatedAt }}</span>
+            <div class="flex-1 min-w-0 flex flex-col gap-px">
+              <span class="text-[12px] font-medium text-foreground truncate">{{ conv.title }}</span>
+              <span class="text-[10px] text-muted-foreground">{{ conv.updatedAt }}</span>
             </div>
             <button
               class="conv-delete"
               @click.stop="deleteConversation(conv.id)"
               title="Delete"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
           </div>
-          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="empty-group">
+          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="py-2.5 px-2 text-center text-[11px] text-muted-foreground border border-dashed border-border rounded-md my-1">
             拖拽会话到此处
           </div>
         </div>
       </div>
 
       <!-- Add group button -->
-      <div v-if="!creatingGroup" class="add-group-btn" @click="creatingGroup = true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14">
+      <div v-if="!creatingGroup" class="flex items-center gap-1.5 px-2.5 py-1.5 my-1 rounded-md cursor-pointer text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground" @click="creatingGroup = true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
         <span>新建分组</span>
       </div>
-      <div v-else class="create-group-row">
+      <div v-else class="flex items-center gap-1 px-2 py-1">
         <input
           v-model="newGroupName"
-          class="create-group-input"
+          class="flex-1 rounded-md bg-card text-[11px] font-[inherit] px-2 py-1 outline-0 text-foreground ring-1 ring-primary"
           placeholder="分组名称"
           @keydown.enter="confirmCreateGroup()"
           @keydown.escape="cancelCreateGroup()"
           autofocus
         />
-        <button class="create-group-ok" @click="confirmCreateGroup">确定</button>
-        <button class="create-group-cancel" @click="cancelCreateGroup">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
+        <button class="cursor-pointer rounded-md border-0 bg-foreground px-2.5 py-1 text-[11px] font-semibold text-background transition-opacity hover:opacity-85" @click="confirmCreateGroup">确定</button>
+        <button class="flex items-center justify-center w-[22px] h-[22px] rounded-md bg-transparent border-0 text-muted-foreground cursor-pointer hover:bg-accent transition-colors" @click="cancelCreateGroup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="11" height="11">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -310,422 +313,124 @@ function onContextMenuBackdrop() {
     </div>
 
     <!-- Context menu backdrop -->
-    <div v-if="contextMenu" class="context-menu-backdrop" @click="onContextMenuBackdrop" @contextmenu.prevent="onContextMenuBackdrop" />
+    <div v-if="contextMenu" class="fixed inset-0 z-[200]" @click="onContextMenuBackdrop" @contextmenu.prevent="onContextMenuBackdrop" />
 
     <!-- Context menu -->
     <div
       v-if="contextMenu"
-      class="context-menu"
+      class="fixed z-[201] bg-popover rounded-lg shadow-md ring-1 ring-border p-1 min-w-[160px]"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
     >
-      <button class="context-menu-item" @click="startRename(contextMenu.groupId)">重命名</button>
-      <div class="context-menu-colors">
+      <button class="ctx-item" @click="startRename(contextMenu.groupId)">重命名</button>
+      <div class="flex gap-1 px-2.5 py-1.5 flex-wrap">
         <button
           v-for="c in GROUP_COLORS"
           :key="c"
-          class="color-swatch"
+          class="w-5 h-5 rounded-full border-2 border-transparent cursor-pointer transition-all hover:scale-110 hover:border-foreground"
           :style="{ background: c }"
           @click="handleRecolor(contextMenu.groupId, c)"
         />
       </div>
-      <button class="context-menu-item danger" @click="handleDeleteGroup(contextMenu.groupId)">删除分组</button>
+      <button class="ctx-item text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20" @click="handleDeleteGroup(contextMenu.groupId)">删除分组</button>
     </div>
   </aside>
 </template>
 
 <style scoped>
-.sidebar {
-  width: 280px;
-  height: 100%;
-  background: #f8fafc;
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-title {
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: var(--text-primary);
+.chat-sidebar {
+  border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
 }
 
 .new-chat-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-secondary);
+  width: 26px;
+  height: 26px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
   box-shadow: var(--shadow-sm);
 }
 
 .new-chat-btn:hover {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  border-color: hsl(var(--ring));
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
 }
 
-.sidebar-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  margin: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--shadow-sm);
-}
-
-.search-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.search-input {
-  flex: 1;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--text-primary);
-}
-
-.search-input::placeholder { color: #b0b0be; }
-
-.search-clear {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 50%;
-  background: var(--hover-bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.search-clear:hover {
-  background: #e0e0e8;
-  color: var(--text-primary);
-}
-
-.sidebar-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 8px 8px;
-}
-
-/* --- group section --- */
-.group-section {
-  margin-bottom: 2px;
-  border-radius: 8px;
-  transition: background 0.15s;
-}
-
+/* Drag-over state */
 .group-section.drag-over {
-  background: rgba(99, 102, 241, 0.06);
-  outline: 2px dashed var(--accent);
+  background: hsl(var(--muted));
+  outline: 2px dashed hsl(var(--border));
   outline-offset: -2px;
 }
 
-.group-section.is-ungrouped {
-  margin-top: 8px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
-}
-
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.1s;
-}
-
-.group-header:hover {
-  background: var(--hover-bg);
-}
-
-.group-header.is-ungrouped {
-  cursor: default;
-}
-
-.group-chevron {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-  transition: transform 0.15s;
-}
-
-.group-chevron.collapsed {
-  transform: rotate(-90deg);
-}
-
-.group-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.group-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.group-count {
-  font-size: 10px;
-  color: #b0b0be;
-  background: var(--hover-bg);
-  padding: 1px 6px;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.group-rename-input-wrapper {
-  flex: 1;
-  min-width: 0;
-}
-
-.group-rename-input {
-  width: 100%;
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  background: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  padding: 2px 6px;
-  outline: none;
-  color: var(--text-primary);
-}
-
-/* --- conversations in group --- */
-.group-conversations {
-  padding: 2px 0 2px 8px;
-}
-
+/* Conversation items — admin nav-item style */
 .conv-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 7px;
+  gap: 5px;
+  padding: 6px 7px;
+  border-radius: var(--radius-md, 7px);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 150ms ease;
   border-left: 2px solid transparent;
 }
 
-.conv-item:hover { background: var(--hover-bg); }
+.conv-item:hover {
+  background: hsl(var(--accent));
+}
 
 .conv-item.active {
-  background: #ecfdf3;
-  border-left-color: var(--accent);
-}
-
-.conv-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.conv-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.conv-time {
-  font-size: 11px;
-  color: var(--text-secondary);
+  background: hsl(var(--accent));
+  border-left-color: hsl(var(--foreground));
 }
 
 .conv-delete {
   display: none;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 6px);
   background: transparent;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
   flex-shrink: 0;
 }
 
-.conv-item:hover .conv-delete { display: flex; }
+.conv-item:hover .conv-delete {
+  display: flex;
+}
 
 .conv-delete:hover {
-  background: #fee2e2;
-  color: #ef4444;
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
 }
 
-.empty-group {
-  padding: 12px;
-  text-align: center;
-  font-size: 12px;
-  color: #c0c0ce;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  margin: 4px 0;
-}
-
-/* --- add group --- */
-.add-group-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  margin: 4px 0;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary);
-  transition: background 0.15s, color 0.15s;
-}
-
-.add-group-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
-.create-group-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-}
-
-.create-group-input {
-  flex: 1;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: #fff;
-  font-size: 12px;
-  font-family: inherit;
-  padding: 4px 8px;
-  outline: none;
-  color: var(--text-primary);
-}
-
-.create-group-ok {
-  padding: 3px 10px;
-  border: none;
-  border-radius: 4px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.create-group-cancel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.create-group-cancel:hover { background: var(--hover-bg); }
-
-/* --- context menu --- */
-.context-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 201;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.1);
-  padding: 6px;
-  min-width: 160px;
-}
-
-.context-menu-item {
+/* Context menu items */
+.ctx-item {
   display: block;
   width: 100%;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md, 7px);
   background: transparent;
-  font-size: 13px;
+  font-size: 12px;
   font-family: inherit;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   text-align: left;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 100ms ease;
 }
 
-.context-menu-item:hover { background: var(--hover-bg); }
-
-.context-menu-item.danger { color: #ef4444; }
-
-.context-menu-item.danger:hover { background: #fee2e2; }
-
-.context-menu-colors {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px;
-  flex-wrap: wrap;
-}
-
-.color-swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.1s, border-color 0.1s;
-}
-
-.color-swatch:hover {
-  transform: scale(1.15);
-  border-color: var(--text-primary);
+.ctx-item:hover {
+  background: hsl(var(--accent));
 }
 </style>

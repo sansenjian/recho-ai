@@ -77,20 +77,24 @@ defineEmits<{
 <style scoped>
 .agent-panel {
   width: 320px;
-  border-left: 1px solid var(--border);
-  background: #f8fafc;
-  padding: 16px;
+  box-shadow: -1px 0 0 var(--seed-border, rgba(0,0,0,0.08));
+  background: var(--seed-surface, #fff);
+  padding: 14px;
   overflow-y: auto;
   flex-shrink: 0;
 }
 
 .panel-section {
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  box-shadow: 0 1px 0 0 var(--seed-border, rgba(0,0,0,0.08));
 }
 
 .panel-section:first-child {
   padding-top: 0;
+}
+
+.panel-section:last-child {
+  box-shadow: none;
 }
 
 .section-header {
@@ -104,10 +108,10 @@ defineEmits<{
   display: block;
   margin-bottom: 8px;
   font-size: 11px;
-  font-weight: 700;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--seed-muted, #666);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 .mode-grid {
@@ -118,34 +122,33 @@ defineEmits<{
 
 .mode-card,
 .skill-row {
-  border: 1px solid var(--border);
-  background: #fff;
-  color: var(--text-primary);
+  border: none;
+  background: var(--seed-surface-raised, #fafafa);
+  color: var(--seed-fg, #171717);
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 0 1px var(--seed-border, rgba(0,0,0,0.08));
+  transition: box-shadow 150ms ease, background 150ms ease;
 }
 
 .mode-card {
-  min-height: 74px;
+  min-height: 70px;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--seed-radius, 6px);
 }
 
 .mode-card.active,
 .skill-row.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.12);
+  background: color-mix(in srgb, var(--seed-success, #16a34a) 8%, transparent);
+  box-shadow: 0 0 0 1px var(--seed-success, #16a34a);
 }
 
 .mode-name,
 .skill-name {
   display: block;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .mode-hint,
@@ -156,30 +159,31 @@ defineEmits<{
   margin-top: 2px;
   font-size: 11px;
   line-height: 1.35;
-  color: var(--text-secondary);
+  color: var(--seed-muted, #666);
 }
 
 .skill-list,
 .tool-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .skill-row {
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 7px 9px;
+  border-radius: var(--seed-radius, 6px);
 }
 
 .clear-btn {
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 999px;
-  background: #fff;
-  color: var(--text-secondary);
+  background: var(--seed-surface-raised, #fafafa);
+  color: var(--seed-muted, #666);
   cursor: pointer;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 2px 8px;
+  box-shadow: 0 0 0 1px var(--seed-border, rgba(0,0,0,0.08));
 }
 
 .tool-row {
@@ -187,11 +191,11 @@ defineEmits<{
   grid-template-columns: 16px 1fr auto;
   align-items: center;
   gap: 6px;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--shadow-sm);
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--seed-radius, 6px);
+  background: var(--seed-surface-raised, #fafafa);
+  box-shadow: 0 0 0 1px var(--seed-border, rgba(0,0,0,0.08));
 }
 
 .tool-name {
@@ -200,19 +204,19 @@ defineEmits<{
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  font-family: var(--font-mono);
+  font-family: var(--seed-mono, 'JetBrains Mono', monospace);
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--seed-success, #16a34a);
   animation: pulse 1s ease-in-out infinite;
 }
 
 .check {
-  color: var(--accent);
+  color: var(--seed-success, #16a34a);
   font-size: 13px;
 }
 

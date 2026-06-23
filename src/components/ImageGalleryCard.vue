@@ -100,10 +100,10 @@ const emit = defineEmits<{
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-sm);
 }
 
 .gallery-image-wrap {
@@ -115,13 +115,13 @@ const emit = defineEmits<{
   aspect-ratio: 4 / 3;
   padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   background:
-    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
-    #f8fafc;
+    linear-gradient(45deg, hsl(var(--border) / 0.55) 25%, transparent 25%),
+    linear-gradient(-45deg, hsl(var(--border) / 0.55) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, hsl(var(--border) / 0.55) 75%),
+    linear-gradient(-45deg, transparent 75%, hsl(var(--border) / 0.55) 75%),
+    hsl(var(--muted));
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
   background-size: 18px 18px;
   cursor: zoom-in;
@@ -143,7 +143,7 @@ const emit = defineEmits<{
 }
 
 .gallery-image-wrap:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid hsl(var(--ring));
   outline-offset: -2px;
 }
 
@@ -156,10 +156,10 @@ const emit = defineEmits<{
   align-items: center;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
+  border: 1px solid hsl(var(--border) / 0.45);
+  border-radius: var(--radius-sm, 6px);
+  background: hsl(var(--foreground) / 0.76);
+  color: hsl(var(--background));
   font-size: 11px;
   font-weight: 900;
   backdrop-filter: blur(8px);
@@ -184,7 +184,7 @@ const emit = defineEmits<{
   min-height: 38px;
   margin: 0;
   overflow: hidden;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   font-size: 13px;
   font-weight: 800;
   line-height: 1.46;
@@ -197,7 +197,7 @@ const emit = defineEmits<{
   min-width: 0;
   flex-wrap: wrap;
   gap: 5px;
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 11px;
   font-weight: 800;
 }
@@ -205,8 +205,8 @@ const emit = defineEmits<{
 .gallery-card-meta span {
   max-width: 100%;
   padding: 3px 7px;
-  border-radius: 999px;
-  background: #f1f5f9;
+  border-radius: var(--radius-sm, 6px);
+  background: hsl(var(--muted));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -229,11 +229,11 @@ const emit = defineEmits<{
   width: 30px;
   height: 30px;
   margin-right: -7px;
-  border: 2px solid #fff;
-  border-radius: 8px;
-  background: #fff;
+  border: 2px solid hsl(var(--card));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--card));
   object-fit: cover;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--shadow-sm);
 }
 
 .gallery-actions {
@@ -249,19 +249,19 @@ const emit = defineEmits<{
   width: 32px;
   min-height: 32px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-secondary);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
 }
 
 .gallery-actions button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
-  color: var(--text-primary);
+  border-color: hsl(var(--ring));
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
 }
 
 .gallery-actions button:disabled {
@@ -271,11 +271,33 @@ const emit = defineEmits<{
 
 @media (max-width: 768px) {
   .gallery-actions {
+    flex: 1;
     gap: 8px;
   }
 
   .gallery-actions button {
-    min-height: 58px;
+    flex: 1;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 460px) {
+  .gallery-card-body {
+    padding: 10px;
+  }
+
+  .gallery-card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gallery-reference-strip {
+    height: 28px;
+  }
+
+  .gallery-reference-strip img {
+    width: 28px;
+    height: 28px;
   }
 }
 </style>

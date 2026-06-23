@@ -83,6 +83,12 @@ const latestAssistantMessageId = computed(() => {
   return [...messages.value].reverse().find(msg => msg.role === 'assistant')?.id ?? null
 })
 
+function assistantMessageIndex(id: number) {
+  const assistantMessages = messages.value.filter(msg => msg.role === 'assistant')
+  const index = assistantMessages.findIndex(msg => msg.id === id)
+  return index >= 0 ? index + 1 : 1
+}
+
 const hasToolActivity = computed(() => {
   return activeToolCalls.value.length > 0 || completedToolCalls.value.length > 0
 })
@@ -125,13 +131,13 @@ const showAgentPanel = ref(false)
 const showImagePanel = ref(true)
 const imageWorkspace = ref<ImageWorkspace>('canvas')
 const isMobile = () => (typeof window !== 'undefined' ? window.innerWidth < 768 : false)
-const imageMode = ref<'imagio' | 'canvas'>(isMobile() ? 'imagio' : 'canvas')
+const imageMode = ref<'imagio' | 'canvas'>('imagio')
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
 
 function currentRouteWorkspace(): RouteWorkspace {
   const workspace = route.meta.workspace
-  return workspace === 'chat' || workspace === 'works' || workspace === 'image' ? workspace : 'image'
+  return workspace === 'chat' || workspace === 'image' ? workspace : 'image'
 }
 
 function requireChatAccess(nextPath = '/chat') {
@@ -158,9 +164,9 @@ function syncWorkspaceFromRoute() {
 
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
-  imageWorkspace.value = workspace === 'works' ? 'gallery' : 'canvas'
+  imageWorkspace.value = 'canvas'
   if (workspace === 'image') {
-    imageMode.value = isMobile() ? 'imagio' : 'canvas'
+    imageMode.value = 'imagio'
   }
   if (workspace !== 'chat') {
     showSystemEditor.value = false
@@ -328,7 +334,8 @@ function triggerFileInput() {
 
 // --- Drag & drop ---
 function suppressWorksFileDrag(e: DragEvent) {
-  if (currentRouteWorkspace() !== 'works' || !hasFileTransfer(e)) return false
+  if (!hasFileTransfer(e)) return false
+  if (currentRouteWorkspace() !== 'image') return false
   e.preventDefault()
   dragCounter = 0
   isDragOver.value = false
@@ -461,7 +468,10 @@ function handleImageToChat(dataUrl: string) {
   void router.push('/chat')
 }
 function handleImageWorkspaceChange(mode: ImageWorkspace) {
-  void router.push(mode === 'gallery' ? '/works' : '/image')
+  imageWorkspace.value = mode
+  if (currentRouteWorkspace() !== 'image') {
+    void router.push('/image')
+  }
 }
 
 function handleImageModeChange(mode: 'imagio' | 'canvas') {
@@ -471,7 +481,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 
 <template>
   <div
-    class="app-shell"
+    class="app-shell chat-root"
     @dragenter="onDragEnter"
     @dragleave="onDragLeave"
     @dragover="onDragOver"
@@ -503,6 +513,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         @toggle-sidebar="toggleSidebar"
         @toggle-agent-panel="toggleAgentPanel"
         @toggle-image-panel="toggleImagePanel"
+        @open-image="router.push('/image')"
         @new-chat="handleNewChat"
         @toggle-settings="toggleSystemEditor"
         @open-auth="openAuthDialog()"
@@ -568,6 +579,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
             <ChatMessage
               :msg="{ ...msg, timestamp: relativeTime(msg.timestamp) }"
               :copy-feedback="copyFeedbackId === msg.id"
+              :assistant-index="assistantMessageIndex(msg.id)"
               @copy="handleCopy(msg)"
               @retry="handleRetry(msg)"
             />
@@ -693,12 +705,84 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 </template>
 
 <style scoped>
+/* =====================================================
+   Chat Shell — Admin-aligned Design System
+   ===================================================== */
+
+/* --- Seed Tokens (Light) --- */
+.chat-root {
+  --seed-bg: hsl(var(--background));
+  --seed-fg: hsl(var(--foreground));
+  --seed-primary: hsl(var(--primary));
+  --seed-surface: hsl(var(--card));
+  --seed-surface-raised: hsl(var(--secondary));
+  --seed-surface-sunken: hsl(var(--muted));
+  --seed-border: hsl(var(--border));
+  --seed-border-strong: hsl(var(--input));
+  --seed-muted: hsl(var(--muted-foreground));
+  --seed-success: #0a0a0a;
+  --seed-warning: #f59e0b;
+  --seed-danger: hsl(var(--destructive));
+  --seed-radius: 8px;
+  --seed-font: var(--font-sans);
+  --seed-mono: var(--font-mono);
+
+  /* Derived */
+  --fg: var(--seed-fg);
+  --fg-secondary: color-mix(in srgb, var(--seed-fg) 60%, transparent);
+  --fg-muted: var(--seed-muted);
+  --surface: var(--seed-surface);
+  --surface-raised: var(--seed-surface-raised);
+  --surface-sunken: var(--seed-surface-sunken);
+  --border-strong: var(--seed-border-strong);
+  --success: var(--seed-success);
+  --warning: var(--seed-warning);
+  --danger: var(--seed-danger);
+  --radius: var(--seed-radius);
+  --font: var(--seed-font);
+  --mono: var(--seed-mono);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-elevated: 0 16px 36px rgb(0 0 0 / 0.08);
+  --transition: 150ms ease;
+
+  /* Backward-compatible aliases for child components */
+  --bg: var(--seed-bg);
+  --text-primary: var(--seed-fg);
+  --text-secondary: var(--seed-muted);
+  --text-muted: var(--seed-muted);
+  --text-link: var(--seed-primary);
+  --surface-soft: var(--seed-surface-sunken);
+  --input-bg: var(--seed-surface);
+  --header-bg: color-mix(in srgb, var(--seed-surface) 85%, transparent);
+  --hover-bg: var(--seed-surface-sunken);
+  --accent-strong: var(--seed-fg);
+  --accent-soft: var(--seed-surface-sunken);
+  --info: var(--seed-primary);
+  --warn: var(--seed-warning);
+  --shadow-sm: var(--shadow-card);
+  --shadow-md: var(--shadow-elevated);
+
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--seed-bg);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0;
+}
+
+/* --- Seed Tokens (Dark) --- */
+.chat-root.dark {
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-elevated: 0 16px 36px rgb(0 0 0 / 0.45);
+}
+
+/* --- Root Layout --- */
 .app-shell {
   display: flex;
   height: 100vh;
-  background: var(--bg);
   position: relative;
-  color: var(--text-primary);
+  background: var(--seed-bg);
+  transition: background var(--transition), color var(--transition);
 }
 
 .sidebar-backdrop { display: none; }
@@ -708,18 +792,17 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  background: var(--seed-bg);
 }
 
+/* --- System Editor Panel --- */
 .system-editor-panel {
-  width: min(920px, calc(100% - 48px));
+  width: min(780px, calc(100% - 48px));
   margin: 12px auto 0;
-  padding: 14px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
+  padding: 16px;
+  background: var(--seed-surface);
+  border-radius: var(--seed-radius);
+  box-shadow: var(--shadow-card);
 }
 
 .system-editor-header {
@@ -730,11 +813,11 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 }
 
 .system-editor-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--seed-fg);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 .system-editor-close {
@@ -743,38 +826,38 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: none;
+  border-radius: var(--seed-radius);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--seed-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--transition), color var(--transition);
 }
 
 .system-editor-close:hover {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: var(--border);
+  background: var(--seed-surface-sunken);
+  color: var(--seed-fg);
 }
 
 .system-editor-textarea {
   width: 100%;
-  padding: 11px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--input-bg);
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface);
   font-size: 13px;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   line-height: 1.55;
-  color: var(--text-primary);
+  color: var(--seed-fg);
   resize: vertical;
   outline: none;
   min-height: 96px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition);
 }
 
 .system-editor-textarea:focus {
-  border-color: var(--accent);
-  background: #fff;
+  box-shadow: 0 0 0 1px var(--seed-primary), 0 0 0 3px color-mix(in srgb, var(--seed-primary) 15%, transparent);
 }
 
 .system-editor-actions {
@@ -787,51 +870,64 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 .system-editor-btn {
   min-height: 30px;
   padding: 5px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary);
+  border: none;
+  border-radius: var(--seed-radius);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.system-editor-btn.cancel {
+  background: var(--seed-surface);
+  color: var(--seed-fg);
+  box-shadow: var(--shadow-card);
+}
+
+.system-editor-btn.cancel:hover {
+  background: var(--seed-surface-sunken);
 }
 
 .system-editor-btn.save {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  background: var(--seed-fg);
+  color: var(--seed-surface);
+  box-shadow: none;
 }
 
+.system-editor-btn.save:hover {
+  opacity: 0.85;
+}
+
+/* --- Chat Area --- */
 .chat-area {
   flex: 1;
   overflow-y: auto;
   padding: 0;
-  background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.86), rgba(255, 255, 255, 0) 180px),
-    var(--surface);
+  background: hsl(var(--secondary));
 }
 
 .messages-container {
-  max-width: 920px;
+  max-width: 880px;
   margin: 0 auto;
-  padding: 28px 28px 36px;
+  padding: 28px 24px 36px;
 }
 
 .message-wrapper {
-  margin-bottom: 22px;
+  margin-bottom: 16px;
 }
 
+/* --- Drag Overlay --- */
 .drag-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.16);
+  background: rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(5px);
   z-index: 200;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px dashed var(--accent);
-  border-radius: 8px;
+  border: 2px dashed var(--seed-primary);
+  border-radius: var(--seed-radius);
   margin: 24px;
   pointer-events: none;
 }
@@ -841,16 +937,17 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  color: var(--accent-strong);
-  font-size: 16px;
-  font-weight: 700;
-  background: #fff;
-  padding: 32px 48px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-md);
+  color: var(--seed-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  background: var(--seed-surface);
+  padding: 28px 40px;
+  border-radius: var(--seed-radius);
+  box-shadow: var(--shadow-elevated);
 }
 
+/* --- Auth Overlay --- */
 .auth-overlay {
   position: fixed;
   inset: 0;
@@ -858,17 +955,16 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.38);
+  background: rgba(0, 0, 0, 0.32);
   backdrop-filter: blur(8px);
 }
 
 .auth-dialog {
   width: min(420px, calc(100vw - 48px));
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-md);
+  padding: 20px;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface);
+  box-shadow: var(--shadow-elevated);
 }
 
 .auth-dialog-header {
@@ -880,17 +976,19 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 }
 
 .auth-eyebrow {
-  color: var(--text-muted);
+  color: var(--seed-muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .auth-dialog h2 {
   margin: 3px 0 0;
-  color: var(--text-primary);
-  font-size: 20px;
-  letter-spacing: 0;
+  color: var(--seed-fg);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
 }
 
 .auth-close {
@@ -899,19 +997,21 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-secondary);
+  border: none;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface);
+  color: var(--seed-muted);
   cursor: pointer;
+  box-shadow: var(--shadow-card);
+  transition: background var(--transition), color var(--transition);
 }
 
 .auth-close:hover {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-  color: var(--text-primary);
+  background: var(--seed-surface-sunken);
+  color: var(--seed-fg);
 }
 
+/* --- Auth Form --- */
 .auth-form {
   display: grid;
   gap: 12px;
@@ -919,119 +1019,124 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 
 .auth-form label {
   display: grid;
-  gap: 6px;
-  color: var(--text-primary);
+  gap: 5px;
+  color: var(--seed-fg);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .auth-form input {
   width: 100%;
-  min-height: 40px;
+  min-height: 38px;
   padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--input-bg);
-  color: var(--text-primary);
+  border: none;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface);
+  color: var(--seed-fg);
   font-size: 13px;
   outline: none;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition);
 }
 
 .auth-form input:focus {
-  border-color: var(--accent);
-  background: #fff;
+  box-shadow: 0 0 0 1px var(--seed-primary), 0 0 0 3px color-mix(in srgb, var(--seed-primary) 15%, transparent);
 }
 
 .auth-message {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--seed-muted);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.auth-message.error {
-  color: var(--danger);
-}
+.auth-message.error { color: var(--seed-danger); }
 
+/* --- Auth Buttons (admin pattern) --- */
 .auth-submit,
 .auth-oauth,
 .auth-switch,
 .auth-profile button,
 .auth-credit-form button {
-  min-height: 38px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  min-height: 36px;
+  border: none;
+  border-radius: var(--seed-radius);
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--transition), color var(--transition), opacity var(--transition);
 }
 
+/* btn-primary: inverted fg/surface */
 .auth-submit {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
+  background: var(--seed-fg);
+  color: var(--seed-surface);
+  box-shadow: none;
 }
 
+.auth-submit:hover:not(:disabled) { opacity: 0.85; }
+
+/* btn-secondary: border + shadow-card */
 .auth-oauth {
-  background: #fff;
-  color: var(--text-primary);
+  background: var(--seed-surface);
+  color: var(--seed-fg);
+  box-shadow: var(--shadow-card);
 }
 
-.auth-oauth:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
+.auth-oauth:hover:not(:disabled) { background: var(--seed-surface-sunken); }
+
+.auth-switch {
+  background: var(--seed-surface);
+  color: var(--seed-fg);
+  box-shadow: var(--shadow-card);
 }
+
+.auth-switch:hover { background: var(--seed-surface-sunken); }
 
 .auth-submit:disabled,
 .auth-oauth:disabled,
 .auth-profile button:disabled,
 .auth-credit-form button:disabled {
-  opacity: 0.58;
+  opacity: 0.5;
   cursor: default;
 }
 
-.auth-switch {
-  background: #fff;
-  color: var(--text-primary);
-}
-
-.auth-switch:hover,
-.auth-profile button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
+/* --- Auth Profile --- */
 .auth-profile {
   display: grid;
   gap: 10px;
 }
 
 .auth-profile span {
-  color: var(--text-muted);
+  color: var(--seed-muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .auth-profile strong {
   overflow: hidden;
-  color: var(--text-primary);
+  color: var(--seed-fg);
   font-size: 14px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .auth-profile button {
-  background: #fff;
-  color: var(--text-primary);
+  background: var(--seed-surface);
+  color: var(--seed-fg);
+  box-shadow: var(--shadow-card);
 }
 
+.auth-profile button:hover:not(:disabled) { background: var(--seed-surface-sunken); }
+
+/* --- Credit Card --- */
 .auth-credit-card {
   display: grid;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #f8fafc;
+  padding: 14px;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface-sunken);
 }
 
 .auth-credit-header {
@@ -1042,16 +1147,17 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 }
 
 .auth-credit-header span {
-  color: var(--text-muted);
+  color: var(--seed-muted);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .auth-credit-header strong {
-  color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 900;
+  color: var(--seed-fg);
+  font-size: 20px;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: -0.022em;
 }
 
 .auth-credit-form {
@@ -1063,52 +1169,53 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 .auth-credit-form input {
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 36px;
   padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-primary);
+  border: none;
+  border-radius: var(--seed-radius);
+  background: var(--seed-surface-raised);
+  color: var(--seed-fg);
   font-size: 13px;
   outline: none;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition);
 }
 
 .auth-credit-form input:focus {
-  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--seed-primary), 0 0 0 3px color-mix(in srgb, var(--seed-primary) 15%, transparent);
 }
 
 .auth-credit-form button {
   padding: 0 14px;
-  background: #111827;
-  color: #fff;
+  background: var(--seed-fg);
+  color: var(--seed-surface);
+  box-shadow: none;
 }
+
+.auth-credit-form button:hover:not(:disabled) { opacity: 0.85; }
 
 .auth-credit-message {
   margin: 0;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1.4;
 }
 
-.auth-credit-message.success {
-  color: #047857;
-}
+.auth-credit-message.success { color: var(--seed-success); }
+.auth-credit-message.error { color: var(--seed-danger); }
 
-.auth-credit-message.error {
-  color: var(--danger);
-}
-
+/* --- Mobile --- */
 @media (max-width: 768px) {
   .sidebar-backdrop {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.38);
+    background: rgba(0, 0, 0, 0.32);
     z-index: 50;
   }
 
   .messages-container {
-    padding: 18px 14px 28px;
+    padding: 16px 12px 24px;
   }
 
   .system-editor-panel {

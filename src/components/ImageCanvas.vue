@@ -1417,7 +1417,7 @@ onUnmounted(() => {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  background: #f6f8fb;
+  background: hsl(var(--background));
 }
 
 .left-main-column {
@@ -1441,8 +1441,9 @@ onUnmounted(() => {
   margin: 16px 14px 0;
   padding: 4px;
   width: max-content;
-  border-radius: 10px;
-  background: #eef1f4;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
   pointer-events: auto;
 }
 
@@ -1467,9 +1468,9 @@ onUnmounted(() => {
   gap: 6px;
   padding: 6px 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-md, 7px);
   background: transparent;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   font-family: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -1478,13 +1479,13 @@ onUnmounted(() => {
 }
 
 .workspace-tab:hover {
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
 }
 
 .workspace-tab.active {
-  background: #0b0f14;
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: var(--shadow-sm);
 }
 
 .content-row {
@@ -1506,15 +1507,15 @@ onUnmounted(() => {
   width: 320px;
   flex-shrink: 0;
   padding: 24px 20px;
-  border-left: 1px solid var(--border);
-  background: #fff;
+  border-left: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
   overflow-y: auto;
   min-height: 0;
 }
 
 .settings-sidebar h3 {
   margin: 0 0 24px;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   font-size: 16px;
   font-weight: 800;
 }
@@ -1526,7 +1527,7 @@ onUnmounted(() => {
 .setting-group label {
   display: block;
   margin-bottom: 10px;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
 }
@@ -1540,10 +1541,10 @@ onUnmounted(() => {
 .option-buttons button {
   min-height: 36px;
   padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-secondary);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -1551,9 +1552,9 @@ onUnmounted(() => {
 }
 
 .option-buttons button.active {
-  background: #111827;
-  color: #fff;
-  border-color: #111827;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
 }
 
 .model-buttons {
@@ -1562,17 +1563,17 @@ onUnmounted(() => {
 
 .empty-state {
   padding: 16px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  background: #fafbfc;
-  color: var(--text-secondary);
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 600;
   text-align: center;
 }
 
 .loading-hint {
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
 }
@@ -1583,11 +1584,11 @@ onUnmounted(() => {
   overflow: hidden;
   cursor: default;
   background:
-    linear-gradient(#e3e9f1 1px, transparent 1px),
-    linear-gradient(90deg, #e3e9f1 1px, transparent 1px),
-    linear-gradient(#f1f5f9 1px, transparent 1px),
-    linear-gradient(90deg, #f1f5f9 1px, transparent 1px),
-    #fbfdff;
+    linear-gradient(hsl(var(--border) / 0.68) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.68) 1px, transparent 1px),
+    linear-gradient(hsl(var(--border) / 0.38) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.38) 1px, transparent 1px),
+    hsl(var(--background));
   background-size: 28px 28px, 28px 28px, 140px 140px, 140px 140px;
 }
 
@@ -1606,15 +1607,16 @@ onUnmounted(() => {
 
 .connection-path {
   fill: none;
-  stroke: #7a8492;
+  stroke: hsl(var(--muted-foreground));
   stroke-width: 3;
   stroke-linecap: round;
-  filter: drop-shadow(0 1px 1px rgba(15, 23, 42, 0.12));
+  opacity: 0.72;
 }
 
 .connection-path.draft {
-  stroke: var(--accent);
+  stroke: hsl(var(--primary));
   stroke-dasharray: 8 7;
+  opacity: 1;
 }
 
 .canvas-viewport {
@@ -1628,23 +1630,23 @@ onUnmounted(() => {
   z-index: 24;
   max-width: min(560px, calc(100% - 64px));
   padding: 10px 14px;
-  border: 1px solid rgba(220, 38, 38, 0.18);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--danger);
+  border: 1px solid hsl(var(--destructive) / 0.2);
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  color: hsl(var(--destructive));
   font-size: 12px;
   font-weight: 700;
   box-shadow: var(--shadow-md);
   transform: translateX(-50%);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1180px) {
   .settings-sidebar {
     display: none;
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 820px) {
   .content-row > aside {
     display: none;
   }
@@ -1653,6 +1655,46 @@ onUnmounted(() => {
 @media (max-width: 760px) {
   .image-canvas {
     flex-direction: column;
+  }
+
+  .top-tabs-bar {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    width: auto;
+    margin: 10px 10px 0;
+  }
+
+  .workspace-tab {
+    flex: 1;
+    justify-content: center;
+    min-height: 36px;
+  }
+
+  .content-row > aside,
+  .content-row > .gallery-stage,
+  .canvas-stage {
+    padding-top: 10px;
+  }
+}
+
+@media (max-width: 460px) {
+  .top-tabs-bar {
+    margin: 8px 8px 0;
+    gap: 4px;
+    padding: 3px;
+  }
+
+  .workspace-tab {
+    gap: 5px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .global-error {
+    width: calc(100% - 24px);
+    max-width: none;
   }
 }
 </style>

@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-export type RouteWorkspace = 'image' | 'chat' | 'works'
+export type RouteWorkspace = 'image' | 'chat'
 
 function firstQueryValue(value: unknown) {
   return Array.isArray(value) ? value[0] : value
@@ -34,8 +34,7 @@ export const router = createRouter({
     },
     {
       path: '/works',
-      component: () => import('../views/AppShell.vue'),
-      meta: { workspace: 'works' satisfies RouteWorkspace },
+      redirect: '/image',
     },
     {
       path: '/admin',

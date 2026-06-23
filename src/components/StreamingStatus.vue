@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import type { ToolCall } from '../types/tools'
 import type { RunState } from '../types/tools'
+import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{
   isLoading: boolean
@@ -54,56 +55,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="isLoading" class="streaming-status" role="status" aria-live="polite">
-    <span class="status-spark">
-      <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
-        <path d="M12 2l1.7 6.2L20 10l-6.3 1.8L12 18l-1.7-6.2L4 10l6.3-1.8L12 2z" />
-      </svg>
-    </span>
-    <span class="status-label">{{ label }}</span>
-    <span v-if="elapsed" class="status-time">{{ elapsed }}</span>
-  </div>
+  <Badge
+    v-if="isLoading"
+    variant="secondary"
+    class="gap-1 ml-6 mb-1.5 h-5.5 py-0.5 px-2 text-[10px] font-medium rounded-md max-md:ml-0 animate-in fade-in-0"
+    role="status"
+    aria-live="polite"
+  >
+    <svg class="h-3 w-3 text-primary animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z" />
+      <path d="M19 15l.8 2.7L22 18.5l-2.2.8L19 22l-.8-2.7-2.2-.8 2.2-.8L19 15z" />
+    </svg>
+    <span class="font-medium text-foreground">{{ label }}</span>
+    <span v-if="elapsed" class="text-muted-foreground tabular-nums">{{ elapsed }}</span>
+  </Badge>
 </template>
-
-<style scoped>
-.streaming-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 12px 40px;
-  min-height: 32px;
-  padding: 5px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: 12px;
-  box-shadow: var(--shadow-sm);
-}
-
-.status-spark {
-  display: inline-flex;
-  color: var(--accent);
-  animation: shimmer 1.2s ease-in-out infinite;
-}
-
-.status-label {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.status-time {
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-@keyframes shimmer {
-  50% { opacity: 0.35; transform: scale(0.92); }
-}
-
-@media (max-width: 768px) {
-  .streaming-status {
-    margin-left: 0;
-  }
-}
-</style>

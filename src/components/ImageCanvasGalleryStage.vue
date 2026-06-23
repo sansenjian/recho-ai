@@ -165,7 +165,7 @@ function handleScroll(event: Event) {
   min-width: 0;
   padding: 26px clamp(18px, 3vw, 42px);
   overflow-y: auto;
-  background: #f4f6f8;
+  background: hsl(var(--secondary));
 }
 
 .gallery-header {
@@ -190,21 +190,21 @@ function handleScroll(event: Event) {
 }
 
 .gallery-eyebrow {
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 800;
 }
 
 .gallery-header h2 {
   margin: 0;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   font-size: 28px;
   letter-spacing: 0;
 }
 
 .gallery-header p {
   margin: 0;
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 800;
 }
@@ -222,18 +222,18 @@ function handleScroll(event: Event) {
   display: inline-flex;
   gap: 3px;
   padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
 }
 
 .gallery-filter-group button,
 .gallery-reset {
   min-height: 34px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text-primary);
+  border-radius: var(--radius-md, 7px);
+  background: transparent;
+  color: hsl(var(--foreground));
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
@@ -241,12 +241,13 @@ function handleScroll(event: Event) {
 
 .gallery-filter-group button {
   padding: 0 12px;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
 }
 
 .gallery-filter-group button.active {
-  background: #111827;
-  color: #fff;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: var(--shadow-sm);
 }
 
 .gallery-search {
@@ -257,10 +258,10 @@ function handleScroll(event: Event) {
   flex: 1 1 360px;
   gap: 8px;
   padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text-muted);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
 }
 
 .gallery-search input {
@@ -269,18 +270,18 @@ function handleScroll(event: Event) {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   font: inherit;
   font-size: 13px;
 }
 
 .gallery-search input::placeholder {
-  color: #a8b1bf;
+  color: hsl(var(--muted-foreground));
 }
 
 .gallery-reset {
   padding: 0 12px;
-  border-color: var(--border);
+  border-color: hsl(var(--border));
 }
 
 .gallery-reset:disabled {
@@ -299,7 +300,7 @@ function handleScroll(event: Event) {
 
 .gallery-scroll-status {
   padding: 20px 0 4px;
-  color: var(--text-muted);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 900;
   text-align: center;
@@ -312,15 +313,15 @@ function handleScroll(event: Event) {
   min-height: 320px;
   max-width: 720px;
   margin: 0 auto;
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--text-muted);
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
   text-align: center;
 }
 
 .gallery-empty strong {
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   font-size: 18px;
 }
 
@@ -335,10 +336,10 @@ function handleScroll(event: Event) {
   z-index: 24;
   max-width: min(560px, calc(100% - 64px));
   padding: 10px 14px;
-  border: 1px solid rgba(220, 38, 38, 0.18);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--danger);
+  border: 1px solid hsl(var(--destructive) / 0.2);
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  color: hsl(var(--destructive));
   font-size: 12px;
   font-weight: 700;
   box-shadow: var(--shadow-md);
@@ -347,7 +348,7 @@ function handleScroll(event: Event) {
 
 @media (max-width: 760px) {
   .gallery-stage {
-    padding: 16px;
+    padding: 12px;
   }
 
   .gallery-header {
@@ -384,6 +385,40 @@ function handleScroll(event: Event) {
 
   .gallery-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 460px) {
+  .gallery-stage {
+    padding: 8px;
+  }
+
+  .gallery-header {
+    margin-bottom: 12px;
+  }
+
+  .gallery-heading {
+    gap: 6px;
+  }
+
+  .gallery-header h2 {
+    font-size: 22px;
+  }
+
+  .gallery-filter-group {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .gallery-filter-group button,
+  .gallery-reset {
+    min-width: 0;
+  }
+
+  .gallery-empty {
+    min-height: 240px;
+    padding: 18px;
   }
 }
 </style>

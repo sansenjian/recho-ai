@@ -24,16 +24,15 @@ const tone = computed(() => {
   return 'normal'
 })
 
-const ringStyle = computed(() => {
-  const color = tone.value === 'danger'
-    ? '#ef4444'
-    : tone.value === 'warn'
-      ? '#f59e0b'
-      : 'var(--accent)'
-  return {
-    background: `conic-gradient(${color} ${percent.value * 3.6}deg, var(--input-bg) 0deg)`,
-  }
+const ringColor = computed(() => {
+  if (tone.value === 'danger') return '#ef4444'
+  if (tone.value === 'warn') return '#f59e0b'
+  return 'hsl(var(--foreground))'
 })
+
+const ringStyle = computed(() => ({
+  background: `conic-gradient(${ringColor.value} ${percent.value * 3.6}deg, hsl(var(--muted)) 0deg)`,
+}))
 
 const detail = computed(() => {
   const formatted = new Intl.NumberFormat().format(estimatedTokens.value)
@@ -42,62 +41,20 @@ const detail = computed(() => {
 </script>
 
 <template>
-  <div class="context-meter" :class="tone" :title="detail">
-    <span class="context-ring" :style="ringStyle">
-      <span class="context-ring-inner" />
+  <div
+    class="inline-flex items-center gap-1 h-5 px-1.5 rounded-full bg-secondary text-muted-foreground text-[10px] font-medium font-mono max-[640px]:hidden cursor-default"
+    :class="{
+      'ring-1 ring-amber-400/30': tone === 'warn',
+      'ring-1 ring-red-400/30': tone === 'danger',
+    }"
+    :title="detail"
+  >
+    <span
+      class="relative w-3 h-3 rounded-full inline-flex items-center justify-center shrink-0"
+      :style="ringStyle"
+    >
+      <span class="w-1.5 h-1.5 rounded-full bg-secondary" />
     </span>
-    <span class="context-percent">{{ percent }}%</span>
+    <span>{{ percent }}%</span>
   </div>
 </template>
-
-<style scoped>
-.context-meter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--text-secondary);
-  box-shadow: var(--shadow-sm);
-}
-
-.context-ring {
-  position: relative;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.context-ring-inner {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--surface);
-}
-
-.context-percent {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.context-meter.warn {
-  border-color: rgba(245, 158, 11, 0.35);
-}
-
-.context-meter.danger {
-  border-color: rgba(239, 68, 68, 0.35);
-}
-
-@media (max-width: 640px) {
-  .context-meter {
-    display: none;
-  }
-}
-</style>

@@ -231,7 +231,7 @@ const emit = defineEmits<{
   min-width: 0;
   min-height: 0;
   padding: 18px;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid hsl(var(--border));
   overflow-y: auto;
 }
 
@@ -273,7 +273,7 @@ const emit = defineEmits<{
   width: 34px;
   height: 34px;
   flex: 0 0 auto;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: #fff;
   color: var(--text-secondary);
@@ -323,7 +323,7 @@ const emit = defineEmits<{
 .gallery-detail-references img {
   width: 100%;
   aspect-ratio: 1;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   object-fit: cover;
 }
@@ -359,7 +359,7 @@ const emit = defineEmits<{
 
 .gallery-param-grid dd {
   padding: 7px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: var(--surface-soft);
   color: var(--text-primary);
@@ -379,7 +379,7 @@ const emit = defineEmits<{
   justify-content: center;
   min-height: 40px;
   gap: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: #fff;
   color: var(--text-primary);
@@ -422,7 +422,7 @@ const emit = defineEmits<{
   }
 
   .gallery-detail-panel {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid hsl(var(--border));
     border-left: 0;
   }
 
