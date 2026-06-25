@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -305,14 +306,10 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 	if err != nil {
 		return fmt.Errorf("failed to marshal reference images: %w", err)
 	}
-	if !json.Valid(references) {
-		// Log a truncated preview to aid debugging without leaking full content.
-		preview := string(references)
-		if len(preview) > 200 {
-			preview = preview[:200] + "..."
-		}
-		log.Printf("[image-history] invalid reference_images JSON (len=%d, preview=%q)", len(references), preview)
-		return fmt.Errorf("invalid reference_images JSON after marshal")
+	referencesJSON, err := jsonStringForJSONB(references)
+	if err != nil {
+		log.Printf("[image-history] invalid reference_images: %v", err)
+		return fmt.Errorf("invalid reference_images: %w", err)
 	}
 
 	visibility := item.Visibility
@@ -370,7 +367,7 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 		nullableString(item.PreviewURL), nullableString(item.PreviewPath),
 		nullableString(item.ThumbnailURL), nullableString(item.ThumbnailPath),
 		item.Size, nullableString(item.AspectRatio), nullableString(item.Resolution),
-		nullableString(item.Quality), references, referenceCount, nullableString(item.ImageModel),
+		nullableString(item.Quality), referencesJSON, referenceCount, nullableString(item.ImageModel),
 		nullableInt(item.Width), nullableInt(item.Height), nullableInt(item.Bytes),
 		visibility, fundingSource, item.CreditCost, creditTxID, expiresAt, generatedAt,
 	)
@@ -657,6 +654,29 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// jsonStringForJSONB validates that raw bytes are valid UTF-8 and valid JSON,
+// then returns a string that pgx encodes as PostgreSQL text — which can be
+// correctly cast to jsonb. Passing []byte directly to pgx causes it to be
+// encoded as bytea, leading to 22P02 errors when PostgreSQL tries to cast
+// bytea → jsonb.
+func jsonStringForJSONB(data []byte) (string, error) {
+	if !utf8.Valid(data) {
+		preview := string(data)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return "", fmt.Errorf("non-UTF-8 bytes in JSON (len=%d, preview=%q)", len(data), preview)
+	}
+	if !json.Valid(data) {
+		preview := string(data)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return "", fmt.Errorf("invalid JSON (len=%d, preview=%q)", len(data), preview)
+	}
+	return string(data), nil
 }
 
 func decodeReferences(data []byte) []ImageHistoryReference {
