@@ -182,6 +182,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.storageService == nil {
+		log.Printf("[image] 503: storageService is nil (DB not configured or connection failed)")
 		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
 		return
 	}
@@ -241,7 +242,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				response.Error(w, http.StatusPaymentRequired, "额度不足。")
 				return
 			}
-			log.Printf("[image] failed to reserve credits: %v", err)
+			log.Printf("[image] 503: failed to reserve credits: %v", err)
 			response.Error(w, http.StatusServiceUnavailable, "额度服务暂时不可用，请稍后重试。")
 			return
 		} else {
@@ -362,7 +363,8 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				CreditTransactionID: creditTransactionID,
 			}
 			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
-				if creditReservation != nil {
+			log.Printf("[image] 503: SaveImageHistory failed: %v", err)
+			if creditReservation != nil {
 					_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
 					if refundErr != nil {
 						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
