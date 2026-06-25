@@ -57,6 +57,7 @@ func (h *CreditsHandler) GetBalance(w http.ResponseWriter, r *http.Request) {
 
 	balance, err := h.creditService.GetBalance(r.Context(), user.ID)
 	if err != nil {
+		log.Printf("[credits] get balance failed for user %s: %v", user.ID, err)
 		response.Error(w, http.StatusInternalServerError, "额度查询失败，请稍后重试。")
 		return
 	}
