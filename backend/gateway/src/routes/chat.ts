@@ -12,6 +12,15 @@ const router = Router()
 
 const MAX_RETRIES = 3
 
+const ALLOWED_MODEL_PREFIXES = ['gpt-', 'moonshot', 'kimi-']
+
+function isValidChatModel(model: string): boolean {
+  if (ALLOWED_MODEL_PREFIXES.some(prefix => model.startsWith(prefix))) return true
+  // NVIDIA and other provider models typically contain a '/'
+  if (model.includes('/')) return true
+  return false
+}
+
 router.post('/chat', async (req: Request, res: Response) => {
   const { model, messages, skill } = req.body
   const userId = await getRequestUserId(req)
@@ -25,11 +34,23 @@ router.post('/chat', async (req: Request, res: Response) => {
     return
   }
 
+  if (!isValidChatModel(model)) {
+    res.status(400).json({ error: `unsupported model: ${model}` })
+    return
+  }
+
   const clientOrPool = getClientByModel(model)
   if (!clientOrPool) {
     res.status(400).json({ error: `no client available for model: ${model}` })
     return
   }
+
+  const controller = new AbortController()
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      controller.abort()
+    }
+  })
 
   let activeSkill: SkillDefinition | null = null
   let conversationMessages = messages.map((m: any) => ({ ...m }))
@@ -58,9 +79,15 @@ router.post('/chat', async (req: Request, res: Response) => {
 
       // Unified TAOR loop: streaming + tools always provided.
       // The model autonomously decides whether to call tools.
-      await runTAORLoop(client, model, conversationMessages, tools, res)
+      await runTAORLoop(client, model, conversationMessages, tools, res, controller)
       return
     } catch (err: any) {
+      if (controller.signal.aborted || res.writableEnded) {
+        if (!res.writableEnded) {
+          try { res.end() } catch { /* client already gone */ }
+        }
+        return
+      }
       if (err.status === 429 || (err.status >= 500 && err.status < 600)) {
         if (entry) entry.limiter.penalize()
         lastError = err

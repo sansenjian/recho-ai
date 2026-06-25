@@ -57,6 +57,7 @@ type ImageHandler struct {
 	creditService  imageCreditService
 	storageService imageStorageService
 	idempotencySvc imageIdempotencyService // optional, nil disables idempotency
+	httpClient     *http.Client           // reused HTTP client for upstream image API calls
 }
 
 // NewImageHandler creates a new image handler.
@@ -70,6 +71,7 @@ func NewImageHandler(
 		creditService:  creditService,
 		storageService: storageService,
 		idempotencySvc: idempotencySvc,
+		httpClient:     &http.Client{Timeout: 360 * time.Second},
 	}
 }
 
@@ -189,7 +191,11 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
 		outcome, err := h.idempotencySvc.Acquire(r.Context(), user.ID, idemKey, "image_generate", rawBody)
 		if err != nil {
-			log.Printf("[idempotency] acquire error (proceeding without): %v", err)
+			// Returning 503 prevents proceeding without idempotency protection,
+			// which could lead to double-charging on retries.
+			log.Printf("[idempotency] acquire error: %v", err)
+			response.Error(w, http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试")
+			return
 		} else if outcome != nil {
 			if outcome.Conflict {
 				response.Error(w, http.StatusConflict, "请求正在处理中或使用相同的幂等键发送了不同的请求。")
@@ -506,7 +512,10 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	}
 
 	// Shared HTTP client with retry logic
-	client := &http.Client{Timeout: 360 * time.Second}
+	client := h.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 360 * time.Second}
+	}
 	maxRetries := 3
 	urlPath := "/images/generations"
 	var bodyFactory func() (io.Reader, string, error)
@@ -594,11 +603,13 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 
 	// Process results
 	results := make([]ImageResult, 0, len(apiResp.Data))
+	storageFailures := 0
 	for i, item := range apiResp.Data {
 		result := ImageResult{
 			ID:            fmt.Sprintf("img_%d_%d_%s", time.Now().UnixNano(), i, randomID()),
 			RevisedPrompt: item.RevisedPrompt,
 		}
+		storedOK := false
 
 		// Store image and get URLs
 		if item.URL != "" {
@@ -614,7 +625,14 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 				result.Width = stored.Width
 				result.Height = stored.Height
 				result.Bytes = stored.Bytes
+				storedOK = true
 			} else {
+				// Keep the fallback to the original URL, but surface the storage failure.
+				if err != nil {
+					log.Printf("[image] storage failed for %s: %v", item.URL, err)
+				} else {
+					log.Printf("[image] storage returned nil for %s", item.URL)
+				}
 				result.URL = item.URL // Fallback to original URL
 				result.PreviewURL = item.URL
 			}
@@ -633,11 +651,27 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 					result.Width = stored.Width
 					result.Height = stored.Height
 					result.Bytes = stored.Bytes
+					storedOK = true
+				} else {
+					if err != nil {
+						log.Printf("[image] storage failed for base64 image %s: %v", result.ID, err)
+					} else {
+						log.Printf("[image] storage returned nil for base64 image %s", result.ID)
+					}
 				}
+			} else {
+				log.Printf("[image] base64 decode failed for %s: %v", result.ID, err)
 			}
 		}
 
+		if !storedOK {
+			storageFailures++
+		}
 		results = append(results, result)
+	}
+
+	if len(results) > 0 && storageFailures == len(results) {
+		log.Printf("[image] warning: all %d image(s) failed storage, falling back to source URLs", storageFailures)
 	}
 
 	// Truncate to requested count if provider returned more.
@@ -1078,6 +1112,12 @@ func headerText(value string, maxLength int) string {
 	return decoded
 }
 
+// safePathPart sanitizes a single path segment for use in generated storage
+// paths. This is intentionally stricter than service.safePathPart in
+// internal/service/imageproc.go: it collapses the value to path.Base and
+// disallows "/", "." and other separators so the result is safe to embed in
+// URL path segments. The service version permits "/" and "." so that nested
+// storage prefixes are preserved.
 func safePathPart(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1155,6 +1195,9 @@ func dataURLBytes(value string) ([]byte, string, error) {
 	mime := "image/png"
 	if meta != "" {
 		mime = strings.Split(meta, ";")[0]
+	}
+	if !isAllowedReferenceMime(mime) {
+		return nil, "", fmt.Errorf("unsupported reference image MIME type: %s", mime)
 	}
 	if strings.Contains(meta, ";base64") {
 		data, err := base64.StdEncoding.DecodeString(parts[1])

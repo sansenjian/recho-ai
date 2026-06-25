@@ -62,6 +62,12 @@ func detectFormat(data []byte) (mime, ext string) {
 
 const pngMagic = "\x89PNG\r\n\x1a\n"
 
+// safePathPart sanitizes a storage path (which may include nested segments)
+// for use as an object key. Unlike handler.safePathPart in
+// internal/handler/image.go — which is stricter and disallows "/" and "." for
+// URL path segments — this version permits "/" and "." so that multi-level
+// storage prefixes are preserved. The two implementations are intentionally
+// different to suit their respective contexts.
 func safePathPart(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

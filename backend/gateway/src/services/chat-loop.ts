@@ -113,6 +113,7 @@ export async function runTAORLoop(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   tools: OpenAI.Chat.Completions.ChatCompletionTool[],
   res: Response,
+  controller?: AbortController,
 ): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
   const msgs = messages.map(m => ({ ...m } as any))
   let autoContinueRounds = 0
@@ -122,16 +123,23 @@ export async function runTAORLoop(
     let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
     try {
       stream = await withTimeout(
-        client.chat.completions.create({
-          model,
-          messages: msgs as any,
-          tools: tools.length > 0 ? tools : undefined,
-          stream: true,
-        }),
+        client.chat.completions.create(
+          {
+            model,
+            messages: msgs as any,
+            tools: tools.length > 0 ? tools : undefined,
+            stream: true,
+          },
+          controller?.signal ? { signal: controller.signal } : undefined,
+        ),
         STREAM_START_TIMEOUT_MS,
         '模型服务响应超时，请稍后重试或切换其他模型。',
       )
     } catch (err: any) {
+      if (controller?.signal.aborted) {
+        if (!res.writableEnded) await finishStream(res)
+        return msgs
+      }
       const message = publicErrorMessage(err, '模型服务暂时不可用，请稍后重试。')
       console.warn('[chat] stream start failed:', safeErrorDetail(err, 'model stream failed'))
       await writeSSE(res, { type: 'message_complete', finishReason: 'error', incomplete: true } as ToolCallEvent)
@@ -142,6 +150,7 @@ export async function runTAORLoop(
     }
 
     const timeout = setTimeout(() => {
+      controller?.abort()
       if (!res.writableEnded) {
         res.write(`event: error\ndata: ${JSON.stringify({ error: 'stream timeout' })}\n\n`)
         res.end()
@@ -212,6 +221,14 @@ export async function runTAORLoop(
           finishReason = choice.finish_reason
         }
       }
+    } catch (err: any) {
+      if (controller?.signal.aborted) {
+        if (!res.writableEnded) {
+          try { res.end() } catch { /* client already gone */ }
+        }
+        return msgs
+      }
+      throw err
     } finally {
       clearTimeout(timeout)
     }

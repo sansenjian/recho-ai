@@ -21,7 +21,7 @@ export type MessageBlock =
     }
 
 export interface Message {
-  id: number
+  id: string
   role: 'user' | 'assistant'
   content: string
   blocks?: MessageBlock[]
@@ -50,7 +50,7 @@ export const GROUP_COLORS = [
 
 export interface Conversation {
   schemaVersion?: 2
-  id: number
+  id: string
   title: string
   messages: Message[]
   systemPrompt: string

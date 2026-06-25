@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { Message, MessageBlock } from '../types'
 import { getRendered, getRenderedText } from '../utils/markdown'
 import { stripThinking } from '../utils/messageText'
+import { relativeTime } from '../utils/time'
 import ToolActivity from './ToolActivity.vue'
 import ThinkingActivity from './ThinkingActivity.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -31,6 +32,7 @@ const shouldShowThinkingPlaceholder = computed(() =>
   !hasThinkingBlock.value,
 )
 const renderedMessage = computed(() => getRendered(props.msg))
+const displayTimestamp = computed(() => relativeTime(props.msg.timestamp))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
   return getRenderedText(block.content)
@@ -63,7 +65,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
       <!-- Header row -->
       <div class="flex items-center gap-2 mb-1.5">
         <span class="text-[13px] font-semibold text-foreground">Recho</span>
-        <span class="text-[11px] text-muted-foreground tabular-nums" :title="msg.timestamp">{{ msg.timestamp }}</span>
+        <span class="text-[11px] text-muted-foreground tabular-nums" :title="msg.timestamp">{{ displayTimestamp }}</span>
       </div>
 
       <!-- Thinking placeholder (when tools ran but no thinking text) -->
@@ -168,7 +170,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
         >
           <RefreshCw class="h-3 w-3" />
         </Button>
-        <span class="text-[11px] text-muted-foreground ml-0.5 tabular-nums" :title="msg.timestamp">{{ msg.timestamp }}</span>
+        <span class="text-[11px] text-muted-foreground ml-0.5 tabular-nums" :title="msg.timestamp">{{ displayTimestamp }}</span>
       </div>
     </div>
   </div>

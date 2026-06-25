@@ -151,11 +151,12 @@ func main() {
 
 	// Create HTTP server
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", config.Port),
-		Handler:      r,
-		ReadTimeout:  120 * time.Second,
-		WriteTimeout: 620 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              fmt.Sprintf(":%d", config.Port),
+		Handler:           r,
+		ReadTimeout:       120 * time.Second,
+		WriteTimeout:      620 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second, // mitigates Slowloris attacks
 	}
 
 	// Start server in goroutine

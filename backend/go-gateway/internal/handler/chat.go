@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"go-gateway/internal/config"
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/pkg/response"
 	"go-gateway/internal/service"
@@ -96,6 +97,14 @@ type StreamChunk struct {
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
+	// Set a credential-safe CORS origin for all responses. The wildcard "*"
+	// is incompatible with AllowCredentials: true, so echo the request origin
+	// only when it is in the configured allow-list.
+	if allowed := corsAllowedOrigin(r.Header.Get("Origin")); allowed != "" {
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Vary", "Origin")
+	}
+
 	user := middleware.GetUserFromRequest(r)
 	if user == nil {
 		response.Error(w, http.StatusUnauthorized, "Unauthorized")
@@ -228,7 +237,6 @@ func (h *ChatHandler) handleStream(ctx context.Context, w http.ResponseWriter, u
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Stream response to client
 	reader := resp.Body
@@ -311,4 +319,19 @@ func (h *ChatHandler) Routes() http.Handler {
 	r.Post("/", h.Chat)
 	r.Get("/history", h.ChatHistory)
 	return r
+}
+
+// corsAllowedOrigin returns the request origin when it is present in the
+// configured CORS allow-list, otherwise an empty string. Use this instead of
+// the wildcard "*" which is incompatible with AllowCredentials: true.
+func corsAllowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	for _, allowed := range config.CorsOrigins() {
+		if allowed == origin {
+			return origin
+		}
+	}
+	return ""
 }

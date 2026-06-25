@@ -20,7 +20,7 @@ const md: MarkdownIt = new MarkdownIt({
   },
 })
 
-const renderedCache = new Map<number, { source: string; html: string }>()
+const renderedCache = new Map<string, { source: string; html: string }>()
 
 export function getRendered(msg: Message): string | undefined {
   if (msg.role !== 'assistant') return undefined
@@ -32,10 +32,21 @@ export function getRendered(msg: Message): string | undefined {
   return html
 }
 
+const renderedTextCache = new Map<string, string>()
+
 export function getRenderedText(text: string): string {
-  return md.render(stripThinking(text))
+  const cached = renderedTextCache.get(text)
+  if (cached !== undefined) return cached
+  const html = md.render(stripThinking(text))
+  renderedTextCache.set(text, html)
+  return html
+}
+
+export function clearRenderedTextCache(): void {
+  renderedTextCache.clear()
 }
 
 export function clearRenderCache(): void {
   renderedCache.clear()
+  clearRenderedTextCache()
 }
