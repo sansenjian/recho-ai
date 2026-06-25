@@ -39,7 +39,7 @@ type stubImageStorageService struct {
 	saveErr error
 }
 
-func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url string) (*service.StoredImage, error) {
+func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error) {
 	return nil, nil
 }
 

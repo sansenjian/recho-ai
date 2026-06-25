@@ -32,6 +32,27 @@ var SupabaseJWKSURL = FirstNonEmpty(
 )
 var SupabaseImageBucket = parseEnvString("SUPABASE_IMAGE_BUCKET", "recho-images")
 
+// Tencent COS config
+var TencentCosSecretID = os.Getenv("TENCENT_COS_SECRET_ID")
+var TencentCosSecretKey = os.Getenv("TENCENT_COS_SECRET_KEY")
+var TencentCosBucket = os.Getenv("TENCENT_COS_BUCKET")
+var TencentCosAppID = os.Getenv("TENCENT_COS_APPID")
+var TencentCosFullBucket = resolveTencentCosBucket(TencentCosBucket, TencentCosAppID)
+var TencentCosRegion = os.Getenv("TENCENT_COS_REGION")
+var TencentCosPublicBaseURL = os.Getenv("TENCENT_COS_PUBLIC_BASE_URL")
+
+func resolveTencentCosBucket(bucket, appID string) string {
+	bucket = strings.TrimSpace(bucket)
+	appID = strings.TrimSpace(appID)
+	if bucket == "" {
+		return ""
+	}
+	if appID == "" || strings.HasSuffix(bucket, "-"+appID) {
+		return bucket
+	}
+	return bucket + "-" + appID
+}
+
 // Image generation config
 var ImageGenAPIKey = os.Getenv("IMAGE_GEN_API_KEY")
 var ImageGenBaseURL = parseEnvString("IMAGE_GEN_BASE_URL", "https://lucen.plus/v1")
