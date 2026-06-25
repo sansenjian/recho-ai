@@ -291,9 +291,24 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 		return nil
 	}
 
-	references, err := json.Marshal(item.References)
+	// Default nil references to empty array so json.Marshal produces "[]" not "null".
+	refs := item.References
+	if refs == nil {
+		refs = []ImageHistoryReference{}
+	}
+
+	references, err := json.Marshal(refs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal reference images: %w", err)
+	}
+	if !json.Valid(references) {
+		// Log a truncated preview to aid debugging without leaking full content.
+		preview := string(references)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("[image-history] invalid reference_images JSON (len=%d, preview=%q)", len(references), preview)
+		return fmt.Errorf("invalid reference_images JSON after marshal")
 	}
 
 	visibility := item.Visibility
