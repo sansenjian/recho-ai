@@ -370,7 +370,7 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 		nullableString(item.PreviewURL), nullableString(item.PreviewPath),
 		nullableString(item.ThumbnailURL), nullableString(item.ThumbnailPath),
 		item.Size, nullableString(item.AspectRatio), nullableString(item.Resolution),
-		nullableString(item.Quality), references, referenceCount, nullableString(item.ImageModel),
+		nullableString(item.Quality), string(references), referenceCount, nullableString(item.ImageModel),
 		nullableInt(item.Width), nullableInt(item.Height), nullableInt(item.Bytes),
 		visibility, fundingSource, item.CreditCost, creditTxID, expiresAt, generatedAt,
 	)
