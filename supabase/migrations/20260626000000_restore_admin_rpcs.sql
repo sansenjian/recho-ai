@@ -16,12 +16,12 @@ begin
   if matches is null or array_length(matches, 1) < 1 then return 0; end if;
   numeric_val := matches[1]::numeric;
   unit := lower(matches[2] || '');
-  case
-    when unit in ('kb', 'kbytes') then return round(numeric_val * 1024);
-    when unit in ('mb') then return round(numeric_val * 1024 * 1024);
-    when unit in ('gb') then return round(numeric_val * 1024 * 1024 * 1024);
-    else return round(numeric_val);
-  end case;
+  return (case
+    when unit in ('kb', 'kbytes') then round(numeric_val * 1024)
+    when unit in ('mb') then round(numeric_val * 1024 * 1024)
+    when unit in ('gb') then round(numeric_val * 1024 * 1024 * 1024)
+    else round(numeric_val)
+  end)::bigint;
 end;
 $$;
 
