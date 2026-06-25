@@ -26,7 +26,7 @@ const newGroupName = ref('')
 const contextMenu = ref<{ groupId: string; x: number; y: number } | null>(null)
 const renamingGroup = ref<string | null>(null)
 const renameValue = ref('')
-const dragConvId = ref<number | null>(null)
+const dragConvId = ref<string | null>(null)
 const dragOverGroupId = ref<string | null>(null)
 
 // Ensure "ungrouped" is always in expanded set
@@ -125,11 +125,11 @@ function handleRecolor(groupId: string, color: string) {
 }
 
 // --- drag and drop ---
-function onDragStart(e: DragEvent, convId: number) {
+function onDragStart(e: DragEvent, convId: string) {
   dragConvId.value = convId
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(convId))
+    e.dataTransfer.setData('text/plain', convId)
   }
 }
 

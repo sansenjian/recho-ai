@@ -1146,15 +1146,20 @@ export async function saveImageHistory(images: ImageHistoryItem[], options: Save
     referenceCache: new Map(),
     allowCreditStorage: options.allowCreditStorage === true,
   }
-  const storedImages: ImageHistoryItem[] = []
 
-  for (const image of images) {
-    if (!image?.id || (!image.sourceBuffer && !image.dataUrl && !image.storagePath)) continue
-    const imageToStore = trustedCreditImage({
+  const validItems = images
+    .filter(image => image?.id && (image.sourceBuffer || image.dataUrl || image.storagePath))
+    .map(image => trustedCreditImage({
       ...image,
       ...(options.userId ? { userId: options.userId } : {}),
-    }, options.allowCreditMetadata === true)
-    storedImages.push(await storedImage(imageToStore, storeContext))
+    }, options.allowCreditMetadata === true))
+
+  const storedImages: ImageHistoryItem[] = []
+  const STORAGE_CONCURRENCY = 4
+  for (let i = 0; i < validItems.length; i += STORAGE_CONCURRENCY) {
+    const batch = validItems.slice(i, i + STORAGE_CONCURRENCY)
+    const results = await Promise.all(batch.map(item => storedImage(item, storeContext)))
+    storedImages.push(...results)
   }
 
   const validImages = storedImages

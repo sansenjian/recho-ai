@@ -632,7 +632,13 @@ export function useImageGen() {
   }
 
   function clearHistory() {
-    return
+    generatedImages.value = []
+    hasMoreHistory.value = false
+    nextHistoryOffset.value = null
+    // 未登录用户的历史保存在本地（IndexedDB / localStorage），同步清空
+    if (!user.value?.id) {
+      void saveHistory(generatedImages.value)
+    }
   }
 
   async function resolveImageDetail(

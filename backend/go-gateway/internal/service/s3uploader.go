@@ -128,7 +128,10 @@ func (u *S3Uploader) uploadMultipart(ctx context.Context, key string, data []byt
 	var wg sync.WaitGroup
 	var partsMu sync.Mutex
 	sem := make(chan struct{}, multipartConcurrency)
-	errChan := make(chan error, 1)
+	// Buffer the error channel by the number of parts so that every goroutine
+	// can report its error without blocking, even if the first error has
+	// already been observed.
+	errChan := make(chan error, partCount)
 
 	for i := 0; i < partCount; i++ {
 		partNum := i + 1

@@ -35,7 +35,9 @@ function setTheme(t: Theme) {
   } catch { /* ignore */ }
 }
 
-// Listen for system theme changes when in 'system' mode
+// Listen for system theme changes when in 'system' mode.
+// 该监听器刻意放在模块作用域：useTheme 是贯穿整个 SPA 生命周期的单例，
+// 监听器与应用同寿，无需手动移除；如需在卸载时清理可改写为返回 dispose 的函数。
 if (typeof window !== 'undefined') {
   const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
   mediaQuery.addEventListener('change', () => {

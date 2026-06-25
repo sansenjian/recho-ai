@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue'
 import type { Conversation, ChatGroup, Message } from '../types'
 import { GROUP_COLORS } from '../types'
+import { clearRenderCache } from '../utils/markdown'
 
 const STORAGE_KEY = 'recho-conversations'
 const GROUPS_KEY = 'recho-groups'
@@ -24,14 +25,14 @@ function loadConversations(): Conversation[] {
     if (raw) {
       const data = JSON.parse(raw)
       return data
-        .map((c: Conversation) => ({ ...c, systemPrompt: c.systemPrompt ?? '', groupId: c.groupId ?? null }))
+        .map((c: Conversation) => ({ ...c, id: String(c.id), systemPrompt: c.systemPrompt ?? '', groupId: c.groupId ?? null }))
         .filter((c: Conversation) => c.messages.length > 0 || c.systemPrompt)
     }
   } catch { /* ignore */ }
   return []
 }
 
-function saveConversations(convs: Conversation[]) {
+function saveConversationsNow(convs: Conversation[]) {
   // 只保留有实际内容的会话（有消息或系统提示词）
   const meaningful = convs
     .filter(c => c.messages.length > 0 || c.systemPrompt)
@@ -39,29 +40,48 @@ function saveConversations(convs: Conversation[]) {
       const hasBlocks = c.messages.some(message => message.blocks?.length)
       return hasBlocks ? { ...c, schemaVersion: 2 as const } : c
     })
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(meaningful))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(meaningful))
+  } catch (err) {
+    // QuotaExceededError 或隐私模式：静默失败，避免阻塞流式更新
+    if (err instanceof DOMException && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+      console.warn('[chat] localStorage 配额已满，跳过持久化会话')
+    } else {
+      console.warn('[chat] saveConversations failed', err)
+    }
+  }
 }
 
-function loadActiveId(): number | null {
+// 流式输出期间每个 delta 都会触发 deep watcher，用 debounce 合并写入，避免高频 JSON.stringify
+let saveConversationsTimer: ReturnType<typeof setTimeout> | null = null
+function saveConversations(_convs: Conversation[]) {
+  if (saveConversationsTimer !== null) clearTimeout(saveConversationsTimer)
+  saveConversationsTimer = setTimeout(() => {
+    saveConversationsTimer = null
+    // 始终持久化最新状态，而不是回调时捕获的快照
+    saveConversationsNow(conversations.value)
+  }, 500)
+}
+
+function loadActiveId(): string | null {
   const raw = localStorage.getItem(ACTIVE_KEY)
   if (raw) {
-    const id = Number(raw)
-    // 确保该 ID 对应的会话确实存在
-    if (conversations.value.some(c => c.id === id)) return id
+    // 确保该 ID 对应的会话确实存在（统一按字符串比较，兼容历史数字 ID）
+    if (conversations.value.some(c => c.id === raw)) return raw
   }
   return conversations.value[0]?.id ?? null
 }
 
-function saveActiveId(id: number | null) {
+function saveActiveId(id: string | null) {
   if (id !== null) {
-    localStorage.setItem(ACTIVE_KEY, String(id))
+    localStorage.setItem(ACTIVE_KEY, id)
   } else {
     localStorage.removeItem(ACTIVE_KEY)
   }
 }
 
 function createInitialConversation(): Conversation {
-  const id = Date.now()
+  const id = crypto.randomUUID()
   return {
     id,
     title: 'New Chat',
@@ -75,7 +95,7 @@ function createInitialConversation(): Conversation {
 
 const initial = loadConversations()
 export const conversations = ref<Conversation[]>(initial.length > 0 ? initial : [createInitialConversation()])
-export const activeConversationId = ref<number | null>(loadActiveId() ?? conversations.value[0].id)
+export const activeConversationId = ref<string | null>(loadActiveId() ?? conversations.value[0].id)
 export const groups = ref<ChatGroup[]>(loadGroups())
 
 watch(conversations, saveConversations, { deep: true })
@@ -87,7 +107,7 @@ watch(activeConversationId, (newId, oldId) => {
   }
 })
 
-function cleanupEmptyConversation(id: number) {
+function cleanupEmptyConversation(id: string) {
   const conv = conversations.value.find(c => c.id === id)
   if (!conv) return
   if (conv.messages.length > 0 || conv.systemPrompt) return
@@ -102,7 +122,7 @@ export function getActiveConversation(): Conversation | undefined {
 
 export function createConversation(): Conversation {
   const conv: Conversation = {
-    id: Date.now(),
+    id: crypto.randomUUID(),
     title: 'New Chat',
     messages: [],
     systemPrompt: '',
@@ -115,10 +135,12 @@ export function createConversation(): Conversation {
   return conv
 }
 
-export function deleteConversation(id: number) {
+export function deleteConversation(id: string) {
   const idx = conversations.value.findIndex(c => c.id === id)
   if (idx === -1) return
   conversations.value.splice(idx, 1)
+  // 释放被删除会话对应的 markdown 渲染缓存，避免内存泄漏
+  clearRenderCache()
   if (activeConversationId.value === id) {
     activeConversationId.value = conversations.value[0]?.id ?? null
     if (!conversations.value.length) {
@@ -127,11 +149,11 @@ export function deleteConversation(id: number) {
   }
 }
 
-export function switchConversation(id: number) {
+export function switchConversation(id: string) {
   activeConversationId.value = id
 }
 
-export function updateConversationTitle(id: number, messages: Message[]) {
+export function updateConversationTitle(id: string, messages: Message[]) {
   const conv = conversations.value.find(c => c.id === id)
   if (!conv || conv.title !== 'New Chat') return
   const firstUser = messages.find(m => m.role === 'user')
@@ -140,17 +162,17 @@ export function updateConversationTitle(id: number, messages: Message[]) {
   }
 }
 
-export function setConversationTitle(id: number, title: string) {
+export function setConversationTitle(id: string, title: string) {
   const conv = conversations.value.find(c => c.id === id)
   if (conv) conv.title = title
 }
 
-export function updateSystemPrompt(id: number, prompt: string) {
+export function updateSystemPrompt(id: string, prompt: string) {
   const conv = conversations.value.find(c => c.id === id)
   if (conv) conv.systemPrompt = prompt
 }
 
-export function touchConversation(id: number) {
+export function touchConversation(id: string) {
   const conv = conversations.value.find(c => c.id === id)
   if (conv) conv.updatedAt = new Date().toLocaleString()
 }
@@ -183,7 +205,7 @@ export function recolorGroup(id: string, color: string) {
   if (g) g.color = color
 }
 
-export function assignToGroup(convId: number, groupId: string | null) {
+export function assignToGroup(convId: string, groupId: string | null) {
   const conv = conversations.value.find(c => c.id === convId)
   if (conv) conv.groupId = groupId
 }

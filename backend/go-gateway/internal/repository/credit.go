@@ -57,7 +57,10 @@ func (r *CreditRepository) GetBalance(ctx context.Context, userID string) (*User
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, nil // User has no balance record
+			// Return nil, nil to indicate the user has no balance record yet.
+			// Callers treat this as a zero balance rather than an error, so a
+			// missing row is not surfaced as a failure to the request handler.
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
