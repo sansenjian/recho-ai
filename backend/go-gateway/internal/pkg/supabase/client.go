@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +35,15 @@ func NewClient() (*Client, error) {
 	poolConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse database config: %w", err)
+	}
+
+	// When connecting through Supabase PgBouncer (transaction mode), pgx's
+	// prepared statement cache causes "prepared statement already exists"
+	// (SQLSTATE 42P05) because named statements are not visible across
+	// PgBouncer-routed sessions. Detect PgBouncer and switch to simple
+	// extended protocol (Exec) that skips the prepare step.
+	if isPgBouncerURL(connString) {
+		poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	}
 
 	// Connection pool settings optimized for serverless
@@ -72,4 +83,11 @@ func (c *Client) Pool() *pgxpool.Pool {
 // Ping checks database connectivity
 func (c *Client) Ping(ctx context.Context) error {
 	return c.pool.Ping(ctx)
+}
+
+// isPgBouncerURL detects whether the connection string points to PgBouncer
+// (Supabase pooler on port 6543 or hostname containing "pooler.supabase.com").
+func isPgBouncerURL(connString string) bool {
+	return strings.Contains(connString, "pooler.supabase.com") ||
+		strings.Contains(connString, ":6543")
 }
