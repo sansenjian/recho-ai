@@ -26,7 +26,6 @@ const proxiedRoutes = [
   /^\/image\/references(?:\/|$)/,
   /^\/image\/storage(?:\/|$)/,
   /^\/image\/generate(?:\/|$)/,
-  /^\/image\/diagnostics(?:\/|$)/,
   /^\/credits(?:\/|$)/,
   /^\/config\/app(?:\/|$)/,
   /^\/config\/supabase(?:\/|$)/,

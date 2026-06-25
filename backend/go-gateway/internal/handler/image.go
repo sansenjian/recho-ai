@@ -927,17 +927,28 @@ func (h *ImageHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/history/{id}", h.GetHistoryDetail)
 	r.Delete("/history/{id}", h.DeleteHistory)
 	r.Delete("/history", h.ClearHistory)
-	r.Get("/diagnostics", h.Diagnostics)
+	if config.EnableDiagnostics {
+		r.Get("/diagnostics", h.Diagnostics)
+	}
+}
+
+// diagnosticsResponse is the typed response for the diagnostics endpoint.
+// It only exposes boolean service-availability flags — no internal details.
+type diagnosticsResponse struct {
+	StorageService bool `json:"storageService"`
+	CreditService  bool `json:"creditService"`
+	IdempotencySvc bool `json:"idempotencySvc"`
+	HTTPClient     bool `json:"httpClient"`
 }
 
 // Diagnostics handles GET /api/image/diagnostics — returns service status
-// for debugging 503 errors. Does not require authentication.
+// for debugging 503 errors. Only registered when ENABLE_DIAGNOSTICS=true.
 func (h *ImageHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
-	status := map[string]any{
-		"storageService": h.storageService != nil,
-		"creditService":  h.creditService != nil,
-		"idempotencySvc": h.idempotencySvc != nil,
-		"httpClient":     h.httpClient != nil,
+	status := diagnosticsResponse{
+		StorageService: h.storageService != nil,
+		CreditService:  h.creditService != nil,
+		IdempotencySvc: h.idempotencySvc != nil,
+		HTTPClient:     h.httpClient != nil,
 	}
 	response.JSON(w, http.StatusOK, status)
 }
