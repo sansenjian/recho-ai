@@ -927,6 +927,19 @@ func (h *ImageHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/history/{id}", h.GetHistoryDetail)
 	r.Delete("/history/{id}", h.DeleteHistory)
 	r.Delete("/history", h.ClearHistory)
+	r.Get("/diagnostics", h.Diagnostics)
+}
+
+// Diagnostics handles GET /api/image/diagnostics — returns service status
+// for debugging 503 errors. Does not require authentication.
+func (h *ImageHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
+	status := map[string]any{
+		"storageService": h.storageService != nil,
+		"creditService":  h.creditService != nil,
+		"idempotencySvc": h.idempotencySvc != nil,
+		"httpClient":     h.httpClient != nil,
+	}
+	response.JSON(w, http.StatusOK, status)
 }
 
 // Helper functions
