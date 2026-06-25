@@ -418,22 +418,29 @@ func decodeBase64URLUInt(value string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(value)
 }
 
-// audContainsAuthenticated reports whether the `aud` claim contains the
-// "authenticated" audience used by Supabase for signed-in users. The claim may
+// allowedAudiences is the set of audience values that Supabase uses for
+// signed-in users. Exact matches are required to prevent strings like
+// "notauthenticated" from being accepted.
+var allowedAudiences = map[string]bool{
+	"authenticated": true,
+}
+
+// audContainsAuthenticated reports whether the `aud` claim includes one of the
+// allowed audience values used by Supabase for signed-in users. The claim may
 // be a single string or an array of strings per the JWT spec.
 func audContainsAuthenticated(audClaim any) bool {
 	switch v := audClaim.(type) {
 	case string:
-		return strings.Contains(v, "authenticated")
+		return allowedAudiences[v]
 	case []string:
 		for _, a := range v {
-			if strings.Contains(a, "authenticated") {
+			if allowedAudiences[a] {
 				return true
 			}
 		}
 	case []any:
 		for _, a := range v {
-			if s, ok := a.(string); ok && strings.Contains(s, "authenticated") {
+			if s, ok := a.(string); ok && allowedAudiences[s] {
 				return true
 			}
 		}
