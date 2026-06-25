@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	crand "crypto/rand"
 	"database/sql"
@@ -14,22 +13,26 @@ import (
 	"strings"
 	"time"
 
-	"go-gateway/internal/config"
-
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // StorageService handles image storage operations
 type StorageService struct {
-	pool   *pgxpool.Pool
-	client *http.Client // reused HTTP client for storage uploads
+	pool      *pgxpool.Pool
+	client    *http.Client // reused HTTP client for downloading upstream images
+	processor *ImageProcessor
+	uploader  *S3Uploader
 }
 
 // NewStorageService creates a new storage service
-func NewStorageService(pool *pgxpool.Pool) *StorageService {
+func NewStorageService(pool *pgxpool.Pool, processor *ImageProcessor, uploader *S3Uploader) *StorageService {
 	return &StorageService{
-		pool: pool,
+		pool:      pool,
+		processor: processor,
+		uploader:  uploader,
 		client: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -109,8 +112,9 @@ type ImageHistoryReference struct {
 	FileName      string `json:"fileName,omitempty"`
 }
 
-// StoreFromURL downloads an image from URL and stores it
-func (s *StorageService) StoreFromURL(ctx context.Context, url string) (*StoredImage, error) {
+// StoreFromURL downloads an image from URL, processes it, and stores it.
+// The pathHint is used to build the storage path; if empty, a random path is generated.
+func (s *StorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*StoredImage, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download request: %w", err)
@@ -141,103 +145,127 @@ func (s *StorageService) StoreFromURL(ctx context.Context, url string) (*StoredI
 		mime = "image/gif"
 	}
 
-	return s.StoreFromBuffer(ctx, data, mime, "")
+	return s.StoreFromBuffer(ctx, data, mime, pathHint)
 }
 
-// StoreFromBuffer uploads image data to Supabase Storage
+// StoreFromBuffer processes image data and uploads the original, preview, and thumbnail.
 func (s *StorageService) StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*StoredImage, error) {
 	storagePath := imageStoragePath(mime, hint)
 	return s.StoreFromBufferAtPath(ctx, data, mime, storagePath)
 }
 
-// StoreFromBufferAtPath uploads image data to a specific storage path.
+// StoreFromBufferAtPath processes image data and uploads variants to a specific storage path prefix.
 func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*StoredImage, error) {
 	if storagePath == "" {
 		storagePath = imageStoragePath(mime, "")
 	}
-	// Upload to Supabase Storage if configured
-	if config.SupabaseURL != "" && config.SupabaseServiceRoleKey != "" && config.SupabaseImageBucket != "" {
-		publicURL, err := s.uploadToSupabaseStorage(ctx, data, storagePath, mime)
-		if err != nil {
-			return nil, fmt.Errorf("failed to upload to storage: %w", err)
-		}
+
+	if s.processor == nil {
+		return nil, fmt.Errorf("image processor not configured")
+	}
+
+	processed, err := s.processor.ProcessImage(data, storagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process image: %w", err)
+	}
+
+	if s.uploader == nil {
+		// Fallback: storage not configured, return proxy URLs
 		return &StoredImage{
-			PublicURL:   publicURL,
-			StoragePath: storagePath,
-			PreviewURL:  publicURL,
-			Bytes:       len(data),
-			Mime:        mime,
+			PublicURL:     s.getPublicURL(processed.Original.Path),
+			StoragePath:   processed.Original.Path,
+			PreviewURL:    s.getPublicURL(processed.Preview.Path),
+			PreviewPath:   processed.Preview.Path,
+			ThumbnailURL:  s.getPublicURL(processed.Thumbnail.Path),
+			ThumbnailPath: processed.Thumbnail.Path,
+			Bytes:         processed.Original.Bytes,
+			Mime:          processed.Original.Mime,
 		}, nil
 	}
 
-	// Fallback: return a proxy URL (storage not configured)
+	uploadedKeys := make([]string, 0, 3)
+
+	originalURL, err := s.uploader.Upload(ctx, processed.Original.Path, processed.Original.Data, processed.Original.Mime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload original: %w", err)
+	}
+	uploadedKeys = append(uploadedKeys, processed.Original.Path)
+
+	previewURL, err := s.uploader.Upload(ctx, processed.Preview.Path, processed.Preview.Data, processed.Preview.Mime)
+	if err != nil {
+		s.cleanupUploaded(ctx, uploadedKeys)
+		return nil, fmt.Errorf("failed to upload preview: %w", err)
+	}
+	uploadedKeys = append(uploadedKeys, processed.Preview.Path)
+
+	thumbnailURL, err := s.uploader.Upload(ctx, processed.Thumbnail.Path, processed.Thumbnail.Data, processed.Thumbnail.Mime)
+	if err != nil {
+		s.cleanupUploaded(ctx, uploadedKeys)
+		return nil, fmt.Errorf("failed to upload thumbnail: %w", err)
+	}
+
 	return &StoredImage{
-		PublicURL:   "/api/image/storage/" + storagePath,
-		StoragePath: storagePath,
-		PreviewURL:  "/api/image/storage/" + storagePath,
-		Bytes:       len(data),
-		Mime:        mime,
+		PublicURL:     originalURL,
+		StoragePath:   processed.Original.Path,
+		PreviewURL:    previewURL,
+		PreviewPath:   processed.Preview.Path,
+		ThumbnailURL:  thumbnailURL,
+		ThumbnailPath: processed.Thumbnail.Path,
+		Width:         processed.Width,
+		Height:        processed.Height,
+		Bytes:         processed.Original.Bytes,
+		Mime:          processed.Original.Mime,
 	}, nil
 }
 
-// uploadToSupabaseStorage uploads bytes to Supabase Storage via REST API.
-// Returns the public URL of the uploaded object.
-func (s *StorageService) uploadToSupabaseStorage(ctx context.Context, data []byte, objectPath, contentType string) (string, error) {
-	uploadURL := fmt.Sprintf("%s/storage/v1/object/%s/%s",
-		strings.TrimRight(config.SupabaseURL, "/"),
-		config.SupabaseImageBucket,
-		objectPath,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", uploadURL, bytes.NewReader(data))
-	if err != nil {
-		return "", fmt.Errorf("failed to build upload request: %w", err)
+func (s *StorageService) cleanupUploaded(ctx context.Context, keys []string) {
+	if s.uploader == nil {
+		return
 	}
-
-	req.Header.Set("Authorization", "Bearer "+config.SupabaseServiceRoleKey)
-	req.Header.Set("apikey", config.SupabaseServiceRoleKey)
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("x-upsert", "false")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("upload request failed: %w", err)
+	for _, key := range keys {
+		if err := s.uploader.Delete(ctx, key); err != nil {
+			log.Printf("[image-storage] failed to clean up uploaded object %s: %v", key, err)
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("storage upload returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Build public URL
-	publicURL := fmt.Sprintf("%s/storage/v1/object/public/%s/%s",
-		strings.TrimRight(config.SupabaseURL, "/"),
-		config.SupabaseImageBucket,
-		objectPath,
-	)
-
-	return publicURL, nil
 }
 
-// DownloadImage downloads a stored image through Supabase Storage.
+// DownloadImage downloads a stored image from S3-compatible storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
-	if config.SupabaseURL == "" || config.SupabaseServiceRoleKey == "" || config.SupabaseImageBucket == "" {
+	if s.uploader != nil && s.uploader.client != nil {
+		resp, err := s.uploader.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(s.uploader.bucket),
+			Key:    aws.String(storagePath),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to download from storage: %w", err)
+		}
+		defer resp.Body.Close()
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read storage response: %w", err)
+		}
+
+		mime := ""
+		if resp.ContentType != nil {
+			mime = *resp.ContentType
+		}
+		if mime == "" {
+			mime = mimeFromStoragePath(storagePath)
+		}
+		return &DownloadedImage{Data: data, Mime: mime}, nil
+	}
+
+	// Fallback: try public URL or proxy path
+	publicURL := s.getPublicURL(storagePath)
+	if publicURL == "" || publicURL == "/api/image/storage/"+storagePath {
 		return nil, fmt.Errorf("storage is not configured")
 	}
 
-	downloadURL := fmt.Sprintf("%s/storage/v1/object/%s/%s",
-		strings.TrimRight(config.SupabaseURL, "/"),
-		config.SupabaseImageBucket,
-		storagePath,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", publicURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+config.SupabaseServiceRoleKey)
-	req.Header.Set("apikey", config.SupabaseServiceRoleKey)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -540,13 +568,8 @@ func (s *StorageService) getPublicURL(storagePath string) string {
 	if storagePath == "" {
 		return ""
 	}
-	// Use direct Supabase Storage public URL if configured
-	if config.SupabaseURL != "" && config.SupabaseImageBucket != "" {
-		return fmt.Sprintf("%s/storage/v1/object/public/%s/%s",
-			strings.TrimRight(config.SupabaseURL, "/"),
-			config.SupabaseImageBucket,
-			storagePath,
-		)
+	if s.uploader != nil {
+		return s.uploader.PublicURL(storagePath)
 	}
 	// Fallback to proxy URL
 	return "/api/image/storage/" + storagePath

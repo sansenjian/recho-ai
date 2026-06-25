@@ -29,6 +29,10 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	// Initialize libvips when CGO is available
+	initVips()
+	defer shutdownVips()
+
 	// Initialize middleware (JWT secret, production safety checks)
 	middleware.Init()
 
@@ -74,10 +78,14 @@ func main() {
 		appSettingsService = service.NewAppSettingsService(db.Pool())
 	}
 
+	// Initialize image processor and S3 uploader
+	imageProcessor := service.NewImageProcessor()
+	s3Uploader := service.S3UploaderFromEnv()
+
 	// Initialize storage service
 	var storageService *service.StorageService
 	if db != nil {
-		storageService = service.NewStorageService(db.Pool())
+		storageService = service.NewStorageService(db.Pool(), imageProcessor, s3Uploader)
 	}
 
 	// Initialize chat service. Chat remains optional while Go is used as an image sidecar.

@@ -35,7 +35,7 @@ type imageCreditService interface {
 }
 
 type imageStorageService interface {
-	StoreFromURL(ctx context.Context, url string) (*service.StoredImage, error)
+	StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error)
 	StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
 	StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
 	DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
@@ -129,6 +129,7 @@ type ImageResult struct {
 	ModelPrompt       string                          `json:"modelPrompt,omitempty"`
 	References        []service.ImageHistoryReference `json:"references,omitempty"`
 	ReferenceCount    int                             `json:"referenceImageCount,omitempty"`
+	Bytes             int                             `json:"bytes,omitempty"`
 	Visibility        string                          `json:"visibility,omitempty"`
 	FundingSource     string                          `json:"fundingSource,omitempty"`
 	CreditCost        float64                         `json:"creditCost,omitempty"`
@@ -602,7 +603,7 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		// Store image and get URLs
 		if item.URL != "" {
 			// Download and store image
-			stored, err := h.storageService.StoreFromURL(ctx, item.URL)
+			stored, err := h.storageService.StoreFromURL(ctx, item.URL, fmt.Sprintf("generated/%s", result.ID))
 			if err == nil && stored != nil {
 				result.URL = stored.PublicURL
 				result.PreviewURL = stored.PreviewURL
@@ -610,6 +611,9 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 				result.StoragePath = stored.StoragePath
 				result.PreviewPath = stored.PreviewPath
 				result.ThumbnailPath = stored.ThumbnailPath
+				result.Width = stored.Width
+				result.Height = stored.Height
+				result.Bytes = stored.Bytes
 			} else {
 				result.URL = item.URL // Fallback to original URL
 				result.PreviewURL = item.URL
@@ -618,7 +622,7 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 			// Decode base64 and store
 			decoded, err := base64.StdEncoding.DecodeString(item.Base64)
 			if err == nil {
-				stored, err := h.storageService.StoreFromBuffer(ctx, decoded, "image/png", result.ID)
+				stored, err := h.storageService.StoreFromBuffer(ctx, decoded, "image/png", fmt.Sprintf("generated/%s", result.ID))
 				if err == nil && stored != nil {
 					result.URL = stored.PublicURL
 					result.PreviewURL = stored.PreviewURL
@@ -626,6 +630,9 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 					result.StoragePath = stored.StoragePath
 					result.PreviewPath = stored.PreviewPath
 					result.ThumbnailPath = stored.ThumbnailPath
+					result.Width = stored.Width
+					result.Height = stored.Height
+					result.Bytes = stored.Bytes
 				}
 			}
 		}
