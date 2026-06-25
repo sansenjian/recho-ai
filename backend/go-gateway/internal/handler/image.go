@@ -121,10 +121,11 @@ type ImageResult struct {
 	GenerationBatchID string                          `json:"generationBatchId,omitempty"`
 	StoragePath       string                          `json:"storagePath,omitempty"`
 	URL               string                          `json:"url,omitempty"`
+	DataURL           string                          `json:"dataUrl,omitempty"`
 	PreviewURL        string                          `json:"previewUrl,omitempty"`
 	PreviewPath       string                          `json:"previewPath,omitempty"`
-	ThumbnailURL      string                          `json:"thumbnailUrl,omitempty"`
-	ThumbnailPath     string                          `json:"thumbnailPath,omitempty"`
+	ThumbnailURL     string                          `json:"thumbnailUrl,omitempty"`
+	ThumbnailPath    string                          `json:"thumbnailPath,omitempty"`
 	Prompt            string                          `json:"prompt"`
 	UserPrompt        string                          `json:"userPrompt,omitempty"`
 	SystemPrompt      string                          `json:"systemPrompt,omitempty"`
@@ -134,7 +135,7 @@ type ImageResult struct {
 	Bytes             int                             `json:"bytes,omitempty"`
 	Visibility        string                          `json:"visibility,omitempty"`
 	FundingSource     string                          `json:"fundingSource,omitempty"`
-	CreditCost        float64                         `json:"creditCost,omitempty"`
+	CreditCost        float64                          `json:"creditCost,omitempty"`
 	RevisedPrompt     string                          `json:"revisedPrompt,omitempty"`
 	Size              string                          `json:"size"`
 	AspectRatio       string                          `json:"aspectRatio,omitempty"`
@@ -660,6 +661,10 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 					} else {
 						log.Printf("[image] storage returned nil for base64 image %s", result.ID)
 					}
+					// Fallback: return as data URL so the frontend can still display the image
+					result.DataURL = "data:image/png;base64," + item.Base64
+					result.URL = result.DataURL
+					result.PreviewURL = result.DataURL
 				}
 			} else {
 				log.Printf("[image] base64 decode failed for %s: %v", result.ID, err)
