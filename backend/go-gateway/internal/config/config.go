@@ -89,6 +89,10 @@ var GuestGenerationEnabled = parseEnvBool("GUEST_GENERATION_ENABLED", true)
 var AdminUserIDs = parseEnvStringSlice("ADMIN_USER_IDS", ",")
 var AdminUserEmails = parseEnvStringSlice("ADMIN_USER_EMAILS", ",")
 
+// Diagnostics config — opt-in via ENABLE_DIAGNOSTICS=true. When disabled, the
+// /api/image/diagnostics endpoint is not registered at all.
+var EnableDiagnostics = parseEnvBool("ENABLE_DIAGNOSTICS", false)
+
 func CorsOrigins() []string {
 	origins := parseEnvStringSlice("CORS_ORIGIN", ",")
 	if len(origins) == 0 {
