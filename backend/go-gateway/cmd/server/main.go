@@ -93,7 +93,12 @@ func main() {
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	configHandler := handler.NewConfigHandler(appSettingsService, log.Default())
+	var configHandler *handler.ConfigHandler
+	if appSettingsService != nil {
+		configHandler = handler.NewConfigHandler(appSettingsService, log.Default())
+	} else {
+		configHandler = handler.NewConfigHandler(nil, log.Default())
+	}
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
 	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)

@@ -170,17 +170,7 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 	}
 
 	if s.uploader == nil {
-		// Fallback: storage not configured, return proxy URLs
-		return &StoredImage{
-			PublicURL:     s.getPublicURL(processed.Original.Path),
-			StoragePath:   processed.Original.Path,
-			PreviewURL:    s.getPublicURL(processed.Preview.Path),
-			PreviewPath:   processed.Preview.Path,
-			ThumbnailURL:  s.getPublicURL(processed.Thumbnail.Path),
-			ThumbnailPath: processed.Thumbnail.Path,
-			Bytes:         processed.Original.Bytes,
-			Mime:          processed.Original.Mime,
-		}, nil
+		return nil, fmt.Errorf("storage uploader is not configured")
 	}
 
 	uploadedKeys := make([]string, 0, 3)
@@ -193,14 +183,14 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 
 	previewURL, err := s.uploader.Upload(ctx, processed.Preview.Path, processed.Preview.Data, processed.Preview.Mime)
 	if err != nil {
-		s.cleanupUploaded(ctx, uploadedKeys)
+		s.cleanupUploaded(uploadedKeys)
 		return nil, fmt.Errorf("failed to upload preview: %w", err)
 	}
 	uploadedKeys = append(uploadedKeys, processed.Preview.Path)
 
 	thumbnailURL, err := s.uploader.Upload(ctx, processed.Thumbnail.Path, processed.Thumbnail.Data, processed.Thumbnail.Mime)
 	if err != nil {
-		s.cleanupUploaded(ctx, uploadedKeys)
+		s.cleanupUploaded(uploadedKeys)
 		return nil, fmt.Errorf("failed to upload thumbnail: %w", err)
 	}
 
@@ -218,10 +208,12 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 	}, nil
 }
 
-func (s *StorageService) cleanupUploaded(ctx context.Context, keys []string) {
+func (s *StorageService) cleanupUploaded(keys []string) {
 	if s.uploader == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for _, key := range keys {
 		if err := s.uploader.Delete(ctx, key); err != nil {
 			log.Printf("[image-storage] failed to clean up uploaded object %s: %v", key, err)
@@ -258,7 +250,7 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 
 	// Fallback: try public URL or proxy path
 	publicURL := s.getPublicURL(storagePath)
-	if publicURL == "" || publicURL == "/api/image/storage/"+storagePath {
+	if publicURL == "" {
 		return nil, fmt.Errorf("storage is not configured")
 	}
 

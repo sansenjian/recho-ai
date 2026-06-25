@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -72,7 +73,7 @@ func NewS3Uploader(cfg S3Config) *S3Uploader {
 		client:     client,
 		bucket:     cfg.Bucket,
 		publicBase: strings.TrimRight(cfg.PublicBase, "/"),
-		urlCache:   expirable.NewLRU[string, string](cacheMaxEntries, nil, cacheTTLSeconds*1000),
+		urlCache:   expirable.NewLRU[string, string](cacheMaxEntries, nil, cacheTTLSeconds*time.Second),
 	}
 }
 
@@ -180,9 +181,11 @@ func (u *S3Uploader) uploadMultipart(ctx context.Context, key string, data []byt
 
 	select {
 	case uploadErr := <-errChan:
-		if abortErr := u.abortMultipart(ctx, key, uploadID); abortErr != nil {
+		cleanupCtx, cancel := cleanupContext()
+		if abortErr := u.abortMultipart(cleanupCtx, key, uploadID); abortErr != nil {
 			log.Printf("[s3uploader] failed to abort multipart upload %s: %v", key, abortErr)
 		}
+		cancel()
 		return "", uploadErr
 	default:
 	}
@@ -196,15 +199,21 @@ func (u *S3Uploader) uploadMultipart(ctx context.Context, key string, data []byt
 		},
 	})
 	if err != nil {
-		if abortErr := u.abortMultipart(ctx, key, uploadID); abortErr != nil {
+		cleanupCtx, cancel := cleanupContext()
+		if abortErr := u.abortMultipart(cleanupCtx, key, uploadID); abortErr != nil {
 			log.Printf("[s3uploader] failed to abort multipart upload %s: %v", key, abortErr)
 		}
+		cancel()
 		return "", fmt.Errorf("failed to complete multipart upload %s: %w", key, err)
 	}
 
 	publicURL := u.publicURL(key)
 	u.urlCache.Add(key, publicURL)
 	return publicURL, nil
+}
+
+func cleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
 func (u *S3Uploader) abortMultipart(ctx context.Context, key, uploadID string) error {
@@ -284,7 +293,7 @@ func S3UploaderFromEnv() *S3Uploader {
 }
 
 func cosConfigFromEnv() (S3Config, bool) {
-	if config.TencentCosSecretID == "" || config.TencentCosSecretKey == "" || config.TencentCosBucket == "" || config.TencentCosRegion == "" {
+	if config.TencentCosSecretID == "" || config.TencentCosSecretKey == "" || config.TencentCosFullBucket == "" || config.TencentCosRegion == "" {
 		return S3Config{}, false
 	}
 

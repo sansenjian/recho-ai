@@ -1,6 +1,7 @@
 package service
 
 import (
+	"path"
 	"strings"
 )
 
@@ -79,7 +80,14 @@ func safePathPart(value, fallback string) string {
 		}
 	}
 	result := strings.Trim(builder.String(), "/")
-	if result == "" {
+	// Normalize the path and reject any dot-dot segments that could escape the
+	// intended storage prefix (e.g. "foo/../bar" or "../../secret").
+	result = path.Clean("/" + result)
+	result = strings.TrimPrefix(result, "/")
+	if strings.Contains(result, "../") || strings.HasPrefix(result, "..") || result == ".." {
+		return fallback
+	}
+	if result == "" || result == "." {
 		return fallback
 	}
 	return result

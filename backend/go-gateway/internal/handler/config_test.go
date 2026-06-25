@@ -20,6 +20,18 @@ func (s *stubAppConfigProvider) PublicConfig(ctx context.Context) (service.Publi
 	return s.config, s.err
 }
 
+type stubLogger struct {
+	called bool
+	format string
+	args   []interface{}
+}
+
+func (l *stubLogger) Printf(format string, v ...interface{}) {
+	l.called = true
+	l.format = format
+	l.args = v
+}
+
 func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 	h := NewConfigHandler(&stubAppConfigProvider{
 		config: service.PublicAppConfig{
@@ -73,5 +85,60 @@ func TestConfigAppFallsBackWithoutHardcodedModels(t *testing.T) {
 	}
 	if len(body.AvailableImageModels) != 0 {
 		t.Fatalf("expected no fallback image models, got %#v", body.AvailableImageModels)
+	}
+}
+
+func TestConfigAppDefaultsWhenAppSettingsNil(t *testing.T) {
+	h := NewConfigHandler(nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/app", nil)
+	res := httptest.NewRecorder()
+
+	h.App(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var got service.PublicAppConfig
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := service.DefaultPublicAppConfig()
+	if got.ImageEventsEnabled != want.ImageEventsEnabled {
+		t.Errorf("ImageEventsEnabled: got %v, want %v", got.ImageEventsEnabled, want.ImageEventsEnabled)
+	}
+	if got.CanvasContextEnabled != want.CanvasContextEnabled {
+		t.Errorf("CanvasContextEnabled: got %v, want %v", got.CanvasContextEnabled, want.CanvasContextEnabled)
+	}
+	if got.GuestGenerationEnabled != want.GuestGenerationEnabled {
+		t.Errorf("GuestGenerationEnabled: got %v, want %v", got.GuestGenerationEnabled, want.GuestGenerationEnabled)
+	}
+	if got.DefaultImageModel != want.DefaultImageModel {
+		t.Errorf("DefaultImageModel: got %q, want %q", got.DefaultImageModel, want.DefaultImageModel)
+	}
+	if len(got.AvailableImageModels) != len(want.AvailableImageModels) {
+		t.Errorf("AvailableImageModels length: got %d, want %d", len(got.AvailableImageModels), len(want.AvailableImageModels))
+	}
+}
+
+func TestConfigAppLogsErrorWhenProviderFails(t *testing.T) {
+	providerErr := errors.New("provider failure")
+	logger := &stubLogger{}
+
+	h := NewConfigHandler(&stubAppConfigProvider{err: providerErr}, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/app", nil)
+	res := httptest.NewRecorder()
+
+	h.App(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	if !logger.called {
+		t.Errorf("expected logger.Printf to be called when PublicConfig returns an error")
 	}
 }

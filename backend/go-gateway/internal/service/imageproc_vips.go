@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	previewQuality   = 86
-	thumbnailQuality = 72
-	thumbnailMaxSize = 480
-	webpLossless     = true
+	previewQuality      = 86
+	thumbnailQuality    = 72
+	originalQuality     = 95
+	thumbnailMaxSize    = 480
+	webpLossless        = true
+	losslessWebpQuality = 0
 )
 
 type vipsProcessor struct{}
@@ -103,15 +105,35 @@ func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 
 func (p *vipsProcessor) exportOriginal(img *vips.ImageRef, originalData []byte) ([]byte, string, string, error) {
 	// Match Node.js behaviour: only PNG is converted to lossless WebP.
-	// Other formats are passed through untouched.
+	// Other formats are re-encoded from the already AutoRotate()d image so that
+	// the stored bytes and the reported width/height stay consistent for
+	// orientation-corrected images.
 	if len(originalData) >= len(pngMagic) && string(originalData[:len(pngMagic)]) == pngMagic {
-		buf, mime, err := p.exportWebp(img, previewQuality, webpLossless)
+		buf, mime, err := p.exportWebp(img, losslessWebpQuality, webpLossless)
 		return buf, mime, "webp", err
 	}
 
-	// Determine the original format and extension from the first bytes.
 	mime, ext := detectFormat(originalData)
-	return originalData, mime, ext, nil
+	switch ext {
+	case "jpg":
+		buf, err := img.JpegExport(&vips.JpegExportParams{
+			Quality: originalQuality,
+		})
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to export jpeg original: %w", err)
+		}
+		return buf, mime, ext, nil
+	case "webp":
+		buf, _, err := p.exportWebp(img, originalQuality, false)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return buf, mime, ext, nil
+	default:
+		// GIF and any other format libvips cannot write are passed through
+		// untouched; this preserves animation for GIFs.
+		return originalData, mime, ext, nil
+	}
 }
 
 func (p *vipsProcessor) exportPreview(img *vips.ImageRef) ([]byte, error) {
