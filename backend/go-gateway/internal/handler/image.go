@@ -365,18 +365,18 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
 			log.Printf("[image] 503: SaveImageHistory failed: %v", err)
 			if creditReservation != nil {
-					_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
-					if refundErr != nil {
-						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
-					}
-					if idemKey != "" && user != nil && h.idempotencySvc != nil {
-						h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
-					}
-					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
-					return
+				_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
+				if refundErr != nil {
+					log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
 				}
-				log.Printf("[image-history] save skipped: %v", err)
+				if idemKey != "" && user != nil && h.idempotencySvc != nil {
+					h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
+				}
+				response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
+				return
 			}
+			log.Printf("[image-history] save skipped: %v", err)
+		}
 		}
 		responseImages = append(responseImages, image)
 	}

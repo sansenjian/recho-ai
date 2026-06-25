@@ -199,11 +199,19 @@ func verifyTokenWithJWKS(ctx context.Context, tokenString string) (*User, error)
 	// Validate issuer (iss) when an expected issuer is configured. The expected
 	// issuer is sourced from SUPABASE_JWT_ISSUER (falling back to SUPABASE_URL).
 	// When neither is set (e.g. tests/local dev) issuer validation is skipped.
-	// Supabase JWTs use iss="https://<project>.supabase.co/auth/v1" while
-	// SUPABASE_URL is typically "https://<project>.supabase.co" — so we accept
-	// any iss that starts with the expected issuer prefix.
+	//
+	// Security model: Supabase JWTs use iss="https://<project>.supabase.co/auth/v1"
+	// while SUPABASE_URL is "https://<project>.supabase.co". We accept any iss that
+	// either exactly matches the expected issuer or starts with
+	// expected_issuer + "/", constraining to the same Supabase project origin.
+	// This prevents tokens from unrelated Supabase projects from being accepted
+	// while accommodating the "/auth/v1" suffix that Supabase appends.
 	if expectedIssuer := config.SupabaseJWTIssuer; expectedIssuer != "" {
-		iss, _ := claims["iss"].(string)
+		iss, ok := claims["iss"].(string)
+		if !ok || iss == "" {
+			log.Printf("[auth] token iss claim missing or non-string")
+			return nil, fmt.Errorf("token issuer missing")
+		}
 		normalizedExpected := strings.TrimRight(expectedIssuer, "/")
 		if iss != normalizedExpected && !strings.HasPrefix(iss, normalizedExpected+"/") {
 			log.Printf("[auth] token issuer mismatch: got %q, expected prefix %q", iss, normalizedExpected)
