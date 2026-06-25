@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -81,6 +82,14 @@ func marshalMetadata(metadata map[string]any) (string, error) {
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+	if !json.Valid(data) {
+		preview := string(data)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("[credits] invalid metadata JSON (len=%d, preview=%q)", len(data), preview)
+		return "", fmt.Errorf("invalid metadata JSON after marshal")
 	}
 	return string(data), nil
 }
