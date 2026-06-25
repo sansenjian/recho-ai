@@ -43,6 +43,7 @@ func main() {
 		db, err = supabase.NewClient()
 		if err != nil {
 			log.Printf("Warning: Failed to initialize Supabase client: %v", err)
+			log.Printf("Warning: Image generation will return 503 (storageService is nil)")
 			log.Println("Continuing without database connection...")
 		} else {
 			log.Println("Supabase client initialized successfully")
@@ -50,6 +51,7 @@ func main() {
 		}
 	} else {
 		log.Println("Supabase credentials not configured, running in limited mode")
+		log.Println("Warning: Image generation will return 503 (storageService is nil)")
 	}
 
 	// Initialize repositories
