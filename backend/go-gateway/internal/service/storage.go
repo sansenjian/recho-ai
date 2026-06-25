@@ -248,7 +248,10 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 		return &DownloadedImage{Data: data, Mime: mime}, nil
 	}
 
-	// Fallback: try public URL or proxy path
+	// Fallback: try public URL
+	if s.uploader == nil {
+		return nil, fmt.Errorf("storage is not configured")
+	}
 	publicURL := s.getPublicURL(storagePath)
 	if publicURL == "" {
 		return nil, fmt.Errorf("storage is not configured")

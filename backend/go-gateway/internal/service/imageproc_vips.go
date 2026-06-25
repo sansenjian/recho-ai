@@ -37,14 +37,20 @@ func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 	}
 	defer img.Close()
 
+	// Detect whether AutoRotate will change the image dimensions, indicating
+	// that an EXIF orientation rotation (5–8) is present and the stored bytes
+	// must be rotated to match the reported width/height.
+	origW, origH := img.Width(), img.Height()
+
 	if err := img.AutoRotate(); err != nil {
 		return nil, fmt.Errorf("failed to auto-rotate image: %w", err)
 	}
 
 	width := img.Width()
 	height := img.Height()
+	rotated := origW != width || origH != height
 
-	originalBytes, originalMime, originalExt, err := p.exportOriginal(img, data)
+	originalBytes, originalMime, originalExt, err := p.exportOriginal(img, data, rotated)
 	if err != nil {
 		return nil, fmt.Errorf("failed to export original: %w", err)
 	}
@@ -103,17 +109,23 @@ func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 	}, nil
 }
 
-func (p *vipsProcessor) exportOriginal(img *vips.ImageRef, originalData []byte) ([]byte, string, string, error) {
+func (p *vipsProcessor) exportOriginal(img *vips.ImageRef, originalData []byte, rotated bool) ([]byte, string, string, error) {
 	// Match Node.js behaviour: only PNG is converted to lossless WebP.
-	// Other formats are re-encoded from the already AutoRotate()d image so that
-	// the stored bytes and the reported width/height stay consistent for
-	// orientation-corrected images.
 	if len(originalData) >= len(pngMagic) && string(originalData[:len(pngMagic)]) == pngMagic {
 		buf, mime, err := p.exportWebp(img, losslessWebpQuality, webpLossless)
 		return buf, mime, "webp", err
 	}
 
 	mime, ext := detectFormat(originalData)
+
+	// When no EXIF rotation was applied the original bytes still match the
+	// stored width/height, so passthrough avoids unnecessary re-encoding.
+	if !rotated {
+		return originalData, mime, ext, nil
+	}
+
+	// Re-encode from the rotated image so the bytes match the reported
+	// width/height for orientation-corrected (5–8) images.
 	switch ext {
 	case "jpg":
 		buf, err := img.JpegExport(&vips.JpegExportParams{
