@@ -3,8 +3,8 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies
-RUN apk add --no-cache git
+# Install build dependencies: git for go mod, vips-dev for image processing
+RUN apk add --no-cache git vips-dev vips-heif build-base pkgconf
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -13,16 +13,16 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o go-gateway ./cmd/server
+# Build binary with CGO enabled for libvips
+RUN CGO_ENABLED=1 GOOS=linux go build -a -o go-gateway ./cmd/server
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.24
 
 WORKDIR /app
 
-# Install CA certificates for HTTPS and create a non-root runtime user
-RUN apk add --no-cache ca-certificates tzdata \
+# Install runtime dependencies for libvips, CA certificates, timezone data
+RUN apk add --no-cache vips vips-heif ca-certificates tzdata \
     && addgroup -S app \
     && adduser -S -G app app
 

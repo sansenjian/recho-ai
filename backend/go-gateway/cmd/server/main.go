@@ -29,6 +29,10 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	// Initialize libvips when CGO is available
+	initVips()
+	defer shutdownVips()
+
 	// Initialize middleware (JWT secret, production safety checks)
 	middleware.Init()
 
@@ -62,6 +66,7 @@ func main() {
 	var creditService *service.CreditService
 	var redeemService *service.RedeemService
 	var idempotencyService *service.IdempotencyService
+	var appSettingsService *service.AppSettingsService
 	if creditRepo != nil {
 		creditService = service.NewCreditService(creditRepo)
 		redeemService = service.NewRedeemService(redeemRepo)
@@ -69,11 +74,18 @@ func main() {
 	if idempotencyRepo != nil {
 		idempotencyService = service.NewIdempotencyService(idempotencyRepo)
 	}
+	if db != nil {
+		appSettingsService = service.NewAppSettingsService(db.Pool())
+	}
+
+	// Initialize image processor and S3 uploader
+	imageProcessor := service.NewImageProcessor()
+	s3Uploader := service.S3UploaderFromEnv()
 
 	// Initialize storage service
 	var storageService *service.StorageService
 	if db != nil {
-		storageService = service.NewStorageService(db.Pool())
+		storageService = service.NewStorageService(db.Pool(), imageProcessor, s3Uploader)
 	}
 
 	// Initialize chat service. Chat remains optional while Go is used as an image sidecar.
@@ -81,7 +93,12 @@ func main() {
 
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
-	configHandler := handler.NewConfigHandler()
+	var configHandler *handler.ConfigHandler
+	if appSettingsService != nil {
+		configHandler = handler.NewConfigHandler(appSettingsService, log.Default())
+	} else {
+		configHandler = handler.NewConfigHandler(nil, log.Default())
+	}
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
 	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)
