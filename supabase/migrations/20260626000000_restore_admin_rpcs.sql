@@ -17,10 +17,10 @@ begin
   numeric_val := matches[1]::numeric;
   unit := lower(matches[2] || '');
   case
-    when unit in ('kb', 'kbytes') then return round(numeric_val * 1024);
-    when unit in ('mb') then return round(numeric_val * 1024 * 1024);
-    when unit in ('gb') then return round(numeric_val * 1024 * 1024 * 1024);
-    else return round(numeric_val);
+    when unit in ('kb', 'kbytes') then return round(numeric_val * 1024)::bigint;
+    when unit in ('mb') then return round(numeric_val * 1024 * 1024)::bigint;
+    when unit in ('gb') then return round(numeric_val * 1024 * 1024 * 1024)::bigint;
+    else return round(numeric_val)::bigint;
   end case;
 end;
 $$;
