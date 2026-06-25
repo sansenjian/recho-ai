@@ -111,6 +111,7 @@ function safePathPart(value: string) {
 }
 
 let bucketReady = false
+let bucketReadyPromise: Promise<ReturnType<typeof getSupabaseAdminClient>> | null = null
 const publicUrlCache = new Map<string, { publicUrl: string; expiresAt: number }>()
 
 function cosPath(key: string) {
@@ -138,7 +139,7 @@ function storageProvider(options: StoreImageOptions = {}): ImageStorageProvider 
   return options.provider === 'tencent-cos' ? 'tencent-cos' : 'supabase'
 }
 
-async function ensureImageBucket() {
+async function doEnsureImageBucket(): Promise<ReturnType<typeof getSupabaseAdminClient>> {
   const client = getSupabaseAdminClient()
   if (!client) return null
   if (bucketReady) return client
@@ -162,6 +163,20 @@ async function ensureImageBucket() {
 
   bucketReady = true
   return client
+}
+
+async function ensureImageBucket(): Promise<ReturnType<typeof getSupabaseAdminClient>> {
+  if (bucketReady) {
+    const client = getSupabaseAdminClient()
+    if (client) return client
+  }
+  if (bucketReadyPromise) return bucketReadyPromise
+  bucketReadyPromise = doEnsureImageBucket()
+  try {
+    return await bucketReadyPromise
+  } finally {
+    bucketReadyPromise = null
+  }
 }
 
 export function isStorageUrl(value: string) {

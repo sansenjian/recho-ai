@@ -17,6 +17,11 @@ interface MCPConfigFile {
 
 class MCPManager {
   connections: Map<string, MCPConnection> = new Map()
+  private serverConfigs: Map<string, MCPServerConfig> = new Map()
+  private retryCounts: Map<string, number> = new Map()
+  private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  private readonly maxRetries = 3
+  private readonly retryDelays = [5_000, 10_000, 20_000]
 
   private async loadConfig(configPath: string): Promise<MCPConfigFile> {
     try {
@@ -28,6 +33,8 @@ class MCPManager {
   }
 
   async connect(serverName: string, serverConfig: MCPServerConfig): Promise<void> {
+    this.serverConfigs.set(serverName, serverConfig)
+    this.clearRetryTimer(serverName)
     if (this.connections.has(serverName)) {
       await this.disconnect(serverName)
     }
@@ -40,15 +47,10 @@ class MCPManager {
     let transport
     switch (serverConfig.type) {
       case 'stdio': {
-        const stdioEnv: Record<string, string> = {}
-        for (const [k, v] of Object.entries(process.env)) {
-          if (v !== undefined) stdioEnv[k] = v
-        }
-        Object.assign(stdioEnv, serverConfig.env || {})
         transport = new StdioClientTransport({
           command: serverConfig.command!,
           args: serverConfig.args || [],
-          env: stdioEnv,
+          env: serverConfig.env || {},
         })
         break
       }
@@ -76,6 +78,7 @@ class MCPManager {
       })
 
       console.log(`MCP [${serverName}]: connected, ${tools?.length || 0} tool(s)`)
+      this.retryCounts.delete(serverName)
     } catch (err: any) {
       console.error(`MCP [${serverName}]: connection failed — ${safeErrorDetail(err)}`)
       this.connections.set(serverName, {
@@ -84,10 +87,49 @@ class MCPManager {
         tools: [],
         status: 'error',
       })
+      this.scheduleReconnect(serverName)
     }
   }
 
+  private clearRetryTimer(serverName: string): void {
+    const timer = this.retryTimers.get(serverName)
+    if (timer) {
+      clearTimeout(timer)
+      this.retryTimers.delete(serverName)
+    }
+  }
+
+  private scheduleReconnect(serverName: string): void {
+    this.clearRetryTimer(serverName)
+    const count = this.retryCounts.get(serverName) ?? 0
+    if (count >= this.maxRetries) {
+      console.error(`MCP [${serverName}]: max retries (${this.maxRetries}) reached, giving up`)
+      this.retryCounts.delete(serverName)
+      return
+    }
+    const delay = this.retryDelays[count] ?? this.retryDelays[this.retryDelays.length - 1]
+    this.retryCounts.set(serverName, count + 1)
+    console.log(`MCP [${serverName}]: scheduling reconnect attempt ${count + 1}/${this.maxRetries} in ${delay}ms`)
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(serverName)
+      this.reconnect(serverName).catch(err => {
+        console.error(`MCP [${serverName}]: reconnect error:`, safeErrorDetail(err))
+      })
+    }, delay)
+    this.retryTimers.set(serverName, timer)
+  }
+
+  async reconnect(serverName: string): Promise<void> {
+    const config = this.serverConfigs.get(serverName)
+    if (!config) {
+      console.warn(`MCP [${serverName}]: no stored config, cannot reconnect`)
+      return
+    }
+    await this.connect(serverName, config)
+  }
+
   async disconnect(serverName: string): Promise<void> {
+    this.clearRetryTimer(serverName)
     const conn = this.connections.get(serverName)
     if (!conn) return
     try { await conn.client?.close() } catch { /* ignore */ }
@@ -161,6 +203,17 @@ class MCPManager {
 
     for (const [name, serverConfig] of Object.entries(allServers)) {
       await this.connect(name, serverConfig)
+    }
+
+    // Health check: ping each connected server
+    for (const [name, conn] of this.connections) {
+      if (conn.status !== 'connected') continue
+      try {
+        await conn.client.ping()
+        console.log(`MCP [${name}]: ping ok`)
+      } catch (err: any) {
+        console.warn(`MCP [${name}]: ping failed — ${safeErrorDetail(err)}`)
+      }
     }
   }
 }

@@ -12,7 +12,6 @@ import {
 import { useChatLoop } from '../composables/useChatLoop'
 import { useMemory } from '../composables/useMemory'
 import { extractThinking } from '../utils/messageText'
-import { relativeTime } from '../utils/time'
 import ChatHeader from '../components/ChatHeader.vue'
 import ChatSidebar from '../components/ChatSidebar.vue'
 import ToolActivity from '../components/ToolActivity.vue'
@@ -83,7 +82,7 @@ const latestAssistantMessageId = computed(() => {
   return [...messages.value].reverse().find(msg => msg.role === 'assistant')?.id ?? null
 })
 
-function assistantMessageIndex(id: number) {
+function assistantMessageIndex(id: string) {
   const assistantMessages = messages.value.filter(msg => msg.role === 'assistant')
   const index = assistantMessages.findIndex(msg => msg.id === id)
   return index >= 0 ? index + 1 : 1
@@ -130,7 +129,6 @@ const showSidebar = ref(false)
 const showAgentPanel = ref(false)
 const showImagePanel = ref(true)
 const imageWorkspace = ref<ImageWorkspace>('canvas')
-const isMobile = () => (typeof window !== 'undefined' ? window.innerWidth < 768 : false)
 const imageMode = ref<'imagio' | 'canvas'>('imagio')
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 function closeSidebar() { showSidebar.value = false }
@@ -300,7 +298,12 @@ function fileToBase64(file: File): Promise<string> {
       const canvas = document.createElement('canvas')
       canvas.width = img.width * scale
       canvas.height = img.height * scale
-      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(img.src)
+        return reject(new Error('canvas 2d context unavailable'))
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       resolve(canvas.toDataURL('image/jpeg', 0.85))
       URL.revokeObjectURL(img.src)
     }
@@ -400,7 +403,7 @@ async function handleSubmit(value: string) {
 function handleStop() { stopGeneration() }
 
 // --- Copy / Retry ---
-const copyFeedbackId = ref<number | null>(null)
+const copyFeedbackId = ref<string | null>(null)
 async function handleCopy(msg: Message) {
   try {
     await navigator.clipboard.writeText(msg.content)
@@ -577,7 +580,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
             />
 
             <ChatMessage
-              :msg="{ ...msg, timestamp: relativeTime(msg.timestamp) }"
+              :msg="msg"
               :copy-feedback="copyFeedbackId === msg.id"
               :assistant-index="assistantMessageIndex(msg.id)"
               @copy="handleCopy(msg)"

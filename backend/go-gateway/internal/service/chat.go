@@ -94,8 +94,10 @@ func (s *ChatService) SaveChatMessage(userID, model, role, content string) error
 	return nil
 }
 
-// SendAnalytics sends usage analytics
-func (s *ChatService) SendAnalytics(userID, event string, data map[string]interface{}) error {
+// SendAnalytics sends usage analytics. The provided ctx should be derived from
+// the request context so the analytics call is cancelled when the client
+// disconnects, instead of using a detached context.Background().
+func (s *ChatService) SendAnalytics(ctx context.Context, userID, event string, data map[string]interface{}) error {
 	if s.analysisURL == "" {
 		return nil
 	}
@@ -111,7 +113,7 @@ func (s *ChatService) SendAnalytics(userID, event string, data map[string]interf
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(context.Background(), "POST", s.analysisURL+"/api/analytics", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.analysisURL+"/api/analytics", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

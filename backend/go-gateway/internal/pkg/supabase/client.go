@@ -18,18 +18,16 @@ type Client struct {
 
 // NewClient creates a new Supabase client with a connection pool
 func NewClient() (*Client, error) {
+	// Prefer DATABASE_URL, then fall back to POSTGRES_URL. The previous logic
+	// checked SUPABASE_URL but then used POSTGRES_URL, which was misleading
+	// because the Supabase URL alone cannot construct a Postgres connection
+	// string (the database password is not derivable from it).
 	connString := os.Getenv("DATABASE_URL")
 	if connString == "" {
-		// Fallback: construct from individual env vars (Supabase pattern)
-		url := os.Getenv("SUPABASE_URL")
-		if url == "" {
-			return nil, fmt.Errorf("DATABASE_URL or SUPABASE_URL is required")
-		}
-		// Supabase uses a specific connection string format
 		connString = os.Getenv("POSTGRES_URL")
-		if connString == "" {
-			return nil, fmt.Errorf("POSTGRES_URL environment variable is required")
-		}
+	}
+	if connString == "" {
+		return nil, fmt.Errorf("DATABASE_URL or POSTGRES_URL is required")
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(connString)

@@ -50,6 +50,7 @@ const REFERENCE_UPLOAD_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/j
 const IMAGE_PROXY_THUMBNAIL_ESTIMATE_BYTES = 512 * 1024
 const IMAGE_PROXY_PREVIEW_ESTIMATE_BYTES = 2 * 1024 * 1024
 const IMAGE_PROXY_ORIGINAL_ESTIMATE_BYTES = 8 * 1024 * 1024
+const MAX_IMAGE_PROMPT_LENGTH = 10_000
 // Per-process fallback limiter for single-instance gateway deployments. Use a shared store if Render scales to multiple instances.
 const imageProxyIpBuckets = new Map<string, { resetAt: number; requests: number; bytes: number }>()
 
@@ -625,6 +626,11 @@ router.post('/image/generate', async (req: Request, res: Response) => {
   }
 
   console.log(`[image] request received refs=${references.length}, size=${size}, quality=${quality}, count=${count}, prompt="${shortPrompt(prompt || '')}"`)
+
+  if (prompt && prompt.length > MAX_IMAGE_PROMPT_LENGTH) {
+    res.status(400).json({ error: 'prompt is too long (max 10000 characters)' })
+    return
+  }
 
   if (!prompt?.trim()) {
     res.status(400).json({ error: 'prompt is required' })

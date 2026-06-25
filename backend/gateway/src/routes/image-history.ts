@@ -8,10 +8,36 @@ import {
   saveImageHistory,
 } from '../services/image-history.js'
 import { getRequestUserId } from '../services/request-auth.js'
+import { requestIp } from '../services/request-ip.js'
 import type { ImageHistoryItem } from '../services/image-history.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
+
+const imageHistoryBuckets = new Map<string, { resetAt: number; requests: number }>()
+const IMAGE_HISTORY_RATE_LIMIT_WINDOW_MS = 60_000
+const IMAGE_HISTORY_RATE_LIMIT_MAX_REQUESTS = 10
+
+function imageHistoryRateLimitKey(req: Request) {
+  return requestIp(req) || req.socket.remoteAddress || 'unknown'
+}
+
+function checkImageHistoryRateLimit(req: Request): boolean {
+  const now = Date.now()
+  const key = imageHistoryRateLimitKey(req)
+  let bucket = imageHistoryBuckets.get(key)
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { resetAt: now + IMAGE_HISTORY_RATE_LIMIT_WINDOW_MS, requests: 0 }
+    imageHistoryBuckets.set(key, bucket)
+  }
+  if (imageHistoryBuckets.size > 10_000) {
+    for (const [k, b] of imageHistoryBuckets) {
+      if (b.resetAt <= now) imageHistoryBuckets.delete(k)
+    }
+  }
+  bucket.requests += 1
+  return bucket.requests <= IMAGE_HISTORY_RATE_LIMIT_MAX_REQUESTS
+}
 
 function publicHistoryImage(image: ImageHistoryItem, options: { includeOriginal?: boolean } = {}) {
   const {
@@ -102,6 +128,10 @@ router.get('/image/history', async (req: Request, res: Response) => {
 
 router.post('/image/history', async (req: Request, res: Response) => {
   try {
+    if (!checkImageHistoryRateLimit(req)) {
+      res.status(429).json({ error: '请求过于频繁，请稍后重试。' })
+      return
+    }
     const images = Array.isArray(req.body?.images) ? req.body.images.slice(0, 50) : []
     const userId = await getRequestUserId(req)
     const savedImages = await saveImageHistory(images, { userId })

@@ -196,6 +196,26 @@ func verifyTokenWithJWKS(ctx context.Context, tokenString string) (*User, error)
 		return nil, fmt.Errorf("token is missing subject")
 	}
 
+	// Validate issuer (iss) when an expected issuer is configured. The expected
+	// issuer is sourced from SUPABASE_JWT_ISSUER (falling back to SUPABASE_URL).
+	// When neither is set (e.g. tests/local dev) issuer validation is skipped.
+	if expectedIssuer := config.SupabaseJWTIssuer; expectedIssuer != "" {
+		iss, _ := claims["iss"].(string)
+		if iss != expectedIssuer {
+			log.Printf("[auth] token issuer mismatch: got %q, expected %q", iss, expectedIssuer)
+			return nil, fmt.Errorf("token issuer mismatch")
+		}
+	}
+
+	// Validate audience (aud) when the claim is present. Supabase issues
+	// "authenticated" as the audience for signed-in users.
+	if audClaim, ok := claims["aud"]; ok && audClaim != nil {
+		if !audContainsAuthenticated(audClaim) {
+			log.Printf("[auth] token audience rejected: %v", audClaim)
+			return nil, fmt.Errorf("token audience not allowed")
+		}
+	}
+
 	user := &User{ID: sub}
 	if email, ok := claims["email"].(string); ok {
 		user.Email = email
@@ -396,6 +416,36 @@ func decodeBase64URLUInt(value string) ([]byte, error) {
 		return nil, fmt.Errorf("empty value")
 	}
 	return base64.RawURLEncoding.DecodeString(value)
+}
+
+// allowedAudiences is the set of audience values that Supabase uses for
+// signed-in users. Exact matches are required to prevent strings like
+// "notauthenticated" from being accepted.
+var allowedAudiences = map[string]bool{
+	"authenticated": true,
+}
+
+// audContainsAuthenticated reports whether the `aud` claim includes one of the
+// allowed audience values used by Supabase for signed-in users. The claim may
+// be a single string or an array of strings per the JWT spec.
+func audContainsAuthenticated(audClaim any) bool {
+	switch v := audClaim.(type) {
+	case string:
+		return allowedAudiences[v]
+	case []string:
+		for _, a := range v {
+			if allowedAudiences[a] {
+				return true
+			}
+		}
+	case []any:
+		for _, a := range v {
+			if s, ok := a.(string); ok && allowedAudiences[s] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RequireAuth requires authentication for the handler

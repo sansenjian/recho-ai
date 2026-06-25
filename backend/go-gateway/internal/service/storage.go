@@ -19,6 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// maxImageSize caps how many bytes are read from a single image download to
+// protect against unbounded memory growth (OOM) from oversized responses.
+const maxImageSize = 100 * 1024 * 1024 // 100MB
+
 // StorageService handles image storage operations
 type StorageService struct {
 	pool      *pgxpool.Pool
@@ -130,7 +134,7 @@ func (s *StorageService) StoreFromURL(ctx context.Context, url, pathHint string)
 		return nil, fmt.Errorf("failed to download image: status %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
@@ -233,7 +237,7 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 		}
 		defer resp.Body.Close()
 
-		data, err := io.ReadAll(resp.Body)
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read storage response: %w", err)
 		}
@@ -273,7 +277,7 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 		return nil, fmt.Errorf("storage download returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read storage response: %w", err)
 	}

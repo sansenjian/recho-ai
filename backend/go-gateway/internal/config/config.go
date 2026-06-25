@@ -30,6 +30,13 @@ var SupabaseJWKSURL = FirstNonEmpty(
 	os.Getenv("SUPABASE_JWKS_URL"),
 	jwksURLFromSupabaseURL(SupabaseURL),
 )
+// SupabaseJWTIssuer is the expected JWT `iss` claim. Defaults to SUPABASE_JWT_ISSUER,
+// falling back to SUPABASE_URL. When empty (e.g. in tests/local dev), issuer
+// validation is skipped.
+var SupabaseJWTIssuer = FirstNonEmpty(
+	os.Getenv("SUPABASE_JWT_ISSUER"),
+	os.Getenv("SUPABASE_URL"),
+)
 var SupabaseImageBucket = parseEnvString("SUPABASE_IMAGE_BUCKET", "recho-images")
 
 // Tencent COS config

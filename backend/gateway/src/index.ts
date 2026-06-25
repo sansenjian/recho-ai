@@ -94,6 +94,14 @@ app.get('/', (_req, res) => {
   res.json({ status: 'ok', message: 'recho-ai gateway' })
 })
 
+// Global error handler — must be the last middleware before routes start
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[gateway] unhandled error:', err)
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 const server = app.listen(PORT, async () => {
   console.log(`Gateway running on http://localhost:${PORT}`)
   await skillLoader.load()
@@ -113,3 +121,19 @@ try {
   // @ts-expect-error -- node might not expose requestsTimeout; set only if present.
   server.requestsTimeout = 0
 } catch { /* ignore */ }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[gateway] unhandled rejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[gateway] uncaught exception:', err)
+})
+
+const shutdown = async () => {
+  console.log('[gateway] shutting down...')
+  server.close()
+  await mcpManager.disconnectAll()
+  process.exit(0)
+}
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
