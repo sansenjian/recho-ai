@@ -640,8 +640,9 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		results = append(results, result)
 	}
 
-	// Truncate to requested count if provider returned more
-	if len(results) > count {
+	// Truncate to requested count if provider returned more.
+	// Guard count > 0 to prevent slice panic on malformed requests.
+	if count > 0 && len(results) > count {
 		log.Printf("[image] provider returned %d image(s); keeping %d", len(results), count)
 		results = results[:count]
 	}
