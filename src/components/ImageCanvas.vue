@@ -1102,14 +1102,12 @@ onUnmounted(() => {
 <template>
   <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
     <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
-      <!-- Top workspace switcher -->
-      <div class="z-20 flex shrink-0 items-center gap-2 mx-3.5 mt-4 mb-8 p-1 w-max border border-border rounded-lg bg-muted pointer-events-auto non-selectable max-md:relative max-md:top-auto max-md:left-auto max-md:right-auto max-md:w-auto max-md:mx-2.5 max-md:mt-2.5 max-md:mb-5 max-sm:mx-2 max-sm:mt-2 max-sm:mb-3 max-sm:gap-1 max-sm:p-[3px]">
+      <!-- Top workspace switcher (always visible in the left column) -->
+      <div class="top-tabs-bar non-selectable">
         <button
           type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1.5 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer transition-all duration-200 max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5 max-sm:text-xs',
-            activeWorkspace === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-          ]"
+          class="workspace-tab"
+          :class="{ active: activeWorkspace === 'canvas' }"
           @click="selectWorkspace('canvas')"
         >
           <LayoutGrid :size="14" stroke-width="1.8" />
@@ -1117,10 +1115,8 @@ onUnmounted(() => {
         </button>
         <button
           type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1.5 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer transition-all duration-200 max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5 max-sm:text-xs',
-            activeWorkspace === 'gallery' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-          ]"
+          class="workspace-tab"
+          :class="{ active: activeWorkspace === 'gallery' }"
           @click="selectWorkspace('gallery')"
         >
           <Image :size="14" stroke-width="1.8" />
@@ -1132,7 +1128,7 @@ onUnmounted(() => {
       <div class="flex flex-1 min-h-0 min-w-0">
         <!-- Sidebar: only in canvas workspace mode -->
         <template v-if="activeWorkspace === 'canvas'">
-          <div v-if="currentImageMode === 'imagio'" class="pt-3 max-md:pt-2.5">
+          <div v-if="currentImageMode === 'imagio'" class="pt-[60px] max-md:pt-2.5">
             <ImagioSidebar
               :image-mode="currentImageMode"
               :history-images="historyImages"
@@ -1144,7 +1140,7 @@ onUnmounted(() => {
               @clear-history="clearHistory"
             />
           </div>
-          <div v-else class="pt-3 max-md:pt-2.5">
+          <div v-else class="pt-[60px] max-md:pt-2.5">
             <ImageCanvasSidebar
               :active-workspace="activeWorkspace"
               :image-mode="currentImageMode"
@@ -1160,7 +1156,7 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden">
+        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden pt-[60px] max-md:pt-2.5">
           <template v-if="currentImageMode === 'imagio'">
             <ImagioView
               :can-select-generation-count="props.canSelectGenerationCount"
@@ -1291,7 +1287,7 @@ onUnmounted(() => {
           </template>
         </section>
 
-        <div v-else class="flex flex-1 min-h-0 min-w-0 flex-col">
+        <div v-else class="flex flex-1 min-h-0 min-w-0 flex-col pt-[60px] max-md:pt-2.5">
           <ImageCanvasGalleryStage
             v-model:query="galleryQuery"
             v-model:filter="galleryFilter"
@@ -1439,3 +1435,86 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.top-tabs-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 14px 0;
+  padding: 4px;
+  width: max-content;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
+  pointer-events: auto;
+}
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-md, 7px);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.workspace-tab:hover {
+  color: hsl(var(--foreground));
+}
+
+.workspace-tab.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: var(--shadow-sm);
+}
+
+.non-selectable {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (max-width: 760px) {
+  .top-tabs-bar {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    width: auto;
+    margin: 10px 10px 0;
+  }
+
+  .workspace-tab {
+    flex: 1;
+    justify-content: center;
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 460px) {
+  .top-tabs-bar {
+    margin: 8px 8px 0;
+    gap: 4px;
+    padding: 3px;
+  }
+
+  .workspace-tab {
+    gap: 5px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+}
+</style>
+
