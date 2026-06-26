@@ -502,7 +502,10 @@ export function useImageGen() {
   )
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage[] | null> {
-    if (isGenerating.value) return null
+    if (isGenerating.value) {
+      error.value = '正在生成中，请等待当前任务完成'
+      return null
+    }
     error.value = null
     isGenerating.value = true
 
