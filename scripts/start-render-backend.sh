@@ -15,7 +15,9 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-for attempt in $(seq 1 60); do
+MAX_ATTEMPTS=60
+
+for attempt in $(seq 1 $MAX_ATTEMPTS); do
   if ! kill -0 "$GO_PID" 2>/dev/null; then
     echo "go-gateway exited before becoming healthy" >&2
     exit 1
@@ -27,7 +29,7 @@ for attempt in $(seq 1 60); do
     break
   fi
 
-  if [ "$attempt" -eq 60 ]; then
+  if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
     echo "go-gateway did not become ready on port ${GO_GATEWAY_PORT} (DB connection may have failed)" >&2
     exit 1
   fi

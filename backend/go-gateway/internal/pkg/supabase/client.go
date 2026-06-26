@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,13 +50,14 @@ func NewClient() (*Client, error) {
 	poolConfig.MaxConnLifetime = time.Hour
 	poolConfig.MaxConnIdleTime = 5 * time.Minute
 
-	const maxRetries = 3
-	const retryInterval = 3 * time.Second
+	maxRetries := envInt("DB_CONNECT_MAX_RETRIES", 3)
+	retryInterval := time.Duration(envInt("DB_CONNECT_RETRY_INTERVAL_SECONDS", 3)) * time.Second
+	perAttemptTimeout := time.Duration(envInt("DB_CONNECT_TIMEOUT_SECONDS", 15)) * time.Second
 
 	var pool *pgxpool.Pool
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), perAttemptTimeout)
 		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 		if err != nil {
 			cancel()
@@ -109,4 +111,14 @@ func (c *Client) Ping(ctx context.Context) error {
 func isPgBouncerURL(connString string) bool {
 	return strings.Contains(connString, "pooler.supabase.com") ||
 		strings.Contains(connString, ":6543")
+}
+
+// envInt reads an integer environment variable or returns the given default.
+func envInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			return intVal
+		}
+	}
+	return defaultVal
 }
