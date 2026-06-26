@@ -492,8 +492,8 @@ async function handleGenerate() {
   border-color: hsl(var(--primary));
 }
 
-/* Match ImageCanvas settings-sidebar collapse breakpoint. */
-@media (max-width: 1180px) {
+/* Match ImageCanvas settings-sidebar collapse breakpoint (Tailwind lg = 1024px). */
+@media (max-width: 1023px) {
   .inline-params {
     display: block;
   }
