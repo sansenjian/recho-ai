@@ -427,7 +427,7 @@ function storageStatFromRows(rows: Array<Record<string, unknown>>): AdminImageSt
       totalCreditCost: 0,
     }
     current.imageCount += 1
-    current.totalBytes += parseSizeToBytes(stringField(row, 'size'))
+    current.totalBytes += Number(row.original_bytes || 0)
     current.totalCreditCost += normalizedCreditAmount(row.credit_cost)
     stats.set(location, current)
   }
@@ -443,7 +443,7 @@ async function storageOverviewFromRows(): Promise<AdminImageStorageStat[]> {
   const client = requireAdminImageClient()
   const { data, error } = await client
     .from(IMAGE_HISTORY_TABLE)
-    .select('storage_path,size,credit_cost')
+    .select('storage_path,original_bytes,credit_cost')
     .limit(STORAGE_OVERVIEW_FALLBACK_LIMIT)
 
   if (error) throw error

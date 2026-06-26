@@ -63,6 +63,15 @@ function saveConversations(_convs: Conversation[]) {
   }, 500)
 }
 
+// 页面隐藏/关闭时立即刷写挂起的 debounce，避免在 500ms 窗口内丢失最近的会话改动
+function flushPendingSave() {
+  if (saveConversationsTimer !== null) {
+    clearTimeout(saveConversationsTimer)
+    saveConversationsTimer = null
+    saveConversationsNow(conversations.value)
+  }
+}
+
 function loadActiveId(): string | null {
   const raw = localStorage.getItem(ACTIVE_KEY)
   if (raw) {
@@ -208,4 +217,15 @@ export function recolorGroup(id: string, color: string) {
 export function assignToGroup(convId: string, groupId: string | null) {
   const conv = conversations.value.find(c => c.id === convId)
   if (conv) conv.groupId = groupId
+}
+
+// 页面生命周期事件：在页面隐藏/卸载时刷写挂起的持久化，防止 debounce 窗口内的改动丢失
+if (typeof window !== 'undefined') {
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushPendingSave()
+    }
+  })
+  window.addEventListener('beforeunload', flushPendingSave)
+  window.addEventListener('pagehide', flushPendingSave)
 }

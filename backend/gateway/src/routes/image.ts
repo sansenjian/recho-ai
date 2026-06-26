@@ -1,5 +1,7 @@
 import { Router, Request, Response, raw } from 'express'
 import { randomUUID } from 'node:crypto'
+import { lookup as dnsLookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
 import {
   IMAGE_PROXY_RATE_LIMIT_MAX_BYTES,
   IMAGE_PROXY_RATE_LIMIT_MAX_REQUESTS,
@@ -322,6 +324,89 @@ function referencesForHistory(references: ImageGenReference[]) {
   }))
 }
 
+/**
+ * Returns true if the IPv4 address falls within private/loopback/link-local
+ * ranges that must never be reached from user-supplied URLs (SSRF defense).
+ */
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number)
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) {
+    return true // Malformed = treat as internal (deny by default)
+  }
+  if (parts[0] === 10) return true // 10.0.0.0/8
+  if (parts[0] === 127) return true // 127.0.0.0/8 (loopback)
+  if (parts[0] === 0) return true // 0.0.0.0/8 (current network)
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true // 172.16.0.0/12
+  if (parts[0] === 192 && parts[1] === 168) return true // 192.168.0.0/16
+  if (parts[0] === 169 && parts[1] === 254) return true // 169.254.0.0/16 (link-local)
+  return false
+}
+
+/**
+ * Returns true if the IPv6 address falls within private/loopback/link-local
+ * ranges, or is an IPv4-mapped address whose embedded IPv4 is private.
+ */
+function isPrivateIPv6(ip: string): boolean {
+  const lower = ip.toLowerCase()
+  if (lower === '::1') return true // loopback
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true // fc00::/7 (ULA)
+  if (lower.startsWith('fe80')) return true // fe80::/10 (link-local)
+  if (lower.startsWith('fe90') || lower.startsWith('fea0') || lower.startsWith('feb0')) return true // fe80::/10
+  // IPv4-mapped IPv6: ::ffff:a.b.c.d
+  const v4MappedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
+  if (v4MappedMatch) {
+    return isPrivateIPv4(v4MappedMatch[1])
+  }
+  // IPv4-compatible IPv6: ::a.b.c.d (deprecated but still parsed)
+  const v4CompatMatch = lower.match(/^::(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
+  if (v4CompatMatch) {
+    return isPrivateIPv4(v4CompatMatch[1])
+  }
+  return false
+}
+
+/** Returns true if the IP literal (v4 or v6) is a private/internal address. */
+function isPrivateIP(ip: string): boolean {
+  const family = isIP(ip)
+  if (family === 4) return isPrivateIPv4(ip)
+  if (family === 6) return isPrivateIPv6(ip)
+  return true // Unrecognized format = deny
+}
+
+/**
+ * SSRF defense: resolves the hostname via DNS and blocks if any resolved
+ * IP address (IPv4 or IPv6) falls within private/loopback/link-local ranges.
+ *
+ * Literal IP addresses are checked directly without DNS resolution.
+ * Hostnames are resolved so that DNS rebinding to internal IPs is caught.
+ */
+async function isInternalUrl(urlStr: string): Promise<boolean> {
+  let parsed: URL
+  try {
+    parsed = new URL(urlStr)
+  } catch {
+    return true // Invalid URL = block
+  }
+
+  const host = parsed.hostname
+  // Fast path: if the hostname is already a literal IP, check it directly.
+  if (isIP(host) !== 0) {
+    return isPrivateIP(host)
+  }
+
+  // Resolve the hostname and check every returned address.
+  try {
+    const results = await dnsLookup(host, { all: true })
+    if (results.length === 0) {
+      return true // No DNS results = block
+    }
+    return results.some((addr) => isPrivateIP(addr.address))
+  } catch {
+    // DNS resolution failed — deny by default to be safe.
+    return true
+  }
+}
+
 async function referenceToBlob(reference: ImageGenReference, index: number) {
   let mime = 'image/png'
   let buffer: Buffer
@@ -339,6 +424,9 @@ async function referenceToBlob(reference: ImageGenReference, index: number) {
       mime = parsed.mime
       buffer = parsed.buffer
     } else if (/^https?:\/\//i.test(reference.dataUrl)) {
+      if (await isInternalUrl(reference.dataUrl)) {
+        throw Object.assign(new Error('参考图URL不允许'), { status: 400 })
+      }
       const response = await fetch(reference.dataUrl, { signal: AbortSignal.timeout(60_000) })
       if (!response.ok) {
         throw Object.assign(new Error(`参考图下载失败 ${response.status}: ${compactErrorText(await response.text())}`), { status: response.status })

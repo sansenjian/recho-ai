@@ -309,7 +309,7 @@ func fetchJWKSKeys(ctx context.Context, force bool) (map[string]any, error) {
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch Supabase JWKS: %w", err)
 	}
