@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { LayoutGrid, Image } from '@lucide/vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
@@ -76,9 +77,6 @@ import ImageGalleryDetailModal from './ImageGalleryDetailModal.vue'
 import ImageViewerModal from './ImageViewerModal.vue'
 import ImagioView from './ImagioView.vue'
 import ImagioSidebar from './ImagioSidebar.vue'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Image, LayoutGrid } from '@lucide/vue'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -1100,8 +1098,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
-    <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
+  <div class="image-canvas">
+    <div class="left-main-column">
       <!-- Top workspace switcher (always visible in the left column) -->
       <div class="top-tabs-bar non-selectable">
         <button
@@ -1125,281 +1123,249 @@ onUnmounted(() => {
       </div>
 
       <!-- Content row: sidebar + main content -->
-      <div class="flex flex-1 min-h-0 min-w-0">
+      <div class="content-row">
         <!-- Sidebar: only in canvas workspace mode -->
         <template v-if="activeWorkspace === 'canvas'">
-          <div v-if="currentImageMode === 'imagio'" class="pt-[60px] max-md:pt-2.5">
-            <ImagioSidebar
-              :image-mode="currentImageMode"
-              :history-images="historyImages"
-              :has-generated-images="Boolean(generatedImages.length)"
-              :is-loading-history="isLoadingHistory"
-              @select-image-mode="handleImageModeChange"
-              @select-workspace-tab="selectWorkspace"
-              @use-history-image="useHistoryImage"
-              @clear-history="clearHistory"
-            />
-          </div>
-          <div v-else class="pt-[60px] max-md:pt-2.5">
-            <ImageCanvasSidebar
-              :active-workspace="activeWorkspace"
-              :image-mode="currentImageMode"
-              :mini-map-layout="miniMapLayout"
-              :history-images="historyImages"
-              :has-generated-images="Boolean(generatedImages.length)"
-              @select-workspace="selectWorkspace"
-              @select-image-mode="handleImageModeChange"
-              @create-node="createNodeNearCenter"
-              @use-history-image="useHistoryImage"
-              @clear-history="clearHistory"
-            />
-          </div>
+          <ImagioSidebar
+            v-if="currentImageMode === 'imagio'"
+            :image-mode="currentImageMode"
+            :history-images="historyImages"
+            :has-generated-images="Boolean(generatedImages.length)"
+            :is-loading-history="isLoadingHistory"
+            @select-image-mode="handleImageModeChange"
+            @select-workspace-tab="selectWorkspace"
+            @use-history-image="useHistoryImage"
+            @clear-history="clearHistory"
+          />
+          <ImageCanvasSidebar
+            v-else
+            :active-workspace="activeWorkspace"
+            :image-mode="currentImageMode"
+            :mini-map-layout="miniMapLayout"
+            :history-images="historyImages"
+            :has-generated-images="Boolean(generatedImages.length)"
+            @select-workspace="selectWorkspace"
+            @select-image-mode="handleImageModeChange"
+            @create-node="createNodeNearCenter"
+            @use-history-image="useHistoryImage"
+            @clear-history="clearHistory"
+          />
         </template>
 
-        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden pt-[60px] max-md:pt-2.5">
-          <template v-if="currentImageMode === 'imagio'">
-            <ImagioView
-              :can-select-generation-count="props.canSelectGenerationCount"
-              v-model:image-model="imageModel"
-              v-model:resolution="resolution"
-              v-model:aspect-ratio="aspectRatio"
-              v-model:quality="quality"
-              :model-options="imagioModelOptions"
-              :resolution-options="imagioResolutionOptions"
-              :aspect-ratio-options="imagioAspectRatioOptions"
-              :quality-options="imagioQualityOptions"
+        <section v-if="activeWorkspace === 'canvas'" class="canvas-stage">
+      <template v-if="currentImageMode === 'imagio'">
+        <ImagioView
+          :can-select-generation-count="props.canSelectGenerationCount"
+          v-model:image-model="imageModel"
+          v-model:resolution="resolution"
+          v-model:aspect-ratio="aspectRatio"
+          v-model:quality="quality"
+          :model-options="imagioModelOptions"
+          :resolution-options="imagioResolutionOptions"
+          :aspect-ratio-options="imagioAspectRatioOptions"
+          :quality-options="imagioQualityOptions"
+        />
+      </template>
+      <template v-else>
+        <ImageCanvasStageActions
+          :zoom-label="viewportZoomLabel"
+          @create-node="createNodeNearCenter"
+          @fit-view="fitView"
+          @import-canvas="importCanvasFromFile"
+          @export-canvas="exportCanvasToFile"
+          @clear-canvas="clearCanvas"
+        />
+
+        <div
+          ref="viewportRef"
+          class="canvas-viewport"
+          @contextmenu.prevent="openContextMenu"
+          @dragover="handleCanvasDragOver"
+          @drop="handleCanvasDrop"
+          @pointerdown="startPan"
+          @wheel.prevent="handleWheel"
+        >
+        <div class="graph-plane" :style="planeStyle" @pointerdown="startPan">
+          <svg class="connections" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">
+            <path
+              v-for="connection in connections"
+              :key="connection.id"
+              class="connection-path"
+              :d="connectionPath(connection)"
             />
-          </template>
-          <template v-else>
-            <ImageCanvasStageActions
-              :zoom-label="viewportZoomLabel"
-              @create-node="createNodeNearCenter"
-              @fit-view="fitView"
-              @import-canvas="importCanvasFromFile"
-              @export-canvas="exportCanvasToFile"
-              @clear-canvas="clearCanvas"
-            />
+            <path v-if="draftPath" class="connection-path draft" :d="draftPath" />
+          </svg>
 
-            <div
-              ref="viewportRef"
-              class="absolute inset-0 overflow-hidden cursor-default touch-none"
-              :style="{
-                background: 'linear-gradient(hsl(var(--border) / 0.68) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.68) 1px, transparent 1px), linear-gradient(hsl(var(--border) / 0.38) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.38) 1px, transparent 1px), hsl(var(--background))',
-                backgroundSize: '28px 28px, 28px 28px, 140px 140px, 140px 140px',
-              }"
-              @contextmenu.prevent="openContextMenu"
-              @dragover="handleCanvasDragOver"
-              @drop="handleCanvasDrop"
-              @pointerdown="startPan"
-              @wheel.prevent="handleWheel"
-            >
-              <div class="absolute top-0 left-0 origin-top-left" :style="planeStyle" @pointerdown="startPan">
-                <svg class="absolute inset-0 overflow-visible pointer-events-none" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">
-                  <path
-                    v-for="connection in connections"
-                    :key="connection.id"
-                    class="fill-none stroke-muted-foreground [stroke-width:3] [stroke-linecap:round] opacity-[0.72]"
-                    :d="connectionPath(connection)"
-                  />
-                  <path v-if="draftPath" class="fill-none stroke-primary [stroke-dasharray:8_7] opacity-100" :d="draftPath" />
-                </svg>
-
-                <ImageCanvasNode
-                  v-for="node in nodes"
-                  :key="node.id"
-                  :ref="measuredNodeRef(node.id)"
-                  :node="node"
-                  :selected="selectedNodeId === node.id"
-                  :node-style="nodeStyle(node)"
-                  :mention-state="mentionState"
-                  :mention-options="mentionOptions"
-                  :text-mention-open="isMentionIndexOpen(node, 'text')"
-                  :generation-mention-open="isMentionIndexOpen(node, 'generation')"
-                  :connected-handles="connectedHandlesForNode(node)"
-                  :is-generated-image-node="isGeneratedImageNode(node)"
-                  :image-alt="imageAltText(node)"
-                  :image-output-meta="imageOutputMeta(node)"
-                  :is-downloading="isDownloadingImage(nodeDownloadKey(node))"
-                  :has-prompt-link="hasPromptLink(node)"
-                  :generation-prompt-value="getGenerationPromptValue(node)"
-                  :referenced-image-nodes="referencedImageNodes(node)"
-                  :can-select-generation-count="Boolean(props.canSelectGenerationCount)"
-                  :generation-count="generationCountForNode(node)"
-                  :generation-count-options="generationCountOptions"
-                  :resolution-options="resolutionOptions"
-                  :aspect-ratio-options="aspectRatioOptions"
-                  :quality-options="qualityOptions"
-                  :is-generating="isGenerating"
-                  :resolve-mention-token="imageNodeForRichToken"
-                  @select="selectNode"
-                  @open-context-menu="openNodeContextMenu"
-                  @start-drag="startNodeDrag"
-                  @remove="removeNode"
-                  @rich-input="updateRichEditorContent"
-                  @mention-keydown="handleMentionKeydown"
-                  @mention-caret="updateMentionStateFromEditor"
-                  @insert-mention="insertMention"
-                  @start-connection="startConnection"
-                  @finish-connection="finishConnection"
-                  @choose-image="chooseImage"
-                  @image-load="handleNodeImageLoad"
-                  @open-image-viewer="openImageViewer"
-                  @update-content="updateNodeContent"
-                  @create-continuation="createContinuation"
-                  @download="handleDownload"
-                  @send-to-chat="sendNodeImageToChat"
-                  @update-resolution="updateNodeResolution"
-                  @update-aspect-ratio="updateNodeAspectRatio"
-                  @update-quality="updateNodeQuality"
-                  @update-generation-count="setGenerationCount"
-                  @generate="generateFromNode"
-                  @start-resize="startNodeResize"
-                  @reset-scale="resetNodeScale"
-                />
-              </div>
-
-              <ImageCanvasContextMenu
-                v-if="contextMenu.visible"
-                :x="contextMenu.x"
-                :y="contextMenu.y"
-                :has-node="Boolean(contextMenuNode)"
-                @rename="renameContextNode"
-                @duplicate="duplicateContextNode"
-                @delete="deleteContextNode"
-                @create-node="createNodeAtMenu"
-              />
-            </div>
-
-            <ImageCanvasBottomToolbar
-              :zoom="viewport.zoom"
-              :min-zoom="MIN_VIEWPORT_ZOOM"
-              :max-zoom="MAX_VIEWPORT_ZOOM"
-              :zoom-label="viewportZoomLabel"
-              @update:zoom="viewport.zoom = $event"
-            />
-
-            <div
-              v-if="error"
-              class="absolute left-1/2 bottom-[22px] z-24 max-w-[min(560px,calc(100%-64px))] px-3.5 py-2.5 border border-destructive/20 rounded-lg bg-card text-destructive text-xs font-bold shadow-md -translate-x-1/2 max-sm:w-[calc(100%-24px)] max-sm:max-w-none"
-            >
-              {{ error }}
-            </div>
-          </template>
-        </section>
-
-        <div v-else class="flex flex-1 min-h-0 min-w-0 flex-col pt-[60px] max-md:pt-2.5">
-          <ImageCanvasGalleryStage
-            v-model:query="galleryQuery"
-            v-model:filter="galleryFilter"
-            :images="visibleGalleryImages"
-            :filtered-count="filteredGalleryImages.length"
-            :source-count="gallerySourceImages.length"
-            :filter-options="galleryFilterOptions"
-            :has-filter="galleryHasFilter"
-            :is-public-filter="isPublicGalleryFilter"
-            :gallery-loaded="galleryLoaded"
-            :is-loading="isGalleryLoading"
-            :is-loading-more="isGalleryLoadingMore"
-            :error="error"
+          <ImageCanvasNode
+            v-for="node in nodes"
+            :key="node.id"
+            :ref="measuredNodeRef(node.id)"
+            :node="node"
+            :selected="selectedNodeId === node.id"
+            :node-style="nodeStyle(node)"
+            :mention-state="mentionState"
+            :mention-options="mentionOptions"
+            :text-mention-open="isMentionIndexOpen(node, 'text')"
+            :generation-mention-open="isMentionIndexOpen(node, 'generation')"
+            :connected-handles="connectedHandlesForNode(node)"
+            :is-generated-image-node="isGeneratedImageNode(node)"
+            :image-alt="imageAltText(node)"
+            :image-output-meta="imageOutputMeta(node)"
+            :is-downloading="isDownloadingImage(nodeDownloadKey(node))"
+            :has-prompt-link="hasPromptLink(node)"
+            :generation-prompt-value="getGenerationPromptValue(node)"
+            :referenced-image-nodes="referencedImageNodes(node)"
+            :can-select-generation-count="Boolean(props.canSelectGenerationCount)"
+            :generation-count="generationCountForNode(node)"
+            :generation-count-options="generationCountOptions"
             :resolution-options="resolutionOptions"
+            :aspect-ratio-options="aspectRatioOptions"
             :quality-options="qualityOptions"
-            :is-image-downloading="isGalleryImageDownloading"
-            @load-more="handleLoadMoreGallery"
-            @view="openGalleryDetail"
-            @use-image="handleGalleryUseImage"
-            @preload-download="handleGalleryPreloadDownload"
-            @download="handleGalleryDownload"
-            @send-to-chat="handleGallerySendToChat"
+            :is-generating="isGenerating"
+            :resolve-mention-token="imageNodeForRichToken"
+            @select="selectNode"
+            @open-context-menu="openNodeContextMenu"
+            @start-drag="startNodeDrag"
+            @remove="removeNode"
+            @rich-input="updateRichEditorContent"
+            @mention-keydown="handleMentionKeydown"
+            @mention-caret="updateMentionStateFromEditor"
+            @insert-mention="insertMention"
+            @start-connection="startConnection"
+            @finish-connection="finishConnection"
+            @choose-image="chooseImage"
+            @image-load="handleNodeImageLoad"
+            @open-image-viewer="openImageViewer"
+            @update-content="updateNodeContent"
+            @create-continuation="createContinuation"
+            @download="handleDownload"
+            @send-to-chat="sendNodeImageToChat"
+            @update-resolution="updateNodeResolution"
+            @update-aspect-ratio="updateNodeAspectRatio"
+            @update-quality="updateNodeQuality"
+            @update-generation-count="setGenerationCount"
+            @generate="generateFromNode"
+            @start-resize="startNodeResize"
+            @reset-scale="resetNodeScale"
           />
         </div>
+
+        <ImageCanvasContextMenu
+          v-if="contextMenu.visible"
+          :x="contextMenu.x"
+          :y="contextMenu.y"
+          :has-node="Boolean(contextMenuNode)"
+          @rename="renameContextNode"
+          @duplicate="duplicateContextNode"
+          @delete="deleteContextNode"
+          @create-node="createNodeAtMenu"
+        />
       </div>
+
+      <ImageCanvasBottomToolbar
+        :zoom="viewport.zoom"
+        :min-zoom="MIN_VIEWPORT_ZOOM"
+        :max-zoom="MAX_VIEWPORT_ZOOM"
+        :zoom-label="viewportZoomLabel"
+        @update:zoom="viewport.zoom = $event"
+      />
+
+      <div v-if="error" class="global-error">{{ error }}</div>
+      </template>
+    </section>
+
+    <ImageCanvasGalleryStage
+      v-else
+      v-model:query="galleryQuery"
+      v-model:filter="galleryFilter"
+      :images="visibleGalleryImages"
+      :filtered-count="filteredGalleryImages.length"
+      :source-count="gallerySourceImages.length"
+      :filter-options="galleryFilterOptions"
+      :has-filter="galleryHasFilter"
+      :is-public-filter="isPublicGalleryFilter"
+      :gallery-loaded="galleryLoaded"
+      :is-loading="isGalleryLoading"
+      :is-loading-more="isGalleryLoadingMore"
+      :error="error"
+      :resolution-options="resolutionOptions"
+      :quality-options="qualityOptions"
+      :is-image-downloading="isGalleryImageDownloading"
+      @load-more="handleLoadMoreGallery"
+      @view="openGalleryDetail"
+      @use-image="handleGalleryUseImage"
+      @preload-download="handleGalleryPreloadDownload"
+      @download="handleGalleryDownload"
+      @send-to-chat="handleGallerySendToChat"
+    />
+    </div>
     </div>
 
     <!-- Right side: settings panel (only in imagio mode) -->
     <aside
       v-if="activeWorkspace === 'canvas' && currentImageMode === 'imagio'"
-      class="w-80 shrink-0 px-5 py-6 border-l border-border bg-card overflow-y-auto min-h-0 max-lg:hidden"
+      class="settings-sidebar"
     >
-      <h3 class="mb-6 text-base font-extrabold text-foreground">参数设置</h3>
+      <h3>参数设置</h3>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">模型</label>
-        <div v-if="imagioModelOptions.length" class="grid grid-cols-2 gap-2">
-          <Button
+      <div class="setting-group">
+        <label>模型</label>
+        <div v-if="imagioModelOptions.length" class="option-buttons model-buttons">
+          <button
             v-for="opt in imagioModelOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
-            :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              imageModel === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
-            ]"
+            :class="{ active: imageModel === opt.value }"
             @click="imageModel = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
-        <span v-else class="text-muted-foreground text-xs font-bold">加载中...</span>
+        <span v-else class="loading-hint">加载中...</span>
       </div>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">分辨率</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+      <div class="setting-group">
+        <label>分辨率</label>
+        <div class="option-buttons">
+          <button
             v-for="opt in imagioResolutionOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
-            :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              resolution === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
-            ]"
+            :class="{ active: resolution === opt.value }"
             @click="resolution = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
       </div>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">尺寸 / 比例</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+      <div class="setting-group">
+        <label>尺寸 / 比例</label>
+        <div class="option-buttons">
+          <button
             v-for="opt in imagioAspectRatioOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
-            :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              aspectRatio === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
-            ]"
+            :class="{ active: aspectRatio === opt.value }"
             @click="aspectRatio = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
       </div>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">质量</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+      <div class="setting-group">
+        <label>质量</label>
+        <div class="option-buttons">
+          <button
             v-for="opt in imagioQualityOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
-            :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              quality === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
-            ]"
+            :class="{ active: quality === opt.value }"
             @click="quality = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
       </div>
     </aside>
@@ -1437,6 +1403,25 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.image-canvas {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: hsl(var(--background));
+}
+
+.left-main-column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
 .top-tabs-bar {
   position: absolute;
   top: 0;
@@ -1453,6 +1438,21 @@ onUnmounted(() => {
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--muted));
   pointer-events: auto;
+}
+
+.content-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.content-row > aside {
+  padding-top: 60px;
+}
+
+.content-row > .gallery-stage {
+  padding-top: 60px;
 }
 
 .workspace-tab {
@@ -1481,12 +1481,175 @@ onUnmounted(() => {
   box-shadow: var(--shadow-sm);
 }
 
-.non-selectable {
-  user-select: none;
-  -webkit-user-select: none;
+.content-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.canvas-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-top: 60px;
+}
+
+.settings-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  padding: 24px 20px;
+  border-left: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings-sidebar h3 {
+  margin: 0 0 24px;
+  color: hsl(var(--foreground));
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.setting-group {
+  margin-bottom: 24px;
+}
+
+.setting-group label {
+  display: block;
+  margin-bottom: 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.option-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.option-buttons button {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 7px);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.option-buttons button.active {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+}
+
+.model-buttons {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.empty-state {
+  padding: 16px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.loading-hint {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.canvas-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: default;
+  background:
+    linear-gradient(hsl(var(--border) / 0.68) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.68) 1px, transparent 1px),
+    linear-gradient(hsl(var(--border) / 0.38) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.38) 1px, transparent 1px),
+    hsl(var(--background));
+  background-size: 28px 28px, 28px 28px, 140px 140px, 140px 140px;
+}
+
+.graph-plane {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+}
+
+.connections {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.connection-path {
+  fill: none;
+  stroke: hsl(var(--muted-foreground));
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.72;
+}
+
+.connection-path.draft {
+  stroke: hsl(var(--primary));
+  stroke-dasharray: 8 7;
+  opacity: 1;
+}
+
+.canvas-viewport {
+  touch-action: none;
+}
+
+.global-error {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  z-index: 24;
+  max-width: min(560px, calc(100% - 64px));
+  padding: 10px 14px;
+  border: 1px solid hsl(var(--destructive) / 0.2);
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  color: hsl(var(--destructive));
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: var(--shadow-md);
+  transform: translateX(-50%);
+}
+
+@media (max-width: 1180px) {
+  .settings-sidebar {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .content-row > aside {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
+  .image-canvas {
+    flex-direction: column;
+  }
+
   .top-tabs-bar {
     position: relative;
     top: auto;
@@ -1500,6 +1663,12 @@ onUnmounted(() => {
     flex: 1;
     justify-content: center;
     min-height: 36px;
+  }
+
+  .content-row > aside,
+  .content-row > .gallery-stage,
+  .canvas-stage {
+    padding-top: 10px;
   }
 }
 
@@ -1515,6 +1684,10 @@ onUnmounted(() => {
     padding: 6px 8px;
     font-size: 12px;
   }
+
+  .global-error {
+    width: calc(100% - 24px);
+    max-width: none;
+  }
 }
 </style>
-

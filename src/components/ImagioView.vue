@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { Plus, X, Sparkles } from '@lucide/vue'
 import { useImageGen } from '../composables/useImageGen'
 import {
   clipboardImageFile,
@@ -140,11 +141,7 @@ async function handleGenerate() {
             title="添加参考图"
             @click="openReferencePicker"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M12 8v8" />
-              <path d="M8 12h8" />
-            </svg>
+            <Plus :size="16" stroke-width="1.7" />
             <span>参考图</span>
           </button>
           <input
@@ -163,10 +160,7 @@ async function handleGenerate() {
             >
               <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
               <button type="button" title="移除参考图" @click="removeReference(index)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
+                <X :size="12" stroke-width="2" />
               </button>
             </div>
           </div>
@@ -272,10 +266,7 @@ async function handleGenerate() {
             :disabled="!canGenerate"
             @click="handleGenerate"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18">
-              <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
-              <path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
-            </svg>
+            <Sparkles :size="18" stroke-width="2" />
             {{ isGenerating ? '生成中...' : '生成' }}
           </button>
         </div>
@@ -492,8 +483,8 @@ async function handleGenerate() {
   border-color: hsl(var(--primary));
 }
 
-/* Match ImageCanvas settings-sidebar collapse breakpoint (Tailwind lg = 1024px). */
-@media (max-width: 1023px) {
+/* Match ImageCanvas settings-sidebar collapse breakpoint. */
+@media (max-width: 1180px) {
   .inline-params {
     display: block;
   }
