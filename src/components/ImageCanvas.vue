@@ -1195,7 +1195,7 @@ onUnmounted(() => {
               @dragover="handleCanvasDragOver"
               @drop="handleCanvasDrop"
               @pointerdown="startPan"
-              @wheel="handleWheel"
+              @wheel.prevent="handleWheel"
             >
               <div class="absolute top-0 left-0 origin-top-left" :style="planeStyle" @pointerdown="startPan">
                 <svg class="absolute inset-0 overflow-visible pointer-events-none" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">

@@ -34,11 +34,21 @@ function loadConversations(): Conversation[] {
 
 function saveConversationsNow(convs: Conversation[]) {
   // 只保留有实际内容的会话（有消息或系统提示词）
+  // 剥离 images（base64 data URL）以避免 JSON.stringify + localStorage.setItem
+  // 在会话数量多时阻塞主线程数秒（visibilitychange 时尤为明显）
   const meaningful = convs
     .filter(c => c.messages.length > 0 || c.systemPrompt)
     .map(c => {
       const hasBlocks = c.messages.some(message => message.blocks?.length)
-      return hasBlocks ? { ...c, schemaVersion: 2 as const } : c
+      const stripped: Conversation = {
+        ...c,
+        messages: c.messages.map(m => ({
+          ...m,
+          images: undefined,
+        })),
+        ...(hasBlocks ? { schemaVersion: 2 as const } : {}),
+      }
+      return stripped
     })
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(meaningful))
