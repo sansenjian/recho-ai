@@ -45,6 +45,7 @@ type imageStorageService interface {
 	GetImageVisibilityByPath(ctx context.Context, storagePath string) (visibility string, ownerID string, err error)
 	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
 	ClearImageHistory(ctx context.Context, userID string) (int64, error)
+	CleanupObjects(paths ...string)
 }
 
 type imageIdempotencyService interface {
@@ -390,18 +391,23 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[image] orphaned S3 objects for %s (history save failed): storagePath=%s previewPath=%s thumbnailPath=%s", image.ID, image.StoragePath, image.PreviewPath, image.ThumbnailPath)
 
 				if creditReservation != nil {
+					// Detached context for rollback, S3 cleanup, and refund — created
+					// right before use to avoid timeout expiry from the long-running
+					// image generation upstream, and independent of client cancellation.
+					refundCtx, refundCancel := withRefundContext()
+					defer refundCancel()
+
 					// Rollback previously saved history records for this batch so the
 					// batch is handled atomically — either all persist or none do.
 					for _, savedID := range savedHistoryIDs {
-						if _, delErr := h.storageService.DeleteImageHistory(r.Context(), savedID, userID); delErr != nil {
+						if _, delErr := h.storageService.DeleteImageHistory(refundCtx, savedID, userID); delErr != nil {
 							log.Printf("[image] failed to clean up saved history record %s during batch rollback: %v", savedID, delErr)
 						}
 					}
-					// Detached context so refund + idempotency-fail complete even if the
-					// client has disconnected. Created right before use to avoid timeout
-					// expiry from the long-running image generation upstream.
-					refundCtx, refundCancel := withRefundContext()
-					defer refundCancel()
+
+					// Best-effort S3 cleanup for the current failed image's orphaned objects.
+					h.storageService.CleanupObjects(image.StoragePath, image.PreviewPath, image.ThumbnailPath)
+
 					_, refundErr := h.creditService.RefundCredits(refundCtx, userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
 					if refundErr != nil {
 						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
@@ -539,7 +545,7 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
 		return
 	}
-	if ownerID != "" && visibility == "private" {
+	if visibility == "private" {
 		user := middleware.GetUserFromRequest(r)
 		if user == nil || user.ID != ownerID {
 			response.Error(w, http.StatusForbidden, "无权访问该图片。")

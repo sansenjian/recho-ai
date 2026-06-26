@@ -8,7 +8,7 @@
     "componentLibrary": "shadcn",
     "outputTarget": "vue-vite",
     "fidelity": "high-fidelity",
-    "accentColor": "blue #0070f3",
+    "accentColor": "green #16a34a",
     "darkMode": true,
     "designPrinciple": "完全对齐 AdminView.vue 的 Vercel/Geist 设计系统",
     "currentStack": "Vue 3.5 + Vite + TypeScript + Tailwind CSS v4 + shadcn-vue pattern"
@@ -24,7 +24,7 @@
       "light": {
         "bg": "#ffffff",
         "fg": "#171717",
-        "primary": "#0070f3",
+        "primary": "#16a34a",
         "surface": "#ffffff",
         "surface-raised": "#fafafa",
         "surface-sunken": "#f5f5f5",
@@ -94,12 +94,12 @@
       "action": "modify",
       "purpose": "统一令牌系统，将 shadcn HSL 令牌映射到 admin 的 hex 值，确保 Tailwind 工具类和 scoped CSS 共用同一套颜色",
       "requirements": [
-        "--primary 改为 212 100% 48%（#0070f3 蓝），--primary-foreground 改为 0 0% 100%",
-        "--accent 改为 0 0% 98%（surface-raised），--accent-foreground 改为 0 0% 9%",
-        "--muted 改为 0 0% 96%（#f5f5f5 sunken），--muted-foreground 改为 0 0% 40%（#666）",
-        "--border 改为 0 0% 93%（近似 rgba(0,0,0,0.08)），--input 同步",
-        "--ring 改为 212 100% 48%（蓝），--radius 改为 0.375rem（6px）",
-        "暗色模式完全对齐 admin 的 dark tokens"
+        "--primary 改为 142.1 76.2% 36.3%（#16a34a 品牌绿），--primary-foreground 改为 355.7 100% 97.3%",
+        "--accent 改为 210 40% 96.1%，--accent-foreground 改为 222.2 47.4% 11.2%",
+        "--muted 改为 210 40% 96.1%，--muted-foreground 改为 215.4 16.3% 46.9%（#64748b）",
+        "--border 改为 214.3 31.8% 91.4%（#dbe3ee），--input 同步",
+        "--ring 改为 142.1 76.2% 36.3%（品牌绿），--radius 改为 0.5rem",
+        "暗色模式完全对齐 SHADCN_MIGRATION_PLAN.md 的 dark tokens（--primary: 142.1 70.6% 45.3%）"
       ]
     },
     {

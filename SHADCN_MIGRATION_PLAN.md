@@ -184,15 +184,30 @@ import { ref, watch } from 'vue'
 type Theme = 'light' | 'dark' | 'system'
 
 const theme = ref<Theme>('system')
+let mediaQuery: MediaQueryList | null = null
 
 function applyTheme(t: Theme) {
   const root = document.documentElement
+
+  // 切换主题时移除旧监听，避免重复绑定
+  if (mediaQuery) {
+    mediaQuery.removeEventListener('change', onSystemThemeChange)
+    mediaQuery = null
+  }
+
   if (t === 'system') {
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     root.classList.toggle('dark', isDark)
+    // 监听 OS 主题变化，实时同步 dark class
+    mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    mediaQuery.addEventListener('change', onSystemThemeChange)
   } else {
     root.classList.toggle('dark', t === 'dark')
   }
+}
+
+function onSystemThemeChange(e: MediaQueryListEvent) {
+  document.documentElement.classList.toggle('dark', e.matches)
 }
 
 export function useTheme() {
@@ -418,7 +433,7 @@ shadcn-vue 组件天然支持响应式。迁移时注意：
 
 ## 七、推荐执行顺序
 
-```
+```text
 阶段一（基础设施）  ← 必须先完成，后续所有阶段依赖此
     ↓
 阶段二（布局导航）  ← 第二优先，解决侧边栏/弹窗/认证

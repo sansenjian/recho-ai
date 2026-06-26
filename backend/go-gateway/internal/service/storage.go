@@ -256,6 +256,18 @@ func (s *StorageService) cleanupStorageObjects(paths ...*string) {
 	}
 }
 
+// CleanupObjects is the public, best-effort S3 cleanup entry point. It accepts
+// plain string paths and delegates to the internal cleanupStorageObjects helper.
+// Callers outside the storage service (e.g. the image handler) use this when
+// they need to remove orphaned S3 objects without a DB row.
+func (s *StorageService) CleanupObjects(paths ...string) {
+	ptrs := make([]*string, len(paths))
+	for i := range paths {
+		ptrs[i] = &paths[i]
+	}
+	s.cleanupStorageObjects(ptrs...)
+}
+
 // DownloadImage downloads a stored image from S3-compatible storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
 	if s.uploader != nil && s.uploader.client != nil {
@@ -581,7 +593,9 @@ func (s *StorageService) GetImageVisibilityByPath(ctx context.Context, storagePa
 		return "", "", nil
 	}
 	// Match against all three path columns — any of them could be the target.
-	query := `SELECT visibility, user_id FROM image_generations
+	// COALESCE NULL user_id to empty string so pgx can scan it directly into a
+	// string variable (anonymous images may have no owner).
+	query := `SELECT visibility, COALESCE(user_id::text, '') FROM image_generations
 		WHERE storage_path = $1 OR preview_path = $1 OR thumbnail_path = $1
 		LIMIT 1`
 	row := s.pool.QueryRow(ctx, query, storagePath)
@@ -617,19 +631,19 @@ func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID stri
 		return false, err
 	}
 
+	// Best-effort S3 cleanup BEFORE DB delete — if cleanup fails, the DB
+	// record survives and continues to enforce visibility/ownership checks
+	// in ProxyStorage, rather than leaving generated/private objects
+	// downloadable with no access-control record.
+	s.cleanupStorageObjects(&storagePath, &previewPath, &thumbnailPath)
+
 	query := `DELETE FROM image_generations WHERE id = $1 AND user_id = $2::uuid`
 	result, err := s.pool.Exec(ctx, query, id, userID)
 	if err != nil {
 		return false, err
 	}
 
-	deleted := result.RowsAffected() > 0
-	if deleted {
-		// Best-effort S3 cleanup of orphaned objects.
-		s.cleanupStorageObjects(&storagePath, &previewPath, &thumbnailPath)
-	}
-
-	return deleted, nil
+	return result.RowsAffected() > 0, nil
 }
 
 // ClearImageHistory clears all image history for a user and best-effort removes
@@ -653,8 +667,7 @@ func (s *StorageService) ClearImageHistory(ctx context.Context, userID string) (
 	for rows.Next() {
 		var storagePath, previewPath, thumbnailPath string
 		if scanErr := rows.Scan(&storagePath, &previewPath, &thumbnailPath); scanErr != nil {
-			log.Printf("[image-storage] ClearImageHistory: failed to scan path row: %v", scanErr)
-			continue
+			return 0, fmt.Errorf("ClearImageHistory: failed to scan path row: %w", scanErr)
 		}
 		orphanPaths = append(orphanPaths, &storagePath, &previewPath, &thumbnailPath)
 	}

@@ -36,7 +36,12 @@ func (s *stubImageCreditService) GetCreditCost(imageCount int) (float64, float64
 }
 
 type stubImageStorageService struct {
-	saveErr error
+	saveErr      error
+	downloadFunc func(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
+	storeFunc    func(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
+	visibility   string
+	owner        string
+	visErr       error
 }
 
 func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error) {
@@ -76,7 +81,14 @@ func (s *stubImageStorageService) ClearImageHistory(ctx context.Context, userID 
 }
 
 func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, storagePath string) (string, string, error) {
-	return "public", "", nil
+	if s.visErr != nil {
+		return "", "", s.visErr
+	}
+	return s.visibility, s.owner, nil
+}
+
+func (s *stubImageStorageService) CleanupObjects(paths ...string) {
+	// no-op in tests
 }
 
 type stubImageIdempotencyService struct {

@@ -45,7 +45,7 @@ backend/
 | 应用配置 `/api/config/*` | 完整实现 | 部分实现 | Go 侧可读取 app_settings |
 | 图片存储代理 | 完整实现 | 待验证 | COS 行为与公开作品访问需对齐 |
 | 冷启动 | 3-10s | 50-200ms | Render 无服务器场景差异显著 |
-| 内存占用 | 100-200MB | 30-50MB | 图片来自 Go 网关 README |
+| 内存占用 | 100-200MB | 30-50MB | — |
 | 测试覆盖 | 较完整 | 基础 | Node 侧测试数量明显更多 |
 
 ## 三种候选架构对比
@@ -137,7 +137,7 @@ backend/
 ### 中期（未来 2-6 个月）：评估 Node 网关剩余能力迁移
 
 - 如果 MCP 工具调用逻辑进入稳定期，可把 `backend/gateway/src/mcp/manager.ts` 的能力在 Go 侧重写。
-- 如果管理后台需求增加，优先把只读/轻量管理接口迁到 Go；写操作和复杂审核逻辑保留 Node。
+- 如果管理后台需求增加，可逐步将管理接口迁到 Go（先只读查询，后写操作），与 `docs/gateway-division-analysis.md` 中的分阶段迁移策略保持一致；复杂审核逻辑在条件成熟前保留在 Node 侧。
 - 引入统一网关层（如 Traefik / Nginx / API Gateway），由它根据路径路由到 Node 或 Go，前端不再感知多个 base URL。
 
 ### 长期（6 个月后）：二选一
