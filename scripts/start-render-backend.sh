@@ -15,22 +15,26 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-for attempt in $(seq 1 30); do
+MAX_ATTEMPTS=60
+
+for attempt in $(seq 1 $MAX_ATTEMPTS); do
   if ! kill -0 "$GO_PID" 2>/dev/null; then
     echo "go-gateway exited before becoming healthy" >&2
     exit 1
   fi
 
-  if node -e "fetch('http://127.0.0.1:${GO_GATEWAY_PORT}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+  # Use /ready (not /health) because /ready checks DB connectivity.
+  # /health always returns 200 even when DB is not connected.
+  if node -e "fetch('http://127.0.0.1:${GO_GATEWAY_PORT}/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
     break
   fi
 
-  if [ "$attempt" -eq 30 ]; then
-    echo "go-gateway did not become healthy on port ${GO_GATEWAY_PORT}" >&2
+  if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+    echo "go-gateway did not become ready on port ${GO_GATEWAY_PORT} (DB connection may have failed)" >&2
     exit 1
   fi
 
-  sleep 1
+  sleep 2
 done
 
 cd /app/backend/gateway

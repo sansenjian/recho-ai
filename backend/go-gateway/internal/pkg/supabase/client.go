@@ -3,7 +3,9 @@ package supabase
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,12 +18,10 @@ type Client struct {
 	pool *pgxpool.Pool
 }
 
-// NewClient creates a new Supabase client with a connection pool
+// NewClient creates a new Supabase client with a connection pool.
+// It retries up to 3 times with 3-second intervals to handle cold-start
+// DNS/network delays on serverless platforms like Render.
 func NewClient() (*Client, error) {
-	// Prefer DATABASE_URL, then fall back to POSTGRES_URL. The previous logic
-	// checked SUPABASE_URL but then used POSTGRES_URL, which was misleading
-	// because the Supabase URL alone cannot construct a Postgres connection
-	// string (the database password is not derivable from it).
 	connString := os.Getenv("DATABASE_URL")
 	if connString == "" {
 		connString = os.Getenv("POSTGRES_URL")
@@ -50,20 +50,43 @@ func NewClient() (*Client, error) {
 	poolConfig.MaxConnLifetime = time.Hour
 	poolConfig.MaxConnIdleTime = 5 * time.Minute
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+	maxRetries := envInt("DB_CONNECT_MAX_RETRIES", 3)
+	retryInterval := time.Duration(envInt("DB_CONNECT_RETRY_INTERVAL_SECONDS", 3)) * time.Second
+	perAttemptTimeout := time.Duration(envInt("DB_CONNECT_TIMEOUT_SECONDS", 15)) * time.Second
+
+	var pool *pgxpool.Pool
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), perAttemptTimeout)
+		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("failed to create connection pool (attempt %d/%d): %w", attempt, maxRetries, err)
+			log.Printf("[supabase] %v", lastErr)
+			if attempt < maxRetries {
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+
+		// Verify connection
+		if err = pool.Ping(ctx); err != nil {
+			pool.Close()
+			cancel()
+			lastErr = fmt.Errorf("failed to ping database (attempt %d/%d): %w", attempt, maxRetries, err)
+			log.Printf("[supabase] %v", lastErr)
+			if attempt < maxRetries {
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+
+		cancel()
+		log.Printf("[supabase] database connection established on attempt %d/%d", attempt, maxRetries)
+		return &Client{pool: pool}, nil
 	}
 
-	// Verify connection
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	return &Client{pool: pool}, nil
+	return nil, lastErr
 }
 
 // Close closes the connection pool
@@ -88,4 +111,14 @@ func (c *Client) Ping(ctx context.Context) error {
 func isPgBouncerURL(connString string) bool {
 	return strings.Contains(connString, "pooler.supabase.com") ||
 		strings.Contains(connString, ":6543")
+}
+
+// envInt reads an integer environment variable or returns the given default.
+func envInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			return intVal
+		}
+	}
+	return defaultVal
 }
