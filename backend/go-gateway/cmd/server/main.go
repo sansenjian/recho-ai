@@ -36,22 +36,18 @@ func main() {
 	// Initialize middleware (JWT secret, production safety checks)
 	middleware.Init()
 
-	// Initialize Supabase client
+	// Initialize Supabase client. NewClient() is the single source of truth for
+	// env/config validation — main() only inspects the returned client/error.
 	var db *supabase.Client
 	var err error
-	if config.SupabaseURL != "" && config.SupabaseServiceRoleKey != "" {
-		db, err = supabase.NewClient()
-		if err != nil {
-			log.Printf("Warning: Failed to initialize Supabase client: %v", err)
-			log.Printf("Warning: Image generation will return 503 (storageService is nil)")
-			log.Println("Continuing without database connection...")
-		} else {
-			log.Println("Supabase client initialized successfully")
-			defer db.Close()
-		}
+	db, err = supabase.NewClient()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize Supabase client: %v", err)
+		log.Printf("Warning: Image generation will return 503 (storageService is nil)")
+		log.Println("Continuing without database connection...")
 	} else {
-		log.Println("Supabase credentials not configured, running in limited mode")
-		log.Println("Warning: Image generation will return 503 (storageService is nil)")
+		log.Println("Supabase client initialized successfully")
+		defer db.Close()
 	}
 
 	// Initialize repositories
