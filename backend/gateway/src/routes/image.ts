@@ -322,6 +322,26 @@ function referencesForHistory(references: ImageGenReference[]) {
   }))
 }
 
+function isInternalUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr)
+    const host = parsed.hostname
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true
+    if (host.startsWith('169.254.')) return true
+    // Block private ranges
+    const parts = host.split('.').map(Number)
+    if (parts.length === 4) {
+      if (parts[0] === 10) return true
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true
+      if (parts[0] === 192 && parts[1] === 168) return true
+      if (parts[0] === 127) return true
+    }
+    return false
+  } catch {
+    return true // Invalid URL = block
+  }
+}
+
 async function referenceToBlob(reference: ImageGenReference, index: number) {
   let mime = 'image/png'
   let buffer: Buffer
@@ -339,6 +359,9 @@ async function referenceToBlob(reference: ImageGenReference, index: number) {
       mime = parsed.mime
       buffer = parsed.buffer
     } else if (/^https?:\/\//i.test(reference.dataUrl)) {
+      if (isInternalUrl(reference.dataUrl)) {
+        throw Object.assign(new Error('参考图URL不允许'), { status: 400 })
+      }
       const response = await fetch(reference.dataUrl, { signal: AbortSignal.timeout(60_000) })
       if (!response.ok) {
         throw Object.assign(new Error(`参考图下载失败 ${response.status}: ${compactErrorText(await response.text())}`), { status: response.status })
