@@ -124,8 +124,8 @@ type ImageResult struct {
 	DataURL           string                          `json:"dataUrl,omitempty"`
 	PreviewURL        string                          `json:"previewUrl,omitempty"`
 	PreviewPath       string                          `json:"previewPath,omitempty"`
-	ThumbnailURL     string                          `json:"thumbnailUrl,omitempty"`
-	ThumbnailPath    string                          `json:"thumbnailPath,omitempty"`
+	ThumbnailURL      string                          `json:"thumbnailUrl,omitempty"`
+	ThumbnailPath     string                          `json:"thumbnailPath,omitempty"`
 	Prompt            string                          `json:"prompt"`
 	UserPrompt        string                          `json:"userPrompt,omitempty"`
 	SystemPrompt      string                          `json:"systemPrompt,omitempty"`
@@ -135,7 +135,7 @@ type ImageResult struct {
 	Bytes             int                             `json:"bytes,omitempty"`
 	Visibility        string                          `json:"visibility,omitempty"`
 	FundingSource     string                          `json:"fundingSource,omitempty"`
-	CreditCost        float64                          `json:"creditCost,omitempty"`
+	CreditCost        float64                         `json:"creditCost,omitempty"`
 	RevisedPrompt     string                          `json:"revisedPrompt,omitempty"`
 	Size              string                          `json:"size"`
 	AspectRatio       string                          `json:"aspectRatio,omitempty"`
@@ -506,6 +506,11 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	// Build API request
 	size := determineSize(resolution, aspectRatio)
 
+	// Image format MIME type. The API currently returns PNG for b64_json
+	// responses. If a format/response_format field is added to the request
+	// in the future, derive the MIME type from that field here.
+	imageMime := "image/png"
+
 	apiReq := map[string]any{
 		"model":   config.ImageResponsesImageModel,
 		"prompt":  req.Prompt,
@@ -643,7 +648,7 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 			// Decode base64 and store
 			decoded, err := base64.StdEncoding.DecodeString(item.Base64)
 			if err == nil {
-				stored, err := h.storageService.StoreFromBuffer(ctx, decoded, "image/png", fmt.Sprintf("generated/%s", result.ID))
+				stored, err := h.storageService.StoreFromBuffer(ctx, decoded, imageMime, fmt.Sprintf("generated/%s", result.ID))
 				if err == nil && stored != nil {
 					result.URL = stored.PublicURL
 					result.PreviewURL = stored.PreviewURL
@@ -662,7 +667,7 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 						log.Printf("[image] storage returned nil for base64 image %s", result.ID)
 					}
 					// Fallback: return as data URL so the frontend can still display the image
-					result.DataURL = "data:image/png;base64," + item.Base64
+					result.DataURL = "data:" + imageMime + ";base64," + item.Base64
 					result.URL = result.DataURL
 					result.PreviewURL = result.DataURL
 				}
