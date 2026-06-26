@@ -28,7 +28,7 @@ import type { RouteWorkspace } from '../router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Image, X } from '@lucide/vue'
+import { Image as ImageIcon, X } from '@lucide/vue'
 
 type ImageWorkspace = 'canvas' | 'gallery'
 
@@ -500,7 +500,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
       class="fixed inset-0 bg-black/12 backdrop-blur-sm z-[200] flex items-center justify-center border-2 border-dashed border-primary rounded-lg m-6 pointer-events-none"
     >
       <div class="flex flex-col items-center gap-3 text-primary text-[15px] font-semibold tracking-tight bg-card p-7 px-10 rounded-lg shadow-lg">
-        <Image :size="40" stroke-width="1.5" />
+        <ImageIcon :size="40" stroke-width="1.5" />
         <span>拖放图片到此处</span>
       </div>
     </div>
