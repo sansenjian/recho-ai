@@ -146,9 +146,12 @@ router.use(async (req: Request, res: Response, next) => {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
 
-  // Abort upstream request when client disconnects
+  // Abort upstream request when client disconnects. Clear the timeout so the
+  // timer doesn't fire after we've already aborted, tying the controller's
+  // lifecycle explicitly to the request.
   req.on('close', () => {
     if (!res.writableEnded) {
+      clearTimeout(timeout)
       controller.abort()
     }
   })
