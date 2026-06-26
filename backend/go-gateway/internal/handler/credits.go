@@ -123,7 +123,9 @@ func (h *CreditsHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 	if idemKey != "" && h.idempotencySvc != nil {
 		outcome, err := h.idempotencySvc.Acquire(r.Context(), user.ID, idemKey, "credit_redeem", rawBody)
 		if err != nil {
-			log.Printf("[idempotency] acquire error (proceeding without): %v", err)
+			log.Printf("[idempotency] acquire error: %v", err)
+			response.Error(w, http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试")
+			return
 		} else if outcome != nil {
 			if outcome.Conflict {
 				response.Error(w, http.StatusConflict, "请求正在处理中或使用相同的幂等键发送了不同的请求。")

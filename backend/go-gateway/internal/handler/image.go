@@ -57,7 +57,7 @@ type ImageHandler struct {
 	creditService  imageCreditService
 	storageService imageStorageService
 	idempotencySvc imageIdempotencyService // optional, nil disables idempotency
-	httpClient     *http.Client           // reused HTTP client for upstream image API calls
+	httpClient     *http.Client            // reused HTTP client for upstream image API calls
 }
 
 // NewImageHandler creates a new image handler.
@@ -156,6 +156,16 @@ const imageGenerateMaxBytes = 2 * 1024 * 1024
 func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 
+	// Enforce guest and free generation toggles for anonymous users.
+	if user == nil && !config.GuestGenerationEnabled {
+		response.Error(w, http.StatusForbidden, "请先登录后再生成图片")
+		return
+	}
+	if user == nil && !config.FreeGenerationEnabled {
+		response.Error(w, http.StatusForbidden, "免费生成已关闭，请登录后使用额度生成")
+		return
+	}
+
 	// Read raw body for idempotency fingerprint, then restore for JSON decoding
 	body := http.MaxBytesReader(w, r.Body, imageGenerateMaxBytes)
 	defer body.Close()
@@ -186,6 +196,14 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
 		return
 	}
+
+	// Detached context for refund and idempotency-fail operations. The request
+	// context is cancelled when the client disconnects, which would cause
+	// refund DB calls to fail — leaving the user permanently out of pocket.
+	// Use a background context with a timeout so these critical operations
+	// can complete even after the client has gone away.
+	refundCtx, refundCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer refundCancel()
 
 	// --- Idempotency check ---
 	idemKey := r.Header.Get("Idempotency-Key")
@@ -237,7 +255,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
 				// Mark idempotency as failed so the client can retry after topping up
 				if idemKey != "" && h.idempotencySvc != nil {
-					h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
+					h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 				}
 				response.Error(w, http.StatusPaymentRequired, "额度不足。")
 				return
@@ -259,16 +277,17 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	images, err := h.callImageAPI(ctx, req, count, aspectRatio, resolution, quality)
 	if err != nil {
+		log.Printf("[image] generation failed: %v", err)
 		// Full refund on complete failure
 		if creditReservation != nil {
-			_, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
+			_, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
 			if refundErr != nil {
 				log.Printf("[image] failed to refund credits after generation failure: %v", refundErr)
 			}
 		}
 		// Mark idempotency as failed so the client can retry
 		if idemKey != "" && user != nil && h.idempotencySvc != nil {
-			h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
+			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 		}
 		response.Error(w, http.StatusInternalServerError, "图片生成失败，请稍后重试。")
 		return
@@ -279,7 +298,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		missingCount := count - len(images)
 		refundAmount := roundToTwoDecimals(float64(missingCount) * costPerImage)
 		if refundAmount > 0 {
-			newBalance, refundErr := h.creditService.RefundCredits(r.Context(), user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
+			newBalance, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
 			if refundErr != nil {
 				log.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
 			} else {
@@ -363,14 +382,19 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				CreditTransactionID: creditTransactionID,
 			}
 			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
-			log.Printf("[image] 503: SaveImageHistory failed: %v", err)
-			if creditReservation != nil {
-					_, refundErr := h.creditService.RefundCredits(r.Context(), userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
+				log.Printf("[image] 503: SaveImageHistory failed: %v", err)
+				if creditReservation != nil {
+					// Best-effort S3 cleanup: the generated objects (original + preview +
+					// thumbnail) are now orphaned because the DB row was never persisted.
+					// The storage interface does not expose batch deletion, so we log the
+					// orphaned paths for manual reconciliation.
+					log.Printf("[image] orphaned S3 objects for %s (history save failed): storagePath=%s previewPath=%s thumbnailPath=%s", image.ID, image.StoragePath, image.PreviewPath, image.ThumbnailPath)
+					_, refundErr := h.creditService.RefundCredits(refundCtx, userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
 					if refundErr != nil {
 						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
 					}
 					if idemKey != "" && user != nil && h.idempotencySvc != nil {
-						h.idempotencySvc.Fail(r.Context(), user.ID, idemKey, "image_generate")
+						h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 					}
 					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
 					return
@@ -473,6 +497,8 @@ func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProxyStorage handles GET /api/image/storage/{encodedPath}.
+// NOTE: No per-user auth check. Storage paths contain random components
+// making them hard to guess, but this is not a true authorization mechanism.
 func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
 		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")

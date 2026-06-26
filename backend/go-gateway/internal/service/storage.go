@@ -226,6 +226,35 @@ func (s *StorageService) cleanupUploaded(keys []string) {
 	}
 }
 
+// cleanupStorageObjects attempts to delete the original, preview, and thumbnail
+// S3 objects for a deleted image history row. Failures are logged but do not
+// block the DB deletion. If the uploader is nil, orphaned paths are logged.
+func (s *StorageService) cleanupStorageObjects(paths ...*string) {
+	var orphans []string
+	for _, p := range paths {
+		if p == nil || *p == "" {
+			continue
+		}
+		orphans = append(orphans, *p)
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	if s.uploader == nil {
+		for _, p := range orphans {
+			log.Printf("[image-storage] S3 uploader not configured; orphaned object: %s", p)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, p := range orphans {
+		if err := s.uploader.Delete(ctx, p); err != nil {
+			log.Printf("[image-storage] failed to delete orphaned S3 object %s: %v", p, err)
+		}
+	}
+}
+
 // DownloadImage downloads a stored image from S3-compatible storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
 	if s.uploader != nil && s.uploader.client != nil {
@@ -549,13 +578,32 @@ func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID stri
 		return false, nil
 	}
 
+	// Query storage paths before deleting so we can attempt S3 cleanup.
+	var storagePath, previewPath, thumbnailPath *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT storage_path, preview_path, thumbnail_path FROM image_generations WHERE id = $1 AND user_id = $2::uuid`,
+		id, userID,
+	).Scan(&storagePath, &previewPath, &thumbnailPath)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+
 	query := `DELETE FROM image_generations WHERE id = $1 AND user_id = $2::uuid`
 	result, err := s.pool.Exec(ctx, query, id, userID)
 	if err != nil {
 		return false, err
 	}
 
-	return result.RowsAffected() > 0, nil
+	deleted := result.RowsAffected() > 0
+	if deleted {
+		// Best-effort S3 cleanup of orphaned objects.
+		s.cleanupStorageObjects(storagePath, previewPath, thumbnailPath)
+	}
+
+	return deleted, nil
 }
 
 // ClearImageHistory clears all image history for a user
@@ -564,6 +612,9 @@ func (s *StorageService) ClearImageHistory(ctx context.Context, userID string) (
 		return 0, nil
 	}
 
+	// TODO: S3 objects are not cleaned up here. Batch deletion would require
+	// listing all storage_paths for the user before deleting the DB rows.
+	// For now, S3 objects may be orphaned when history is cleared.
 	query := `DELETE FROM image_generations WHERE user_id = $1::uuid`
 	result, err := s.pool.Exec(ctx, query, userID)
 	if err != nil {
