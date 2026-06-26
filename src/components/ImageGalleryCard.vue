@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ExternalLink, Plus, Download, MessageCircle } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import {
   displayImageUrl,
   displayReferenceUrl,
@@ -28,276 +30,104 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <article class="gallery-card">
-    <button type="button" class="gallery-image-wrap" title="查看作品" @click="emit('view')">
-      <span class="gallery-card-date">{{ formatGalleryDate(image.timestamp) }}</span>
-      <span v-if="galleryReferenceCount(image)" class="gallery-card-reference-count">
+  <article class="grid w-full min-w-0 overflow-hidden border border-border rounded-lg bg-card shadow-sm">
+    <button
+      type="button"
+      class="relative flex items-center justify-center w-full aspect-[4/3] p-0 border-0 border-b border-border cursor-zoom-in overflow-hidden focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
+      title="查看作品"
+      :style="{
+        background: 'linear-gradient(45deg, hsl(var(--border) / 0.55) 25%, transparent 25%), linear-gradient(-45deg, hsl(var(--border) / 0.55) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, hsl(var(--border) / 0.55) 75%), linear-gradient(-45deg, transparent 75%, hsl(var(--border) / 0.55) 75%), hsl(var(--muted))',
+        backgroundPosition: '0 0, 0 9px, 9px -9px, -9px 0',
+        backgroundSize: '18px 18px',
+      }"
+      @click="emit('view')"
+    >
+      <span
+        class="absolute z-[1] top-2.5 left-2.5 inline-flex items-center min-h-6 px-2 border border-border/[0.45] rounded-md bg-foreground/[0.76] text-background text-[11px] font-black backdrop-blur-sm"
+      >
+        {{ formatGalleryDate(image.timestamp) }}
+      </span>
+      <span
+        v-if="galleryReferenceCount(image)"
+        class="absolute z-[1] top-2.5 right-2.5 inline-flex items-center min-h-6 px-2 border border-border/[0.45] rounded-md bg-foreground/[0.76] text-background text-[11px] font-black backdrop-blur-sm"
+      >
         {{ galleryReferenceCount(image) }} 张参考
       </span>
-      <span class="gallery-image-button">
-        <img :src="displayImageUrl(image)" :alt="galleryPrompt(image)" loading="lazy">
+      <span class="block w-full h-full">
+        <img
+          :src="displayImageUrl(image)"
+          :alt="galleryPrompt(image)"
+          loading="lazy"
+          class="block w-full h-full object-cover object-center"
+        >
       </span>
     </button>
-    <div class="gallery-card-body">
-      <p class="gallery-card-prompt">{{ galleryPrompt(image) }}</p>
-      <div class="gallery-card-meta">
-        <span>{{ image.size || 'auto' }}</span>
-        <span>{{ galleryOptionLabel(image.resolution, resolutionOptions) }}</span>
-        <span>{{ galleryOptionLabel(image.quality, qualityOptions) }}</span>
+    <div class="grid gap-2.5 p-3 max-[460px]:p-2.5">
+      <p class="min-h-[38px] m-0 overflow-hidden text-foreground text-[13px] font-extrabold leading-[1.46] line-clamp-2">
+        {{ galleryPrompt(image) }}
+      </p>
+      <div class="flex min-w-0 flex-wrap gap-[5px] text-muted-foreground text-[11px] font-extrabold">
+        <span
+          v-for="(item, idx) in [image.size || 'auto', galleryOptionLabel(image.resolution, resolutionOptions), galleryOptionLabel(image.quality, qualityOptions)]"
+          :key="idx"
+          class="max-w-full px-[7px] py-[3px] rounded-md bg-muted overflow-hidden text-ellipsis whitespace-nowrap"
+        >
+          {{ item }}
+        </span>
       </div>
-      <div class="gallery-card-footer">
-        <div class="gallery-reference-strip" aria-label="参考图">
+      <div class="flex items-center justify-between gap-2.5 max-[460px]:items-stretch max-[460px]:flex-col">
+        <div class="flex min-w-0 h-[30px] max-[460px]:h-7" aria-label="参考图">
           <img
             v-for="reference in galleryReferences(image).slice(0, 3)"
             :key="reference.id || reference.title"
             :src="displayReferenceUrl(reference)"
             :alt="reference.title || '参考图'"
             loading="lazy"
+            class="w-[30px] h-[30px] -mr-[7px] border-2 border-card rounded-md bg-card object-cover shadow-sm last:mr-0 max-[460px]:w-7 max-[460px]:h-7"
           >
         </div>
-        <div class="gallery-actions">
-          <button type="button" title="查看作品" @click="emit('view')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M15 3h6v6" />
-              <path d="M10 14 21 3" />
-              <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
-            </svg>
-          </button>
-          <button type="button" title="放入画布" @click="emit('useImage')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M12 5v14" />
-              <path d="M5 12h14" />
-            </svg>
-          </button>
-          <button
-            type="button"
+        <div class="flex flex-[0_0_auto] gap-[5px] max-md:flex-1 max-md:gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            class="w-8 min-h-8 p-0 text-muted-foreground hover:text-foreground rounded-md border-border bg-background hover:bg-accent hover:border-ring disabled:opacity-[0.46] disabled:cursor-not-allowed max-md:flex-1 max-md:min-h-11"
+            title="查看作品"
+            @click="emit('view')"
+          >
+            <ExternalLink class="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            class="w-8 min-h-8 p-0 text-muted-foreground hover:text-foreground rounded-md border-border bg-background hover:bg-accent hover:border-ring max-md:flex-1 max-md:min-h-11"
+            title="放入画布"
+            @click="emit('useImage')"
+          >
+            <Plus class="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            class="w-8 min-h-8 p-0 text-muted-foreground hover:text-foreground rounded-md border-border bg-background hover:bg-accent hover:border-ring disabled:opacity-[0.46] disabled:cursor-not-allowed max-md:flex-1 max-md:min-h-11"
             title="下载原图"
             :disabled="isDownloading"
             @pointerenter="emit('preloadDownload')"
             @focus="emit('preloadDownload')"
             @click="emit('download')"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M12 3v12" />
-              <path d="m7 10 5 5 5-5" />
-              <path d="M5 19h14" />
-            </svg>
-          </button>
-          <button type="button" title="发送到对话" @click="emit('sendToChat')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-              <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-            </svg>
-          </button>
+            <Download class="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            class="w-8 min-h-8 p-0 text-muted-foreground hover:text-foreground rounded-md border-border bg-background hover:bg-accent hover:border-ring max-md:flex-1 max-md:min-h-11"
+            title="发送到对话"
+            @click="emit('sendToChat')"
+          >
+            <MessageCircle class="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </div>
   </article>
 </template>
-
-<style scoped>
-.gallery-card {
-  display: grid;
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--card));
-  box-shadow: var(--shadow-sm);
-}
-
-.gallery-image-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid hsl(var(--border));
-  background:
-    linear-gradient(45deg, hsl(var(--border) / 0.55) 25%, transparent 25%),
-    linear-gradient(-45deg, hsl(var(--border) / 0.55) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, hsl(var(--border) / 0.55) 75%),
-    linear-gradient(-45deg, transparent 75%, hsl(var(--border) / 0.55) 75%),
-    hsl(var(--muted));
-  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
-  background-size: 18px 18px;
-  cursor: zoom-in;
-  overflow: hidden;
-}
-
-.gallery-image-wrap img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-}
-
-.gallery-image-button {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.gallery-image-wrap:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: -2px;
-}
-
-.gallery-card-date,
-.gallery-card-reference-count {
-  position: absolute;
-  z-index: 1;
-  top: 10px;
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid hsl(var(--border) / 0.45);
-  border-radius: var(--radius-sm, 6px);
-  background: hsl(var(--foreground) / 0.76);
-  color: hsl(var(--background));
-  font-size: 11px;
-  font-weight: 900;
-  backdrop-filter: blur(8px);
-}
-
-.gallery-card-date {
-  left: 10px;
-}
-
-.gallery-card-reference-count {
-  right: 10px;
-}
-
-.gallery-card-body {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-}
-
-.gallery-card-prompt {
-  display: -webkit-box;
-  min-height: 38px;
-  margin: 0;
-  overflow: hidden;
-  color: hsl(var(--foreground));
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.46;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.gallery-card-meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.gallery-card-meta span {
-  max-width: 100%;
-  padding: 3px 7px;
-  border-radius: var(--radius-sm, 6px);
-  background: hsl(var(--muted));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gallery-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.gallery-reference-strip {
-  display: flex;
-  min-width: 0;
-  height: 30px;
-}
-
-.gallery-reference-strip img {
-  width: 30px;
-  height: 30px;
-  margin-right: -7px;
-  border: 2px solid hsl(var(--card));
-  border-radius: var(--radius-md, 7px);
-  background: hsl(var(--card));
-  object-fit: cover;
-  box-shadow: var(--shadow-sm);
-}
-
-.gallery-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-}
-
-.gallery-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-md, 7px);
-  background: hsl(var(--background));
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.gallery-actions button:hover:not(:disabled) {
-  border-color: hsl(var(--ring));
-  background: hsl(var(--accent));
-  color: hsl(var(--foreground));
-}
-
-.gallery-actions button:disabled {
-  opacity: 0.46;
-  cursor: not-allowed;
-}
-
-@media (max-width: 768px) {
-  .gallery-actions {
-    flex: 1;
-    gap: 8px;
-  }
-
-  .gallery-actions button {
-    flex: 1;
-    min-height: 44px;
-  }
-}
-
-@media (max-width: 460px) {
-  .gallery-card-body {
-    padding: 10px;
-  }
-
-  .gallery-card-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .gallery-reference-strip {
-    height: 28px;
-  }
-
-  .gallery-reference-strip img {
-    width: 28px;
-    height: 28px;
-  }
-}
-</style>

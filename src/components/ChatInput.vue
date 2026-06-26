@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { ModelOption } from '../types'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Plus, ChevronDown, X, Languages, Code, FileText, Search, Square, Send } from '@lucide/vue'
 
 interface SkillOption {
   name: string
@@ -158,26 +161,36 @@ function selectModel(m: ModelOption) {
   emit('changeModel', m)
   showModelDropdown.value = false
 }
+
+function skillIcon(name: string) {
+  if (name === 'languages') return Languages
+  if (name === 'code') return Code
+  if (name === 'file-text') return FileText
+  return Search
+}
 </script>
 
 <template>
-  <footer class="composer-footer">
-    <div class="composer-shell">
-      <div class="composer-input-wrap">
-        <div v-if="pendingImages && pendingImages.length > 0" class="pending-images">
-          <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-image">
-            <img :src="img" alt="" />
-            <button type="button" title="移除图片" @click="emit('removeImage', idx)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
+  <footer class="shrink-0 border-t-0 bg-background/96 px-5 pb-4 pt-3 backdrop-blur-[14px] max-sm:px-2.5 max-sm:pb-2.5 max-sm:pt-2">
+    <div class="relative mx-auto w-full max-w-[760px] overflow-visible rounded-3xl border border-b-0 border-border bg-card shadow-sm shadow-foreground/5 max-sm:rounded-[11px]">
+      <div class="relative">
+        <div v-if="pendingImages && pendingImages.length > 0" class="flex flex-wrap gap-1.5 px-3 pt-2.5">
+          <div v-for="(img, idx) in pendingImages" :key="idx" class="relative h-[58px] w-[58px] overflow-hidden rounded-lg border border-border bg-muted">
+            <img :src="img" alt="" class="h-full w-full object-cover" />
+            <button
+              type="button"
+              title="移除图片"
+              class="absolute right-1 top-1 inline-flex h-[18px] w-[18px] items-center justify-center rounded border-0 bg-background/90 text-foreground"
+              @click="emit('removeImage', idx)"
+            >
+              <X class="h-3 w-3" />
             </button>
           </div>
         </div>
 
-        <textarea
+        <Textarea
           v-model="inputValue"
-          class="chat-input"
+          class="chat-input min-h-[76px] w-full resize-none border-0 bg-transparent px-5 pb-2 pt-[22px] text-lg leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-[54px] max-sm:px-3 max-sm:pb-2 max-sm:pt-3.5 max-sm:text-[15px]"
           :placeholder="activeSkill ? '输入消息...' : '要求后续变更'"
           rows="1"
           :disabled="isLoading"
@@ -185,80 +198,75 @@ function selectModel(m: ModelOption) {
           @input="onInput"
         />
 
-        <div v-if="showSkillMenu && filteredSkills.length > 0" class="skill-menu">
+        <div
+          v-if="showSkillMenu && filteredSkills.length > 0"
+          class="absolute -left-px -right-px bottom-[calc(100%+13px)] z-50 max-h-[min(430px,calc(100vh-230px))] overflow-auto rounded-[21px] border border-border bg-popover p-[7px] shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] [scrollbar-color:hsl(var(--muted-foreground)/0.22)_transparent] [scrollbar-width:thin]"
+        >
           <div
             v-for="(s, idx) in filteredSkills"
             :key="s.name"
-            class="skill-option"
-            :class="{ active: idx === skillHighlight }"
+            class="flex min-h-[42px] cursor-pointer items-center gap-3 rounded-[14px] px-3.5 py-[7px] hover:bg-muted"
+            :class="{ 'bg-muted': idx === skillHighlight }"
             @click="pickSkill(s)"
             @mouseenter="skillHighlight = idx"
           >
-            <span class="skill-icon">
-              <svg v-if="s.icon === 'languages'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <path d="M5 8h10" /><path d="M8 4v4" /><path d="M3 12c3.5 0 6.5-2.5 7.5-6" /><path d="M7 12c1.3 1.6 3 2.7 5 3.2" /><path d="M14 20l4-9 4 9" /><path d="M16 16h4" />
-              </svg>
-              <svg v-else-if="s.icon === 'code'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <path d="M8 9l-4 3 4 3" /><path d="M16 9l4 3-4 3" /><path d="M13 5l-2 14" />
-              </svg>
-              <svg v-else-if="s.icon === 'file-text'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h6" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
-              </svg>
-            </span>
-            <span class="skill-copy">
-              <strong>/{{ s.name }}</strong>
-              <small>{{ s.description }}</small>
-            </span>
+            <component :is="skillIcon(s.icon)" class="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div class="flex min-w-0 flex-1 items-baseline gap-2">
+              <strong class="shrink-0 text-base font-semibold">/{{ s.name }}</strong>
+              <small class="min-w-0 flex-1 truncate text-[15px] leading-snug text-muted-foreground">{{ s.description }}</small>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="composer-bottom-row">
-        <div class="composer-actions left">
-          <button class="composer-icon-button plus" type="button" title="上传图片" @click="emit('upload')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="19" height="19">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
+      <div class="flex items-center justify-between gap-2 border-t-0 border-b-0 px-3.5 pb-2.5 pt-1.5 max-sm:items-end max-sm:px-2 max-sm:pb-1.5 max-sm:pt-1">
+        <div class="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-8 w-8 text-muted-foreground"
+            title="上传图片"
+            @click="emit('upload')"
+          >
+            <Plus class="h-[19px] w-[19px]" />
+          </Button>
         </div>
 
-        <div class="composer-actions right">
-          <div class="model-picker">
-            <button
-              class="model-selector-btn"
-              type="button"
+        <div class="flex shrink-0 items-center justify-end gap-1.5">
+          <div class="relative inline-flex items-center">
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-8 gap-1.5 px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               :aria-expanded="showModelDropdown"
               aria-haspopup="listbox"
               @click="showModelDropdown = !showModelDropdown"
             >
-              <span class="model-name">{{ compactModelLabel }}</span>
-              <svg class="model-chevron" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                <path d="M4 6l4 4 4-4" />
-              </svg>
-            </button>
+              <span class="min-w-0 truncate text-[13px] font-semibold">{{ compactModelLabel }}</span>
+              <ChevronDown class="h-[13px] w-[13px] opacity-70" />
+            </Button>
 
-            <div v-if="showModelDropdown" class="model-dropdown">
-              <div class="model-dropdown-title">模型</div>
+            <div
+              v-if="showModelDropdown"
+              class="absolute bottom-[calc(100%+12px)] right-0 z-50 w-[min(300px,calc(100vw-32px))] max-h-80 overflow-auto rounded-2xl border border-border bg-popover p-2 shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] max-sm:-right-12 max-sm:w-[min(300px,calc(100vw-20px))]"
+            >
+              <div class="px-3.5 pb-2 pt-1 text-sm text-muted-foreground">模型</div>
               <button
                 v-for="m in models"
                 :key="m.id"
-                class="model-option"
-                :class="{ active: m.id === currentModel?.id }"
+                class="flex w-full min-h-[44px] items-center gap-3 rounded-[10px] border-0 bg-transparent px-3.5 py-2 text-left text-foreground hover:bg-muted"
+                :class="{ 'bg-muted': m.id === currentModel?.id }"
                 type="button"
                 role="option"
                 :aria-selected="m.id === currentModel?.id"
                 @click.stop="selectModel(m)"
               >
-                <span class="model-option-main">
-                  <span>{{ m.label }}</span>
-                  <small>{{ m.provider }}</small>
+                <span class="flex min-w-0 flex-1 flex-col gap-px">
+                  <span class="truncate text-[15px] font-medium">{{ m.label }}</span>
+                  <small class="truncate text-[11px] text-muted-foreground">{{ m.provider }}</small>
                 </span>
-                <span class="model-option-hint">{{ m.hint }}</span>
-                <span class="model-check" aria-hidden="true">
+                <span class="hidden text-[11px] text-muted-foreground">{{ m.hint }}</span>
+                <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
                   <svg v-if="m.id === currentModel?.id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
                     <path d="M20 6 9 17l-5-5" />
                   </svg>
@@ -266,538 +274,29 @@ function selectModel(m: ModelOption) {
               </button>
             </div>
           </div>
-          <button
+
+          <Button
             v-if="isLoading"
-            class="composer-submit stop"
-            type="button"
+            variant="destructive"
+            size="icon"
+            class="h-9 w-9 rounded-full"
             title="停止"
             @click="emit('stop')"
           >
-            <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          </button>
-          <button
+            <Square class="h-[13px] w-[13px] fill-current" />
+          </Button>
+          <Button
             v-else
-            class="composer-submit"
-            :class="{ ready: inputValue.trim() }"
+            size="icon"
+            class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="!inputValue.trim()"
-            type="button"
             title="发送"
             @click="handleSubmit"
           >
-            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
-          </button>
+            <Send class="h-[14px] w-[14px] fill-current" />
+          </Button>
         </div>
       </div>
     </div>
   </footer>
 </template>
-
-<style scoped>
-.composer-footer {
-  flex-shrink: 0;
-  padding: 12px 20px 16px;
-  border-top: 0;
-  background: hsl(var(--background) / 0.96);
-  backdrop-filter: blur(14px);
-}
-
-.composer-shell {
-  position: relative;
-  width: min(760px, 100%);
-  margin: 0 auto;
-  overflow: visible;
-  border: 1px solid hsl(var(--border));
-  border-bottom-color: transparent;
-  border-radius: 24px;
-  background: hsl(var(--card));
-  box-shadow: var(--shadow-sm), 0 12px 30px hsl(var(--foreground) / 0.04);
-}
-
-.pending-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 12px 0;
-}
-
-.pending-image {
-  position: relative;
-  width: 58px;
-  height: 58px;
-  overflow: hidden;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--muted));
-}
-
-.pending-image img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.pending-image button {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 5px;
-  background: hsl(var(--background) / 0.9);
-  color: hsl(var(--foreground));
-  cursor: pointer;
-}
-
-.composer-model-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  padding: 7px 12px;
-  border-bottom: 0;
-  background: hsl(var(--background));
-}
-
-.model-selector-btn {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-  gap: 6px;
-  height: 32px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--radius-md, 7px);
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.model-picker {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.model-selector-btn:hover {
-  background: hsl(var(--accent));
-  color: hsl(var(--accent-foreground));
-}
-
-.model-selector-btn:hover .model-name,
-.model-selector-btn:hover .model-chevron,
-.model-selector-btn[aria-expanded="true"] .model-name,
-.model-selector-btn[aria-expanded="true"] .model-chevron {
-  color: hsl(var(--foreground));
-}
-
-.model-icon,
-.skill-icon {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--foreground));
-}
-
-.model-prefix {
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-}
-
-.model-name {
-  min-width: 0;
-  overflow: hidden;
-  color: currentColor;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-status,
-.model-option-status {
-  flex: 0 0 auto;
-  color: hsl(var(--foreground));
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.model-check {
-  display: inline-flex;
-  width: 22px;
-  flex: 0 0 22px;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--muted-foreground));
-}
-
-.model-status.slow,
-.model-option-status.slow {
-  color: hsl(var(--muted-foreground));
-}
-
-.model-chevron {
-  flex: 0 0 auto;
-  color: currentColor;
-  opacity: 0.72;
-}
-
-.model-dropdown,
-.skill-menu {
-  position: absolute;
-  z-index: 50;
-  overflow: auto;
-  border: 1px solid hsl(var(--border));
-  border-radius: 16px;
-  background: hsl(var(--popover));
-  box-shadow: 0 18px 60px hsl(var(--foreground) / 0.14), var(--shadow-sm);
-}
-
-.model-dropdown {
-  bottom: calc(100% + 12px);
-  right: 0;
-  width: min(300px, calc(100vw - 32px));
-  max-height: 320px;
-  padding: 10px 6px;
-}
-
-.model-dropdown-title {
-  padding: 4px 14px 8px;
-  color: hsl(var(--muted-foreground));
-  font-size: 14px;
-  line-height: 1.25;
-}
-
-.model-option {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding: 8px 12px 8px 14px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: hsl(var(--foreground));
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-}
-
-.model-option:hover,
-.model-option.active,
-.skill-option:hover,
-.skill-option.active {
-  background: hsl(var(--muted));
-}
-
-.model-option-main,
-.skill-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.model-option-main span,
-.skill-copy strong {
-  overflow: hidden;
-  color: hsl(var(--foreground));
-  font-size: 15px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-option-main small,
-.skill-copy small,
-.model-option-hint {
-  overflow: hidden;
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-option-main {
-  flex: 1 1 auto;
-}
-
-.model-option-main small {
-  display: none;
-}
-
-.model-option-hint {
-  display: none;
-}
-
-.composer-input-wrap {
-  position: relative;
-}
-
-.chat-input {
-  width: 100%;
-  min-height: 76px;
-  max-height: 210px;
-  padding: 22px 20px 8px;
-  border: 0;
-  background: transparent;
-  color: hsl(var(--foreground));
-  font-family: inherit;
-  font-size: 18px;
-  line-height: 1.5;
-  outline: none;
-  resize: none;
-}
-
-.chat-input:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.chat-input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.skill-menu {
-  right: -1px;
-  bottom: calc(100% + 13px);
-  left: -1px;
-  max-height: min(430px, calc(100vh - 230px));
-  padding: 7px;
-  border-radius: 21px;
-  scrollbar-color: hsl(var(--muted-foreground) / 0.22) transparent;
-  scrollbar-width: thin;
-}
-
-.skill-menu::-webkit-scrollbar {
-  width: 10px;
-}
-
-.skill-menu::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.skill-menu::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: hsl(var(--muted-foreground) / 0.22);
-  background-clip: padding-box;
-}
-
-.skill-option {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  gap: 12px;
-  padding: 7px 14px;
-  border-radius: 14px;
-  cursor: pointer;
-}
-
-.skill-icon {
-  width: 26px;
-  color: hsl(var(--muted-foreground));
-}
-
-.skill-copy {
-  flex: 1 1 auto;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 9px;
-}
-
-.skill-copy strong {
-  flex: 0 0 auto;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.skill-copy small {
-  flex: 1 1 auto;
-  font-size: 15px;
-  line-height: 1.35;
-}
-
-.composer-bottom-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px 10px 14px;
-  border-top: 0;
-  border-bottom: 0;
-}
-
-.composer-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-}
-
-.model-id {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
-
-.composer-actions.left {
-  min-width: 0;
-}
-
-.composer-actions.right {
-  justify-content: flex-end;
-}
-
-.composer-icon-button,
-.composer-submit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: var(--radius-md, 7px);
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 150ms ease, color 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
-}
-
-.composer-icon-button {
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-}
-
-.composer-icon-button.plus {
-  width: 32px;
-  height: 32px;
-  color: hsl(var(--muted-foreground));
-}
-
-.composer-icon-button:hover {
-  background: hsl(var(--accent));
-  color: hsl(var(--accent-foreground));
-}
-
-.composer-submit {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  box-shadow: var(--shadow-sm);
-}
-
-.composer-submit.ready {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-}
-
-.composer-submit:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.composer-submit.stop {
-  background: hsl(var(--destructive));
-  color: hsl(var(--destructive-foreground));
-}
-
-.composer-submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-@media (max-width: 640px) {
-  .composer-footer {
-    padding: 8px 10px 10px;
-  }
-
-  .composer-shell {
-    border-radius: 11px;
-  }
-
-  .composer-model-row {
-    min-height: 40px;
-    padding: 6px 10px;
-  }
-
-  .model-prefix {
-    display: none;
-  }
-
-  .model-name {
-    max-width: 180px;
-    font-size: 13px;
-  }
-
-  .model-dropdown {
-    right: -48px;
-    width: min(300px, calc(100vw - 20px));
-  }
-
-  .chat-input {
-    min-height: 54px;
-    padding: 14px 12px 8px;
-    font-size: 15px;
-  }
-
-  .composer-bottom-row {
-    align-items: flex-end;
-    padding: 5px 7px 7px 9px;
-  }
-
-  .composer-icon-button,
-  .model-selector-btn {
-    height: 30px;
-  }
-
-  .composer-icon-button.plus {
-    width: 30px;
-    height: 30px;
-  }
-
-  .model-id {
-    display: none;
-  }
-}
-
-@media (max-width: 420px) {
-  .model-name {
-    max-width: 138px;
-  }
-
-  .model-status {
-    font-size: 11px;
-  }
-
-  .composer-meta {
-    font-size: 11px;
-  }
-}
-</style>

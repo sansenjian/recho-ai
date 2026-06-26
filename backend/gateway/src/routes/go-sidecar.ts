@@ -159,6 +159,11 @@ router.use(async (req: Request, res: Response, next) => {
   const startedAt = Date.now()
   const trackImageAttempt = isImageGenerateRequest(req)
 
+  // Tell reverse proxies (Render/nginx) not to buffer this response so
+  // streaming responses are forwarded immediately. This helps prevent
+  // 504s on long-running image generation requests.
+  res.setHeader('X-Accel-Buffering', 'no')
+
   try {
     const upstream = await fetch(requestUrl(req), {
       method: req.method,

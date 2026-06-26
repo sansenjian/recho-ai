@@ -14,6 +14,10 @@ import {
   assignToGroup,
 } from '../stores/chat'
 import { GROUP_COLORS } from '../types'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Input } from '@/components/ui/input'
+import { Plus, Search, X, ChevronRight, Trash2, Pencil, Palette } from '@lucide/vue'
 
 const emit = defineEmits<{
   close: []
@@ -172,48 +176,50 @@ function onContextMenuBackdrop() {
 </script>
 
 <template>
-  <aside class="chat-sidebar w-[240px] h-full flex flex-col shrink-0 relative">
+  <aside class="relative flex h-full w-[240px] shrink-0 flex-col border-r border-border bg-background">
     <!-- Header -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-      <span class="text-[11px] font-semibold tracking-[0.04em] text-foreground uppercase">History</span>
-      <button class="new-chat-btn" @click="createConversation()" title="New Chat">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-      </button>
+    <div class="flex items-center justify-between border-b border-border px-4 py-3">
+      <span class="text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground">History</span>
+      <Button
+        variant="outline"
+        size="icon"
+        class="h-[26px] w-[26px] text-muted-foreground shadow-sm"
+        title="New Chat"
+        @click="createConversation()"
+      >
+        <Plus class="h-[15px] w-[15px]" />
+      </Button>
     </div>
 
     <!-- Search -->
-    <div class="flex items-center gap-1.5 px-2.5 py-2 mx-2 my-1.5 rounded-md bg-card ring-1 ring-border">
-      <svg class="shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
-        <circle cx="11" cy="11" r="8" />
-        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      </svg>
-      <input
+    <div class="mx-2 my-1.5 flex items-center gap-1.5 rounded-md bg-card px-2.5 py-2 ring-1 ring-border">
+      <Search class="h-[13px] w-[13px] shrink-0 text-muted-foreground" />
+      <Input
         v-model="searchQuery"
-        class="flex-1 border-0 outline-0 bg-transparent text-[12px] font-[inherit] text-foreground placeholder:text-muted-foreground/60"
+        class="h-auto border-0 bg-transparent p-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:ring-offset-0"
         placeholder="搜索会话..."
         @keydown.escape="searchQuery = ''"
       />
-      <button v-if="searchQuery" class="flex items-center justify-center w-[18px] h-[18px] rounded-full bg-accent text-muted-foreground border-0 cursor-pointer shrink-0 hover:bg-accent/80 hover:text-foreground transition-colors" @click="searchQuery = ''">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="11" height="11">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
+      <Button
+        v-if="searchQuery"
+        variant="ghost"
+        size="icon"
+        class="h-[18px] w-[18px] shrink-0 rounded-full text-muted-foreground"
+        @click="searchQuery = ''"
+      >
+        <X class="h-[11px] w-[11px]" />
+      </Button>
     </div>
 
     <!-- Conversation list -->
-    <div class="flex-1 overflow-y-auto px-1.5 pb-1.5">
+    <ScrollArea class="flex-1 px-1.5 pb-1.5">
       <!-- Grouped sections -->
       <div
         v-for="section in groupedSections"
         :key="section.groupId ?? '__ungrouped__'"
-        class="group-section mb-0.5 rounded-md transition-colors"
+        class="mb-0.5 rounded-md transition-colors"
         :class="{
-          'drag-over': dragOverGroupId === section.groupId,
-          'is-ungrouped': section.groupId === '__ungrouped__',
+          'bg-muted outline outline-2 outline-dashed outline-border -outline-offset-2': dragOverGroupId === section.groupId,
         }"
         @dragover="onDragOver($event, section.groupId)"
         @dragleave="onDragLeave(section.groupId)"
@@ -221,34 +227,28 @@ function onContextMenuBackdrop() {
       >
         <!-- Group header -->
         <div
-          class="group-header flex items-center gap-1 px-1.5 py-1 rounded-md cursor-pointer select-none transition-colors hover:bg-accent/50"
-          :class="{ 'cursor-default!': section.groupId === '__ungrouped__', 'mt-2 pt-1 border-t border-border': section.groupId === '__ungrouped__' }"
+          class="flex cursor-pointer select-none items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/50"
+          :class="{ 'cursor-default': section.groupId === '__ungrouped__', 'mt-2 border-t border-border pt-1': section.groupId === '__ungrouped__' }"
           @click="toggleGroup(section.groupId!)"
           @contextmenu="onGroupContextMenu($event, section.groupId!)"
         >
-          <svg
-            class="group-chevron shrink-0 text-muted-foreground transition-transform"
+          <ChevronRight
+            class="h-[11px] w-[11px] shrink-0 text-muted-foreground transition-transform"
             :class="{ '-rotate-90': !isExpanded(section.groupId!) }"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-            width="11"
-            height="11"
-          >
-            <path d="M6 4l4 4-4 4" />
-          </svg>
-          <span v-if="section.groupColor" class="w-[7px] h-[7px] rounded-full shrink-0" :style="{ background: section.groupColor }" />
-          <span v-if="renamingGroup === section.groupId" class="flex-1 min-w-0" @click.stop>
-            <input
+          />
+          <span v-if="section.groupColor" class="h-[7px] w-[7px] shrink-0 rounded-full" :style="{ background: section.groupColor }" />
+          <span v-if="renamingGroup === section.groupId" class="min-w-0 flex-1" @click.stop>
+            <Input
               v-model="renameValue"
-              class="w-full rounded bg-card text-[10px] font-semibold font-[inherit] px-1.5 py-0.5 outline-0 text-foreground ring-1 ring-primary"
+              class="h-auto rounded bg-card px-1.5 py-0.5 text-[10px] font-semibold shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
               @keydown.enter="confirmRename()"
               @keydown.escape="renamingGroup = null"
               @blur="confirmRename()"
               autofocus
             />
           </span>
-          <span v-else class="flex-1 min-w-0 text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.05em] truncate">{{ section.groupName }}</span>
-          <span class="text-[9px] text-muted-foreground/70 bg-accent px-1.5 py-px rounded-full shrink-0">{{ section.convs.length }}</span>
+          <span v-else class="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">{{ section.groupName }}</span>
+          <span class="shrink-0 rounded-full bg-accent px-1.5 py-px text-[9px] text-muted-foreground/70">{{ section.convs.length }}</span>
         </div>
 
         <!-- Conversations in group -->
@@ -256,61 +256,69 @@ function onContextMenuBackdrop() {
           <div
             v-for="conv in section.convs"
             :key="conv.id"
-            class="conv-item"
-            :class="{ active: conv.id === activeConversationId }"
+            class="group flex cursor-pointer items-center gap-[5px] rounded-[var(--radius-md,7px)] border-l-2 border-l-transparent px-[7px] py-1.5 transition-colors hover:bg-accent"
+            :class="{ 'bg-accent': conv.id === activeConversationId }"
             :style="section.groupColor && conv.id === activeConversationId ? { borderLeftColor: section.groupColor } : {}"
             draggable="true"
             @click="switchConversation(conv.id); emit('close')"
             @dragstart="onDragStart($event, conv.id)"
             @dragend="onDragEnd"
           >
-            <div class="flex-1 min-w-0 flex flex-col gap-px">
-              <span class="text-[12px] font-medium text-foreground truncate">{{ conv.title }}</span>
+            <div class="flex min-w-0 flex-1 flex-col gap-px">
+              <span class="truncate text-xs font-medium text-foreground">{{ conv.title }}</span>
               <span class="text-[10px] text-muted-foreground">{{ conv.updatedAt }}</span>
             </div>
-            <button
-              class="conv-delete"
-              @click.stop="deleteConversation(conv.id)"
+            <Button
+              variant="ghost"
+              size="icon"
+              class="hidden h-[18px] w-[18px] text-muted-foreground group-hover:flex"
               title="Delete"
+              @click.stop="deleteConversation(conv.id)"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="12" height="12">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
+              <Trash2 class="h-3 w-3" />
+            </Button>
           </div>
-          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="py-2.5 px-2 text-center text-[11px] text-muted-foreground border border-dashed border-border rounded-md my-1">
+          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="my-1 rounded-md border border-dashed border-border px-2 py-2.5 text-center text-[11px] text-muted-foreground">
             拖拽会话到此处
           </div>
         </div>
       </div>
 
       <!-- Add group button -->
-      <div v-if="!creatingGroup" class="flex items-center gap-1.5 px-2.5 py-1.5 my-1 rounded-md cursor-pointer text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground" @click="creatingGroup = true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
+      <div
+        v-if="!creatingGroup"
+        class="my-1 flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+        @click="creatingGroup = true"
+      >
+        <Plus class="h-[13px] w-[13px]" />
         <span>新建分组</span>
       </div>
       <div v-else class="flex items-center gap-1 px-2 py-1">
-        <input
+        <Input
           v-model="newGroupName"
-          class="flex-1 rounded-md bg-card text-[11px] font-[inherit] px-2 py-1 outline-0 text-foreground ring-1 ring-primary"
+          class="h-auto rounded-md bg-card px-2 py-1 text-[11px] shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
           placeholder="分组名称"
           @keydown.enter="confirmCreateGroup()"
           @keydown.escape="cancelCreateGroup()"
           autofocus
         />
-        <button class="cursor-pointer rounded-md border-0 bg-foreground px-2.5 py-1 text-[11px] font-semibold text-background transition-opacity hover:opacity-85" @click="confirmCreateGroup">确定</button>
-        <button class="flex items-center justify-center w-[22px] h-[22px] rounded-md bg-transparent border-0 text-muted-foreground cursor-pointer hover:bg-accent transition-colors" @click="cancelCreateGroup">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="11" height="11">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        <Button
+          size="sm"
+          class="h-auto rounded-md px-2.5 py-1 text-[11px] font-semibold"
+          @click="confirmCreateGroup"
+        >
+          确定
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-[22px] w-[22px] text-muted-foreground"
+          @click="cancelCreateGroup"
+        >
+          <X class="h-[11px] w-[11px]" />
+        </Button>
       </div>
-    </div>
+    </ScrollArea>
 
     <!-- Context menu backdrop -->
     <div v-if="contextMenu" class="fixed inset-0 z-[200]" @click="onContextMenuBackdrop" @contextmenu.prevent="onContextMenuBackdrop" />
@@ -318,119 +326,36 @@ function onContextMenuBackdrop() {
     <!-- Context menu -->
     <div
       v-if="contextMenu"
-      class="fixed z-[201] bg-popover rounded-lg shadow-md ring-1 ring-border p-1 min-w-[160px]"
+      class="fixed z-[201] min-w-[160px] rounded-lg bg-popover p-1 shadow-md ring-1 ring-border"
       :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
     >
-      <button class="ctx-item" @click="startRename(contextMenu.groupId)">重命名</button>
-      <div class="flex gap-1 px-2.5 py-1.5 flex-wrap">
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-auto w-full justify-start px-2.5 py-[5px] text-xs"
+        @click="startRename(contextMenu.groupId)"
+      >
+        <Pencil class="mr-2 h-3 w-3" />
+        重命名
+      </Button>
+      <div class="flex flex-wrap gap-1 px-2.5 py-1.5">
         <button
           v-for="c in GROUP_COLORS"
           :key="c"
-          class="w-5 h-5 rounded-full border-2 border-transparent cursor-pointer transition-all hover:scale-110 hover:border-foreground"
+          class="h-5 w-5 cursor-pointer rounded-full border-2 border-transparent transition-all hover:scale-110 hover:border-foreground"
           :style="{ background: c }"
           @click="handleRecolor(contextMenu.groupId, c)"
         />
       </div>
-      <button class="ctx-item text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20" @click="handleDeleteGroup(contextMenu.groupId)">删除分组</button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-auto w-full justify-start px-2.5 py-[5px] text-xs text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20"
+        @click="handleDeleteGroup(contextMenu.groupId)"
+      >
+        <Trash2 class="mr-2 h-3 w-3" />
+        删除分组
+      </Button>
     </div>
   </aside>
 </template>
-
-<style scoped>
-.chat-sidebar {
-  border-right: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
-}
-
-.new-chat-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-md, 7px);
-  background: hsl(var(--card));
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
-  box-shadow: var(--shadow-sm);
-}
-
-.new-chat-btn:hover {
-  border-color: hsl(var(--ring));
-  background: hsl(var(--foreground));
-  color: hsl(var(--background));
-}
-
-/* Drag-over state */
-.group-section.drag-over {
-  background: hsl(var(--muted));
-  outline: 2px dashed hsl(var(--border));
-  outline-offset: -2px;
-}
-
-/* Conversation items — admin nav-item style */
-.conv-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 7px;
-  border-radius: var(--radius-md, 7px);
-  cursor: pointer;
-  transition: background 150ms ease;
-  border-left: 2px solid transparent;
-}
-
-.conv-item:hover {
-  background: hsl(var(--accent));
-}
-
-.conv-item.active {
-  background: hsl(var(--accent));
-  border-left-color: hsl(var(--foreground));
-}
-
-.conv-delete {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.conv-item:hover .conv-delete {
-  display: flex;
-}
-
-.conv-delete:hover {
-  background: hsl(var(--destructive) / 0.1);
-  color: hsl(var(--destructive));
-}
-
-/* Context menu items */
-.ctx-item {
-  display: block;
-  width: 100%;
-  padding: 5px 10px;
-  border: none;
-  border-radius: var(--radius-md, 7px);
-  background: transparent;
-  font-size: 12px;
-  font-family: inherit;
-  color: hsl(var(--foreground));
-  text-align: left;
-  cursor: pointer;
-  transition: background 100ms ease;
-}
-
-.ctx-item:hover {
-  background: hsl(var(--accent));
-}
-</style>

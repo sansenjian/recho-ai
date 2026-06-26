@@ -2,8 +2,25 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import {
+  LayoutDashboard,
+  Coins,
+  Image,
+  Activity,
+  Server,
+  Megaphone,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Moon,
+  Sun,
+  Zap,
+} from '@lucide/vue'
 import AdminImageAttemptsPanel from '../components/admin/AdminImageAttemptsPanel.vue'
 import AdminImagesPanel from '../components/admin/AdminImagesPanel.vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { apiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import { getAuthAccessToken, useAuthSession } from '../composables/useAuthSession'
@@ -59,13 +76,13 @@ function toggleTheme() {
 function toggleLocale() { locale.value = locale.value === 'zh' ? 'en' : 'zh' }
 
 const navItems = [
-  { id: 'overview', labelKey: 'nav.overview', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1' },
-  { id: 'credits', labelKey: 'nav.credits', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-  { id: 'images', labelKey: 'nav.images', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
-  { id: 'monitor', labelKey: 'nav.monitor', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
-  { id: 'system', labelKey: 'nav.system', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01' },
-  { id: 'announcements', labelKey: 'nav.announcements', icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z' },
-  { id: 'settings', labelKey: 'nav.settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+  { id: 'overview', labelKey: 'nav.overview', icon: LayoutDashboard },
+  { id: 'credits', labelKey: 'nav.credits', icon: Coins },
+  { id: 'images', labelKey: 'nav.images', icon: Image },
+  { id: 'monitor', labelKey: 'nav.monitor', icon: Activity },
+  { id: 'system', labelKey: 'nav.system', icon: Server },
+  { id: 'announcements', labelKey: 'nav.announcements', icon: Megaphone },
+  { id: 'settings', labelKey: 'nav.settings', icon: Settings },
 ]
 
 const adminChecked = ref(false)
@@ -911,244 +928,235 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="admin-root" :class="{ dark: isDark }">
+  <div class="flex min-h-screen text-sm transition-colors duration-150" :class="{ dark: isDark }">
     <!-- Sidebar -->
-    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
-      <div class="sidebar-header">
-        <div class="brand">
-          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-          </svg>
-          <span v-show="!sidebarCollapsed" class="brand-text">Recho Admin</span>
+    <aside
+      class="fixed top-0 left-0 bottom-0 z-20 flex flex-col bg-[var(--surface)] border-r border-[var(--border)] overflow-hidden transition-[width] duration-150"
+      :class="sidebarCollapsed ? 'w-16' : 'w-[240px] max-lg:w-16'"
+    >
+      <div class="flex items-center justify-between h-14 px-4 border-b border-[var(--border)] shrink-0">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <Zap class="w-6 h-6 shrink-0" />
+          <span v-show="!sidebarCollapsed" class="text-[15px] font-semibold tracking-tight whitespace-nowrap max-lg:hidden">Recho Admin</span>
         </div>
-        <button class="sidebar-toggle" @click="toggleSidebar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-            <path v-if="!sidebarCollapsed" d="M15 19l-7-7 7-7" />
-            <path v-else d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
+        <Button variant="ghost" size="icon-xs" class="shrink-0" @click="toggleSidebar">
+          <ChevronLeft v-if="!sidebarCollapsed" class="w-4 h-4" />
+          <ChevronRight v-else class="w-4 h-4" />
+        </Button>
       </div>
 
-      <nav class="sidebar-nav">
+      <nav class="flex-1 p-2 overflow-y-auto">
         <button
           v-for="item in navItems"
           :key="item.id"
-          class="nav-item"
-          :class="{ active: activeView === item.id }"
+          class="flex items-center gap-2.5 w-full min-h-9 px-2.5 rounded-md border-0 bg-transparent text-[var(--text-secondary)] text-[13px] font-medium cursor-pointer text-left whitespace-nowrap transition-colors duration-150 hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]"
+          :class="{ 'bg-[var(--hover-bg)] text-[var(--text-primary)] font-semibold': activeView === item.id }"
           @click="activeView = item.id"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20">
-            <path :d="item.icon" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span v-show="!sidebarCollapsed" class="nav-label">{{ t(item.labelKey) }}</span>
+          <component :is="item.icon" class="w-5 h-5 shrink-0" stroke-width="1.5" />
+          <span v-show="!sidebarCollapsed" class="overflow-hidden text-ellipsis max-lg:hidden">{{ t(item.labelKey) }}</span>
         </button>
       </nav>
 
-      <div class="sidebar-footer">
-        <button class="sidebar-action" @click="toggleLocale">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-            <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-          </svg>
-          <span v-show="!sidebarCollapsed">{{ locale === 'zh' ? '中文' : 'EN' }}</span>
+      <div class="p-2 border-t border-[var(--border)] flex flex-col gap-0.5 shrink-0">
+        <button class="flex items-center gap-2.5 w-full min-h-8 px-2.5 rounded-md border-0 bg-transparent text-[var(--text-muted)] text-xs cursor-pointer text-left whitespace-nowrap hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)] transition-colors" @click="toggleLocale">
+          <Globe class="w-4 h-4" stroke-width="1.5" />
+          <span v-show="!sidebarCollapsed" class="max-lg:hidden">{{ locale === 'zh' ? '中文' : 'EN' }}</span>
         </button>
-        <button class="sidebar-action" @click="toggleTheme">
-          <svg v-if="!isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">
-            <circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-          </svg>
-          <span v-show="!sidebarCollapsed">{{ isDark ? t('common.lightMode') : t('common.darkMode') }}</span>
+        <button class="flex items-center gap-2.5 w-full min-h-8 px-2.5 rounded-md border-0 bg-transparent text-[var(--text-muted)] text-xs cursor-pointer text-left whitespace-nowrap hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)] transition-colors" @click="toggleTheme">
+          <Moon v-if="!isDark" class="w-4 h-4" stroke-width="1.5" />
+          <Sun v-else class="w-4 h-4" stroke-width="1.5" />
+          <span v-show="!sidebarCollapsed" class="max-lg:hidden">{{ isDark ? t('common.lightMode') : t('common.darkMode') }}</span>
         </button>
-        <div class="sidebar-links" v-show="!sidebarCollapsed">
-          <RouterLink to="/image" class="ext-link">{{ t('nav.canvas') }}</RouterLink>
-          <RouterLink to="/works" class="ext-link">{{ t('nav.works') }}</RouterLink>
+        <div v-show="!sidebarCollapsed" class="flex gap-2 px-2.5 py-1.5 max-lg:hidden">
+          <RouterLink to="/image" class="text-xs text-[var(--text-muted)] no-underline hover:text-[var(--text-primary)]">{{ t('nav.canvas') }}</RouterLink>
+          <RouterLink to="/works" class="text-xs text-[var(--text-muted)] no-underline hover:text-[var(--text-primary)]">{{ t('nav.works') }}</RouterLink>
         </div>
-        <div v-if="user && !sidebarCollapsed" class="user-badge">
-          <div class="user-avatar">{{ (userEmail || 'A').charAt(0).toUpperCase() }}</div>
-          <div class="user-detail">
-            <span class="user-email">{{ userEmail || 'Admin' }}</span>
-            <span class="user-role">{{ currentAdminRole === 'senior' ? t('settings.seniorAdmin') : t('settings.operator') }}</span>
+        <div v-if="user && !sidebarCollapsed" class="flex items-center gap-2.5 p-2 mt-1 border-t border-[var(--border)] max-lg:hidden">
+          <div class="w-7 h-7 rounded-full bg-[var(--bubble-bg)] border border-[var(--border)] grid place-items-center text-xs font-semibold shrink-0">{{ (userEmail || 'A').charAt(0).toUpperCase() }}</div>
+          <div class="flex flex-col min-w-0">
+            <span class="text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap">{{ userEmail || 'Admin' }}</span>
+            <span class="text-[11px] text-[var(--text-muted)]">{{ currentAdminRole === 'senior' ? t('settings.seniorAdmin') : t('settings.operator') }}</span>
           </div>
         </div>
       </div>
     </aside>
 
     <!-- Main Area -->
-    <div class="main-area">
+    <div class="flex-1 min-w-0 transition-[margin-left] duration-150" :class="sidebarCollapsed ? 'ml-16' : 'ml-[240px] max-lg:ml-16'">
       <!-- Top Bar -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <h1 class="page-title">{{ t(`nav.${activeView}`) }}</h1>
-          <div class="mode-switch" role="group">
-            <button :class="{ active: adminMode === 'visual' }" @click="adminMode = 'visual'">{{ t('mode.visual') }}</button>
-            <button :class="{ active: adminMode === 'manage' }" @click="adminMode = 'manage'">{{ t('mode.manage') }}</button>
+      <header class="sticky top-0 z-10 h-14 flex items-center justify-between px-6 bg-[var(--header-bg)] backdrop-blur-md border-b border-[var(--border)] max-md:px-4">
+        <div class="flex items-center gap-4">
+          <h1 class="text-base font-semibold tracking-tight">{{ t(`nav.${activeView}`) }}</h1>
+          <div class="flex gap-0.5 p-0.5 rounded-md bg-[var(--bubble-bg)] border border-[var(--border)]" role="group">
+            <button class="px-3 py-1 rounded-[calc(var(--radius)-2px)] border-0 bg-transparent text-[var(--text-muted)] text-xs font-medium cursor-pointer whitespace-nowrap" :class="{ 'bg-[var(--surface)] text-[var(--text-primary)] shadow-sm': adminMode === 'visual' }" @click="adminMode = 'visual'">{{ t('mode.visual') }}</button>
+            <button class="px-3 py-1 rounded-[calc(var(--radius)-2px)] border-0 bg-transparent text-[var(--text-muted)] text-xs font-medium cursor-pointer whitespace-nowrap" :class="{ 'bg-[var(--surface)] text-[var(--text-primary)] shadow-sm': adminMode === 'manage' }" @click="adminMode = 'manage'">{{ t('mode.manage') }}</button>
           </div>
         </div>
       </header>
 
       <!-- Auth States -->
-      <div v-if="!isAuthReady || !adminChecked" class="auth-state">
-        <span class="spinner" />
+      <div v-if="!isAuthReady || !adminChecked" class="grid place-items-center gap-3 min-h-[400px] text-center">
+        <span class="w-5 h-5 border-2 border-[var(--border)] border-t-[var(--seed-primary)] rounded-full animate-spin" />
         <strong>{{ t('auth.checking') }}</strong>
       </div>
 
-      <div v-else-if="!user" class="auth-state">
+      <div v-else-if="!user" class="grid place-items-center gap-3 min-h-[400px] text-center">
         <strong>{{ t('auth.loginRequired') }}</strong>
-        <RouterLink to="/image" class="btn-secondary">{{ t('auth.loginLink') }}</RouterLink>
+        <RouterLink to="/image" class="inline-flex items-center justify-center min-h-8 px-3 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-[13px] font-medium shadow-sm no-underline hover:bg-[var(--hover-bg)]">{{ t('auth.loginLink') }}</RouterLink>
       </div>
 
-      <div v-else-if="!isAdmin" class="auth-state">
+      <div v-else-if="!isAdmin" class="grid place-items-center gap-3 min-h-[400px] text-center">
         <strong>{{ errorMessage || t('auth.noAccess') }}</strong>
-        <span class="text-muted">{{ userEmail }}</span>
+        <span class="text-[var(--text-muted)]">{{ userEmail }}</span>
       </div>
 
       <!-- Content -->
-      <main v-else class="content">
+      <main v-else class="p-6 max-w-[1400px] max-md:p-4">
         <!-- Feedback Messages -->
-        <div class="feedback" aria-live="polite">
-          <p v-if="errorMessage" class="feedback-msg error">{{ errorMessage }}</p>
-          <p v-if="noticeMessage" class="feedback-msg success">{{ noticeMessage }}</p>
+        <div class="min-h-0" aria-live="polite">
+          <p v-if="errorMessage" class="inline-flex items-center min-h-8 px-3 rounded-md text-[13px] font-medium mb-2 bg-red-500/10 text-red-500">{{ errorMessage }}</p>
+          <p v-if="noticeMessage" class="inline-flex items-center min-h-8 px-3 rounded-md text-[13px] font-medium mb-2 bg-emerald-500/10 text-emerald-600">{{ noticeMessage }}</p>
         </div>
 
         <!-- ===== OVERVIEW ===== -->
-        <section v-if="activeView === 'overview'" class="view-section">
+        <section v-if="activeView === 'overview'" class="flex flex-col gap-4">
           <!-- KPI Grid -->
-          <div class="card">
-            <div class="card-header">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('overview.title') }}</h2>
-                <span class="card-subtitle">{{ overviewGeneratedAt }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('overview.title') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ overviewGeneratedAt }}</span>
               </div>
-              <button class="btn-secondary" :disabled="overviewLoading" @click="refreshOverview">{{ t('common.refresh') }}</button>
+              <Button variant="outline" size="sm" :disabled="overviewLoading" @click="refreshOverview">{{ t('common.refresh') }}</Button>
             </div>
-            <div class="kpi-grid">
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.totalBalance') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.users.totalBalance) }}</strong>
+            <div class="grid gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.totalBalance') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.users.totalBalance) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.totalRedeemed') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.totalRedeemed') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.users.totalRedeemed) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.totalSpent') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.users.totalSpent) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.totalSpent') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.users.totalSpent) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.imageCostPerImage') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.imageCostPerImage') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.settings.imageCreditCostPerImage ?? 1) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.availableCodes') }}</span>
-                <strong class="kpi-value">{{ overviewCodeHealth }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.availableCodes') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ overviewCodeHealth }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.redeemedCodeCredits') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.redeemedCodeCredits') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.codes.totalRedeemedCredits) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.weeklyTxns') }}</span>
-                <strong class="kpi-value">{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.weeklyTxns') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ overview?.transactions.last7Days.totalCount ?? 0 }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.weeklySpend') }}</span>
-                <strong class="kpi-value">{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.weeklySpend') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap">{{ creditAmount(overview?.transactions.last7Days.spentCredits) }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.weeklyNet') }}</span>
-                <strong class="kpi-value" :class="overviewNetChange >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(overviewNetChange) }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.weeklyNet') }}</span>
+                <strong class="block text-xl font-semibold tracking-tight leading-tight overflow-hidden text-ellipsis whitespace-nowrap" :class="overviewNetChange >= 0 ? 'text-emerald-600' : 'text-red-500'">{{ signedCreditAmount(overviewNetChange) }}</strong>
               </div>
             </div>
           </div>
 
           <!-- Image Cost Panel -->
-          <div class="card">
-            <div class="card-header">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('overview.imageCost') }}</h2>
-                <span class="card-subtitle">{{ t('overview.payAsYouGo') }} · {{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('overview.imageCost') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ t('overview.payAsYouGo') }} · {{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
               </div>
-              <span class="cost-big">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small>{{ t('overview.imageCostUnit') }}</small></span>
+              <span class="text-2xl font-semibold tracking-tight whitespace-nowrap">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small class="text-[13px] font-normal text-[var(--text-muted)]">{{ t('overview.imageCostUnit') }}</small></span>
             </div>
-            <div class="kpi-grid cols-6">
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.cosStoragePerImage') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+            <div class="grid gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.cosStoragePerImage') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.cosTrafficPerImage') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.cosTrafficPerImage') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.supabaseStoragePerImage') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.supabaseStoragePerImage') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.supabaseStorageCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.supabaseTrafficPerImage') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.supabaseTrafficPerImage') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.supabaseTrafficCostPerImage?.toFixed(4) ?? '0.0000' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.estimatedMonthlyCost') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.estimatedMonthlyCost') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('overview.sampleCount') }}</span>
-                <strong class="kpi-value sm">{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} SB</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('overview.sampleCount') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ overview?.imageCost?.cosImageCount ?? 0 }} COS / {{ overview?.imageCost?.supabaseImageCount ?? 0 }} SB</strong>
               </div>
             </div>
           </div>
 
           <!-- Ledger -->
-          <div class="card">
-            <div class="card-header">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('credits.ledger.title') }}</h2>
-                <span class="card-subtitle">{{ ledgerTransactions.length }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('credits.ledger.title') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ ledgerTransactions.length }}</span>
               </div>
-              <div class="filter-group">
-                <select v-model="ledgerReason" :disabled="ledgerLoading" @change="refreshLedger">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <select v-model="ledgerReason" :disabled="ledgerLoading" class="min-h-8 min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-[13px]" @change="refreshLedger">
                   <option value="">{{ t('credits.ledger.allTypes') }}</option>
                   <option value="redemption">{{ t('credits.transactionReason.redemption') }}</option>
                   <option value="image_generation">{{ t('credits.transactionReason.image_generation') }}</option>
                   <option value="refund">{{ t('credits.transactionReason.refund') }}</option>
                   <option value="admin_adjustment">{{ t('credits.transactionReason.admin_adjustment') }}</option>
                 </select>
-                <select v-model="ledgerHours" :disabled="ledgerLoading" @change="refreshLedger">
+                <select v-model="ledgerHours" :disabled="ledgerLoading" class="min-h-8 min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-[13px]" @change="refreshLedger">
                   <option value="24">{{ t('credits.ledger.last24h') }}</option>
                   <option value="168">{{ t('credits.ledger.last7d') }}</option>
                   <option value="720">{{ t('credits.ledger.last30d') }}</option>
                   <option value="">{{ t('credits.ledger.allTime') }}</option>
                 </select>
-                <input v-model="ledgerUserId" type="search" :placeholder="t('credits.ledger.userIdFilter')" :disabled="ledgerLoading" @keyup.enter="refreshLedger" class="input-sm" />
-                <button class="btn-secondary" :disabled="ledgerLoading" @click="refreshLedger">{{ t('common.refresh') }}</button>
+                <input v-model="ledgerUserId" type="search" :placeholder="t('credits.ledger.userIdFilter')" :disabled="ledgerLoading" class="min-h-8 max-w-[140px] min-w-[100px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs" @keyup.enter="refreshLedger">
+                <Button variant="outline" size="sm" :disabled="ledgerLoading" @click="refreshLedger">{{ t('common.refresh') }}</Button>
               </div>
             </div>
-            <div class="table-wrap">
-              <table>
+            <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+              <table class="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
-                    <th>{{ t('credits.table.time') }}</th>
-                    <th>{{ t('credits.table.user') }}</th>
-                    <th>{{ t('credits.table.type') }}</th>
-                    <th>{{ t('credits.table.change') }}</th>
-                    <th>{{ t('credits.table.balance') }}</th>
-                    <th>{{ t('credits.table.details') }}</th>
-                    <th>{{ t('credits.table.note') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.time') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.user') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.type') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.change') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.balance') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.details') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.note') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="tx in ledgerTransactions" :key="tx.id">
-                    <td class="text-caption">{{ dateTime(tx.createdAt) }}</td>
-                    <td>{{ tx.email || shortId(tx.userId) }}</td>
-                    <td><span class="badge">{{ transactionReason(tx.reason) }}</span></td>
-                    <td class="text-mono" :class="tx.amount >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(tx.amount) }}</td>
-                    <td class="text-mono">{{ creditAmount(tx.balanceAfter) }}</td>
-                    <td class="text-caption">{{ ledgerDetails(tx) }}</td>
-                    <td class="text-caption">{{ tx.note || '-' }}</td>
+                  <tr v-for="tx in ledgerTransactions" :key="tx.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                    <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(tx.createdAt) }}</td>
+                    <td class="px-3 py-2">{{ tx.email || shortId(tx.userId) }}</td>
+                    <td class="px-3 py-2"><Badge variant="secondary">{{ transactionReason(tx.reason) }}</Badge></td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium" :class="tx.amount >= 0 ? 'text-emerald-600' : 'text-red-500'">{{ signedCreditAmount(tx.amount) }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ creditAmount(tx.balanceAfter) }}</td>
+                    <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ ledgerDetails(tx) }}</td>
+                    <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ tx.note || '-' }}</td>
                   </tr>
                   <tr v-if="!ledgerTransactions.length">
-                    <td colspan="7" class="empty-cell">{{ t('common.noData') }}</td>
+                    <td colspan="7" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('common.noData') }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1157,90 +1165,90 @@ onMounted(async () => {
         </section>
 
         <!-- ===== CREDITS ===== -->
-        <section v-else-if="activeView === 'credits'" class="view-section">
-          <div class="two-col">
+        <section v-else-if="activeView === 'credits'" class="flex flex-col gap-4">
+          <div class="grid gap-4 max-lg:grid-cols-1" style="grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);">
             <!-- User List -->
-            <div class="card">
-              <div class="card-header">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
                 <div>
-                  <h2 class="card-title">{{ t('credits.users') }}</h2>
-                  <span class="card-subtitle">{{ users.length }}</span>
+                  <h2 class="text-sm font-semibold tracking-tight">{{ t('credits.users') }}</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ users.length }}</span>
                 </div>
-                <button class="btn-secondary" :disabled="loading" @click="refreshUsers">{{ t('common.refresh') }}</button>
+                <Button variant="outline" size="sm" :disabled="loading" @click="refreshUsers">{{ t('common.refresh') }}</Button>
               </div>
-              <form class="search-row" @submit.prevent="refreshUsers">
-                <input v-model.trim="userQuery" type="search" :placeholder="t('credits.searchUsers')" />
-                <button class="btn-secondary" type="submit" :disabled="loading">{{ t('common.search') }}</button>
+              <form class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 mb-3" @submit.prevent="refreshUsers">
+                <input v-model.trim="userQuery" type="search" :placeholder="t('credits.searchUsers')" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                <Button variant="outline" size="sm" type="submit" :disabled="loading">{{ t('common.search') }}</Button>
               </form>
-              <div class="user-list">
+              <div class="flex flex-col gap-1 max-h-[480px] overflow-y-auto">
                 <button
                   v-for="item in users"
                   :key="item.userId"
-                  class="user-row"
-                  :class="{ active: selectedUser?.userId === item.userId }"
+                  class="flex items-center justify-between gap-2 min-h-[38px] px-2.5 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-[13px] text-left cursor-pointer w-full transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--hover-bg)]"
+                  :class="{ 'border-[var(--seed-primary)] bg-[color-mix(in_srgb,var(--seed-primary)_6%,transparent)]': selectedUser?.userId === item.userId }"
                   @click="selectUser(item)"
                 >
-                  <span>{{ item.email || shortId(item.userId) }}</span>
-                  <strong class="text-mono">{{ creditAmount(item.balance) }}</strong>
+                  <span class="overflow-hidden text-ellipsis whitespace-nowrap">{{ item.email || shortId(item.userId) }}</span>
+                  <strong class="font-mono text-[13px] font-medium shrink-0">{{ creditAmount(item.balance) }}</strong>
                 </button>
               </div>
             </div>
 
             <!-- User Detail -->
-            <div class="card">
-              <div class="card-header">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
                 <div>
-                  <h2 class="card-title">{{ t('credits.userDetail') }}</h2>
-                  <span class="card-subtitle">{{ selectedUserTitle }}</span>
+                  <h2 class="text-sm font-semibold tracking-tight">{{ t('credits.userDetail') }}</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ selectedUserTitle }}</span>
                 </div>
               </div>
 
-              <div v-if="selectedUser" class="kpi-grid cols-4">
-                <div class="kpi-item">
-                  <span class="kpi-label">{{ t('credits.balance') }}</span>
-                  <strong class="kpi-value">{{ creditAmount(selectedUser.balance) }}</strong>
+              <div v-if="selectedUser" class="grid gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden mb-4" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('credits.balance') }}</span>
+                  <strong class="block text-xl font-semibold tracking-tight">{{ creditAmount(selectedUser.balance) }}</strong>
                 </div>
-                <div class="kpi-item">
-                  <span class="kpi-label">{{ t('credits.totalRedeemed') }}</span>
-                  <strong class="kpi-value">{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('credits.totalRedeemed') }}</span>
+                  <strong class="block text-xl font-semibold tracking-tight">{{ creditAmount(selectedUser.totalRedeemed) }}</strong>
                 </div>
-                <div class="kpi-item">
-                  <span class="kpi-label">{{ t('credits.totalSpent') }}</span>
-                  <strong class="kpi-value">{{ creditAmount(selectedUser.totalSpent) }}</strong>
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('credits.totalSpent') }}</span>
+                  <strong class="block text-xl font-semibold tracking-tight">{{ creditAmount(selectedUser.totalSpent) }}</strong>
                 </div>
-                <div class="kpi-item">
-                  <span class="kpi-label">{{ t('common.updatedAt') }}</span>
-                  <strong class="kpi-value sm">{{ dateTime(selectedUser.updatedAt) }}</strong>
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('common.updatedAt') }}</span>
+                  <strong class="block text-[15px] font-semibold">{{ dateTime(selectedUser.updatedAt) }}</strong>
                 </div>
               </div>
 
-              <form class="inline-form" @submit.prevent="submitAdjustment">
-                <input v-model.number="adjustAmount" type="number" step="1" :placeholder="t('credits.adjustPlaceholder')" class="input-sm" />
-                <input v-model.trim="adjustNote" type="text" :placeholder="t('credits.adjustNotePlaceholder')" class="input-sm" />
-                <button class="btn-primary" type="submit" :disabled="actionLoading || !selectedUser || !adjustAmount">{{ t('common.submit') }}</button>
+              <form class="flex gap-2 items-end flex-wrap mb-4" @submit.prevent="submitAdjustment">
+                <input v-model.number="adjustAmount" type="number" step="1" :placeholder="t('credits.adjustPlaceholder')" class="min-h-[30px] max-w-[140px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs flex-1 min-w-[100px]">
+                <input v-model.trim="adjustNote" type="text" :placeholder="t('credits.adjustNotePlaceholder')" class="min-h-[30px] max-w-[140px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs flex-1 min-w-[100px]">
+                <Button type="submit" :disabled="actionLoading || !selectedUser || !adjustAmount">{{ t('common.submit') }}</Button>
               </form>
 
-              <div class="table-wrap">
-                <table>
+              <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+                <table class="w-full border-collapse text-[13px]">
                   <thead>
                     <tr>
-                      <th>{{ t('credits.table.time') }}</th>
-                      <th>{{ t('credits.table.type') }}</th>
-                      <th>{{ t('credits.table.change') }}</th>
-                      <th>{{ t('credits.table.balance') }}</th>
-                      <th>{{ t('credits.table.note') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.time') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.type') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.change') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.balance') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.note') }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="tx in transactions" :key="tx.id">
-                      <td class="text-caption">{{ dateTime(tx.created_at) }}</td>
-                      <td><span class="badge">{{ transactionReason(tx.reason) }}</span></td>
-                      <td class="text-mono" :class="tx.amount >= 0 ? 'text-positive' : 'text-negative'">{{ signedCreditAmount(tx.amount) }}</td>
-                      <td class="text-mono">{{ creditAmount(tx.balance_after) }}</td>
-                      <td class="text-caption">{{ transactionNote(tx) }}</td>
+                    <tr v-for="tx in transactions" :key="tx.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(tx.created_at) }}</td>
+                      <td class="px-3 py-2"><Badge variant="secondary">{{ transactionReason(tx.reason) }}</Badge></td>
+                      <td class="px-3 py-2 font-mono text-[13px] font-medium" :class="tx.amount >= 0 ? 'text-emerald-600' : 'text-red-500'">{{ signedCreditAmount(tx.amount) }}</td>
+                      <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ creditAmount(tx.balance_after) }}</td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ transactionNote(tx) }}</td>
                     </tr>
                     <tr v-if="!transactions.length">
-                      <td colspan="5" class="empty-cell">{{ t('common.noData') }}</td>
+                      <td colspan="5" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('common.noData') }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1249,117 +1257,119 @@ onMounted(async () => {
           </div>
 
           <!-- Codes Section -->
-          <div class="two-col">
-            <div class="card">
-              <div class="card-header">
-                <h2 class="card-title">{{ t('credits.generateCodes') }}</h2>
-                <span class="card-subtitle">{{ codeForm.count }} {{ t('credits.codeCount') }}</span>
+          <div class="grid gap-4 max-lg:grid-cols-1" style="grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('credits.generateCodes') }}</h2>
+                <span class="text-xs text-[var(--text-muted)]">{{ codeForm.count }} {{ t('credits.codeCount') }}</span>
               </div>
-              <form class="form-grid cols-3" @submit.prevent="createCodes">
-                <label class="form-field">
-                  <span class="form-label">{{ t('credits.prefix') }}</span>
-                  <input v-model.trim="codeForm.prefix" type="text" />
+              <form class="grid gap-2.5 mb-4" style="grid-template-columns: repeat(3, 1fr);" @submit.prevent="createCodes">
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('credits.prefix') }}</span>
+                  <input v-model.trim="codeForm.prefix" type="text" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('credits.creditsPerCode') }}</span>
-                  <input v-model.number="codeForm.credits" type="number" min="1" step="1" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('credits.creditsPerCode') }}</span>
+                  <input v-model.number="codeForm.credits" type="number" min="1" step="1" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('credits.quantity') }}</span>
-                  <input v-model.number="codeForm.count" type="number" min="1" max="100" step="1" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('credits.quantity') }}</span>
+                  <input v-model.number="codeForm.count" type="number" min="1" max="100" step="1" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('credits.maxRedemptions') }}</span>
-                  <input v-model.number="codeForm.maxRedemptions" type="number" min="1" step="1" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('credits.maxRedemptions') }}</span>
+                  <input v-model.number="codeForm.maxRedemptions" type="number" min="1" step="1" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('credits.validDays') }}</span>
-                  <input v-model.number="codeForm.days" type="number" min="1" step="1" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('credits.validDays') }}</span>
+                  <input v-model.number="codeForm.days" type="number" min="1" step="1" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('common.note') }}</span>
-                  <input v-model.trim="codeForm.note" type="text" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('common.note') }}</span>
+                  <input v-model.trim="codeForm.note" type="text" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <div class="form-actions">
-                  <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('common.generate') }}</button>
+                <div class="flex items-end" style="grid-column: 1 / -1;">
+                  <Button type="submit" :disabled="actionLoading">{{ t('common.generate') }}</Button>
                 </div>
               </form>
 
-              <div v-if="createdCodes.length" class="created-output">
-                <div class="created-actions">
+              <div v-if="createdCodes.length" class="mt-4 pt-4 border-t border-[var(--border)]">
+                <div class="flex items-center gap-2 mb-2.5">
                   <strong>{{ t('credits.thisBatch') }}</strong>
-                  <button class="btn-ghost" @click="copyCreatedCsv">{{ t('credits.copyCsv') }}</button>
-                  <button class="btn-ghost" @click="downloadCreatedCsv">{{ t('credits.downloadCsv') }}</button>
+                  <Button variant="ghost" size="sm" @click="copyCreatedCsv">{{ t('credits.copyCsv') }}</Button>
+                  <Button variant="ghost" size="sm" @click="downloadCreatedCsv">{{ t('credits.downloadCsv') }}</Button>
                 </div>
-                <textarea :value="createdCsv" readonly rows="6" />
+                <textarea :value="createdCsv" readonly rows="6" class="w-full min-h-8 p-2 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs font-mono resize-y" />
               </div>
             </div>
 
-            <div class="card">
-              <div class="card-header">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
                 <div>
-                  <h2 class="card-title">{{ t('credits.codes') }}</h2>
-                  <span class="card-subtitle">{{ codes.length }}</span>
+                  <h2 class="text-sm font-semibold tracking-tight">{{ t('credits.codes') }}</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ codes.length }}</span>
                 </div>
-                <button class="btn-secondary" :disabled="loading" @click="refreshCodes">{{ t('common.refresh') }}</button>
+                <Button variant="outline" size="sm" :disabled="loading" @click="refreshCodes">{{ t('common.refresh') }}</Button>
               </div>
-              <div class="table-wrap">
-                <table>
+              <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+                <table class="w-full border-collapse text-[13px]">
                   <thead>
                     <tr>
-                      <th>{{ t('credits.table.created') }}</th>
-                      <th>{{ t('credits.table.credits') }}</th>
-                      <th>{{ t('credits.table.usage') }}</th>
-                      <th>{{ t('credits.table.status') }}</th>
-                      <th>{{ t('credits.table.note') }}</th>
-                      <th>{{ t('credits.table.actions') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.created') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.credits') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.usage') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.status') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.note') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.actions') }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="code in codes" :key="code.id">
-                      <td class="text-caption">{{ dateTime(code.createdAt) }}</td>
-                      <td class="text-mono">{{ code.credits }}</td>
-                      <td class="text-mono">{{ code.redeemedCount }} / {{ code.maxRedemptions }}</td>
-                      <td><span class="badge" :class="{ positive: codeStatus(code) === t('credits.codeStatus.available'), negative: codeStatus(code) !== t('credits.codeStatus.available') }">{{ codeStatus(code) }}</span></td>
-                      <td class="text-caption">{{ code.note || '-' }}</td>
-                      <td>
-                        <div class="action-group">
-                          <button class="btn-ghost" :disabled="codeRedemptionsLoading && selectedCode?.id === code.id" @click="viewCodeRedemptions(code)">{{ t('common.details') }}</button>
-                          <button class="btn-ghost" :disabled="actionLoading" @click="setCodeDisabled(code, !code.disabledAt)">{{ code.disabledAt ? t('common.restore') : t('common.disable') }}</button>
+                    <tr v-for="code in codes" :key="code.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(code.createdAt) }}</td>
+                      <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ code.credits }}</td>
+                      <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ code.redeemedCount }} / {{ code.maxRedemptions }}</td>
+                      <td class="px-3 py-2">
+                        <Badge :variant="codeStatus(code) === t('credits.codeStatus.available') ? 'default' : 'destructive'">{{ codeStatus(code) }}</Badge>
+                      </td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ code.note || '-' }}</td>
+                      <td class="px-3 py-2">
+                        <div class="flex gap-1 flex-wrap">
+                          <Button variant="ghost" size="sm" :disabled="codeRedemptionsLoading && selectedCode?.id === code.id" @click="viewCodeRedemptions(code)">{{ t('common.details') }}</Button>
+                          <Button variant="ghost" size="sm" :disabled="actionLoading" @click="setCodeDisabled(code, !code.disabledAt)">{{ code.disabledAt ? t('common.restore') : t('common.disable') }}</Button>
                         </div>
                       </td>
                     </tr>
                     <tr v-if="!codes.length">
-                      <td colspan="6" class="empty-cell">{{ t('common.noData') }}</td>
+                      <td colspan="6" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('common.noData') }}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <div v-if="selectedCode" class="created-output">
-                <div class="created-actions">
+              <div v-if="selectedCode" class="mt-4 pt-4 border-t border-[var(--border)]">
+                <div class="flex items-center gap-2 mb-2.5">
                   <strong>{{ t('credits.codeRedemptions') }}</strong>
-                  <span class="text-muted">{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
-                  <button class="btn-ghost" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode!)">{{ t('common.refresh') }}</button>
+                  <span class="text-[var(--text-muted)]">{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span>
+                  <Button variant="ghost" size="sm" :disabled="codeRedemptionsLoading" @click="viewCodeRedemptions(selectedCode!)">{{ t('common.refresh') }}</Button>
                 </div>
-                <div class="table-wrap">
-                  <table>
+                <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+                  <table class="w-full border-collapse text-[13px]">
                     <thead>
                       <tr>
-                        <th>{{ t('credits.table.time') }}</th>
-                        <th>{{ t('credits.table.user') }}</th>
-                        <th>{{ t('credits.table.credits') }}</th>
-                        <th>{{ t('credits.table.balance') }}</th>
+                        <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.time') }}</th>
+                        <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.user') }}</th>
+                        <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.credits') }}</th>
+                        <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('credits.table.balance') }}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="r in codeRedemptions" :key="r.id">
-                        <td class="text-caption">{{ dateTime(r.redeemedAt) }}</td>
-                        <td>{{ r.email || shortId(r.userId) }}</td>
-                        <td class="text-mono">{{ r.credits }}</td>
-                        <td class="text-mono">{{ r.balanceAfter ?? '-' }}</td>
+                      <tr v-for="r in codeRedemptions" :key="r.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                        <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(r.redeemedAt) }}</td>
+                        <td class="px-3 py-2">{{ r.email || shortId(r.userId) }}</td>
+                        <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ r.credits }}</td>
+                        <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ r.balanceAfter ?? '-' }}</td>
                       </tr>
                       <tr v-if="!codeRedemptions.length">
-                        <td colspan="4" class="empty-cell">{{ codeRedemptionsLoading ? t('common.loading') : t('common.noData') }}</td>
+                        <td colspan="4" class="text-center text-[var(--text-muted)] py-6 px-3">{{ codeRedemptionsLoading ? t('common.loading') : t('common.noData') }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -1370,7 +1380,7 @@ onMounted(async () => {
         </section>
 
         <!-- ===== IMAGES ===== -->
-        <section v-else-if="activeView === 'images'" class="view-section">
+        <section v-else-if="activeView === 'images'" class="flex flex-col gap-4">
           <AdminImagesPanel
             v-model:selected-ids="selectedImageIds"
             v-model:visibility-filter="imageVisibilityFilter"
@@ -1387,35 +1397,35 @@ onMounted(async () => {
             @bulk-delete="bulkDeleteImages"
           />
 
-          <div class="card">
-            <div class="card-header">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('images.storageOverview') }}</h2>
-                <span class="card-subtitle">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('images.storageOverview') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span>
               </div>
-              <button class="btn-secondary" :disabled="storageOverviewLoading" @click="refreshStorageOverview">{{ t('common.refresh') }}</button>
+              <Button variant="outline" size="sm" :disabled="storageOverviewLoading" @click="refreshStorageOverview">{{ t('common.refresh') }}</Button>
             </div>
-            <div v-if="storageOverviewLoading" class="empty-state">{{ t('images.statistics') }}</div>
-            <div v-else-if="storageOverview" class="table-wrap">
-              <table>
+            <div v-if="storageOverviewLoading" class="p-6 text-center text-[var(--text-muted)]">{{ t('images.statistics') }}</div>
+            <div v-else-if="storageOverview" class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+              <table class="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
-                    <th>{{ t('images.storageLocation') }}</th>
-                    <th>{{ t('images.imageCount') }}</th>
-                    <th>{{ t('images.totalSize') }}</th>
-                    <th>{{ t('images.avgSize') }}</th>
-                    <th>{{ t('images.totalCredits') }}</th>
-                    <th>{{ t('images.sizePercent') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.storageLocation') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.imageCount') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.totalSize') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.avgSize') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.totalCredits') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('images.sizePercent') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="stat in storageOverview.byLocation" :key="stat.location">
-                    <td>{{ storageLocationLabel(stat.location) }}</td>
-                    <td class="text-mono">{{ stat.imageCount }}</td>
-                    <td class="text-mono">{{ formatByteSize(stat.totalBytes) }}</td>
-                    <td class="text-mono">{{ formatByteSize(stat.averageBytes) }}</td>
-                    <td class="text-mono">{{ formatCreditAmount(stat.totalCreditCost) }}</td>
-                    <td>{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td>
+                  <tr v-for="stat in storageOverview.byLocation" :key="stat.location" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                    <td class="px-3 py-2">{{ storageLocationLabel(stat.location) }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ stat.imageCount }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ formatByteSize(stat.totalBytes) }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ formatByteSize(stat.averageBytes) }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ formatCreditAmount(stat.totalCreditCost) }}</td>
+                    <td class="px-3 py-2">{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1424,7 +1434,7 @@ onMounted(async () => {
         </section>
 
         <!-- ===== MONITOR ===== -->
-        <section v-else-if="activeView === 'monitor'" class="view-section">
+        <section v-else-if="activeView === 'monitor'" class="flex flex-col gap-4">
           <AdminImageAttemptsPanel
             v-model:status-filter="attemptStatusFilter"
             v-model:user-filter="attemptUserFilter"
@@ -1439,100 +1449,97 @@ onMounted(async () => {
         </section>
 
         <!-- ===== SYSTEM ===== -->
-        <section v-else-if="activeView === 'system'" class="view-section">
-          <div class="card">
-            <div class="card-header">
+        <section v-else-if="activeView === 'system'" class="flex flex-col gap-4">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('system.title') }}</h2>
-                <span class="card-subtitle">{{ systemGeneratedAt }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('system.title') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ systemGeneratedAt }}</span>
               </div>
-              <div class="header-actions">
-                <span class="status-pill" :class="systemStatus?.status || 'warning'">{{ systemStatusLabel }}</span>
-                <button class="btn-secondary" :disabled="systemLoading" @click="refreshSystem">{{ t('common.refresh') }}</button>
+              <div class="flex items-center gap-2">
+                <Badge :variant="systemStatus?.status === 'ok' ? 'default' : 'destructive'">{{ systemStatusLabel }}</Badge>
+                <Button variant="outline" size="sm" :disabled="systemLoading" @click="refreshSystem">{{ t('common.refresh') }}</Button>
               </div>
             </div>
-            <div class="kpi-grid cols-5">
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.supabaseBackend') }}</span>
-                <strong class="kpi-value sm" :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'text-positive' : 'text-negative') : ''">
+            <div class="grid gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden" style="grid-template-columns: repeat(5, 1fr);">
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.supabaseBackend') }}</span>
+                <strong class="block text-[15px] font-semibold" :class="systemStatus ? (systemStatus.config.supabase.adminConfigured ? 'text-emerald-600' : 'text-red-500') : ''">
                   {{ systemStatus ? (systemStatus.config.supabase.adminConfigured ? t('system.ready') : t('system.notReady')) : '-' }}
                 </strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.imageService') }}</span>
-                <strong class="kpi-value sm" :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'text-positive' : 'text-negative') : ''">
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.imageService') }}</span>
+                <strong class="block text-[15px] font-semibold" :class="systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? 'text-emerald-600' : 'text-red-500') : ''">
                   {{ systemStatus ? (systemStatus.config.imageGeneration.apiKeyConfigured ? t('system.ready') : t('system.notReady')) : '-' }}
                 </strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.adminRules') }}</span>
-                <strong class="kpi-value sm">{{ systemStatus ? systemStatus.config.adminUsers.databaseCount + systemStatus.config.adminUsers.envUserIdCount + systemStatus.config.adminUsers.envEmailCount : '-' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.adminRules') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ systemStatus ? systemStatus.config.adminUsers.databaseCount + systemStatus.config.adminUsers.envUserIdCount + systemStatus.config.adminUsers.envEmailCount : '-' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.imageMonitor') }}</span>
-                <strong class="kpi-value sm">{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? t('system.enabled') : t('system.disabled')) : '-' }}</strong>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.imageMonitor') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ systemStatus ? (systemStatus.config.imageGeneration.analyticsEnabled ? t('system.enabled') : t('system.disabled')) : '-' }}</strong>
               </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.imageCostPerImage') }}</span>
-                <strong class="kpi-value sm">{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
-              </div>
-            </div>
-
-            <!-- Storage Stats -->
-            <div class="section-divider" />
-            <h3 class="section-label">{{ t('system.storageStats') }}</h3>
-            <div class="kpi-grid cols-4">
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.cosStorage') }}</span>
-                <strong class="kpi-value sm">{{ overview?.imageCost?.cosImageCount ?? 0 }} 张</strong>
-                <span class="kpi-sub">{{ t('system.avgPerImage') }} {{ (overview?.imageCost?.averageStoredMb ?? 0).toFixed(2) }} MB</span>
-              </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.supabaseStorage') }}</span>
-                <strong class="kpi-value sm">{{ overview?.imageCost?.supabaseImageCount ?? 0 }} 张</strong>
-                <span class="kpi-sub">{{ t('system.sampleDays') }} {{ overview?.imageCost?.sampleDays ?? 0 }} 天</span>
-              </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.estimatedMonthlyCost') }}</span>
-                <strong class="kpi-value sm">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
-                <span class="kpi-sub">{{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
-              </div>
-              <div class="kpi-item">
-                <span class="kpi-label">{{ t('system.totalImages') }}</span>
-                <strong class="kpi-value sm">{{ (overview?.imageCost?.cosImageCount ?? 0) + (overview?.imageCost?.supabaseImageCount ?? 0) }} 张</strong>
-                <span class="kpi-sub">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}/张</span>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.imageCostPerImage') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ systemStatus?.config.imageGeneration.creditCostPerImage ?? 1 }}</strong>
               </div>
             </div>
 
-            <!-- Warnings -->
-            <div class="section-divider" />
-            <h3 class="section-label">{{ t('system.warnings') }}</h3>
-            <div class="warning-list">
-              <span v-for="warning in systemStatus?.warnings || []" :key="warning" class="warning-item">{{ warning }}</span>
-              <span v-if="systemStatus && !systemStatus.warnings.length" class="warning-item ok">{{ t('system.noWarnings') }}</span>
-              <span v-else-if="!systemStatus" class="warning-item">{{ t('system.waitingCheck') }}</span>
+            <div class="h-px bg-[var(--border)] my-4" />
+            <h3 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-2.5">{{ t('system.storageStats') }}</h3>
+            <div class="grid gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden" style="grid-template-columns: repeat(4, 1fr);">
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.cosStorage') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ overview?.imageCost?.cosImageCount ?? 0 }} 张</strong>
+                <span class="block mt-0.5 text-[11px] text-[var(--text-muted)]">{{ t('system.avgPerImage') }} {{ (overview?.imageCost?.averageStoredMb ?? 0).toFixed(2) }} MB</span>
+              </div>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.supabaseStorage') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ overview?.imageCost?.supabaseImageCount ?? 0 }} 张</strong>
+                <span class="block mt-0.5 text-[11px] text-[var(--text-muted)]">{{ t('system.sampleDays') }} {{ overview?.imageCost?.sampleDays ?? 0 }} 天</span>
+              </div>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.estimatedMonthlyCost') }}</span>
+                <strong class="block text-[15px] font-semibold">¥{{ overview?.imageCost?.estimatedMonthlyCost?.toFixed(2) ?? '0.00' }}</strong>
+                <span class="block mt-0.5 text-[11px] text-[var(--text-muted)]">{{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span>
+              </div>
+              <div class="p-3 bg-[var(--surface)]">
+                <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">{{ t('system.totalImages') }}</span>
+                <strong class="block text-[15px] font-semibold">{{ (overview?.imageCost?.cosImageCount ?? 0) + (overview?.imageCost?.supabaseImageCount ?? 0) }} 张</strong>
+                <span class="block mt-0.5 text-[11px] text-[var(--text-muted)]">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}/张</span>
+              </div>
             </div>
 
-            <!-- System Table -->
-            <div class="table-wrap">
-              <table>
+            <div class="h-px bg-[var(--border)] my-4" />
+            <h3 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-2.5">{{ t('system.warnings') }}</h3>
+            <div class="flex flex-wrap gap-1.5 mb-4">
+              <span v-for="warning in systemStatus?.warnings || []" :key="warning" class="inline-flex items-center min-h-[26px] px-2.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600">{{ warning }}</span>
+              <span v-if="systemStatus && !systemStatus.warnings.length" class="inline-flex items-center min-h-[26px] px-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-600">{{ t('system.noWarnings') }}</span>
+              <span v-else-if="!systemStatus" class="inline-flex items-center min-h-[26px] px-2.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600">{{ t('system.waitingCheck') }}</span>
+            </div>
+
+            <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+              <table class="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
-                    <th>{{ t('system.table.module') }}</th>
-                    <th>{{ t('system.table.status') }}</th>
-                    <th>{{ t('system.table.records') }}</th>
-                    <th>{{ t('system.table.message') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('system.table.module') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('system.table.status') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('system.table.records') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('system.table.message') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="table in systemStatus?.data.tables || []" :key="table.key">
-                    <td>{{ table.label }}</td>
-                    <td :class="table.status === 'ok' ? 'text-positive' : 'text-negative'">{{ tableStatusLabel(table.status) }}</td>
-                    <td class="text-mono">{{ table.count ?? '-' }}</td>
-                    <td class="text-caption">{{ table.message }}</td>
+                  <tr v-for="table in systemStatus?.data.tables || []" :key="table.key" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                    <td class="px-3 py-2">{{ table.label }}</td>
+                    <td class="px-3 py-2" :class="table.status === 'ok' ? 'text-emerald-600' : 'text-red-500'">{{ tableStatusLabel(table.status) }}</td>
+                    <td class="px-3 py-2 font-mono text-[13px] font-medium">{{ table.count ?? '-' }}</td>
+                    <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ table.message }}</td>
                   </tr>
                   <tr v-if="!(systemStatus?.data.tables || []).length">
-                    <td colspan="4" class="empty-cell">{{ t('system.noResults') }}</td>
+                    <td colspan="4" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('system.noResults') }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1541,54 +1548,54 @@ onMounted(async () => {
         </section>
 
         <!-- ===== ANNOUNCEMENTS ===== -->
-        <section v-else-if="activeView === 'announcements'" class="view-section">
-          <div class="card">
-            <div class="card-header">
+        <section v-else-if="activeView === 'announcements'" class="flex flex-col gap-4">
+          <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h2 class="card-title">{{ t('announcements.title') }}</h2>
-                <span class="card-subtitle">{{ announcements.length }}</span>
+                <h2 class="text-sm font-semibold tracking-tight">{{ t('announcements.title') }}</h2>
+                <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ announcements.length }}</span>
               </div>
-              <button class="btn-secondary" :disabled="announcementsLoading" @click="refreshAnnouncements">{{ t('common.refresh') }}</button>
+              <Button variant="outline" size="sm" :disabled="announcementsLoading" @click="refreshAnnouncements">{{ t('common.refresh') }}</Button>
             </div>
 
-            <form class="announcement-form" @submit.prevent="createAnnouncement">
-              <label class="form-field">
-                <span class="form-label">{{ t('announcements.titleLabel') }}</span>
-                <input v-model.trim="announcementForm.title" type="text" maxlength="120" required />
+            <form class="flex flex-col gap-2.5 mb-4 pb-4 border-b border-[var(--border)]" @submit.prevent="createAnnouncement">
+              <label class="flex flex-col gap-1">
+                <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.titleLabel') }}</span>
+                <input v-model.trim="announcementForm.title" type="text" maxlength="120" required class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
               </label>
-              <label class="form-field full">
-                <span class="form-label">{{ t('announcements.bodyLabel') }}</span>
-                <textarea v-model.trim="announcementForm.body" rows="4" maxlength="4000" required />
+              <label class="flex flex-col gap-1" style="grid-column: 1 / -1;">
+                <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.bodyLabel') }}</span>
+                <textarea v-model.trim="announcementForm.body" rows="4" maxlength="4000" required class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-xs font-mono resize-y" />
               </label>
-              <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('announcements.publishBtn') }}</button>
+              <Button type="submit" :disabled="actionLoading">{{ t('announcements.publishBtn') }}</Button>
             </form>
 
-            <div class="table-wrap">
-              <table>
+            <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+              <table class="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
-                    <th>{{ t('announcements.table.updated') }}</th>
-                    <th>{{ t('announcements.table.status') }}</th>
-                    <th>{{ t('announcements.table.title') }}</th>
-                    <th>{{ t('announcements.table.body') }}</th>
-                    <th>{{ t('announcements.table.actions') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('announcements.table.updated') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('announcements.table.status') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('announcements.table.title') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('announcements.table.body') }}</th>
+                    <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('announcements.table.actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="ann in announcements" :key="ann.id">
-                    <td class="text-caption">{{ dateTime(ann.updatedAt) }}</td>
-                    <td><span class="badge" :class="ann.status === 'published' ? 'positive' : 'muted'">{{ announcementStatusLabel(ann.status) }}</span></td>
-                    <td class="text-title">{{ ann.title }}</td>
-                    <td class="ann-body-cell">{{ ann.body }}</td>
-                    <td>
-                      <div class="action-group">
-                        <button v-if="ann.status !== 'published'" class="btn-ghost" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'published')">{{ t('common.publish') }}</button>
-                        <button v-if="ann.status !== 'archived'" class="btn-ghost" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'archived')">{{ t('common.archive') }}</button>
+                  <tr v-for="ann in announcements" :key="ann.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                    <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(ann.updatedAt) }}</td>
+                    <td class="px-3 py-2"><Badge :variant="ann.status === 'published' ? 'default' : 'secondary'">{{ announcementStatusLabel(ann.status) }}</Badge></td>
+                    <td class="px-3 py-2 font-semibold">{{ ann.title }}</td>
+                    <td class="px-3 py-2 max-w-[400px] whitespace-pre-wrap break-keep-all text-xs text-[var(--text-secondary)]">{{ ann.body }}</td>
+                    <td class="px-3 py-2">
+                      <div class="flex gap-1 flex-wrap">
+                        <Button v-if="ann.status !== 'published'" variant="ghost" size="sm" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'published')">{{ t('common.publish') }}</Button>
+                        <Button v-if="ann.status !== 'archived'" variant="ghost" size="sm" :disabled="announcementActionId === ann.id" @click="setAnnouncementStatus(ann, 'archived')">{{ t('common.archive') }}</Button>
                       </div>
                     </td>
                   </tr>
                   <tr v-if="!announcements.length">
-                    <td colspan="5" class="empty-cell">{{ t('common.noData') }}</td>
+                    <td colspan="5" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('common.noData') }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1597,107 +1604,108 @@ onMounted(async () => {
         </section>
 
         <!-- ===== SETTINGS ===== -->
-        <section v-else-if="activeView === 'settings'" class="view-section">
-          <div class="two-col">
+        <section v-else-if="activeView === 'settings'" class="flex flex-col gap-4">
+          <div class="grid gap-4 max-lg:grid-cols-1" style="grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);">
             <!-- Runtime Config -->
-            <div class="card">
-              <div class="card-header">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
                 <div>
-                  <h2 class="card-title">{{ t('settings.runtimeConfig') }}</h2>
-                  <span class="card-subtitle">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span>
+                  <h2 class="text-sm font-semibold tracking-tight">{{ t('settings.runtimeConfig') }}</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span>
                 </div>
-                <button class="btn-secondary" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</button>
+                <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
               </div>
 
-              <form class="settings-form" @submit.prevent="saveSettings">
-                <div class="form-field">
-                  <span class="form-label">{{ t('settings.imagePrice') }}</span>
-                  <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required />
-                  <div class="cost-preview">
-                    <span v-for="item in settingsPricePreview" :key="item.label" class="cost-chip">{{ item.label }} {{ item.value }} 额度</span>
+              <form class="flex flex-col gap-3" @submit.prevent="saveSettings">
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imagePrice') }}</span>
+                  <input v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  <div class="flex flex-wrap gap-1.5 mt-1.5">
+                    <span v-for="item in settingsPricePreview" :key="item.label" class="inline-flex items-center min-h-6 px-2 rounded-md bg-[var(--bubble-bg)] border border-[var(--border)] text-[11px] text-[var(--text-muted)]">{{ item.label }} {{ item.value }} 额度</span>
                   </div>
                 </div>
-                <label class="form-field">
-                  <span class="form-label">{{ t('settings.responseModel') }}</span>
-                  <input v-model.trim="settingsForm.imageResponsesModel" type="text" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.responseModel') }}</span>
+                  <input v-model.trim="settingsForm.imageResponsesModel" type="text" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="form-field">
-                  <span class="form-label">{{ t('settings.imageModel') }}</span>
-                  <input v-model.trim="settingsForm.imageResponsesImageModel" type="text" />
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imageModel') }}</span>
+                  <input v-model.trim="settingsForm.imageResponsesImageModel" type="text" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                 </label>
-                <label class="check-row">
-                  <input v-model="settingsForm.imageAnalyticsEnabled" type="checkbox" />
-                  <span>{{ t('settings.analytics') }}</span>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="settingsForm.imageAnalyticsEnabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">{{ t('settings.analytics') }}</span>
                 </label>
-                <label class="check-row">
-                  <input v-model="settingsForm.imageEventsEnabled" type="checkbox" />
-                  <span>{{ t('settings.frontendEvents') }}</span>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="settingsForm.imageEventsEnabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">{{ t('settings.frontendEvents') }}</span>
                 </label>
-                <label class="check-row">
-                  <input v-model="settingsForm.canvasContextEnabled" type="checkbox" />
-                  <span>{{ t('settings.canvasContext') }}</span>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="settingsForm.canvasContextEnabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">{{ t('settings.canvasContext') }}</span>
                 </label>
-                <label class="check-row">
-                  <input v-model="settingsForm.freeGenerationEnabled" type="checkbox" />
-                  <span>{{ t('settings.freeGeneration') }}</span>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="settingsForm.freeGenerationEnabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">{{ t('settings.freeGeneration') }}</span>
                 </label>
-                <label class="check-row">
-                  <input v-model="settingsForm.guestGenerationEnabled" type="checkbox" />
-                  <span>{{ t('settings.guestGeneration') }}</span>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="settingsForm.guestGenerationEnabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">{{ t('settings.guestGeneration') }}</span>
                 </label>
-                <button class="btn-primary" type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}</button>
+                <Button type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}</Button>
               </form>
             </div>
 
             <!-- Admin Users -->
-            <div class="card">
-              <div class="card-header">
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
                 <div>
-                  <h2 class="card-title">{{ t('settings.adminUsers') }}</h2>
-                  <span class="card-subtitle">{{ adminRuleTotal }}</span>
+                  <h2 class="text-sm font-semibold tracking-tight">{{ t('settings.adminUsers') }}</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ adminRuleTotal }}</span>
                 </div>
-                <button class="btn-secondary" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</button>
+                <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
               </div>
 
-              <form v-if="canManageAdminUsers" class="inline-form cols-4" @submit.prevent="createAdminRule">
-                <input v-model.trim="adminUserForm.userId" type="text" :placeholder="t('settings.adminUserId')" />
-                <input v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" />
-                <input v-model.trim="adminUserForm.note" type="text" :placeholder="t('settings.adminNote')" />
-                <button class="btn-primary" type="submit" :disabled="actionLoading">{{ t('common.add') }}</button>
+              <form v-if="canManageAdminUsers" class="flex gap-2 items-end flex-wrap mb-4" style="grid-template-columns: repeat(4, 1fr);" @submit.prevent="createAdminRule">
+                <input v-model.trim="adminUserForm.userId" type="text" :placeholder="t('settings.adminUserId')" class="min-h-[30px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs flex-1 min-w-[100px]">
+                <input v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" class="min-h-[30px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs flex-1 min-w-[100px]">
+                <input v-model.trim="adminUserForm.note" type="text" :placeholder="t('settings.adminNote')" class="min-h-[30px] rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2 py-1 text-xs flex-1 min-w-[100px]">
+                <Button type="submit" :disabled="actionLoading">{{ t('common.add') }}</Button>
               </form>
-              <p v-else class="hint-text">{{ t('settings.noManagePermission') }}</p>
+              <p v-else class="text-[13px] text-[var(--text-muted)] mb-3">{{ t('settings.noManagePermission') }}</p>
 
-              <div class="table-wrap">
-                <table>
+              <div class="w-full overflow-x-auto rounded-md border border-[var(--border)]">
+                <table class="w-full border-collapse text-[13px]">
                   <thead>
                     <tr>
-                      <th>{{ t('settings.adminTable.account') }}</th>
-                      <th>{{ t('settings.adminTable.level') }}</th>
-                      <th>{{ t('settings.adminTable.source') }}</th>
-                      <th>{{ t('settings.adminTable.status') }}</th>
-                      <th>{{ t('settings.adminTable.updated') }}</th>
-                      <th>{{ t('settings.adminTable.actions') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.account') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.level') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.source') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.status') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.updated') }}</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">{{ t('settings.adminTable.actions') }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="rule in adminUserRules" :key="rule.id">
-                      <td>{{ adminRuleIdentity(rule) }}</td>
-                      <td><span class="badge">{{ adminRuleRoleLabel(rule) }}</span></td>
-                      <td class="text-caption">{{ adminRuleSource(rule) }}</td>
-                      <td :class="rule.enabled ? 'text-positive' : 'text-negative'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td>
-                      <td class="text-caption">{{ dateTime(rule.updatedAt) }}</td>
-                      <td>
-                        <button
-                          class="btn-ghost"
+                    <tr v-for="rule in adminUserRules" :key="rule.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                      <td class="px-3 py-2">{{ adminRuleIdentity(rule) }}</td>
+                      <td class="px-3 py-2"><Badge variant="secondary">{{ adminRuleRoleLabel(rule) }}</Badge></td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ adminRuleSource(rule) }}</td>
+                      <td class="px-3 py-2" :class="rule.enabled ? 'text-emerald-600' : 'text-red-500'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ dateTime(rule.updatedAt) }}</td>
+                      <td class="px-3 py-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id"
                           @click="setAdminRuleEnabled(rule, !rule.enabled)"
                         >
                           {{ rule.enabled ? t('common.disable') : t('common.enable') }}
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                     <tr v-if="!adminUserRules.length">
-                      <td colspan="6" class="empty-cell">{{ t('settings.noRules') }}</td>
+                      <td colspan="6" class="text-center text-[var(--text-muted)] py-6 px-3">{{ t('settings.noRules') }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1709,1044 +1717,3 @@ onMounted(async () => {
     </div>
   </div>
 </template>
-
-<style scoped>
-/* =====================================================
-   Recho AI Admin — Vercel-inspired Dashboard Design
-   ===================================================== */
-
-/* --- Seed Tokens (Light) --- */
-.admin-root {
-  --seed-bg: #ffffff;
-  --seed-fg: #171717;
-  --seed-primary: #0070f3;
-  --seed-surface: #ffffff;
-  --seed-surface-raised: #fafafa;
-  --seed-surface-sunken: #f5f5f5;
-  --seed-border: rgba(0, 0, 0, 0.08);
-  --seed-border-strong: #ebebeb;
-  --seed-muted: #666666;
-  --seed-success: #16a34a;
-  --seed-warning: #f5a623;
-  --seed-danger: #ee0000;
-  --seed-radius: 6px;
-  --seed-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --seed-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  /* Derived tokens */
-  --fg: var(--seed-fg);
-  --fg-secondary: color-mix(in srgb, var(--seed-fg) 60%, transparent);
-  --fg-muted: var(--seed-muted);
-  --surface: var(--seed-surface);
-  --surface-raised: var(--seed-surface-raised);
-  --surface-sunken: var(--seed-surface-sunken);
-  --border: var(--seed-border);
-  --border-strong: var(--seed-border-strong);
-  --success: var(--seed-success);
-  --warning: var(--seed-warning);
-  --danger: var(--seed-danger);
-  --radius: var(--seed-radius);
-  --font: var(--seed-font);
-  --mono: var(--seed-mono);
-  --shadow-card: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04);
-  --shadow-elevated: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04), 0 8px 8px -8px rgba(0,0,0,0.04);
-  --transition: 150ms ease;
-  --sidebar-w: 240px;
-  --sidebar-w-collapsed: 64px;
-  --topbar-h: 56px;
-
-  /* Backward-compatible aliases for child components */
-  --bg: var(--seed-bg);
-  --text-primary: var(--seed-fg);
-  --text-secondary: var(--seed-muted);
-  --text-muted: var(--seed-muted);
-  --text-link: var(--seed-primary);
-  --surface: var(--seed-surface);
-  --surface-soft: var(--seed-surface-sunken);
-  --surface-raised: var(--seed-surface-raised);
-  --border: var(--seed-border);
-  --border-strong: var(--seed-border-strong);
-  --input-bg: var(--seed-surface);
-  --header-bg: color-mix(in srgb, var(--seed-surface) 85%, transparent);
-  --bubble-bg: var(--seed-surface-sunken);
-  --hover-bg: var(--seed-surface-sunken);
-  --accent: var(--seed-success);
-  --accent-strong: var(--seed-success);
-  --accent-soft: color-mix(in srgb, var(--seed-success) 10%, transparent);
-  --info: var(--seed-primary);
-  --warn: var(--seed-warning);
-  --danger: var(--seed-danger);
-  --shadow-sm: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04);
-  --shadow-md: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.04), 0 8px 8px -8px rgba(0,0,0,0.04);
-}
-
-/* --- Dark Theme --- */
-.admin-root.dark {
-  --seed-bg: #000000;
-  --seed-fg: #ededed;
-  --seed-primary: #3291ff;
-  --seed-surface: #0a0a0a;
-  --seed-surface-raised: #111111;
-  --seed-surface-sunken: #080808;
-  --seed-border: rgba(255, 255, 255, 0.08);
-  --seed-border-strong: #262626;
-  --seed-muted: #888888;
-  --seed-success: #22c55e;
-  --seed-warning: #f5a623;
-  --seed-danger: #ff5b4f;
-  --shadow-card: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2);
-  --shadow-elevated: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2), 0 8px 8px -8px rgba(0,0,0,0.16);
-
-  /* Dark backward-compatible aliases */
-  --bg: var(--seed-bg);
-  --text-primary: var(--seed-fg);
-  --text-secondary: var(--seed-muted);
-  --text-muted: var(--seed-muted);
-  --text-link: var(--seed-primary);
-  --surface: var(--seed-surface);
-  --surface-soft: var(--seed-surface-sunken);
-  --surface-raised: var(--seed-surface-raised);
-  --border: var(--seed-border);
-  --border-strong: var(--seed-border-strong);
-  --input-bg: var(--seed-surface);
-  --header-bg: color-mix(in srgb, var(--seed-surface) 85%, transparent);
-  --bubble-bg: var(--seed-surface-sunken);
-  --hover-bg: var(--seed-surface-sunken);
-  --accent: var(--seed-success);
-  --accent-strong: var(--seed-success);
-  --accent-soft: color-mix(in srgb, var(--seed-success) 10%, transparent);
-  --info: var(--seed-primary);
-  --warn: var(--seed-warning);
-  --danger: var(--seed-danger);
-  --shadow-sm: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2);
-  --shadow-md: 0 0 0 1px var(--seed-border), 0 2px 2px rgba(0,0,0,0.2), 0 8px 8px -8px rgba(0,0,0,0.16);
-}
-
-/* --- Root Layout --- */
-.admin-root {
-  display: flex;
-  min-height: 100vh;
-  font-family: var(--font);
-  font-size: 14px;
-  color: var(--fg);
-  background: var(--seed-bg);
-  -webkit-font-smoothing: antialiased;
-  transition: background var(--transition), color var(--transition);
-}
-
-/* --- Sidebar --- */
-.sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: var(--sidebar-w);
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  z-index: 20;
-  transition: width var(--transition);
-  overflow: hidden;
-}
-
-.sidebar.collapsed {
-  width: var(--sidebar-w-collapsed);
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--topbar-h);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.brand-icon {
-  width: 24px;
-  height: 24px;
-  color: var(--fg);
-  flex-shrink: 0;
-}
-
-.brand-text {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-  white-space: nowrap;
-}
-
-.sidebar-toggle {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--fg-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.sidebar-toggle:hover {
-  background: var(--surface-sunken);
-  color: var(--fg);
-}
-
-.sidebar-nav {
-  flex: 1;
-  padding: 8px;
-  overflow-y: auto;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--fg-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-  transition: background var(--transition), color var(--transition);
-}
-
-.nav-item:hover {
-  background: var(--surface-sunken);
-  color: var(--fg);
-}
-
-.nav-item.active {
-  background: var(--surface-sunken);
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.nav-item svg {
-  flex-shrink: 0;
-}
-
-.nav-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-footer {
-  padding: 8px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.sidebar-action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  border: none;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.sidebar-action:hover {
-  background: var(--surface-sunken);
-  color: var(--fg);
-}
-
-.sidebar-links {
-  display: flex;
-  gap: 8px;
-  padding: 6px 10px;
-}
-
-.ext-link {
-  font-size: 12px;
-  color: var(--fg-muted);
-  text-decoration: none;
-}
-
-.ext-link:hover {
-  color: var(--fg);
-}
-
-.user-badge {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  margin-top: 4px;
-  border-top: 1px solid var(--border);
-}
-
-.user-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--fg);
-  flex-shrink: 0;
-}
-
-.user-detail {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.user-email {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.user-role {
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-/* --- Main Area --- */
-.main-area {
-  flex: 1;
-  margin-left: var(--sidebar-w);
-  transition: margin-left var(--transition);
-  min-width: 0;
-}
-
-.sidebar.collapsed ~ .main-area {
-  margin-left: var(--sidebar-w-collapsed);
-}
-
-/* --- Topbar --- */
-.topbar {
-  position: sticky;
-  top: 0;
-  height: var(--topbar-h);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  background: color-mix(in srgb, var(--surface) 85%, transparent);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  z-index: 10;
-}
-
-.topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.page-title {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.32px;
-}
-
-.mode-switch {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-}
-
-.mode-switch button {
-  padding: 4px 12px;
-  border: none;
-  border-radius: calc(var(--radius) - 2px);
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.mode-switch button.active {
-  background: var(--surface);
-  color: var(--fg);
-  box-shadow: var(--shadow-card);
-}
-
-/* --- Auth States --- */
-.auth-state {
-  display: grid;
-  place-items: center;
-  gap: 12px;
-  min-height: 400px;
-  text-align: center;
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--seed-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* --- Content --- */
-.content {
-  padding: 24px;
-  max-width: 1400px;
-}
-
-.view-section {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* --- Feedback --- */
-.feedback {
-  min-height: 0;
-}
-
-.feedback-msg {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 6px 12px;
-  border-radius: var(--radius);
-  font-size: 13px;
-  font-weight: 500;
-  margin-bottom: 8px;
-}
-
-.feedback-msg.error {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-}
-
-.feedback-msg.success {
-  background: color-mix(in srgb, var(--success) 10%, transparent);
-  color: var(--success);
-}
-
-/* --- Cards --- */
-.card {
-  background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 20px;
-}
-
-.card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.card-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.32px;
-}
-
-.card-subtitle {
-  display: block;
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* --- KPI Grid --- */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.kpi-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
-.kpi-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
-.kpi-grid.cols-6 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-
-.kpi-item {
-  padding: 12px 14px;
-  background: var(--surface);
-}
-
-.kpi-label {
-  display: block;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
-}
-
-.kpi-value {
-  display: block;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.48px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.kpi-value.sm {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.kpi-sub {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-.cost-big {
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.96px;
-  white-space: nowrap;
-}
-
-.cost-big small {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--fg-muted);
-}
-
-/* --- Two Column Layout --- */
-.two-col {
-  display: grid;
-  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
-  gap: 16px;
-}
-
-/* --- Buttons --- */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0 14px;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--fg);
-  color: var(--surface);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: opacity var(--transition);
-}
-
-.btn-primary:hover { opacity: 0.85; }
-.btn-primary:disabled { opacity: 0.4; cursor: default; }
-
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--fg);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  box-shadow: var(--shadow-card);
-  transition: background var(--transition);
-}
-
-.btn-secondary:hover { background: var(--surface-sunken); }
-.btn-secondary:disabled { opacity: 0.4; cursor: default; }
-
-.btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--fg-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-ghost:hover { background: var(--surface-sunken); color: var(--fg); }
-.btn-ghost:disabled { opacity: 0.4; cursor: default; }
-
-button:disabled { cursor: default; }
-
-/* --- Inputs --- */
-input, select, textarea {
-  width: 100%;
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--fg);
-  font-family: var(--font);
-  font-size: 13px;
-  box-shadow: var(--shadow-card);
-  transition: border-color var(--transition);
-}
-
-input:focus, select:focus, textarea:focus {
-  outline: none;
-  border-color: var(--seed-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--seed-primary) 20%, transparent);
-}
-
-.input-sm {
-  max-width: 140px;
-  min-height: 30px;
-  font-size: 12px;
-}
-
-textarea {
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-select {
-  cursor: pointer;
-  min-width: 100px;
-}
-
-/* --- Filter Group --- */
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-/* --- Search Row --- */
-.search-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-/* --- Inline Form --- */
-.inline-form {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-
-.inline-form > * { flex: 1; min-width: 100px; }
-.inline-form > button { flex: 0 0 auto; }
-
-/* --- Form Grid --- */
-.form-grid {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.form-field.full { grid-column: 1 / -1; }
-
-.form-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg-muted);
-}
-
-.form-actions {
-  display: flex;
-  align-items: flex-end;
-}
-
-/* --- Settings Form --- */
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.check-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  cursor: pointer;
-}
-
-.check-row input[type="checkbox"] {
-  width: auto;
-  min-height: auto;
-  box-shadow: none;
-}
-
-.check-row span {
-  font-size: 13px;
-  color: var(--fg);
-}
-
-.cost-preview {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.cost-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 8px;
-  border-radius: var(--radius);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-/* --- Announcement Form --- */
-.announcement-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* --- Tables --- */
-.table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-th, td {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: middle;
-}
-
-th {
-  background: var(--surface-sunken);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  white-space: nowrap;
-}
-
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--surface-sunken); }
-
-.empty-cell {
-  text-align: center;
-  color: var(--fg-muted);
-  padding: 24px 12px;
-}
-
-.ann-body-cell {
-  max-width: 400px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  color: var(--fg-secondary);
-}
-
-/* --- User List --- */
-.user-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 480px;
-  overflow-y: auto;
-}
-
-.user-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 38px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--fg);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
-  transition: border-color var(--transition), background var(--transition);
-}
-
-.user-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.user-row:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-sunken);
-}
-
-.user-row.active {
-  border-color: var(--seed-primary);
-  background: color-mix(in srgb, var(--seed-primary) 6%, transparent);
-}
-
-/* --- Badges --- */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 2px 8px;
-  border-radius: var(--radius);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  background: var(--surface-sunken);
-  color: var(--fg-secondary);
-  border: 1px solid var(--border);
-}
-
-.badge.positive {
-  background: color-mix(in srgb, var(--success) 10%, transparent);
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 20%, transparent);
-}
-
-.badge.negative {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 20%, transparent);
-}
-
-.badge.muted {
-  background: var(--surface-sunken);
-  color: var(--fg-muted);
-}
-
-/* --- Status Pill --- */
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 4px 10px;
-  border-radius: var(--radius);
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  background: var(--surface-sunken);
-  color: var(--fg-muted);
-}
-
-.status-pill.ok {
-  border-color: color-mix(in srgb, var(--success) 30%, transparent);
-  background: color-mix(in srgb, var(--success) 10%, transparent);
-  color: var(--success);
-}
-
-.status-pill.warning {
-  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  color: #b45309;
-}
-
-.status-pill.error {
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-}
-
-/* --- Action Group --- */
-.action-group {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-/* --- Created Output --- */
-.created-output {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.created-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-/* --- Warning List --- */
-.warning-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 16px;
-}
-
-.warning-item {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 4px 10px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
-  font-size: 12px;
-  color: var(--warning);
-}
-
-.warning-item.ok {
-  background: color-mix(in srgb, var(--success) 10%, transparent);
-  border-color: color-mix(in srgb, var(--success) 20%, transparent);
-  color: var(--success);
-}
-
-/* --- Section Divider --- */
-.section-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 16px 0;
-}
-
-.section-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 10px;
-}
-
-/* --- Utility --- */
-.text-positive { color: var(--success) !important; font-weight: 600; }
-.text-negative { color: var(--danger) !important; font-weight: 600; }
-.text-muted { color: var(--fg-muted); }
-.text-caption { font-size: 12px; color: var(--fg-muted); }
-.text-mono { font-family: var(--mono); font-size: 13px; font-weight: 500; }
-.text-title { font-weight: 600; }
-.empty-state { padding: 24px; text-align: center; color: var(--fg-muted); }
-.hint-text { font-size: 13px; color: var(--fg-muted); margin-bottom: 12px; }
-
-/* --- Responsive --- */
-@media (max-width: 1024px) {
-  .sidebar {
-    width: var(--sidebar-w-collapsed);
-  }
-  .main-area {
-    margin-left: var(--sidebar-w-collapsed);
-  }
-  .sidebar .brand-text,
-  .sidebar .nav-label,
-  .sidebar .sidebar-action span,
-  .sidebar .sidebar-links,
-  .sidebar .user-badge {
-    display: none;
-  }
-  .two-col { grid-template-columns: 1fr; }
-  .kpi-grid.cols-4,
-  .kpi-grid.cols-5 { grid-template-columns: repeat(3, 1fr); }
-}
-
-@media (max-width: 768px) {
-  .content { padding: 16px; }
-  .topbar { padding: 0 16px; }
-  .kpi-grid,
-  .kpi-grid.cols-4,
-  .kpi-grid.cols-5,
-  .kpi-grid.cols-6 { grid-template-columns: repeat(2, 1fr); }
-  .form-grid.cols-3 { grid-template-columns: 1fr; }
-  .inline-form { flex-direction: column; }
-  .inline-form > * { min-width: auto; }
-  .filter-group { flex-direction: column; align-items: stretch; }
-  .filter-group select, .filter-group input { max-width: none; }
-}
-</style>
