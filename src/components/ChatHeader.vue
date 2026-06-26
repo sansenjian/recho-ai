@@ -44,9 +44,9 @@ defineEmits<{
 
 <template>
   <header
-    class="app-topbar sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/95 px-2 backdrop-blur-xl sm:gap-4 sm:px-4 lg:px-6"
+    class="sticky top-0 z-30 flex h-14 w-full max-w-[100vw] shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border bg-background/95 px-2 backdrop-blur-xl sm:gap-4 sm:px-4 lg:px-6"
   >
-    <div class="topbar-primary flex min-w-0 items-center gap-2 sm:gap-3">
+    <div class="flex min-w-0 flex-auto items-center gap-2 sm:gap-3">
       <Button
         v-if="!showImagePanel"
         variant="ghost"
@@ -59,19 +59,19 @@ defineEmits<{
         <Menu v-else class="h-4 w-4" />
       </Button>
 
-      <div class="brand-lockup flex shrink-0 items-center gap-2 text-foreground">
+      <div class="flex shrink-0 items-center gap-2 text-foreground max-[480px]:hidden">
         <Zap class="h-5 w-5" />
         <span class="hidden text-sm font-semibold tracking-[-0.24px] sm:inline">Recho</span>
       </div>
 
       <div
-        class="workspace-switcher"
+        class="flex shrink-0 items-center gap-1 rounded-[var(--radius-lg,8px)] border border-border bg-muted/70 p-1 shadow-sm"
         aria-label="工作区切换"
       >
         <Button
           variant="ghost"
           size="sm"
-          class="workspace-switcher-button"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
           :class="cn(
             !showImagePanel
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
@@ -86,7 +86,7 @@ defineEmits<{
         <Button
           variant="ghost"
           size="sm"
-          class="workspace-switcher-button"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
           :class="cn(
             showImagePanel
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
@@ -110,12 +110,12 @@ defineEmits<{
         v-if="!showImagePanel"
         variant="outline"
         size="sm"
-        class="new-chat-button h-8 shrink-0 gap-1.5 px-2.5 text-xs font-medium"
+        class="h-8 shrink-0 gap-1.5 px-2.5 text-xs font-medium max-[900px]:w-8 max-[900px]:px-0 max-[380px]:hidden"
         title="新对话"
         @click="$emit('newChat')"
       >
         <Plus class="h-3.5 w-3.5" />
-        <span class="new-chat-label">新对话</span>
+        <span class="max-[900px]:hidden">新对话</span>
       </Button>
 
       <Button
@@ -144,173 +144,21 @@ defineEmits<{
       <Button
         variant="outline"
         size="sm"
-        class="auth-chip"
+        class="w-[132px] shrink-0 justify-start gap-[7px] overflow-hidden px-2.5 lg:w-[132px] md:w-[112px] sm:w-[104px] max-[420px]:w-24 max-[640px]:w-[104px]"
         :disabled="authLoading"
         :title="authEmail || '登录'"
         @click="$emit('openAuth')"
       >
         <span
-          class="auth-chip-dot"
+          class="h-[7px] w-[7px] shrink-0 rounded-full"
           :class="{
             'bg-muted-foreground': !authEmail && authReady && !authLoading,
             'bg-foreground': !!authEmail,
             'bg-amber-500': (!authReady || authLoading),
           }"
         />
-        <span class="auth-chip-label">{{ authLabel }}</span>
+        <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ authLabel }}</span>
       </Button>
     </div>
   </header>
 </template>
-
-<style scoped>
-.app-topbar {
-  width: 100%;
-  max-width: 100vw;
-  overflow: hidden;
-  padding-inline: 16px;
-}
-
-.topbar-primary {
-  flex: 1 1 auto;
-}
-
-.workspace-switcher {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--muted) / 0.7);
-  box-shadow: var(--shadow-sm);
-}
-
-.workspace-switcher-button {
-  min-width: 68px;
-  height: 28px;
-  gap: 6px;
-  padding: 0 12px;
-  border-radius: var(--radius-md, 7px);
-  font-size: 13px;
-  line-height: 1;
-}
-
-.auth-chip {
-  width: 132px;
-  max-width: 132px;
-  min-width: 0;
-  flex: 0 1 132px;
-  justify-content: flex-start;
-  gap: 7px;
-  overflow: hidden;
-  padding: 0 10px;
-}
-
-.auth-chip-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-}
-
-.auth-chip-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 1024px) {
-  .auth-chip {
-    width: 112px;
-    max-width: 112px;
-    flex-basis: 112px;
-    gap: 7px;
-    padding: 0 9px;
-  }
-}
-
-@media (max-width: 900px) {
-  .new-chat-button {
-    width: 32px;
-    padding: 0;
-  }
-
-  .new-chat-label {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .app-topbar {
-    gap: 8px;
-    padding-inline: 10px;
-  }
-
-  .workspace-switcher {
-    padding: 4px;
-  }
-
-  .workspace-switcher-button {
-    min-width: 64px;
-    padding: 0 9px;
-    font-size: 12px;
-  }
-
-  .auth-chip {
-    width: 104px;
-    max-width: 104px;
-    flex-basis: 104px;
-    justify-content: flex-start;
-    padding: 0 9px;
-  }
-}
-
-@media (max-width: 480px) {
-  .brand-lockup {
-    display: none;
-  }
-}
-
-@media (max-width: 420px) {
-  .app-topbar {
-    padding-inline: 8px;
-  }
-
-  .topbar-primary {
-    gap: 6px;
-  }
-
-  .workspace-switcher {
-    gap: 3px;
-    padding: 3px;
-  }
-
-  .workspace-switcher-button {
-    min-width: 54px;
-    gap: 4px;
-    padding: 0 6px;
-  }
-
-  .auth-chip {
-    width: 96px;
-    max-width: 96px;
-    flex-basis: 96px;
-    padding: 0 8px;
-  }
-}
-
-@media (max-width: 380px) {
-  .new-chat-button {
-    display: none;
-  }
-
-  .auth-chip {
-    width: 92px;
-    max-width: 92px;
-    flex-basis: 92px;
-  }
-}
-</style>

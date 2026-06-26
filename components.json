@@ -1,6 +1,6 @@
 {
   "$schema": "https://shadcn-vue.com/schema.json",
-  "style": "new-york",
+  "style": "reka-nova",
   "typescript": true,
   "tailwind": {
     "config": "",
@@ -18,5 +18,9 @@
   },
   "iconLibrary": "lucide",
   "pointer": false,
-  "rtl": false
+  "rtl": false,
+  "font": "geist-sans",
+  "menuColor": "default",
+  "menuAccent": "subtle",
+  "registries": {}
 }

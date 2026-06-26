@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ZoomOut, ZoomIn, Download, X } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { ImageViewerState } from '../lib/image-canvas-model'
 
 defineProps<{
@@ -21,57 +23,87 @@ function handleWheel(event: WheelEvent) {
 
 <template>
   <Teleport to="body">
-    <div class="image-viewer-overlay" @pointerdown.self="emit('close')">
-      <div class="image-viewer-shell" @pointerdown.stop>
-        <header class="image-viewer-header">
-          <div class="image-viewer-meta">
-            <strong>{{ viewer.title }}</strong>
-            <span>
+    <div
+      class="fixed inset-0 z-[120] grid place-items-center p-6 bg-[rgba(10,15,25,0.78)] backdrop-blur-[10px] max-md:p-2.5"
+      @pointerdown.self="emit('close')"
+    >
+      <div
+        class="grid grid-rows-[auto_1fr] w-[min(1120px,calc(100vw-48px))] max-w-full h-[min(88vh,920px)] border border-white/16 rounded-xl bg-[rgba(10,15,25,0.96)] shadow-[0_28px_90px_rgba(0,0,0,0.38)] overflow-hidden max-md:w-[calc(100vw-20px)] max-md:h-[min(88vh,calc(100dvh-20px))]"
+        @pointerdown.stop
+      >
+        <header
+          class="flex items-center justify-between gap-4 min-h-[58px] px-[18px] py-0 border-b border-white/10 text-white max-md:items-start max-md:flex-col max-md:gap-2.5 max-md:min-h-0 max-md:p-3"
+        >
+          <div class="grid gap-1 min-w-0">
+            <strong class="overflow-hidden text-sm font-black text-ellipsis whitespace-nowrap">
+              {{ viewer.title }}
+            </strong>
+            <span class="overflow-hidden text-xs text-[rgba(226,232,240,0.78)] text-ellipsis whitespace-nowrap">
               {{ viewer.caption }}
-              <small v-if="viewer.loadingPreview">正在加载预览图...</small>
+              <small v-if="viewer.loadingPreview" class="ml-2 text-[rgba(255,255,255,0.58)] text-[11px] font-extrabold">
+                正在加载预览图...
+              </small>
             </span>
           </div>
-          <div class="image-viewer-controls">
-            <button type="button" title="缩小" @click="emit('zoom', -0.12)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M8 11h6" />
-                <path d="m16 16 4 4" />
-              </svg>
-            </button>
-            <button type="button" title="复位" @click="emit('reset-zoom')">1:1</button>
-            <span class="image-viewer-zoom">{{ Math.round((viewer.zoom || 1) * 100) }}%</span>
-            <button type="button" title="放大" @click="emit('zoom', 0.12)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M8 11h6" />
-                <path d="M11 8v6" />
-                <path d="m16 16 4 4" />
-              </svg>
-            </button>
-            <button
-              type="button"
+          <div class="inline-flex items-center gap-2 max-md:w-full max-md:flex-wrap">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="min-w-[34px] h-[34px] border border-white/16 rounded-lg bg-white/[0.08] text-white hover:bg-white/[0.16] max-md:min-w-11 max-md:h-11"
+              title="缩小"
+              @click="emit('zoom', -0.12)"
+            >
+              <ZoomOut class="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              class="min-w-[34px] h-[34px] border border-white/16 rounded-lg bg-white/[0.08] text-white hover:bg-white/[0.16] text-xs max-md:min-w-11 max-md:h-11"
+              title="复位"
+              @click="emit('reset-zoom')"
+            >
+              1:1
+            </Button>
+            <span
+              class="inline-flex items-center justify-center min-w-[62px] h-[34px] px-2.5 rounded-lg bg-white/[0.08] text-[rgba(255,255,255,0.88)] text-xs font-extrabold max-md:min-w-11 max-md:h-11"
+            >
+              {{ Math.round((viewer.zoom || 1) * 100) }}%
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="min-w-[34px] h-[34px] border border-white/16 rounded-lg bg-white/[0.08] text-white hover:bg-white/[0.16] max-md:min-w-11 max-md:h-11"
+              title="放大"
+              @click="emit('zoom', 0.12)"
+            >
+              <ZoomIn class="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="min-w-[34px] h-[34px] border border-white/16 rounded-lg bg-white/[0.08] text-white hover:bg-white/[0.16] disabled:opacity-[0.46] disabled:cursor-not-allowed max-md:min-w-11 max-md:h-11"
               title="下载"
               :disabled="isDownloading"
               @pointerenter="emit('preload-download')"
               @focus="emit('preload-download')"
               @click="emit('download')"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
-                <path d="M12 3v12" />
-                <path d="m7 10 5 5 5-5" />
-                <path d="M5 19h14" />
-              </svg>
-            </button>
-            <button type="button" class="image-viewer-close" title="关闭" @click="emit('close')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
-                <path d="M18 6 6 18" />
-                <path d="m6 6 12 12" />
-              </svg>
-            </button>
+              <Download class="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="min-w-[34px] h-[34px] border border-white/16 rounded-lg bg-white/[0.08] text-white hover:bg-white/[0.16] max-md:min-w-11 max-md:h-11"
+              title="关闭"
+              @click="emit('close')"
+            >
+              <X class="w-4 h-4" />
+            </Button>
           </div>
         </header>
-        <div class="image-viewer-stage" @wheel.prevent="handleWheel">
+        <div
+          class="grid place-items-center min-h-0 overflow-auto p-6 max-md:p-3"
+          @wheel.prevent="handleWheel"
+        >
           <img
             :src="viewer.imageUrl"
             :alt="viewer.caption"
@@ -80,165 +112,10 @@ function handleWheel(event: WheelEvent) {
               height: `${Math.round(viewer.zoom * 100)}%`,
             }"
             draggable="false"
+            class="min-w-0 min-h-0 object-contain select-none"
           >
         </div>
       </div>
     </div>
   </Teleport>
 </template>
-
-<style scoped>
-.image-viewer-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(10, 15, 25, 0.78);
-  backdrop-filter: blur(10px);
-}
-
-.image-viewer-shell {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  width: min(1120px, calc(100vw - 48px));
-  max-width: 100%;
-  height: min(88vh, 920px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
-  background: rgba(10, 15, 25, 0.96);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
-  overflow: hidden;
-}
-
-.image-viewer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 0 14px 0 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-.image-viewer-meta {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.image-viewer-meta strong {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.image-viewer-meta span {
-  overflow: hidden;
-  color: rgba(226, 232, 240, 0.78);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.image-viewer-meta small {
-  margin-left: 8px;
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.image-viewer-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.image-viewer-controls button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  cursor: pointer;
-}
-
-.image-viewer-controls button:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.image-viewer-close {
-  color: #fff;
-}
-
-.image-viewer-zoom {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 62px;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.image-viewer-stage {
-  display: grid;
-  place-items: center;
-  min-height: 0;
-  overflow: auto;
-  padding: 24px;
-}
-
-.image-viewer-stage img {
-  min-width: 0;
-  min-height: 0;
-  object-fit: contain;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-@media (max-width: 768px) {
-  .image-viewer-overlay {
-    padding: 10px;
-  }
-
-  .image-viewer-shell {
-    width: calc(100vw - 20px);
-    height: min(88vh, calc(100dvh - 20px));
-  }
-
-  .image-viewer-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 0;
-    padding: 12px;
-  }
-
-  .image-viewer-controls {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .image-viewer-controls button {
-    min-width: 44px;
-    height: 44px;
-  }
-
-  .image-viewer-stage {
-    padding: 12px;
-  }
-}
-</style>
