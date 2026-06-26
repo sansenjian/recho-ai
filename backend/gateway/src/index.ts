@@ -32,6 +32,8 @@ app.use((req, res, next) => {
     console.warn('[server] response timeout exceeded for', req.method, req.url)
     if (!res.headersSent) {
       res.status(504).json({ error: '请求超时，请稍后重试。' })
+    } else {
+      res.destroy()
     }
   })
   next()

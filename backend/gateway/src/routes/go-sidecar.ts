@@ -145,6 +145,17 @@ router.use(async (req: Request, res: Response, next) => {
   const body = requestBody(req)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
+
+  // Abort upstream request when client disconnects. Clear the timeout so the
+  // timer doesn't fire after we've already aborted, tying the controller's
+  // lifecycle explicitly to the request.
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      clearTimeout(timeout)
+      controller.abort()
+    }
+  })
+
   const startedAt = Date.now()
   const trackImageAttempt = isImageGenerateRequest(req)
 
@@ -175,11 +186,21 @@ router.use(async (req: Request, res: Response, next) => {
 
     if (trackImageAttempt) {
       if (!shouldBufferImageAttemptBody(upstream.headers.get('content-type'), upstream.headers.get('content-length'))) {
+        const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
+        try {
+          await pipeline(responseStream, res)
+        } catch (streamErr) {
+          console.warn('[go-sidecar] stream pipeline failed:', safeErrorDetail(streamErr))
+          // Record as failed if it was a 2xx that failed mid-stream
+          void recordStreamedImageAttempt(req, 500, startedAt).catch((err) => {
+            console.warn('[go-sidecar] streamed image attempt record skipped:', safeErrorDetail(err))
+          })
+          return
+        }
+        // Only record success if pipeline completed
         void recordStreamedImageAttempt(req, upstream.status, startedAt).catch((err) => {
           console.warn('[go-sidecar] streamed image attempt record skipped:', safeErrorDetail(err))
         })
-        const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
-        await pipeline(responseStream, res)
         return
       }
 
