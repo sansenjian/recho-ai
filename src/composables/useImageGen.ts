@@ -458,6 +458,7 @@ export function useImageGen() {
   const { user } = useAuthSession()
   const { setCreditBalance } = useCredits()
   const isGenerating = ref(false)
+  const abortController = ref<AbortController | null>(null)
   const isLoadingHistory = ref(false)
   const hasMoreHistory = ref(false)
   const nextHistoryOffset = ref<number | null>(null)
@@ -501,6 +502,7 @@ export function useImageGen() {
   )
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage[] | null> {
+    if (isGenerating.value) return null
     error.value = null
     isGenerating.value = true
 
@@ -514,6 +516,7 @@ export function useImageGen() {
     }
 
     const controller = new AbortController()
+    abortController.value = controller
     const timeoutId = window.setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
     const requestStartedAt = Date.now()
     const expectedPrompt = normalizedPrompt(options.userPrompt || options.displayPrompt || prompt)
@@ -546,7 +549,7 @@ export function useImageGen() {
         setCreditBalance(data.creditBalance.balance)
       }
       const images = (data.images || [])
-        .filter(image => image?.dataUrl || image?.previewUrl || image?.thumbnailUrl)
+        .filter(image => image?.dataUrl || image?.previewUrl || image?.thumbnailUrl || image?.storagePath)
       if (!images.length) {
         throw new Error('no image returned')
       }
@@ -573,43 +576,47 @@ export function useImageGen() {
       return imagesWithReferences
     } catch (err: any) {
       if (isRecoverableGenerationError(err)) {
-        const identity = await getAuthIdentity()
-        const scope: ImageHistoryScope = identity.userId ? 'mine' : 'public'
-        const recoveredHistory = await loadRemoteHistory(0, scope, identity)
-        const recoveredImages = recoveredHistory.images
-          .filter(image => historyMatchesRequest(image, expectedPrompt, requestStartedAt))
-          .slice(0, expectedCount)
-
-        if (recoveredImages.length) {
-          const imagesWithReferences: GeneratedImage[] = recoveredImages.map(image => ({
-            ...image,
-            references: image.references?.length
-              ? image.references.map(reference => ({ ...reference }))
-              : requestReferences.map(reference => ({ ...reference })),
-          }))
-          generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
+        try {
+          const identity = await getAuthIdentity()
           if (!identity.userId) {
-            void saveHistory(generatedImages.value)
-          } else {
+            // Anonymous users have no remote history to recover from
+            throw err
+          }
+          const scope: ImageHistoryScope = 'mine'
+          const recoveredHistory = await loadRemoteHistory(0, scope, identity)
+          const recoveredImages = recoveredHistory.images
+            .filter(image => historyMatchesRequest(image, expectedPrompt, requestStartedAt))
+            .slice(0, expectedCount)
+
+          if (recoveredImages.length) {
+            const imagesWithReferences: GeneratedImage[] = recoveredImages.map(image => ({
+              ...image,
+              references: image.references?.length
+                ? image.references.map(reference => ({ ...reference }))
+                : requestReferences.map(reference => ({ ...reference })),
+            }))
+            generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
             hasMoreHistory.value = true
-          }
-          if (galleryLoaded.value) {
-            const publicImages = imagesWithReferences.filter(isPublicGalleryImage)
-            if (publicImages.length) {
-              galleryImages.value = uniqueHistory([...publicImages, ...galleryImages.value], MAX_GALLERY_HISTORY)
+            if (galleryLoaded.value) {
+              const publicImages = imagesWithReferences.filter(isPublicGalleryImage)
+              if (publicImages.length) {
+                galleryImages.value = uniqueHistory([...publicImages, ...galleryImages.value], MAX_GALLERY_HISTORY)
+              }
             }
+            error.value = null
+            return imagesWithReferences
           }
-          error.value = null
-          return imagesWithReferences
+          console.debug('[image] generation recovery found no matching history', {
+            userId: identity.userId || null,
+            scope,
+            expectedPrompt,
+            expectedCount,
+            requestStartedAt,
+            error: err instanceof Error ? err.message : String(err || ''),
+          })
+        } catch (recoveryErr) {
+          // Recovery failed (or anonymous user with no remote history); fall through to show original error
         }
-        console.debug('[image] generation recovery found no matching history', {
-          userId: identity.userId || null,
-          scope,
-          expectedPrompt,
-          expectedCount,
-          requestStartedAt,
-          error: err instanceof Error ? err.message : String(err || ''),
-        })
       }
       error.value = err?.name === 'AbortError'
         ? '图片生成请求超时，请减少参考图数量或稍后重试。'
@@ -619,6 +626,7 @@ export function useImageGen() {
       return null
     } finally {
       window.clearTimeout(timeoutId)
+      abortController.value = null
       isGenerating.value = false
     }
   }
@@ -707,8 +715,13 @@ export function useImageGen() {
     }
   }
 
+  function cancelGeneration() {
+    abortController.value?.abort()
+  }
+
   return {
     isGenerating,
+    abortController,
     isLoadingHistory,
     hasMoreHistory,
     isLoadingGallery,
@@ -718,6 +731,7 @@ export function useImageGen() {
     generatedImages,
     galleryImages,
     generate,
+    cancelGeneration,
     removeImage,
     clearHistory,
     loadMoreHistory,
