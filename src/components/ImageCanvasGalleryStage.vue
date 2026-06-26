@@ -92,16 +92,16 @@ function handleScroll(event: Event) {
 <template>
   <section
     ref="stageRef"
-    class="gallery-stage relative flex-1 min-w-0 overflow-y-auto bg-secondary py-[26px] px-[clamp(18px,3vw,42px)] max-md:p-3 max-[460px]:p-2"
+    class="gallery-stage relative flex-1 min-w-0 overflow-y-auto bg-secondary pt-4 pb-[26px] px-[clamp(18px,3vw,42px)] max-md:p-3 max-[460px]:p-2"
     @scroll.passive="handleScroll"
   >
-    <div class="gallery-header mx-auto mb-5 grid max-w-[1540px] items-start gap-[14px] max-md:flex-col max-md:items-stretch max-md:gap-3">
-      <div class="gallery-heading flex min-w-0 flex-wrap items-baseline gap-[10px] max-[460px]:gap-[6px]">
-        <span class="text-xs font-extrabold text-muted-foreground">作品广场</span>
-        <h2 class="m-0 text-[28px] tracking-normal text-foreground max-[460px]:text-[22px]">生成作品</h2>
-        <p class="m-0 text-xs font-extrabold text-muted-foreground">{{ filteredCount }} / {{ sourceCount }}</p>
+    <div class="gallery-header mx-auto mb-5 flex max-w-[1540px] items-center justify-between gap-[14px] max-md:flex-col max-md:items-stretch max-md:gap-3">
+      <div class="gallery-heading flex min-w-0 shrink-0 flex-wrap items-baseline gap-[10px] max-[460px]:gap-[6px]">
+        <span class="text-sm font-medium text-muted-foreground">作品广场</span>
+        <h2 class="m-0 shrink-0 text-[22px] font-medium tracking-normal text-foreground max-[460px]:text-[20px]">生成作品</h2>
+        <p class="m-0 shrink-0 text-xs font-medium text-muted-foreground">{{ filteredCount }} / {{ sourceCount }}</p>
       </div>
-      <div class="gallery-toolbar flex min-w-0 w-full items-center justify-start gap-[10px] max-md:flex-col max-md:items-stretch">
+      <div class="gallery-toolbar flex min-w-0 shrink-0 items-center justify-start gap-[14px] max-md:w-full max-md:flex-col max-md:items-stretch">
         <div
           class="gallery-filter-group inline-flex gap-[3px] rounded-lg border border-border bg-muted p-[3px] max-md:w-full max-[460px]:grid max-[460px]:grid-cols-3"
           role="tablist"
@@ -114,7 +114,7 @@ function handleScroll(event: Event) {
             variant="ghost"
             size="sm"
             :class="[
-              'h-[34px] px-3 text-xs font-extrabold max-md:min-h-[42px] max-md:flex-1 max-[460px]:min-w-0',
+              'h-[34px] px-3 text-xs font-semibold max-md:min-h-[42px] max-md:flex-1 max-[460px]:min-w-0',
               filter === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
             ]"
             @click="emit('update:filter', option.value)"
@@ -136,7 +136,7 @@ function handleScroll(event: Event) {
           type="button"
           variant="outline"
           size="sm"
-          class="min-h-[34px] px-3 text-xs font-extrabold disabled:opacity-[0.42] disabled:cursor-default max-md:min-h-[42px]"
+          class="h-[34px] px-3 text-xs font-semibold disabled:opacity-[0.42] disabled:cursor-default max-md:min-h-[42px]"
           :disabled="!hasFilter"
           @click="resetFilters"
         >
@@ -145,7 +145,7 @@ function handleScroll(event: Event) {
       </div>
     </div>
 
-    <div v-if="images.length" class="gallery-grid mx-auto grid max-w-[1540px] grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] items-start gap-4 max-md:grid-cols-1 max-md:gap-3" aria-live="polite">
+    <div v-if="images.length" class="gallery-grid mx-auto grid max-w-[1540px] gap-4 max-md:grid-cols-1 max-md:gap-3" aria-live="polite" style="grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));">
       <ImageGalleryCard
         v-for="image in images"
         :key="image.id"

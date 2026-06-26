@@ -1103,7 +1103,7 @@ onUnmounted(() => {
   <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
     <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
       <!-- Top workspace switcher -->
-      <div class="absolute top-0 left-0 right-0 z-20 flex items-center gap-2 mx-3.5 mt-4 p-1 w-max border border-border rounded-lg bg-muted pointer-events-auto non-selectable max-md:relative max-md:top-auto max-md:left-auto max-md:right-auto max-md:w-auto max-md:mx-2.5 max-md:mt-2.5 max-sm:mx-2 max-sm:mt-2 max-sm:gap-1 max-sm:p-[3px]">
+      <div class="z-20 flex shrink-0 items-center gap-2 mx-3.5 mt-4 mb-8 p-1 w-max border border-border rounded-lg bg-muted pointer-events-auto non-selectable max-md:relative max-md:top-auto max-md:left-auto max-md:right-auto max-md:w-auto max-md:mx-2.5 max-md:mt-2.5 max-md:mb-5 max-sm:mx-2 max-sm:mt-2 max-sm:mb-3 max-sm:gap-1 max-sm:p-[3px]">
         <button
           type="button"
           :class="[
@@ -1132,7 +1132,7 @@ onUnmounted(() => {
       <div class="flex flex-1 min-h-0 min-w-0">
         <!-- Sidebar: only in canvas workspace mode -->
         <template v-if="activeWorkspace === 'canvas'">
-          <div v-if="currentImageMode === 'imagio'" class="pt-[60px] max-md:pt-2.5">
+          <div v-if="currentImageMode === 'imagio'" class="pt-3 max-md:pt-2.5">
             <ImagioSidebar
               :image-mode="currentImageMode"
               :history-images="historyImages"
@@ -1144,7 +1144,7 @@ onUnmounted(() => {
               @clear-history="clearHistory"
             />
           </div>
-          <div v-else class="pt-[60px] max-md:pt-2.5">
+          <div v-else class="pt-3 max-md:pt-2.5">
             <ImageCanvasSidebar
               :active-workspace="activeWorkspace"
               :image-mode="currentImageMode"
@@ -1160,7 +1160,7 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden pt-[60px] max-md:pt-2.5">
+        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden">
           <template v-if="currentImageMode === 'imagio'">
             <ImagioView
               :can-select-generation-count="props.canSelectGenerationCount"
@@ -1291,7 +1291,7 @@ onUnmounted(() => {
           </template>
         </section>
 
-        <div v-else class="pt-[60px] max-md:pt-2.5">
+        <div v-else class="flex flex-1 min-h-0 min-w-0 flex-col">
           <ImageCanvasGalleryStage
             v-model:query="galleryQuery"
             v-model:filter="galleryFilter"
