@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -572,6 +573,28 @@ func (s *StorageService) GetImageHistory(ctx context.Context, id, userID, scope 
 	return &item, nil
 }
 
+// GetImageVisibilityByPath returns the visibility and owner userID for an image
+// identified by its storage path. Returns nil, nil when no matching DB record
+// exists (e.g. reference images that were stored without a history row).
+func (s *StorageService) GetImageVisibilityByPath(ctx context.Context, storagePath string) (visibility string, ownerID string, err error) {
+	if s.pool == nil {
+		return "", "", nil
+	}
+	// Match against all three path columns — any of them could be the target.
+	query := `SELECT visibility, user_id FROM image_generations
+		WHERE storage_path = $1 OR preview_path = $1 OR thumbnail_path = $1
+		LIMIT 1`
+	row := s.pool.QueryRow(ctx, query, storagePath)
+	err = row.Scan(&visibility, &ownerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+	return visibility, ownerID, nil
+}
+
 // DeleteImageHistory deletes an image history item
 func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID string) (bool, error) {
 	if s.pool == nil {
@@ -579,9 +602,12 @@ func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID stri
 	}
 
 	// Query storage paths before deleting so we can attempt S3 cleanup.
-	var storagePath, previewPath, thumbnailPath *string
+	// Use COALESCE to convert NULL to empty string, then scan into plain
+	// string variables — avoids the **string double-pointer trap with pgx.
+	var storagePath, previewPath, thumbnailPath string
 	err := s.pool.QueryRow(ctx,
-		`SELECT storage_path, preview_path, thumbnail_path FROM image_generations WHERE id = $1 AND user_id = $2::uuid`,
+		`SELECT COALESCE(storage_path, ''), COALESCE(preview_path, ''), COALESCE(thumbnail_path, '')
+		 FROM image_generations WHERE id = $1 AND user_id = $2::uuid`,
 		id, userID,
 	).Scan(&storagePath, &previewPath, &thumbnailPath)
 	if err != nil {
@@ -600,26 +626,52 @@ func (s *StorageService) DeleteImageHistory(ctx context.Context, id, userID stri
 	deleted := result.RowsAffected() > 0
 	if deleted {
 		// Best-effort S3 cleanup of orphaned objects.
-		s.cleanupStorageObjects(storagePath, previewPath, thumbnailPath)
+		s.cleanupStorageObjects(&storagePath, &previewPath, &thumbnailPath)
 	}
 
 	return deleted, nil
 }
 
-// ClearImageHistory clears all image history for a user
+// ClearImageHistory clears all image history for a user and best-effort removes
+// the corresponding S3 objects to avoid orphaning stored images.
 func (s *StorageService) ClearImageHistory(ctx context.Context, userID string) (int64, error) {
 	if s.pool == nil {
 		return 0, nil
 	}
 
-	// TODO: S3 objects are not cleaned up here. Batch deletion would require
-	// listing all storage_paths for the user before deleting the DB rows.
-	// For now, S3 objects may be orphaned when history is cleared.
+	// Fetch all storage paths first so we can clean up S3 objects after the
+	// DB rows are deleted.
+	rows, err := s.pool.Query(ctx,
+		`SELECT COALESCE(storage_path, ''), COALESCE(preview_path, ''), COALESCE(thumbnail_path, '')
+		 FROM image_generations WHERE user_id = $1::uuid`, userID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var orphanPaths []*string
+	for rows.Next() {
+		var storagePath, previewPath, thumbnailPath string
+		if scanErr := rows.Scan(&storagePath, &previewPath, &thumbnailPath); scanErr != nil {
+			log.Printf("[image-storage] ClearImageHistory: failed to scan path row: %v", scanErr)
+			continue
+		}
+		orphanPaths = append(orphanPaths, &storagePath, &previewPath, &thumbnailPath)
+	}
+	// Don't let a scan error mask the real error from Query.
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return 0, rowsErr
+	}
+
+	// Delete all DB rows for the user.
 	query := `DELETE FROM image_generations WHERE user_id = $1::uuid`
 	result, err := s.pool.Exec(ctx, query, userID)
 	if err != nil {
 		return 0, err
 	}
+
+	// Best-effort S3 cleanup of orphaned objects.
+	s.cleanupStorageObjects(orphanPaths...)
 
 	return result.RowsAffected(), nil
 }

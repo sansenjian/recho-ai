@@ -1,0 +1,231 @@
+{
+  "abstract": "从零重新设计 AI 对话页面，完全对齐 AdminView.vue 的 Vercel/Geist 设计系统。统一使用 6px 圆角、rgba 半透明边框、三层表面色（surface / surface-raised / surface-sunken）、ring-shadow 卡片阴影、color-mix 语义色、150ms 过渡。布局采用固定 240px 侧边栏 + 48px 顶栏 + 消息区 + 底部输入栏。所有组件从零编写 scoped CSS，不复用旧 chat 页面的任何样式。实施范围覆盖 globals.css（令牌对齐）、AppShell.vue（布局重构）、ChatSidebar、ChatHeader、ChatMessage、ChatInput、以及所有辅助组件。",
+  "brief": {
+    "targetPlatform": ["responsive", "web"],
+    "businessGoal": "建立全站统一视觉语言，chat 页和 admin 页共享同一套设计系统",
+    "audience": "AI 聊天用户，高频办公场景",
+    "productType": "AI chat SPA",
+    "componentLibrary": "shadcn",
+    "outputTarget": "vue-vite",
+    "fidelity": "high-fidelity",
+    "accentColor": "blue #0070f3",
+    "darkMode": true,
+    "designPrinciple": "完全对齐 AdminView.vue 的 Vercel/Geist 设计系统",
+    "currentStack": "Vue 3.5 + Vite + TypeScript + Tailwind CSS v4 + shadcn-vue pattern"
+  },
+  "output": {
+    "target": "vue-vite",
+    "componentLibrary": "shadcn",
+    "mode": "app-ui"
+  },
+  "designSystem": {
+    "source": "AdminView.vue token system",
+    "tokens": {
+      "light": {
+        "bg": "#ffffff",
+        "fg": "#171717",
+        "primary": "#0070f3",
+        "surface": "#ffffff",
+        "surface-raised": "#fafafa",
+        "surface-sunken": "#f5f5f5",
+        "border": "rgba(0,0,0,0.08)",
+        "border-strong": "#ebebeb",
+        "muted": "#666666",
+        "success": "#16a34a",
+        "warning": "#f5a623",
+        "danger": "#ee0000",
+        "radius": "6px",
+        "shadow-card": "0 0 0 1px rgba(0,0,0,0.08), 0 2px 2px rgba(0,0,0,0.04)",
+        "shadow-elevated": "0 0 0 1px rgba(0,0,0,0.08), 0 2px 2px rgba(0,0,0,0.04), 0 8px 8px -8px rgba(0,0,0,0.04)",
+        "transition": "150ms ease"
+      },
+      "dark": {
+        "bg": "#000000",
+        "fg": "#ededed",
+        "primary": "#3291ff",
+        "surface": "#0a0a0a",
+        "surface-raised": "#111111",
+        "surface-sunken": "#080808",
+        "border": "rgba(255,255,255,0.08)",
+        "border-strong": "#262626",
+        "muted": "#888888",
+        "success": "#22c55e",
+        "warning": "#f5a623",
+        "danger": "#ff5b4f",
+        "shadow-card": "0 0 0 1px rgba(255,255,255,0.08), 0 2px 2px rgba(0,0,0,0.2)",
+        "shadow-elevated": "0 0 0 1px rgba(255,255,255,0.08), 0 2px 2px rgba(0,0,0,0.2), 0 8px 8px -8px rgba(0,0,0,0.16)"
+      }
+    },
+    "typography": {
+      "font": "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+      "mono": "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
+      "body": "14px",
+      "small": "13px",
+      "xs": "12px",
+      "xxs": "11px uppercase 0.5px letter-spacing",
+      "title": "16px 600 -0.32px",
+      "card-title": "14px 600 -0.32px",
+      "kpi": "20px 600 -0.48px"
+    },
+    "spacing": {
+      "unit": "4px base",
+      "common": "4/6/8/10/12/14/16/20/24px"
+    },
+    "layout": {
+      "sidebar-w": "240px",
+      "topbar-h": "48px",
+      "content-max-w": "780px"
+    }
+  },
+  "resources": {
+    "skill": { "id": "dashboard", "title": "dashboard", "rationale": "Admin panel and tool-oriented UI patterns" },
+    "styleReference": { "primary": "linear-app", "inspiration": ["x-ai", "claude"], "rationale": "Linear + admin Vercel aesthetic" },
+    "requiredReads": [
+      { "kind": "skill", "id": "dashboard", "reason": "Canvas skill checklist" },
+      { "kind": "design-system", "id": "linear-app", "reason": "Primary style reference" },
+      { "kind": "craft", "id": "anti-ai-slop", "reason": "AI-slop guardrail" },
+      { "kind": "craft", "id": "typography", "reason": "Typography quality" },
+      { "kind": "craft", "id": "color", "reason": "Color quality" }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "src/assets/css/globals.css",
+      "action": "modify",
+      "purpose": "统一令牌系统，将 shadcn HSL 令牌映射到 admin 的 hex 值，确保 Tailwind 工具类和 scoped CSS 共用同一套颜色",
+      "requirements": [
+        "--primary 改为 212 100% 48%（#0070f3 蓝），--primary-foreground 改为 0 0% 100%",
+        "--accent 改为 0 0% 98%（surface-raised），--accent-foreground 改为 0 0% 9%",
+        "--muted 改为 0 0% 96%（#f5f5f5 sunken），--muted-foreground 改为 0 0% 40%（#666）",
+        "--border 改为 0 0% 93%（近似 rgba(0,0,0,0.08)），--input 同步",
+        "--ring 改为 212 100% 48%（蓝），--radius 改为 0.375rem（6px）",
+        "暗色模式完全对齐 admin 的 dark tokens"
+      ]
+    },
+    {
+      "path": "src/views/AppShell.vue",
+      "action": "rewrite-scoped-css",
+      "purpose": "完全重写 scoped CSS，使用 admin 令牌系统（--seed-* → 本地 --fg/--surface/--border 体系），重写布局模板匹配 admin 的 flex 架构",
+      "requirements": [
+        "模板：flex 布局，固定 240px sidebar + flex-1 主区域（topbar + content）",
+        "scoped CSS 定义 --seed-* 和 derived tokens（直接复制 admin 的令牌块）",
+        "topbar：sticky，h-48px，backdrop-blur，border-bottom",
+        "content：flex-1 overflow-y-auto，padding 24px",
+        "auth dialog：使用 admin 的 card + form 样式",
+        "system editor：使用 admin 的 card + textarea 样式",
+        "drag overlay：admin 的 dashed border 风格"
+      ]
+    },
+    {
+      "path": "src/components/ChatSidebar.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的 240px 固定侧边栏，匹配 admin 的 nav-item 样式",
+      "requirements": [
+        "240px 宽，surface 背景，右侧 1px solid border",
+        "Header：48px 高，border-bottom，品牌文字 + 新建按钮",
+        "搜索框：admin input 样式（border, radius 6px, shadow-card）",
+        "分组标题：admin section-label 样式（11px 600 uppercase 0.5px）",
+        "对话条目：admin nav-item 样式（hover: surface-sunken, active: border-left primary）",
+        "删除按钮：admin btn-ghost 样式",
+        "右键菜单：admin card 样式 + shadow-elevated",
+        "拖拽状态：admin user-row.active 样式"
+      ]
+    },
+    {
+      "path": "src/components/ChatHeader.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的 48px topbar，匹配 admin 的 topbar 布局",
+      "requirements": [
+        "sticky top-0, h-48px, border-bottom, backdrop-blur-12px",
+        "左侧：sidebar toggle btn-ghost + new-chat btn-secondary",
+        "中部：品牌文字 15px 600 -0.3px + separator + 状态文字",
+        "右侧：功能按钮 btn-ghost + 登录按钮 btn-secondary",
+        "所有按钮使用 admin 的 btn-primary/btn-secondary/btn-ghost 样式"
+      ]
+    },
+    {
+      "path": "src/components/ChatMessage.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的卡片消息，助手消息用 admin card 样式",
+      "requirements": [
+        "助手消息：admin card 样式（surface bg, shadow-card, radius 6px, padding 16px）",
+        "助手头像：admin badge 样式的方形标识",
+        "消息头部：card-title 14px 600 + 时间戳 12px muted",
+        "消息正文：13.5px 1.7 line-height，代码块用 mono 字体 + surface-sunken bg",
+        "操作栏：admin btn-ghost 按钮，hover 时显示",
+        "用户消息：surface-sunken 背景的气泡，border + radius 6px",
+        "图片附件：admin 的 border + radius 样式"
+      ]
+    },
+    {
+      "path": "src/components/ChatInput.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的底部输入区，输入框用 admin textarea 样式",
+      "requirements": [
+        "Footer：border-top 分隔，surface bg",
+        "模型选择器：admin mode-switch 样式的按钮组",
+        "文本域：admin textarea 样式（border, radius 6px, shadow-card, focus: border-primary + ring）",
+        "发送按钮：admin btn-primary 样式（inverted: fg bg / surface color）",
+        "技能标签：admin badge 样式",
+        "下拉菜单：admin card + shadow-elevated 样式",
+        "图片预览：admin border + radius 样式"
+      ]
+    },
+    {
+      "path": "src/components/ToolActivity.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的可折叠卡片，匹配 admin 的 card + check-row 样式",
+      "requirements": [
+        "外卡片：admin card 样式",
+        "工具行：admin check-row 样式（surface-sunken bg, border, radius 6px）",
+        "状态图标：admin badge positive/negative 样式",
+        "时间线：admin 风格的虚线连接"
+      ]
+    },
+    {
+      "path": "src/components/ThinkingActivity.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的可折叠卡片",
+      "requirements": [
+        "外卡片：admin card 样式",
+        "思考内容：mono 字体, surface-sunken bg, 可滚动",
+        "状态徽章：admin badge 样式"
+      ]
+    },
+    {
+      "path": "src/components/StreamingStatus.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的状态指示器",
+      "requirements": [
+        "admin status-pill 样式",
+        "脉冲点使用 primary 颜色"
+      ]
+    },
+    {
+      "path": "src/components/AnnouncementPopup.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的公告弹窗",
+      "requirements": [
+        "使用 admin dialog/card 样式",
+        "按钮使用 admin btn-primary + btn-secondary"
+      ]
+    },
+    {
+      "path": "src/components/AgentWorkspace.vue",
+      "action": "rewrite-template-and-css",
+      "purpose": "重写为 admin 风格的右侧面板",
+      "requirements": [
+        "320px 宽，surface bg，左侧 border",
+        "模式卡片：admin card 样式",
+        "技能行：admin check-row 样式",
+        "工具流：admin 列表样式"
+      ]
+    }
+  ],
+  "verificationSteps": [
+    "vue-tsc --noEmit — TypeScript 无错误",
+    "vite build — 构建成功",
+    "视觉对比: chat 页和 admin 页并排查看，确认令牌/边框/阴影/圆角一致",
+    "功能测试: 发送消息、切换模型、使用技能、拖拽分组、暗色模式切换"
+  ]
+}

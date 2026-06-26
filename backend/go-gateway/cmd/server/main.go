@@ -39,7 +39,7 @@ func main() {
 	// Initialize Supabase client
 	var db *supabase.Client
 	var err error
-	if config.SupabaseURL != "" && config.SupabaseServiceRoleKey != "" && os.Getenv("DATABASE_URL") != "" {
+	if config.SupabaseURL != "" && config.SupabaseServiceRoleKey != "" && (os.Getenv("DATABASE_URL") != "" || os.Getenv("POSTGRES_URL") != "") {
 		db, err = supabase.NewClient()
 		if err != nil {
 			log.Printf("Warning: Failed to initialize Supabase client: %v", err)

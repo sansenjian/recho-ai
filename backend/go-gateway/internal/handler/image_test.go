@@ -75,6 +75,10 @@ func (s *stubImageStorageService) ClearImageHistory(ctx context.Context, userID 
 	return 0, nil
 }
 
+func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, storagePath string) (string, string, error) {
+	return "public", "", nil
+}
+
 type stubImageIdempotencyService struct {
 	failCalls []string
 }

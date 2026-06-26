@@ -42,6 +42,7 @@ type imageStorageService interface {
 	SaveImageHistory(ctx context.Context, item *service.ImageHistoryItem, userID string) error
 	ListImageHistory(ctx context.Context, userID, scope string, limit, offset int) (*service.ImageHistory, error)
 	GetImageHistory(ctx context.Context, id, userID, scope string) (*service.ImageHistoryItem, error)
+	GetImageVisibilityByPath(ctx context.Context, storagePath string) (visibility string, ownerID string, err error)
 	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
 	ClearImageHistory(ctx context.Context, userID string) (int64, error)
 }
@@ -197,14 +198,6 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detached context for refund and idempotency-fail operations. The request
-	// context is cancelled when the client disconnects, which would cause
-	// refund DB calls to fail — leaving the user permanently out of pocket.
-	// Use a background context with a timeout so these critical operations
-	// can complete even after the client has gone away.
-	refundCtx, refundCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer refundCancel()
-
 	// --- Idempotency check ---
 	idemKey := r.Header.Get("Idempotency-Key")
 	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
@@ -255,6 +248,8 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
 				// Mark idempotency as failed so the client can retry after topping up
 				if idemKey != "" && h.idempotencySvc != nil {
+					refundCtx, refundCancel := withRefundContext()
+					defer refundCancel()
 					h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 				}
 				response.Error(w, http.StatusPaymentRequired, "额度不足。")
@@ -279,6 +274,8 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[image] generation failed: %v", err)
 		// Full refund on complete failure
+		refundCtx, refundCancel := withRefundContext()
+		defer refundCancel()
 		if creditReservation != nil {
 			_, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
 			if refundErr != nil {
@@ -286,7 +283,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Mark idempotency as failed so the client can retry
-		if idemKey != "" && user != nil && h.idempotencySvc != nil {
+		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
 			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 		}
 		response.Error(w, http.StatusInternalServerError, "图片生成失败，请稍后重试。")
@@ -298,6 +295,8 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		missingCount := count - len(images)
 		refundAmount := roundToTwoDecimals(float64(missingCount) * costPerImage)
 		if refundAmount > 0 {
+			refundCtx, refundCancel := withRefundContext()
+			defer refundCancel()
 			newBalance, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
 			if refundErr != nil {
 				log.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
@@ -326,6 +325,9 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	batchID := "batch_" + randomID()
 	responseImages := make([]ImageResult, 0, len(images))
+	// Track IDs of images whose history rows were successfully persisted so that
+	// a mid-batch failure can rollback the already-saved records atomically.
+	var savedHistoryIDs []string
 	for _, image := range images {
 		image.UserID = userID
 		image.GenerationBatchID = batchID
@@ -383,23 +385,38 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
 				log.Printf("[image] 503: SaveImageHistory failed: %v", err)
+				// Log orphaned S3 objects for the failed image — the DB row was never
+				// persisted, so these objects are unreferenced.
+				log.Printf("[image] orphaned S3 objects for %s (history save failed): storagePath=%s previewPath=%s thumbnailPath=%s", image.ID, image.StoragePath, image.PreviewPath, image.ThumbnailPath)
+
 				if creditReservation != nil {
-					// Best-effort S3 cleanup: the generated objects (original + preview +
-					// thumbnail) are now orphaned because the DB row was never persisted.
-					// The storage interface does not expose batch deletion, so we log the
-					// orphaned paths for manual reconciliation.
-					log.Printf("[image] orphaned S3 objects for %s (history save failed): storagePath=%s previewPath=%s thumbnailPath=%s", image.ID, image.StoragePath, image.PreviewPath, image.ThumbnailPath)
+					// Rollback previously saved history records for this batch so the
+					// batch is handled atomically — either all persist or none do.
+					for _, savedID := range savedHistoryIDs {
+						if _, delErr := h.storageService.DeleteImageHistory(r.Context(), savedID, userID); delErr != nil {
+							log.Printf("[image] failed to clean up saved history record %s during batch rollback: %v", savedID, delErr)
+						}
+					}
+					// Detached context so refund + idempotency-fail complete even if the
+					// client has disconnected. Created right before use to avoid timeout
+					// expiry from the long-running image generation upstream.
+					refundCtx, refundCancel := withRefundContext()
+					defer refundCancel()
 					_, refundErr := h.creditService.RefundCredits(refundCtx, userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
 					if refundErr != nil {
 						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
 					}
-					if idemKey != "" && user != nil && h.idempotencySvc != nil {
+					if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
 						h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
 					}
 					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
 					return
 				}
+				// Best-effort: non-credit (guest / free) flows continue without history
+				// persistence; the orphaned S3 objects are logged above.
 				log.Printf("[image-history] save skipped: %v", err)
+			} else {
+				savedHistoryIDs = append(savedHistoryIDs, image.ID)
 			}
 		}
 		responseImages = append(responseImages, image)
@@ -417,7 +434,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache response for future idempotent replays
-	if idemKey != "" && user != nil && h.idempotencySvc != nil {
+	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
 		txID := ""
 		if creditReservation != nil {
 			txID = creditReservation.TransactionID
@@ -497,8 +514,8 @@ func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
 }
 
 // ProxyStorage handles GET /api/image/storage/{encodedPath}.
-// NOTE: No per-user auth check. Storage paths contain random components
-// making them hard to guess, but this is not a true authorization mechanism.
+// Public images (and reference uploads without a DB record) are served to
+// anyone. Private generated images require the authenticated user to own them.
 func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	if h.storageService == nil {
 		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
@@ -512,6 +529,22 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		response.Error(w, http.StatusBadRequest, "invalid image storage path")
 		return
+	}
+
+	// Enforce ownership gate for private images. Look up the DB record, if any,
+	// and deny access when visibility is "private" and the requester isn't the owner.
+	visibility, ownerID, visErr := h.storageService.GetImageVisibilityByPath(r.Context(), storagePath)
+	if visErr != nil {
+		log.Printf("[image] ProxyStorage: visibility lookup failed: %v", visErr)
+		response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
+		return
+	}
+	if ownerID != "" && visibility == "private" {
+		user := middleware.GetUserFromRequest(r)
+		if user == nil || user.ID != ownerID {
+			response.Error(w, http.StatusForbidden, "无权访问该图片。")
+			return
+		}
 	}
 
 	image, err := h.storageService.DownloadImage(r.Context(), storagePath)
@@ -1270,4 +1303,13 @@ func isTransientStatus(code int) bool {
 		return true
 	}
 	return false
+}
+
+// withRefundContext creates a detached context for refund and idempotency-fail
+// operations. The request context is cancelled when the client disconnects, which
+// would cause refund DB calls to fail — leaving the user permanently out of pocket.
+// Each call site creates a fresh context right before use so the timeout window
+// starts at the moment of the actual operation, not at request ingress.
+func withRefundContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
 }
