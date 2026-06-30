@@ -18,7 +18,10 @@ create table if not exists public.provider_settings (
   updated_at timestamptz not null default now(),
   updated_by uuid references auth.users(id) on delete set null,
   constraint provider_settings_name_check check (length(trim(name)) between 1 and 80),
-  constraint provider_settings_base_url_check check (base_url ~* '^https?://'),
+  constraint provider_settings_base_url_check check (
+    base_url ~* '^https://' or
+    base_url ~* '^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?(/|$)'
+  ),
   constraint provider_settings_priority_check check (priority >= 0 and priority <= 10000),
   constraint provider_settings_timeout_check check (timeout_ms >= 1000 and timeout_ms <= 1200000),
   constraint provider_settings_retry_check check (retry_count >= 0 and retry_count <= 10)

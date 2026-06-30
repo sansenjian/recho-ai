@@ -16,6 +16,7 @@ const HISTORY_PAGE_SIZE = 12
 const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const PRIVATE_HISTORY_REFRESH_DELAY_MS = 5 * 60_000
+const PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS = 5
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 export type { ImageHistoryScope }
 
@@ -64,6 +65,10 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
 function createIdempotencyKey() {
   const random = globalThis.crypto?.randomUUID?.()
   return random || `img_${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
+
+function hasProcessingPrivateImages(images: GeneratedImage[]) {
+  return images.some(image => image.persistenceStatus === 'processing' && !image.storagePath)
 }
 
 function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
@@ -480,6 +485,7 @@ export function useImageGen() {
   const galleryImages = ref<GeneratedImage[]>([])
   let historyLoadSeq = 0
   let privateHistoryRefreshTimer: number | null = null
+  let privateHistoryRefreshAttempts = 0
 
   function clearPrivateHistoryRefreshTimer() {
     if (privateHistoryRefreshTimer !== null) {
@@ -488,11 +494,16 @@ export function useImageGen() {
     }
   }
 
-  function schedulePrivateHistoryRefresh() {
+  function schedulePrivateHistoryRefresh(resetAttempts = false) {
     if (!user.value?.id) return
+    if (resetAttempts) {
+      privateHistoryRefreshAttempts = 0
+    }
+    if (privateHistoryRefreshAttempts >= PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS) return
     clearPrivateHistoryRefreshTimer()
     privateHistoryRefreshTimer = window.setTimeout(() => {
       privateHistoryRefreshTimer = null
+      privateHistoryRefreshAttempts += 1
       void refreshPrivateHistory()
     }, PRIVATE_HISTORY_REFRESH_DELAY_MS)
   }
@@ -511,6 +522,10 @@ export function useImageGen() {
       nextHistoryOffset.value = remoteHistory.nextOffset
       if (!identity.userId) {
         void saveHistory(generatedImages.value)
+      } else if (hasProcessingPrivateImages(generatedImages.value)) {
+        schedulePrivateHistoryRefresh()
+      } else {
+        privateHistoryRefreshAttempts = 0
       }
     } finally {
       if (seq === historyLoadSeq) {
@@ -523,6 +538,7 @@ export function useImageGen() {
     () => user.value?.id || null,
     () => {
       clearPrivateHistoryRefreshTimer()
+      privateHistoryRefreshAttempts = 0
       void refreshPrivateHistory()
     },
     { immediate: true },
@@ -600,8 +616,8 @@ export function useImageGen() {
       generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
       if (user.value?.id) {
         hasMoreHistory.value = true
-        if (imagesWithReferences.some(image => image.persistenceStatus === 'processing' && !image.storagePath)) {
-          schedulePrivateHistoryRefresh()
+        if (hasProcessingPrivateImages(imagesWithReferences)) {
+          schedulePrivateHistoryRefresh(true)
         }
       } else {
         void saveHistory(generatedImages.value)

@@ -301,6 +301,27 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		costPerImage, totalCost = h.creditService.GetCreditCost(r.Context(), count)
 	}
 
+	providerCfg, err := h.resolveImageProvider(r.Context())
+	if err != nil {
+		log.Printf("[image] provider config unavailable: %v", err)
+		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+			refundCtx, refundCancel := withRefundContext()
+			defer refundCancel()
+			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
+		}
+		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 配置暂时不可用。")
+		return
+	}
+	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
+		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+			refundCtx, refundCancel := withRefundContext()
+			defer refundCancel()
+			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
+		}
+		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 尚未配置，请联系管理员。")
+		return
+	}
+
 	// Check and reserve credits if user is authenticated
 	var creditReservation *service.CreditReservation
 	if user != nil && user.ID != "" && h.creditService != nil {
@@ -328,17 +349,6 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			totalCost = cost
 			costPerImage = reservedCostPerImage
 		}
-	}
-
-	providerCfg, err := h.resolveImageProvider(r.Context())
-	if err != nil {
-		log.Printf("[image] provider config unavailable: %v", err)
-		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 配置暂时不可用。")
-		return
-	}
-	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
-		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 尚未配置，请联系管理员。")
-		return
 	}
 
 	// Call image generation API
@@ -376,6 +386,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			} else {
 				totalCost = roundToTwoDecimals(totalCost - refundAmount)
 				creditReservation.Balance = newBalance
+				creditReservation.Amount = totalCost
 			}
 		}
 	}

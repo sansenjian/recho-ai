@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -233,6 +234,34 @@ func TestImageGenerateUsesProviderSettings(t *testing.T) {
 	}
 	if model != "db-image-model" {
 		t.Fatalf("expected provider image model, got %q", model)
+	}
+}
+
+func TestImageGenerateProviderUnavailableDoesNotReserveCreditsAndFailsIdempotency(t *testing.T) {
+	creditSvc := &stubImageCreditService{balance: 10}
+	storageSvc := &stubImageStorageService{}
+	idemSvc := &stubImageIdempotencyService{}
+	h := NewImageHandler(creditSvc, storageSvc, idemSvc).WithProviderSettings(&stubProviderSettingsService{
+		err: errors.New("provider settings unavailable"),
+	})
+
+	raw := []byte(`{"prompt":"test prompt","count":1}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/image/generate", bytes.NewReader(raw))
+	req = req.WithContext(middleware.WithUser(req.Context(), &middleware.User{ID: "user_123"}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "idem-provider-unavailable")
+	res := httptest.NewRecorder()
+
+	h.Generate(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", res.Code, res.Body.String())
+	}
+	if len(creditSvc.reserveCalls) != 0 {
+		t.Fatalf("expected no reserve calls when provider config is unavailable, got %d", len(creditSvc.reserveCalls))
+	}
+	if len(idemSvc.failCalls) != 1 || idemSvc.failCalls[0] != "image_generate" {
+		t.Fatalf("expected idempotency failure for provider config error, got %#v", idemSvc.failCalls)
 	}
 }
 

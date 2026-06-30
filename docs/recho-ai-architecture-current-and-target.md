@@ -337,14 +337,14 @@ metadata: {
 | `/api/skills` | Node | Node |
 | `/api/tools` | Node | Node |
 | `/api/admin/*` | Node | Node BFF |
-| `/api/admin/provider-settings` | 尚未最终定型 | Node BFF，管理员 only |
+| `/api/admin/settings/providers` | Node | Node BFF，管理员 only |
 | `/api/config/app` | sidecar 模式下代理到 Go | 按领域确定 owner，必要时保留 Node facade |
 | `/api/config/supabase` | sidecar 模式下代理到 Go | 按领域确定 owner，必要时保留 Node facade |
 | `/api/image/generate` | sidecar 配置存在时 Node 代理到 Go | Go |
 | `/api/image/references` | sidecar 配置存在时 Node 代理到 Go | Go |
 | `/api/image/storage/*` | sidecar 配置存在时 Node 代理到 Go | Go |
 | `/api/image/history*` | 迁移敏感，改动前要核对当前代码 | Go |
-| `/api/credits` | sidecar 配置存在时 Node 代理到 Go | Go |
+| `/api/credits*` | sidecar 配置存在时 Node 代理到 Go | Go |
 | `/api/ws` | 当前不是最终生产链路 | 需要进度 UI 后由 Go 承担 |
 
 ## 非目标

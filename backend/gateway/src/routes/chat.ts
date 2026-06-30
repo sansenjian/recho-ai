@@ -6,7 +6,7 @@ import { runTAORLoop, sendChatStatus } from '../services/chat-loop.js'
 import type { SkillDefinition } from '../skills/types.js'
 import { applySkillSystemPrompt, filterToolsForSkill } from './chat-utils.js'
 import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
-import { ProviderSettingsError, getRuntimeChatProvider } from '../services/provider-settings.js'
+import { getRuntimeChatProvider } from '../services/provider-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 import OpenAI from 'openai'
@@ -52,15 +52,10 @@ router.post('/chat', async (req: Request, res: Response) => {
 
   let runtimeProvider
   try {
-    runtimeProvider = await getRuntimeChatProvider(model, { strict: true })
+    runtimeProvider = await getRuntimeChatProvider(model)
   } catch (err) {
-    if (err instanceof ProviderSettingsError) {
-      res.status(err.status).json({ error: err.publicMessage })
-      return
-    }
-    console.error('[chat] provider lookup failed:', safeErrorDetail(err))
-    res.status(503).json({ error: 'Chat Provider 配置暂时不可用。' })
-    return
+    console.warn('[chat] provider lookup failed, falling back to env client:', safeErrorDetail(err))
+    runtimeProvider = null
   }
   const clientOrPool = runtimeProvider
     ? new OpenAI({

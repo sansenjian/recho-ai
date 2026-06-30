@@ -47,7 +47,7 @@ const chatButtonDisabled = computed(() => (
   (props.isCheckingChatAccess || !props.canUseChat)
 ))
 
-defineEmits<{
+const emit = defineEmits<{
   toggleSidebar: []
   toggleAgentPanel: []
   toggleImagePanel: []
@@ -56,6 +56,17 @@ defineEmits<{
   toggleSettings: []
   openAuth: []
 }>()
+
+function handleChatButtonClick() {
+  if (!props.showImagePanel) return
+  if (!props.authEmail) {
+    emit('openAuth')
+    return
+  }
+  if (chatButtonDisabled.value) return
+  emit('toggleImagePanel')
+}
+
 </script>
 
 <template>
@@ -96,7 +107,7 @@ defineEmits<{
           :aria-pressed="!showImagePanel"
           :disabled="chatButtonDisabled"
           :title="chatButtonTitle"
-          @click="!showImagePanel || chatButtonDisabled ? undefined : $emit('toggleImagePanel')"
+          @click="handleChatButtonClick"
         >
           <MessageSquare class="h-3.5 w-3.5" />
           <span>{{ showImagePanel && authEmail && isCheckingChatAccess ? '检查中' : '对话' }}</span>

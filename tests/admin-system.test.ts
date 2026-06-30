@@ -17,7 +17,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   IMAGE_RESPONSES_IMAGE_MODEL: 'gpt-image-2',
   IMAGE_EVENTS_ENABLED: true,
   CANVAS_CONTEXT_ENABLED: true,
-  IMAGE_GEN_API_KEY: 'sk-secret-image-key-that-must-not-leak',
+  IMAGE_GEN_API_KEY: '',
   IMAGE_GEN_BASE_URL: '',
   OPENAI_API_KEY: '',
   OPENAI_BASE_URL: '',
@@ -148,6 +148,25 @@ describe('admin system status helpers', () => {
         enabled: true,
       },
     ]
+    providerRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'image',
+        name: 'Configured Image Provider',
+        base_url: 'https://image.example.test/v1',
+        enabled: true,
+        priority: 10,
+        image_model: 'gpt-image-2',
+        edit_model: 'gpt-image-2',
+        timeout_ms: 360000,
+        retry_count: 3,
+        supports_webp_references: true,
+        api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
+        api_key_preview: 'sk-...cret',
+        created_at: '2026-06-29T00:00:00Z',
+        updated_at: '2026-06-29T00:00:00Z',
+      },
+    ]
 
     const status = await getAdminSystemStatus()
 
@@ -179,6 +198,7 @@ describe('admin system status helpers', () => {
 
     const serialized = JSON.stringify(status)
     expect(serialized).not.toContain('sk-secret')
+    expect(serialized).not.toContain('sk-...cret')
     expect(serialized).not.toContain('secret-bucket-name')
     expect(serialized).not.toContain('admin@example.test')
     expect(serialized).not.toContain('admin-user-id')

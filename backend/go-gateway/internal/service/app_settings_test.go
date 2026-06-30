@@ -68,3 +68,24 @@ func TestParseJSONCreditCostFallsBackForInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+func TestParseJSONCreditCostClampsTinyPositiveValues(t *testing.T) {
+	tests := [][]byte{
+		[]byte(`0.004`),
+		[]byte(`"0.009"`),
+	}
+
+	for _, raw := range tests {
+		got := parseJSONCreditCost(raw, 0.5)
+		if got != 0.01 {
+			t.Fatalf("expected minimum billable cost for %s, got %v", string(raw), got)
+		}
+	}
+}
+
+func TestNormalizePositiveCreditCostFallbackClampsTinyFallback(t *testing.T) {
+	got := normalizeImageCreditCostPerImageWithFallback(-1, 0.004)
+	if got != 0.01 {
+		t.Fatalf("expected tiny fallback to clamp to 0.01, got %v", got)
+	}
+}

@@ -166,6 +166,8 @@ describe('provider settings service', () => {
       updated_by: 'admin-user',
     })
     expect(updatedRow).not.toHaveProperty('api_key')
+    expect(updatedRow).not.toHaveProperty('api_key_encrypted')
+    expect(updatedRow).not.toHaveProperty('api_key_preview')
   })
 
   it('resolves an enabled runtime chat provider for matching models', async () => {
@@ -200,16 +202,17 @@ describe('provider settings service', () => {
     })
   })
 
-  it('fails closed in strict mode when encrypted chat key cannot be decrypted', async () => {
+  it('skips malformed encrypted chat rows and uses the next matching provider', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
     providerRows = [
       {
         id: '22222222-2222-4222-8222-222222222222',
         kind: 'chat',
-        name: 'OpenAI Compatible Chat',
+        name: 'Broken Chat',
         base_url: 'https://chat.example.test/v1/',
         enabled: true,
         priority: 20,
-        default_model: 'gpt-4o-mini',
+        default_model: 'gpt-4o',
         timeout_ms: 90000,
         retry_count: 2,
         api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
@@ -217,9 +220,53 @@ describe('provider settings service', () => {
         created_at: '2026-06-29T00:00:00Z',
         updated_at: '2026-06-29T00:00:00Z',
       },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'chat',
+        name: 'Working Chat',
+        base_url: 'https://working-chat.example.test/v1/',
+        enabled: true,
+        priority: 30,
+        default_model: 'gpt-4o',
+        timeout_ms: 90000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-working-chat-secret'),
+        api_key_preview: 'sk-...cret',
+        created_at: '2026-06-29T00:00:00Z',
+        updated_at: '2026-06-29T00:00:00Z',
+      },
     ]
-    const { ProviderSettingsError, getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
 
-    await expect(getRuntimeChatProvider('gpt-4o', { strict: true })).rejects.toBeInstanceOf(ProviderSettingsError)
+    const provider = await getRuntimeChatProvider('gpt-4o', { strict: true })
+
+    expect(provider).toMatchObject({
+      name: 'Working Chat',
+      apiKey: 'sk-working-chat-secret',
+    })
+  })
+
+  it('does not match unrelated slash-model namespaces', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        kind: 'chat',
+        name: 'Foo Namespace',
+        base_url: 'https://foo.example.test/v1/',
+        enabled: true,
+        priority: 20,
+        default_model: 'foo/bar',
+        timeout_ms: 90000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-foo-secret'),
+        api_key_preview: 'sk-...cret',
+        created_at: '2026-06-29T00:00:00Z',
+        updated_at: '2026-06-29T00:00:00Z',
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('baz/qux', { strict: true })).resolves.toBeNull()
   })
 })

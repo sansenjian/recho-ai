@@ -24,6 +24,8 @@ services:
         sync: false
       - key: IMAGE_GEN_BASE_URL
         value: https://lucen.plus/v1
+      - key: PROVIDER_API_KEY_MASTER_KEY
+        sync: false
       - key: IMAGE_CREDIT_COST_PER_IMAGE
         value: 1
       - key: IMAGE_RESPONSES_MODEL

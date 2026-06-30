@@ -1183,7 +1183,7 @@ onUnmounted(() => {
           @dragover="handleCanvasDragOver"
           @drop="handleCanvasDrop"
           @pointerdown="startPan"
-          @wheel.prevent="handleWheel"
+          @wheel="handleWheel"
         >
         <div class="graph-plane" :style="planeStyle" @pointerdown="startPan">
           <svg class="connections" :viewBox="`0 0 ${PLANE_SIZE.width} ${PLANE_SIZE.height}`">

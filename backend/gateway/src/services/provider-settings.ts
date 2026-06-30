@@ -114,9 +114,16 @@ function normalizeBaseUrl(value: unknown) {
       publicMessage: 'Base URL 必须是合法的 http(s) 地址。',
     })
   }
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
+  const hostname = parsed.hostname.toLowerCase()
+  const isLocalHttp = parsed.protocol === 'http:' && (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+  if (parsed.protocol !== 'https:' && !isLocalHttp) {
     throw new ProviderSettingsError('invalid_provider_base_url', {
-      publicMessage: 'Base URL 必须是合法的 http(s) 地址。',
+      publicMessage: 'Base URL 必须使用 HTTPS，本地开发可使用 localhost 或 127.0.0.1 的 HTTP 地址。',
     })
   }
   return parsed.toString().replace(/\/+$/, '')
@@ -264,16 +271,21 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatPr
   }
 }
 
-function chatProviderFamily(model: string) {
-  if (model.startsWith('gpt-')) return 'gpt'
-  if (model.startsWith('moonshot') || model.startsWith('kimi-')) return 'kimi'
-  if (model.includes('/')) return 'slash'
-  return 'other'
+function rowDefaultModel(row: Record<string, unknown>) {
+  return typeof row.default_model === 'string' ? row.default_model.trim() : ''
 }
 
-function chatProviderMatchesModel(provider: RuntimeChatProvider, model: string) {
-  const configuredModel = provider.defaultModel
-  if (!configuredModel) return true
+function chatProviderFamily(model: string) {
+  const normalized = model.trim().toLowerCase()
+  if (normalized.startsWith('gpt-')) return 'openai:gpt'
+  if (normalized.startsWith('moonshot') || normalized.startsWith('kimi-')) return 'kimi'
+  const slashIndex = normalized.indexOf('/')
+  if (slashIndex > 0) return `slash:${normalized.slice(0, slashIndex)}`
+  return `exact:${normalized}`
+}
+
+function chatProviderMatchesModelName(configuredModel: string | null | undefined, model: string) {
+  if (!configuredModel) return false
   if (configuredModel === model) return true
   return chatProviderFamily(configuredModel) === chatProviderFamily(model)
 }
@@ -470,13 +482,30 @@ export async function getRuntimeChatProvider(
 
     if (error) throw error
 
-    const providers = ((data || []) as unknown as Array<Record<string, unknown>>)
-      .map(runtimeChatProviderFromRow)
-      .filter((provider): provider is RuntimeChatProvider => provider !== null)
+    const rows = ((data || []) as unknown as Array<Record<string, unknown>>)
+    const exactRows = rows.filter(row => rowDefaultModel(row) === model)
+    const familyRows = rows.filter((row) => {
+      const defaultModel = rowDefaultModel(row)
+      return defaultModel !== model && chatProviderMatchesModelName(defaultModel, model)
+    })
+    const fallbackRows = rows.filter(row => !rowDefaultModel(row))
+    const seen = new Set<Record<string, unknown>>()
+    const candidates = [...exactRows, ...familyRows, ...fallbackRows].filter((row) => {
+      if (seen.has(row)) return false
+      seen.add(row)
+      return true
+    })
 
-    return providers.find(provider => provider.defaultModel === model) ||
-      providers.find(provider => chatProviderMatchesModel(provider, model)) ||
-      null
+    for (const row of candidates) {
+      try {
+        const provider = runtimeChatProviderFromRow(row)
+        if (provider) return provider
+      } catch (err) {
+        console.warn('[provider-settings] skipping invalid runtime chat provider row:', safeErrorDetail(err))
+      }
+    }
+
+    return null
   } catch (err) {
     console.warn('[provider-settings] chat provider lookup failed:', safeErrorDetail(err))
     if (options.strict) {

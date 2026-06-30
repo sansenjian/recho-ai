@@ -53,7 +53,7 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 
 ### Database
 
-- **PostgreSQL** via Supabase. Key tables: `image_generations`, `image_history`, `image_attempts`, `users` (with credits), `admin_announcements`.
+- **PostgreSQL** via Supabase. Key tables: `image_generations`, `image_history`, `image_attempts`, `users` (with credits), `app_settings`, `provider_settings`, `admin_announcements`.
 - Go gateway uses `pgx` for direct TCP connections; Node gateway uses Supabase JS SDK for management operations.
 
 ## Conventions
@@ -80,4 +80,4 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 - `ChatMessage.vue` handles layout differences between roles: assistant messages include a numbered blue avatar badge and left-aligned text; user messages are right-aligned with a wrapper containing text + action buttons below it.
 - `ChatInput.vue` owns the auto-expanding textarea and emits typed events to `App.vue`.
 - `ImageCanvas.vue` uses a custom pan/zoom canvas with HTML nodes positioned absolutely. Nodes support drag, resize, and connect via SVG bezier curves. Right sidebar is hidden in canvas mode per `project_memory.md` constraints.
-- `AdminView.vue` provides management dashboards for images, generation attempts, and storage overview with filterable tables and metric cards.
+- `AdminView.vue` provides management dashboards for images, generation attempts, storage overview, runtime settings, and provider/API key configuration.

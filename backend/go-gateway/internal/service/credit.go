@@ -139,7 +139,10 @@ func (s *CreditService) imageCreditCostPerImage(ctx context.Context) float64 {
 	if err != nil {
 		return fallback
 	}
-	return normalizeImageCreditCostPerImage(cost)
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
+		return fallback
+	}
+	return normalizeImageCreditCostPerImageWithFallback(cost, fallback)
 }
 
 // roundToTwoDecimals rounds a float to two decimal places

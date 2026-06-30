@@ -185,6 +185,5 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: var(--color-primary);
-  opacity: 0.16;
+  background: hsl(var(--primary) / 0.16);
 }

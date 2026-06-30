@@ -227,9 +227,14 @@ function onContextMenuBackdrop() {
       >
         <!-- Group header -->
         <div
-          class="flex cursor-pointer select-none items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/50"
+          role="button"
+          tabindex="0"
+          class="flex w-full cursor-pointer select-none items-center gap-1 rounded-md border-0 bg-transparent px-1.5 py-1 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :class="{ 'cursor-default': section.groupId === '__ungrouped__', 'mt-2 border-t border-border pt-1': section.groupId === '__ungrouped__' }"
+          :aria-expanded="isExpanded(section.groupId!)"
           @click="toggleGroup(section.groupId!)"
+          @keydown.enter.prevent="toggleGroup(section.groupId!)"
+          @keydown.space.prevent="toggleGroup(section.groupId!)"
           @contextmenu="onGroupContextMenu($event, section.groupId!)"
         >
           <ChevronRight
@@ -241,8 +246,9 @@ function onContextMenuBackdrop() {
             <Input
               v-model="renameValue"
               class="h-auto rounded bg-card px-1.5 py-0.5 text-[10px] font-semibold shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
-              @keydown.enter="confirmRename()"
-              @keydown.escape="renamingGroup = null"
+              @keydown.enter.stop="confirmRename()"
+              @keydown.escape.stop="renamingGroup = null"
+              @keydown.space.stop
               @blur="confirmRename()"
               autofocus
             />
@@ -256,11 +262,16 @@ function onContextMenuBackdrop() {
           <div
             v-for="conv in section.convs"
             :key="conv.id"
-            class="group flex cursor-pointer items-center gap-[5px] rounded-[var(--radius-md,7px)] border-l-2 border-l-transparent px-[7px] py-1.5 transition-colors hover:bg-accent"
+            role="button"
+            tabindex="0"
+            class="group flex w-full cursor-pointer items-center gap-[5px] rounded-[var(--radius-md,7px)] border-0 border-l-2 border-l-transparent bg-transparent px-[7px] py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="{ 'bg-accent': conv.id === activeConversationId }"
             :style="section.groupColor && conv.id === activeConversationId ? { borderLeftColor: section.groupColor } : {}"
             draggable="true"
+            :aria-current="conv.id === activeConversationId ? 'page' : undefined"
             @click="switchConversation(conv.id); emit('close')"
+            @keydown.enter.prevent="switchConversation(conv.id); emit('close')"
+            @keydown.space.prevent="switchConversation(conv.id); emit('close')"
             @dragstart="onDragStart($event, conv.id)"
             @dragend="onDragEnd"
           >
@@ -274,6 +285,8 @@ function onContextMenuBackdrop() {
               class="hidden h-[18px] w-[18px] text-muted-foreground group-hover:flex"
               title="Delete"
               @click.stop="deleteConversation(conv.id)"
+              @keydown.enter.stop
+              @keydown.space.stop
             >
               <Trash2 class="h-3 w-3" />
             </Button>
@@ -285,14 +298,15 @@ function onContextMenuBackdrop() {
       </div>
 
       <!-- Add group button -->
-      <div
+      <button
         v-if="!creatingGroup"
-        class="my-1 flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+        type="button"
+        class="my-1 flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         @click="creatingGroup = true"
       >
         <Plus class="h-[13px] w-[13px]" />
         <span>新建分组</span>
-      </div>
+      </button>
       <div v-else class="flex items-center gap-1 px-2 py-1">
         <Input
           v-model="newGroupName"

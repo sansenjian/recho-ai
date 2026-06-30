@@ -33,6 +33,9 @@ const emit = defineEmits<{
       @pointerdown.self="emit('close')"
     >
       <article
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="image-gallery-detail-title"
         class="grid grid-cols-[minmax(0,1fr)_minmax(360px,410px)] w-[min(1480px,calc(100vw-36px))] h-[min(860px,calc(100dvh-36px))] overflow-hidden border border-white/[0.18] rounded-[10px] bg-white shadow-[0_32px_80px_rgba(15,23,42,0.32)] max-md:grid-cols-1 max-md:grid-rows-[minmax(260px,48vh)_minmax(0,1fr)] max-md:w-[calc(100vw-20px)] max-md:h-[calc(100dvh-20px)]"
         @pointerdown.stop
       >
@@ -71,7 +74,7 @@ const emit = defineEmits<{
           <header class="flex items-start justify-between gap-3">
             <div class="grid min-w-0 gap-1">
               <span class="text-muted-foreground text-[11px] font-black">作品详情</span>
-              <strong class="overflow-hidden text-foreground text-[17px] font-black leading-[1.35] text-ellipsis whitespace-nowrap">
+              <strong id="image-gallery-detail-title" class="overflow-hidden text-foreground text-[17px] font-black leading-[1.35] text-ellipsis whitespace-nowrap">
                 {{ imageTitle }}
               </strong>
             </div>

@@ -191,12 +191,18 @@ func normalizeImageCreditCostPerImageWithFallback(value any, fallback float64) f
 	if math.IsNaN(number) || math.IsInf(number, 0) || number <= 0 {
 		return fallback
 	}
+	if number < 0.01 {
+		return 0.01
+	}
 	return math.Round(number*100) / 100
 }
 
 func normalizePositiveCreditCostFallback(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 1
+	}
+	if value < 0.01 {
+		return 0.01
 	}
 	return math.Round(value*100) / 100
 }

@@ -56,6 +56,8 @@ const compactModelLabel = computed(() => {
   return label.replace(/^DeepSeek\s+/, '').replace(/\s+Flash$/, ' Flash')
 })
 
+const canSubmit = computed(() => Boolean(inputValue.value.trim() || props.activeSkill))
+
 function modelStatusLabel(model: ModelOption) {
   if (model.status === 'recommended') return '推荐'
   if (model.status === 'slow') return '较慢'
@@ -287,7 +289,7 @@ function skillIcon(name: string) {
             v-else
             size="icon"
             class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!inputValue.trim()"
+            :disabled="!canSubmit"
             title="发送"
             @click="handleSubmit"
           >

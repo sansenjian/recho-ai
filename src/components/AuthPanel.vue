@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { LogIn, X, Zap, Eye, EyeOff, LogOut } from '@lucide/vue'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useCredits } from '../composables/useCredits'
@@ -44,6 +44,9 @@ const passwordDraft = ref('')
 const redeemCodeDraft = ref('')
 const showPassword = ref(false)
 const touched = ref({ email: false, password: false, redeem: false })
+const dialogRef = ref<HTMLElement | null>(null)
+const closeButtonRef = ref<HTMLButtonElement | null>(null)
+let restoreFocusElement: HTMLElement | null = null
 
 const creditBalanceLabel = computed(() => (
   isLoadingCredits.value && creditBalance.value === null
@@ -93,10 +96,18 @@ watch(userEmail, (next) => {
 
 watch(() => props.modelValue, (open) => {
   if (open) {
+    restoreFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
     authMode.value = props.initialMode ?? 'signIn'
     passwordDraft.value = ''
     showPassword.value = false
     touched.value = { email: false, password: false, redeem: false }
+    nextTick(() => {
+      const firstField = dialogRef.value?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled]), [href], textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      firstField?.focus()
+    })
+  } else if (restoreFocusElement && document.contains(restoreFocusElement)) {
+    restoreFocusElement.focus()
+    restoreFocusElement = null
   }
 })
 
@@ -116,6 +127,12 @@ function switchMode(mode: AuthMode) {
 function close() {
   emit('update:modelValue', false)
   emit('close')
+  nextTick(() => {
+    if (restoreFocusElement && document.contains(restoreFocusElement)) {
+      restoreFocusElement.focus()
+    }
+    restoreFocusElement = null
+  })
 }
 
 async function handleAuthSubmit() {
@@ -150,6 +167,31 @@ async function handleRedeem() {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     close()
+    return
+  }
+  if (e.key !== 'Tab' || !dialogRef.value) {
+    return
+  }
+
+  const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )).filter(element => !element.hasAttribute('disabled') && element.offsetParent !== null)
+
+  if (!focusable.length) {
+    e.preventDefault()
+    dialogRef.value.focus()
+    return
+  }
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  const active = document.activeElement
+  if (e.shiftKey && (active === first || active === dialogRef.value)) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault()
+    first.focus()
   }
 }
 </script>
@@ -160,9 +202,10 @@ function onKeydown(e: KeyboardEvent) {
     @click.self="close"
     @keydown="onKeydown"
   >
-    <section class="auth-card" role="dialog" aria-modal="true" :aria-label="authTitle">
+    <section ref="dialogRef" class="auth-card" role="dialog" aria-modal="true" :aria-label="authTitle" tabindex="-1">
       <!-- Close button -->
       <button
+        ref="closeButtonRef"
         class="close-btn"
         type="button"
         aria-label="关闭"
