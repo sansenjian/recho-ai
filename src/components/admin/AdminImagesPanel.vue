@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import type { AdminImageItem } from '../../types/admin'
 import {
   dateTime,
@@ -87,338 +89,146 @@ function toggleImage(id: string, event: Event) {
 </script>
 
 <template>
-  <section class="admin-panel images-panel" aria-label="作品管理">
-    <div class="panel-header image-header">
+  <section class="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] p-4 max-w-[1360px] mx-auto mb-3.5" aria-label="作品管理">
+    <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
-        <span>作品管理</span>
-        <strong>{{ images.length }}</strong>
+        <span class="block text-sm">作品管理</span>
+        <strong class="block mt-0.5 text-lg">{{ images.length }}</strong>
       </div>
-      <form class="image-controls" @submit.prevent="emit('refresh')">
-        <select :value="visibilityFilter" :disabled="loading" @change="updateVisibilityFilter">
+      <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
+        <select
+          :value="visibilityFilter"
+          :disabled="loading"
+          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          @change="updateVisibilityFilter"
+        >
           <option value="">全部状态</option>
           <option value="public">公开</option>
           <option value="private">已隐藏</option>
         </select>
-        <select :value="fundingFilter" :disabled="loading" @change="updateFundingFilter">
+        <select
+          :value="fundingFilter"
+          :disabled="loading"
+          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          @change="updateFundingFilter"
+        >
           <option value="">全部来源</option>
           <option value="free">免费</option>
           <option value="credit">额度</option>
         </select>
-        <input :value="userFilter" type="search" placeholder="用户 ID" :disabled="loading" @input="updateUserFilter">
-        <input :value="query" type="search" placeholder="提示词" :disabled="loading" @input="updateQuery">
-        <button type="submit" :disabled="loading">筛选</button>
-        <button type="button" :disabled="loading" @click="emit('refresh')">刷新</button>
+        <input
+          :value="userFilter"
+          type="search"
+          placeholder="用户 ID"
+          :disabled="loading"
+          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          @input="updateUserFilter"
+        >
+        <input
+          :value="query"
+          type="search"
+          placeholder="提示词"
+          :disabled="loading"
+          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          @input="updateQuery"
+        >
+        <Button type="submit" variant="outline" size="sm" :disabled="loading">筛选</Button>
+        <Button type="button" variant="outline" size="sm" :disabled="loading" @click="emit('refresh')">刷新</Button>
       </form>
     </div>
 
-    <div class="bulk-row">
-      <span>已选 {{ selectedCount }}</span>
-      <button type="button" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">批量归档</button>
-      <button type="button" class="danger-action" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">批量删除</button>
+    <div class="flex items-center justify-start gap-2 flex-wrap mb-2.5">
+      <span class="text-xs font-extrabold text-[var(--text-secondary)]">已选 {{ selectedCount }}</span>
+      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">批量归档</Button>
+      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">批量删除</Button>
     </div>
 
-    <div class="table-wrap image-table-wrap">
-      <table class="image-table">
+    <div class="w-full overflow-auto rounded-lg border border-[var(--border)] max-h-[560px]">
+      <table class="w-full border-collapse text-[13px] min-w-[1360px]">
         <thead>
           <tr>
-            <th class="select-cell">
+            <th class="w-[42px] text-center px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">
               <input
                 type="checkbox"
                 :checked="allVisibleSelected"
                 :disabled="loading || !images.length"
                 aria-label="选择当前列表"
+                class="w-4 h-4"
                 @change="toggleAll"
               >
             </th>
-            <th>预览</th>
-            <th>时间</th>
-            <th>用户</th>
-            <th>状态</th>
-            <th>来源</th>
-            <th>存储</th>
-            <th>模型</th>
-            <th>参数</th>
-            <th>提示词</th>
-            <th>操作</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">预览</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">时间</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">用户</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">状态</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">来源</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">存储</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">模型</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">参数</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">提示词</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="image in images" :key="image.id">
-            <td class="select-cell">
+          <tr v-for="image in images" :key="image.id" class="border-b border-[var(--border)]">
+            <td class="w-[42px] text-center px-2.5 py-2 align-middle">
               <input
                 type="checkbox"
                 :checked="selectedSet.has(image.id)"
                 :disabled="loading"
                 :aria-label="`选择 ${image.id}`"
+                class="w-4 h-4"
                 @change="toggleImage(image.id, $event)"
               >
             </td>
-            <td>
-              <img v-if="imagePreviewSrc(image)" class="image-thumb" :src="imagePreviewSrc(image)" alt="">
-              <span v-else class="image-thumb empty">无图</span>
+            <td class="px-2.5 py-2 align-middle">
+              <img v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-[var(--border)] bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="">
+              <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-[var(--border)] bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">无图</span>
             </td>
-            <td>{{ dateTime(image.generatedAt) }}</td>
-            <td>{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
-            <td>{{ imageVisibilityLabel(image.visibility) }}</td>
-            <td>{{ imageFundingLabel(image) }}</td>
-            <td :class="['storage-cell', storageLocationClass(image.storageLocation)]">
-              <span class="storage-label">{{ storageLocationLabel(image.storageLocation) }}</span>
-              <span v-if="image.storagePath" class="storage-path">{{ shortId(image.storagePath) }}</span>
+            <td class="px-2.5 py-2 align-middle">{{ dateTime(image.generatedAt) }}</td>
+            <td class="px-2.5 py-2 align-middle">{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
+            <td class="px-2.5 py-2 align-middle">
+              <Badge variant="outline">{{ imageVisibilityLabel(image.visibility) }}</Badge>
             </td>
-            <td class="model-cell">{{ image.imageModel || '-' }}</td>
-            <td>{{ imageDetails(image) }}</td>
-            <td class="prompt-cell">{{ image.prompt || '-' }}</td>
-            <td>
-              <button
+            <td class="px-2.5 py-2 align-middle">
+              <Badge variant="secondary">{{ imageFundingLabel(image) }}</Badge>
+            </td>
+            <td :class="['flex flex-col gap-0.5 px-2.5 py-2 align-middle', storageLocationClass(image.storageLocation)]">
+              <span class="text-xs font-bold">{{ storageLocationLabel(image.storageLocation) }}</span>
+              <span v-if="image.storagePath" class="text-[11px] text-[var(--text-secondary)]">{{ shortId(image.storagePath) }}</span>
+            </td>
+            <td class="px-2.5 py-2 align-middle text-xs text-[var(--text-secondary)]">{{ image.imageModel || '-' }}</td>
+            <td class="px-2.5 py-2 align-middle">{{ imageDetails(image) }}</td>
+            <td class="px-2.5 py-2 align-middle max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap">{{ image.prompt || '-' }}</td>
+            <td class="px-2.5 py-2 align-middle">
+              <Button
                 v-if="image.visibility === 'public'"
                 type="button"
-                class="table-action"
+                variant="ghost"
+                size="sm"
                 :disabled="actionId === image.id"
                 @click="emit('setVisibility', image, 'private')"
               >
                 隐藏
-              </button>
-              <button
+              </Button>
+              <Button
                 v-else-if="image.fundingSource !== 'credit'"
                 type="button"
-                class="table-action"
+                variant="ghost"
+                size="sm"
                 :disabled="actionId === image.id"
                 @click="emit('setVisibility', image, 'public')"
               >
                 公开
-              </button>
-              <span v-else class="table-muted">私有</span>
+              </Button>
+              <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">私有</span>
             </td>
           </tr>
           <tr v-if="!images.length">
-            <td colspan="11">暂无作品</td>
+            <td colspan="11" class="px-2.5 py-2 text-center">暂无作品</td>
           </tr>
         </tbody>
       </table>
     </div>
   </section>
 </template>
-
-<style scoped>
-.admin-panel {
-  min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.images-panel {
-  max-width: 1360px;
-  margin: 0 auto 14px;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.image-header {
-  align-items: flex-start;
-}
-
-.panel-header strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 18px;
-}
-
-.image-controls,
-.bulk-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.bulk-row {
-  justify-content: flex-start;
-  margin-bottom: 10px;
-}
-
-.bulk-row span,
-.table-muted {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-input,
-select {
-  width: 100%;
-  min-height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--input-bg);
-  color: var(--text-primary);
-  padding: 7px 9px;
-}
-
-select {
-  min-width: 130px;
-  cursor: pointer;
-}
-
-.image-controls input {
-  width: 180px;
-  min-width: 140px;
-}
-
-button {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 800;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--hover-bg);
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.danger-action {
-  color: var(--danger);
-}
-
-.table-wrap {
-  width: 100%;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.image-table-wrap {
-  max-height: 560px;
-}
-
-.image-table {
-  min-width: 1360px;
-}
-
-.storage-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.storage-label {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.storage-cos .storage-label {
-  color: #2563eb;
-}
-
-.storage-supabase .storage-label {
-  color: #3ecf8e;
-}
-
-.storage-data .storage-label {
-  color: #f59e0b;
-}
-
-.storage-path {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.model-cell {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-th,
-td {
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: middle;
-}
-
-th {
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.select-cell {
-  width: 42px;
-  text-align: center;
-}
-
-.select-cell input {
-  width: 16px;
-  min-height: 16px;
-  padding: 0;
-}
-
-.image-thumb {
-  display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.image-thumb.empty {
-  display: grid;
-  place-items: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.prompt-cell {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 680px) {
-  .panel-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .image-controls {
-    justify-content: flex-start;
-    width: 100%;
-  }
-}
-</style>

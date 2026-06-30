@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { Button } from '@/components/ui/button'
 import {
   GALLERY_AUTO_LOAD_PROGRESS,
   type GalleryFilter,
@@ -91,43 +92,60 @@ function handleScroll(event: Event) {
 <template>
   <section
     ref="stageRef"
-    class="gallery-stage"
+    class="gallery-stage relative flex-1 min-w-0 overflow-y-auto bg-secondary py-[26px] px-[clamp(18px,3vw,42px)] max-md:p-3 max-[460px]:p-2"
     @scroll.passive="handleScroll"
   >
-    <div class="gallery-header">
-      <div class="gallery-heading">
-        <span class="gallery-eyebrow">作品广场</span>
-        <h2>生成作品</h2>
-        <p>{{ filteredCount }} / {{ sourceCount }}</p>
+    <div class="gallery-header mx-auto mb-5 grid max-w-[1540px] items-start gap-[14px] max-md:flex-col max-md:items-stretch max-md:gap-3">
+      <div class="gallery-heading flex min-w-0 flex-wrap items-baseline gap-[10px] max-[460px]:gap-[6px]">
+        <span class="text-xs font-extrabold text-muted-foreground">作品广场</span>
+        <h2 class="m-0 text-[28px] tracking-normal text-foreground max-[460px]:text-[22px]">生成作品</h2>
+        <p class="m-0 text-xs font-extrabold text-muted-foreground">{{ filteredCount }} / {{ sourceCount }}</p>
       </div>
-      <div class="gallery-toolbar">
-        <div class="gallery-filter-group" role="tablist" aria-label="作品筛选">
-          <button
+      <div class="gallery-toolbar flex min-w-0 w-full items-center justify-start gap-[10px] max-md:flex-col max-md:items-stretch">
+        <div
+          class="gallery-filter-group inline-flex gap-[3px] rounded-lg border border-border bg-muted p-[3px] max-md:w-full max-[460px]:grid max-[460px]:grid-cols-3"
+          role="tablist"
+          aria-label="作品筛选"
+        >
+          <Button
             v-for="option in filterOptions"
             :key="option.value"
             type="button"
-            :class="{ active: filter === option.value }"
+            variant="ghost"
+            size="sm"
+            :class="[
+              'h-[34px] px-3 text-xs font-extrabold max-md:min-h-[42px] max-md:flex-1 max-[460px]:min-w-0',
+              filter === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
+            ]"
             @click="emit('update:filter', option.value)"
           >
             {{ option.label }}
-          </button>
+          </Button>
         </div>
-        <label class="gallery-search">
-          <Search :size="16" stroke-width="1.8" />
-          <input :value="query" type="search" placeholder="搜索提示词、尺寸、参考图" @input="updateQuery">
+        <label class="gallery-search flex h-[42px] min-w-[220px] flex-[1_1_360px] items-center gap-2 rounded-lg border border-border bg-background px-3 text-muted-foreground max-md:h-[42px] max-md:min-w-0 max-md:w-full max-md:flex-none">
+          <Search class="h-4 w-4 shrink-0" />
+          <input
+            :value="query"
+            type="search"
+            placeholder="搜索提示词、尺寸、参考图"
+            class="w-full min-w-0 border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            @input="updateQuery"
+          >
         </label>
-        <button
+        <Button
           type="button"
-          class="gallery-reset"
+          variant="outline"
+          size="sm"
+          class="min-h-[34px] px-3 text-xs font-extrabold disabled:opacity-[0.42] disabled:cursor-default max-md:min-h-[42px]"
           :disabled="!hasFilter"
           @click="resetFilters"
         >
           重置
-        </button>
+        </Button>
       </div>
     </div>
 
-    <div v-if="images.length" class="gallery-grid" aria-live="polite">
+    <div v-if="images.length" class="gallery-grid mx-auto grid max-w-[1540px] grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] items-start gap-4 max-md:grid-cols-1 max-md:gap-3" aria-live="polite">
       <ImageGalleryCard
         v-for="image in images"
         :key="image.id"
@@ -143,281 +161,17 @@ function handleScroll(event: Event) {
       />
     </div>
 
-    <div v-else class="gallery-empty">
-      <strong>{{ emptyTitle }}</strong>
-      <span v-if="showEmptyHint">换一个筛选或搜索词</span>
+    <div v-else class="gallery-empty mx-auto grid min-h-[320px] max-w-[720px] place-items-center gap-2 rounded-lg border border-dashed border-border bg-card text-center text-muted-foreground max-md:min-h-[240px] max-[460px]:p-[18px]">
+      <strong class="text-lg text-foreground">{{ emptyTitle }}</strong>
+      <span v-if="showEmptyHint" class="text-sm">换一个筛选或搜索词</span>
     </div>
 
-    <div v-if="showScrollStatus" class="gallery-scroll-status">
+    <div v-if="showScrollStatus" class="py-5 pb-1 text-center text-xs font-black text-muted-foreground">
       加载中...
     </div>
 
-    <div v-if="error" class="global-error">{{ error }}</div>
+    <div v-if="error" class="absolute bottom-[22px] left-1/2 z-24 max-w-[min(560px,calc(100%-64px))] -translate-x-1/2 rounded-lg border border-destructive/20 bg-card px-[14px] py-[10px] text-xs font-bold text-destructive shadow-md">
+      {{ error }}
+    </div>
   </section>
 </template>
-
-<style scoped>
-.gallery-stage {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  padding: 26px clamp(18px, 3vw, 42px);
-  overflow-y: auto;
-  background: hsl(var(--secondary));
-}
-
-.gallery-header {
-  display: grid;
-  align-items: start;
-  gap: 14px;
-  margin: 0 auto 20px;
-  max-width: 1540px;
-}
-
-.gallery-header button:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.gallery-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 10px;
-  min-width: 0;
-}
-
-.gallery-eyebrow {
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.gallery-header h2 {
-  margin: 0;
-  color: hsl(var(--foreground));
-  font-size: 28px;
-  letter-spacing: 0;
-}
-
-.gallery-header p {
-  margin: 0;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.gallery-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  gap: 10px;
-  min-width: 0;
-}
-
-.gallery-filter-group {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--muted));
-}
-
-.gallery-filter-group button,
-.gallery-reset {
-  min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md, 7px);
-  background: transparent;
-  color: hsl(var(--foreground));
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.gallery-filter-group button {
-  padding: 0 12px;
-  color: hsl(var(--muted-foreground));
-}
-
-.gallery-filter-group button.active {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  box-shadow: var(--shadow-sm);
-}
-
-.gallery-search {
-  display: flex;
-  align-items: center;
-  min-width: 220px;
-  height: 42px;
-  flex: 1 1 360px;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--background));
-  color: hsl(var(--muted-foreground));
-}
-
-.gallery-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: hsl(var(--foreground));
-  font: inherit;
-  font-size: 13px;
-}
-
-.gallery-search input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.gallery-reset {
-  padding: 0 12px;
-  border-color: hsl(var(--border));
-}
-
-.gallery-reset:disabled {
-  opacity: 0.42;
-  pointer-events: none;
-}
-
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  align-items: start;
-  gap: 16px;
-  max-width: 1540px;
-  margin: 0 auto;
-}
-
-.gallery-scroll-status {
-  padding: 20px 0 4px;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 900;
-  text-align: center;
-}
-
-.gallery-empty {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  min-height: 320px;
-  max-width: 720px;
-  margin: 0 auto;
-  border: 1px dashed hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--card));
-  color: hsl(var(--muted-foreground));
-  text-align: center;
-}
-
-.gallery-empty strong {
-  color: hsl(var(--foreground));
-  font-size: 18px;
-}
-
-.gallery-empty span {
-  font-size: 13px;
-}
-
-.global-error {
-  position: absolute;
-  left: 50%;
-  bottom: 22px;
-  z-index: 24;
-  max-width: min(560px, calc(100% - 64px));
-  padding: 10px 14px;
-  border: 1px solid hsl(var(--destructive) / 0.2);
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--card));
-  color: hsl(var(--destructive));
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: var(--shadow-md);
-  transform: translateX(-50%);
-}
-
-@media (max-width: 760px) {
-  .gallery-stage {
-    padding: 12px;
-  }
-
-  .gallery-header {
-    display: flex;
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .gallery-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .gallery-filter-group {
-    width: 100%;
-  }
-
-  .gallery-filter-group button {
-    flex: 1;
-    min-height: 42px;
-  }
-
-  .gallery-search {
-    width: 100%;
-    min-width: 0;
-    height: 42px;
-    flex: 0 0 auto;
-  }
-
-  .gallery-reset {
-    min-height: 42px;
-  }
-
-  .gallery-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-}
-
-@media (max-width: 460px) {
-  .gallery-stage {
-    padding: 8px;
-  }
-
-  .gallery-header {
-    margin-bottom: 12px;
-  }
-
-  .gallery-heading {
-    gap: 6px;
-  }
-
-  .gallery-header h2 {
-    font-size: 22px;
-  }
-
-  .gallery-filter-group {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .gallery-filter-group button,
-  .gallery-reset {
-    min-width: 0;
-  }
-
-  .gallery-empty {
-    min-height: 240px;
-    padding: 18px;
-  }
-}
-</style>
