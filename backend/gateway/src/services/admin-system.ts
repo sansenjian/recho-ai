@@ -9,6 +9,7 @@ import {
 } from '../clients/supabase.js'
 import { DEFAULT_APP_SETTINGS, getAdminAccessSummary, getAppSettings, type AdminAccessSummary } from './app-settings.js'
 import { normalizeImageCreditCostPerImage } from './image-credit-cost.js'
+import { listProviderSettings } from './provider-settings.js'
 import { safeErrorDetail } from './safe-error.js'
 
 type SystemStatus = 'ok' | 'warning' | 'error'
@@ -67,6 +68,7 @@ const ADMIN_TABLES: AdminTableDefinition[] = [
   { key: 'imageContexts', label: '画布上下文', table: 'image_generation_contexts' },
   { key: 'imageEvents', label: '图片事件', table: 'image_events' },
   { key: 'appSettings', label: '运行时配置', table: 'app_settings' },
+  { key: 'providerSettings', label: 'Provider 配置', table: 'provider_settings' },
   { key: 'adminUsers', label: '后台管理员', table: 'admin_users' },
   { key: 'announcements', label: '公告', table: 'announcements' },
 ]
@@ -211,6 +213,7 @@ export async function getAdminSystemStatus() {
     envEmailCount: 0,
     tableAvailable: false,
   }
+  let imageProviderConfigured = Boolean(IMAGE_GEN_API_KEY)
 
   try {
     settings = await getAppSettings()
@@ -224,12 +227,21 @@ export async function getAdminSystemStatus() {
     console.warn('[admin-system] admin access diagnostics fallback:', safeErrorDetail(err))
   }
 
+  try {
+    const providerSettings = await listProviderSettings()
+    imageProviderConfigured = imageProviderConfigured || providerSettings.providers.some(provider =>
+      provider.kind === 'image' && provider.enabled && provider.apiKeyConfigured,
+    )
+  } catch (err) {
+    console.warn('[admin-system] provider diagnostics fallback:', safeErrorDetail(err))
+  }
+
   return summarizeAdminSystemStatus({
     tables,
     supabasePublicConfigured: hasSupabaseConfig(),
     supabaseAdminConfigured: hasSupabaseAdminConfig(),
     supabaseImageBucketConfigured: Boolean(SUPABASE_IMAGE_BUCKET.trim()),
-    imageApiKeyConfigured: Boolean(IMAGE_GEN_API_KEY),
+    imageApiKeyConfigured: imageProviderConfigured,
     imageCreditCostPerImage: settings.imageCreditCostPerImage,
     imageAnalyticsEnabled: settings.imageAnalyticsEnabled,
     adminUserIdCount: adminAccess.userIdCount,

@@ -34,3 +34,37 @@ func TestParseImageModelOptionsDoesNotAddFallbackModels(t *testing.T) {
 		}
 	}
 }
+
+func TestParseJSONCreditCostAcceptsNumberAndString(t *testing.T) {
+	tests := []struct {
+		raw  []byte
+		want float64
+	}{
+		{raw: []byte(`0.75`), want: 0.75},
+		{raw: []byte(`"1.25"`), want: 1.25},
+		{raw: []byte(`2`), want: 2},
+	}
+
+	for _, tt := range tests {
+		got := parseJSONCreditCost(tt.raw, 1)
+		if got != tt.want {
+			t.Fatalf("expected %v for %s, got %v", tt.want, string(tt.raw), got)
+		}
+	}
+}
+
+func TestParseJSONCreditCostFallsBackForInvalidValues(t *testing.T) {
+	tests := [][]byte{
+		[]byte(`0`),
+		[]byte(`-1`),
+		[]byte(`"nope"`),
+		[]byte(`{}`),
+	}
+
+	for _, raw := range tests {
+		got := parseJSONCreditCost(raw, 0.5)
+		if got != 0.5 {
+			t.Fatalf("expected fallback for %s, got %v", string(raw), got)
+		}
+	}
+}

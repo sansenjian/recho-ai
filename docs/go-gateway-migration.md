@@ -2,15 +2,16 @@
 
 ## Goal
 
-Reduce Render memory pressure and cold-start latency by moving selected API paths from the Node.js gateway to a smaller Go gateway, while keeping the Node gateway as the default fallback during migration.
+Reduce Node.js gateway pressure by moving selected API paths to a smaller Go sidecar, while keeping Node as the single public API entry inside one Render Docker backend.
 
 ## Current Shape
 
-- Node gateway remains the default backend for local development and production.
-- Go gateway is introduced as a parallel service under `backend/go-gateway`.
+- Node gateway remains the single public backend entry for local development and production.
+- Go gateway is introduced as a sidecar process under `backend/go-gateway`.
 - Local Go gateway runs on port `3001`.
-- Vite keeps `/api` proxied to Node and can point only image calls to Go with `VITE_IMAGE_API_BASE_URL=http://127.0.0.1:3001`.
-- Render can deploy a separate `recho-go-gateway` service without replacing `recho-gateway`.
+- Vite keeps `/api` proxied to Node. In normal local development, Node receives `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001` and proxies Go-owned routes to the Go sidecar.
+- `VITE_IMAGE_API_BASE_URL` is still available for isolated image-service verification, but it is not the default `npm run dev` path.
+- Render runs Node and Go in one Docker Web Service. Go is not a separate Render backend service in the current plan.
 
 ## Why Parallel First
 
@@ -39,19 +40,27 @@ Node should remain responsible for now:
 
 ## Local Commands
 
-Default Node path:
+Default local path:
 
 ```bash
 npm run dev
 ```
 
-Go candidate path:
+Explicit Go sidecar path:
 
 ```bash
 npm run dev:go
 ```
 
-This starts both gateways. `/api` still goes to Node through the Vite proxy; only image calls use the Go service through `VITE_IMAGE_API_BASE_URL`.
+Both commands start Node, Go, and Vite. The browser calls `/api`; Node keeps Chat/MCP/Admin locally and proxies image, credits, and selected config endpoints to Go.
+
+Node-only debugging path:
+
+```bash
+npm run dev:node
+```
+
+This starts only Node and Vite. Because the legacy Node image-generation handler has been removed, `/api/image/generate` returns a 503 migration message in this mode.
 
 Build checks:
 
@@ -76,22 +85,23 @@ Expected in limited local mode without Supabase env:
 
 ## Deploy Strategy
 
-1. Deploy `recho-go-gateway` alongside the existing Node `recho-gateway`.
-2. Keep frontend `VITE_API_BASE_URL` pointing to Node.
-3. Set frontend `VITE_IMAGE_API_BASE_URL` to the Go service when image endpoints are ready.
-4. Test Go image endpoints directly in production.
-5. Keep Chat/MCP/Admin on Node until dedicated parity work is complete.
+1. Build Node Gateway and Go Gateway into the same Render Docker image.
+2. Start Go first on `127.0.0.1:3001`, wait for `/health` or `/ready`, then start Node on the public `PORT`.
+3. Set Node `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001`.
+4. Keep frontend `VITE_API_BASE_URL` pointing to Node.
+5. Test Go image endpoints through Node proxy first; direct Go testing is only for internal smoke checks inside the container or local development.
+6. Keep Chat/MCP/Admin on Node until dedicated parity work is complete.
 
 ## Success Metrics
 
-- Go service cold start is consistently lower than Node gateway cold start.
-- Go service memory stays materially below Node gateway under Image/credits traffic.
+- The combined Docker backend starts reliably with both Node and Go healthy.
+- Go-owned Image/credits traffic no longer exercises the old Node generation pipeline.
 - Image public gallery and config routes return within acceptable latency after idle.
 - No regression in auth, credit deduction, public gallery visibility, or image storage URLs.
 
 ## Known Gaps
 
-- Go app config and credits endpoints exist for experiments, but frontend traffic should remain on Node for now.
+- Go app config and credits endpoints are part of the Go-owned route set when Node sidecar proxy is enabled.
 - Go image storage proxy and COS behavior need parity review.
-- Go chat route is basic upstream streaming and does not implement the current Node MCP/tool loop.
+- Go no longer provides `/api/chat`; Chat stays on Node.
 - Go admin APIs are not implemented.

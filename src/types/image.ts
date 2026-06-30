@@ -78,6 +78,9 @@ export interface GeneratedImage {
   id: string
   userId?: string | null
   generationBatchId?: string | null
+  url?: string
+  temporaryUrl?: string
+  persistenceStatus?: 'processing' | 'persisted' | 'failed' | string
   dataUrl?: string
   storagePath?: string
   previewUrl?: string

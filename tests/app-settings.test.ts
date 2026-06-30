@@ -113,12 +113,8 @@ describe('app settings service', () => {
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
-      availableImageModels: [
-        { id: 'gpt-image-1', name: 'GPT Image 1' },
-        { id: 'gpt-image-1-mini', name: 'GPT Image 1 Mini' },
-        { id: 'dall-e-3', name: 'DALL·E 3' },
-        { id: 'dall-e-2', name: 'DALL·E 2' },
-      ],
+      imageCreditCostPerImage: 0.25,
+      availableImageModels: [],
       defaultImageModel: 'custom-image-model',
     })
     expect(Object.keys(publicConfig).sort()).toEqual([
@@ -126,6 +122,7 @@ describe('app settings service', () => {
       'canvasContextEnabled',
       'defaultImageModel',
       'guestGenerationEnabled',
+      'imageCreditCostPerImage',
       'imageEventsEnabled',
     ])
   })

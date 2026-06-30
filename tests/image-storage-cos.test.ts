@@ -70,8 +70,8 @@ describe('image storage Tencent COS support', () => {
     } = await import('../backend/gateway/src/services/image-storage')
 
     expect(imagePublicUrl('cos://generated/a b.webp')).toBe('/api/image/storage/cos%3A%2F%2Fgenerated%2Fa%20b.webp')
-    expect(imagePreviewPath('cos://generated/a b.webp')).toBe('cos://generated/a b.preview.webp')
-    expect(imageThumbnailPath('cos://generated/a b.webp')).toBe('cos://generated/a b.thumb.webp')
+    expect(imagePreviewPath('cos://generated/a b/a b.webp')).toBe('cos://generated/a b/a b.preview.webp')
+    expect(imageThumbnailPath('cos://generated/a b/a b.webp')).toBe('cos://generated/a b/a b.thumb.webp')
   })
 
   it('downloads and deletes COS objects through the COS client wrapper', async () => {
@@ -106,16 +106,16 @@ describe('image storage Tencent COS support', () => {
     )
 
     expect(stored).toMatchObject({
-      publicUrl: 'https://cos.example.test/generated/img_credit_1.webp',
-      storagePath: 'cos://generated/img_credit_1.webp',
-      previewPath: 'cos://generated/img_credit_1.preview.webp',
-      thumbnailPath: 'cos://generated/img_credit_1.thumb.webp',
+      publicUrl: 'https://cos.example.test/generated/img_credit_1/img_credit_1.webp',
+      storagePath: 'cos://generated/img_credit_1/img_credit_1.webp',
+      previewPath: 'cos://generated/img_credit_1/img_credit_1.preview.webp',
+      thumbnailPath: 'cos://generated/img_credit_1/img_credit_1.thumb.webp',
       mime: 'image/webp',
     })
     expect(putCosObjects.map(item => item.key)).toEqual([
-      'generated/img_credit_1.webp',
-      'generated/img_credit_1.preview.webp',
-      'generated/img_credit_1.thumb.webp',
+      'generated/img_credit_1/img_credit_1.webp',
+      'generated/img_credit_1/img_credit_1.preview.webp',
+      'generated/img_credit_1/img_credit_1.thumb.webp',
     ])
     expect(putCosObjects.every(item => item.contentType === 'image/webp')).toBe(true)
     expect(putCosObjects.every(item => item.cacheControl === 'max-age=31536000')).toBe(true)

@@ -6,10 +6,11 @@
 
 当前 Go 网关以并行服务方式引入，不直接替换 `backend/gateway` 的 Node.js 网关。
 
-- Node 网关仍然是默认开发和生产入口。
-- Go 网关默认用于本地验证，建议监听 `3001`。
-- 本地 `npm run dev:go` 会同时启动 Node 和 Go；普通 `/api` 仍走 Node，图片 API 通过 `VITE_IMAGE_API_BASE_URL` 指向 Go。
-- 只有确认接口等价后，再逐步把具体 image API 路由切到 Go。
+- Node 网关仍然是默认 HTTP 入口，Chat / MCP / Admin BFF 继续由 Node 处理。
+- Go 网关建议监听 `3001`，负责图片生成、图片存储、额度和幂等链路。
+- 本地 `npm run dev` / `npm run dev:go` 会同时启动 Node 和 Go，并给 Node 注入 `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001`。
+- 本地默认路径是前端请求 `/api` 到 Node，再由 Node 代理图片、额度和配置路由到 Go；`VITE_IMAGE_API_BASE_URL` 只保留给独立图片服务或专项验证使用。
+- Node 旧生图实现已下线；没有 Go sidecar 或 `GO_GATEWAY_BASE_URL` 时，Node `/api/image/generate` 只返回迁移提示。
 
 ## 快速开始
 
@@ -31,8 +32,8 @@ go mod tidy
 # 开发模式
 go run ./cmd/server/
 
-# 或在项目根目录以 3001 启动 Go 网关 + Vite
-npm run dev:go
+# 或在项目根目录启动 Node + Go + Vite
+npm run dev
 
 # 构建
 go build -o go-gateway ./cmd/server/
@@ -55,17 +56,17 @@ SUPABASE_SERVICE_ROLE_KEY=[SERVICE_ROLE_KEY]
 SUPABASE_JWKS_URL=
 
 # Image Generation
+# Fallback only. Prefer admin-managed encrypted provider settings.
 IMAGE_GEN_API_KEY=[API_KEY]
 IMAGE_GEN_BASE_URL=https://lucen.plus/v1
 IMAGE_CREDIT_COST_PER_IMAGE=0.5
 
-# Optional chat forwarding
-CHAT_BASE_URL=https://api.openai.com
-CHAT_API_KEY=[API_KEY]
+# Required when API keys are configured in Admin Provider settings.
+# Use the same value for Node Gateway and Go Gateway.
+# Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+PROVIDER_API_KEY_MASTER_KEY=[32_BYTE_BASE64URL_OR_HEX_KEY]
 
 # Analytics
-ANALYSIS_URL=
-ANALYSIS_API_KEY=
 IMAGE_ANALYTICS_ENABLED=false
 IMAGE_EVENTS_ENABLED=false
 CANVAS_CONTEXT_ENABLED=false
@@ -133,16 +134,16 @@ backend/go-gateway/
 - 前端配置：`/api/config/app`、`/api/config/supabase`
 - 额度接口：`/api/credits`、`/api/credits/redeem`
 - 图片生成和历史基础接口：`/api/image/generate`、`/api/image/history`
-- Chat 基础流式转发：`/api/chat`
+
+不再提供：
+
+- Chat 转发：`/api/chat` 只由 Node Gateway 负责，Go 不注册 chat 路由。
 
 仍需补齐或验证：
 
 - `/api/config/app` 读取数据库 `app_settings`
-- `/api/skills`
-- MCP 工具调用
-- 管理后台 API
+- 图片相关 API 与现有 Node 网关的错误格式、鉴权边界和响应字段等价性
 - 图片存储代理和公开作品访问权限
-- 与现有 Node 网关的错误格式、鉴权边界和响应字段等价性
 
 ## 部署
 

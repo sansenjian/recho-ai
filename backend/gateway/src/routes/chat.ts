@@ -5,8 +5,11 @@ import { mcpManager } from '../mcp/manager.js'
 import { runTAORLoop, sendChatStatus } from '../services/chat-loop.js'
 import type { SkillDefinition } from '../skills/types.js'
 import { applySkillSystemPrompt, filterToolsForSkill } from './chat-utils.js'
-import { getRequestUserId } from '../services/request-auth.js'
+import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
+import { ProviderSettingsError, getRuntimeChatProvider } from '../services/provider-settings.js'
+import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
+import OpenAI from 'openai'
 
 const router = Router()
 
@@ -15,6 +18,7 @@ const MAX_RETRIES = 3
 const ALLOWED_MODEL_PREFIXES = ['gpt-', 'moonshot', 'kimi-']
 
 function isValidChatModel(model: string): boolean {
+  if (/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/.test(model)) return true
   if (ALLOWED_MODEL_PREFIXES.some(prefix => model.startsWith(prefix))) return true
   // NVIDIA and other provider models typically contain a '/'
   if (model.includes('/')) return true
@@ -23,9 +27,16 @@ function isValidChatModel(model: string): boolean {
 
 router.post('/chat', async (req: Request, res: Response) => {
   const { model, messages, skill } = req.body
-  const userId = await getRequestUserId(req)
-  if (!userId) {
-    res.status(401).json({ error: '请先登录后再使用 Chat' })
+  try {
+    const user = await getRequestUser(req)
+    await assertAdminUser(user)
+  } catch (err) {
+    if (err instanceof AdminCreditError) {
+      res.status(err.status).json({ error: err.publicMessage })
+      return
+    }
+    console.warn('[chat] admin access check failed:', safeErrorDetail(err))
+    res.status(500).json({ error: publicErrorMessage(err, 'Chat 权限检查失败，请稍后重试。') })
     return
   }
 
@@ -39,11 +50,32 @@ router.post('/chat', async (req: Request, res: Response) => {
     return
   }
 
-  const clientOrPool = getClientByModel(model)
+  let runtimeProvider
+  try {
+    runtimeProvider = await getRuntimeChatProvider(model, { strict: true })
+  } catch (err) {
+    if (err instanceof ProviderSettingsError) {
+      res.status(err.status).json({ error: err.publicMessage })
+      return
+    }
+    console.error('[chat] provider lookup failed:', safeErrorDetail(err))
+    res.status(503).json({ error: 'Chat Provider 配置暂时不可用。' })
+    return
+  }
+  const clientOrPool = runtimeProvider
+    ? new OpenAI({
+        baseURL: runtimeProvider.baseUrl,
+        apiKey: runtimeProvider.apiKey,
+        timeout: runtimeProvider.timeoutMs,
+      })
+    : getClientByModel(model)
   if (!clientOrPool) {
     res.status(400).json({ error: `no client available for model: ${model}` })
     return
   }
+  const maxAttempts = runtimeProvider
+    ? Math.max(1, Math.min(runtimeProvider.retryCount + 1, 11))
+    : MAX_RETRIES
 
   const controller = new AbortController()
   req.on('close', () => {
@@ -70,7 +102,7 @@ router.post('/chat', async (req: Request, res: Response) => {
   res.flushHeaders?.()
   await sendChatStatus(res, 'thinking', '连接模型服务')
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let entry: any = null
     try {
       const acquired = await acquireClient(clientOrPool)

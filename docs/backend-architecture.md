@@ -1,5 +1,8 @@
 # 后端架构规划
 
+> 文档状态：早期规划，内容早于当前 Node Gateway + Go sidecar 架构。
+> 当前架构事实请看 [Recho-AI 当前架构与目标架构](./recho-ai-architecture-current-and-target.md)。本文仅作历史参考。
+
 > 适用于 recho-ai 项目：前期只做 API 聚合转发，后期引入 AI 生态。
 
 ---

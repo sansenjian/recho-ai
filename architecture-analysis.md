@@ -1,8 +1,11 @@
 # recho-ai 后端架构分析：Node.js 网关、Go 网关与微服务
 
+> 文档状态：历史分析。当前架构事实以 [docs/recho-ai-architecture-current-and-target.md](./docs/recho-ai-architecture-current-and-target.md) 为准。
+> 本文保留用于追溯当时的架构讨论，不作为当前部署或迁移的唯一依据。
+
 ## 执行摘要
 
-recho-ai 当前后端包含两个并行网关：一个基于 Node.js + Express（`backend/gateway/`），一个基于 Go（`backend/go-gateway/`）。Node 网关仍是默认入口，负责聊天流、MCP 工具调用、技能加载、管理后台等复杂逻辑；Go 网关作为性能优化补充，正在逐步承接图片生成、历史记录、额度查询等冷启动敏感型路由。
+recho-ai 当前后端是同一个 Render Docker 服务中的两个进程：Node.js + Express（`backend/gateway/`）对外提供统一入口，Go（`backend/go-gateway/`）作为本机 sidecar 承接图片生成、历史记录、额度查询等重资源路由。Node 继续负责聊天流、MCP 工具调用、技能加载、管理后台等复杂逻辑。
 
 这不是微服务架构，而是一种"模块化单体 + 双网关分流"的过渡形态。短期最务实的方向是继续收敛 Node 网关能力到 Go 网关，形成单一 Go 网关；真正引入微服务的时机取决于团队规模扩大、子域边界清晰、以及独立部署/扩缩容需求变得不可忽视。
 
@@ -29,16 +32,16 @@ backend/
 
 ### 前端流量走向
 
-本地开发时，Vite 默认把 `/api` 代理到 Node 网关（`3000`）。若设置 `VITE_IMAGE_API_BASE_URL=http://127.0.0.1:3001`，图片相关调用会指向 Go 网关。生产环境中 Render 可同时部署两个服务：`recho-gateway`（Node）和 `recho-go-gateway`（Go），前端按路由分别访问。
+本地开发时，Vite 默认把 `/api` 代理到 Node 网关（`3000`）。`npm run dev` 会同时启动 Go sidecar（`3001`），并给 Node 注入 `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001`；图片、额度和部分配置路由由 Node 代理到 Go。`VITE_IMAGE_API_BASE_URL` 只保留给独立图片服务或专项验证使用，不是默认开发路径。生产环境当前也应优先保持“前端访问 Node，Node facade/代理到 Go-owned 路由”的稳定入口；未来若引入 Cloudflare / Nginx 路径分流，再让边缘层直接分配到 Node 或 Go。
 
 ## Node.js 网关 vs Go 网关：能力矩阵
 
 | 能力 | Node.js 网关 | Go 网关 | 备注 |
 |------|-------------|---------|------|
-| 聊天流式 `/api/chat` | 完整实现，含 MCP 工具循环 | 仅基础流式转发 | Node 有 `chat-loop.ts` 和 `mcp/manager.ts` |
+| 聊天流式 `/api/chat` | 完整实现，含 MCP 工具循环 | 不提供 | Chat/MCP/Skill 统一归 Node |
 | MCP 工具调用 | 完整实现 | 未实现 | Go 侧缺少工具 schema 适配与调用循环 |
 | 技能系统 `/api/skills` | 完整实现 | 未实现 | 技能加载与提示词注入在 Node |
-| 图片生成 `/api/image/generate` | 完整实现 | 已实现 | Go 已作为迁移目标 |
+| 图片生成 `/api/image/generate` | 旧实现已下线；有 sidecar 配置时代理到 Go，否则返回迁移提示 | 已实现 | Go 是当前 owner |
 | 图片历史 `/api/image/history` | 完整实现 | 已实现 | 含 public / mine 两种 scope |
 | 额度系统 `/api/credits` | 完整实现 | 部分实现 | Go 侧有 credits / redeem |
 | 管理后台 `/api/admin/*` | 完整实现 | 未实现 | 用户权限、图片审核、公告等 |

@@ -100,23 +100,17 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
 <template>
   <aside class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-lg:w-[220px] max-md:hidden">
     <!-- Mode switch: Imagio / 画布 -->
-    <div class="flex items-center gap-2 mx-3.5 my-[18px] p-1 border border-border rounded-lg bg-muted text-sm font-extrabold">
+    <div class="mode-switch">
       <button
         type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-        ]"
+        :class="{ active: imageMode !== 'canvas' }"
         @click="emit('select-image-mode', 'imagio')"
       >
         Imagio
       </button>
       <button
         type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
-        ]"
+        :class="{ active: imageMode === 'canvas' }"
         @click="emit('select-image-mode', 'canvas')"
       >
         画布
@@ -251,3 +245,41 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
     </ScrollArea>
   </aside>
 </template>
+
+<style scoped>
+.mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 14px 18px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--muted));
+}
+
+.mode-switch button {
+  flex: 1;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-md, 7px);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mode-switch button:hover {
+  color: hsl(var(--foreground));
+}
+
+.mode-switch button.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: var(--shadow-sm);
+}
+</style>

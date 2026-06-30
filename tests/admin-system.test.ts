@@ -4,6 +4,7 @@ let tableCounts: Record<string, number> = {}
 let tableErrors: Record<string, unknown> = {}
 let appSettingRows: Array<Record<string, unknown>> = []
 let adminUserRows: Array<Record<string, unknown>> = []
+let providerRows: Array<Record<string, unknown>> = []
 
 vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['admin@example.test'],
@@ -77,6 +78,29 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         }
       }
 
+      if (table === 'provider_settings') {
+        return {
+          select: vi.fn((_columns: string, options?: { head?: boolean }) => {
+            if (options?.head) {
+              return Promise.resolve({
+                count: tableCounts[table] ?? providerRows.length,
+                error: tableErrors[table] ?? null,
+              })
+            }
+            return {
+              order: vi.fn(() => ({
+                order: vi.fn(() => ({
+                  order: vi.fn(async () => ({
+                    data: providerRows,
+                    error: tableErrors[table] ?? null,
+                  })),
+                })),
+              })),
+            }
+          }),
+        }
+      }
+
       return {
         select: vi.fn(async () => ({
           count: tableCounts[table] ?? 0,
@@ -93,6 +117,7 @@ describe('admin system status helpers', () => {
     tableErrors = {}
     appSettingRows = []
     adminUserRows = []
+    providerRows = []
     vi.resetModules()
   })
 
@@ -107,6 +132,7 @@ describe('admin system status helpers', () => {
       image_generation_contexts: 7,
       image_events: 8,
       app_settings: 6,
+      provider_settings: 1,
       admin_users: 1,
       announcements: 1,
     }
@@ -147,7 +173,7 @@ describe('admin system status helpers', () => {
         tableAvailable: true,
       },
     })
-    expect(status.data.tables).toHaveLength(10)
+    expect(status.data.tables).toHaveLength(11)
     expect(status.data.tables.every(table => table.status === 'ok')).toBe(true)
     expect(status.warnings).toEqual([])
 

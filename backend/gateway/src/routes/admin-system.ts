@@ -13,6 +13,12 @@ import {
   updateAdminUserRule,
   updateAppSettings,
 } from '../services/app-settings.js'
+import {
+  ProviderSettingsError,
+  createProviderSetting,
+  listProviderSettings,
+  updateProviderSetting,
+} from '../services/provider-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
@@ -27,6 +33,13 @@ function adminSystemErrorResponse(err: unknown, fallback = '系统状态加载�
   }
 
   if (err instanceof AppSettingsError) {
+    return {
+      status: err.status,
+      error: err.publicMessage,
+    }
+  }
+
+  if (err instanceof ProviderSettingsError) {
     return {
       status: err.status,
       error: err.publicMessage,
@@ -81,16 +94,21 @@ router.get('/admin/system', async (req: Request, res: Response) => {
 router.get('/admin/settings', async (req: Request, res: Response) => {
   try {
     const adminUser = await requireAdmin(req)
-    const [settings, adminUsers, adminAccess] = await Promise.all([
+    const [settings, adminUsers, adminAccess, providerSettings] = await Promise.all([
       getAppSettings({ refresh: true }),
       getAdminUserRules({ refresh: true }),
       getAdminAccessSummary({ refresh: true }),
+      listProviderSettings({ refresh: true }),
     ])
     const currentAdminRole = await getAdminUserRole(adminUser)
     res.json({
       settings,
       adminUsers: publicAdminUserRules(adminUsers, currentAdminRole),
       adminAccess,
+      providerSettings: {
+        providers: providerSettings.providers,
+        tableAvailable: providerSettings.tableAvailable,
+      },
       currentAdminRole,
     })
   } catch (err) {
@@ -108,6 +126,46 @@ router.patch('/admin/settings', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-settings] update failed:', safeErrorDetail(err))
     const response = adminSystemErrorResponse(err, '配置保存失败，请稍后重试。')
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.post('/admin/settings/providers', async (req: Request, res: Response) => {
+  try {
+    const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
+    const provider = await createProviderSetting(req.body || {}, adminUser)
+    const providerSettings = await listProviderSettings({ refresh: true })
+    res.json({
+      provider,
+      providerSettings: {
+        providers: providerSettings.providers,
+        tableAvailable: providerSettings.tableAvailable,
+      },
+    })
+  } catch (err) {
+    console.error('[admin-settings] provider create failed:', safeErrorDetail(err))
+    const response = adminSystemErrorResponse(err, 'Provider 配置创建失败，请稍后重试。')
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.patch('/admin/settings/providers/:providerId', async (req: Request, res: Response) => {
+  try {
+    const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
+    const provider = await updateProviderSetting(routeParam(req.params.providerId), req.body || {}, adminUser)
+    const providerSettings = await listProviderSettings({ refresh: true })
+    res.json({
+      provider,
+      providerSettings: {
+        providers: providerSettings.providers,
+        tableAvailable: providerSettings.tableAvailable,
+      },
+    })
+  } catch (err) {
+    console.error('[admin-settings] provider update failed:', safeErrorDetail(err))
+    const response = adminSystemErrorResponse(err, 'Provider 配置更新失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })

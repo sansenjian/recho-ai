@@ -1,10 +1,13 @@
 # Render 全栈部署方案
 
-> recho-ai 全部部署在 Render：Static Site（前端）+ Web Service（后端），一个平台管完。
+> 文档状态：历史部署参考，内容早于当前 Render Docker backend + Go sidecar 方案。
+> 当前架构事实请先看 [Recho-AI 当前架构与目标架构](./recho-ai-architecture-current-and-target.md)。
+
+> 当前推荐后端形态：一个 Render Docker Web Service 同时运行 Node Gateway 和 Go sidecar；不是单独创建 Node Web Service + Go Web Service。
 
 ---
 
-## 架构总览
+## 历史架构总览
 
 ```
 用户浏览器
@@ -18,17 +21,19 @@
                                             └── Kimi
 ```
 
-**为什么全部放 Render？**
+以下内容是早期 Node-only 部署思路，不代表当前推荐方案。当前推荐方案请以 [当前架构与目标架构](./recho-ai-architecture-current-and-target.md) 为准。
+
+**当时为什么全部放 Render？**
 - 当前网关用**内存滑动窗口**做速率限制，Render Web Service 是长驻进程，状态不会丢
 - 前后端同一个平台，管理简单、日志集中看
 - 免费额度够用：Static Site 100GB 带宽 + Web Service 750 小时/月
-- 支持 `render.yaml` 一键部署两个服务
+- 当时计划支持 `render.yaml` 一键部署前端静态站点和后端 Web Service
 
 ---
 
-## 一、render.yaml 蓝图（一键部署）
+## 一、历史 render.yaml 蓝图（一键部署）
 
-在项目根目录创建 `render.yaml`，Render 会自动识别并创建两个服务：
+下面蓝图只适合追溯旧方案。当前后端应使用 Docker Web Service，同时运行 Node Gateway 和 Go sidecar。
 
 ```yaml
 services:
