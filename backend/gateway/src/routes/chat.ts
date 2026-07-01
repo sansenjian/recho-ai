@@ -6,7 +6,7 @@ import { runTAORLoop, sendChatStatus } from '../services/chat-loop.js'
 import type { SkillDefinition } from '../skills/types.js'
 import { applySkillSystemPrompt, filterToolsForSkill } from './chat-utils.js'
 import { AdminCreditError, assertAdminUser } from '../services/admin-credits.js'
-import { getRuntimeChatProvider } from '../services/provider-settings.js'
+import { ProviderSettingsError, getRuntimeChatProvider } from '../services/provider-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 import OpenAI from 'openai'
@@ -51,10 +51,12 @@ router.post('/chat', async (req: Request, res: Response) => {
   }
 
   let runtimeProvider
+  let providerLookupError: unknown = null
   try {
-    runtimeProvider = await getRuntimeChatProvider(model)
+    runtimeProvider = await getRuntimeChatProvider(model, { strict: true })
   } catch (err) {
     console.warn('[chat] provider lookup failed, falling back to env client:', safeErrorDetail(err))
+    providerLookupError = err
     runtimeProvider = null
   }
   const clientOrPool = runtimeProvider
@@ -65,6 +67,13 @@ router.post('/chat', async (req: Request, res: Response) => {
       })
     : getClientByModel(model)
   if (!clientOrPool) {
+    if (providerLookupError) {
+      const status = providerLookupError instanceof ProviderSettingsError ? providerLookupError.status : 503
+      res.status(status >= 500 ? status : 503).json({
+        error: publicErrorMessage(providerLookupError, 'Chat Provider 配置暂时不可用，请稍后重试。'),
+      })
+      return
+    }
     res.status(400).json({ error: `no client available for model: ${model}` })
     return
   }

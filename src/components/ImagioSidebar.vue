@@ -92,23 +92,27 @@ refreshCredits()
     class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-[980px]:w-[220px] max-[760px]:hidden"
   >
     <!-- Mode switch: Imagio / 画布 -->
-    <div class="flex items-center gap-2 m-[18px_14px_18px] p-1 border border-border rounded-lg bg-muted text-sm font-extrabold">
-      <Button
-        variant="ghost"
-        class="flex-1 min-h-[34px] px-3 rounded-md text-[13px] font-extrabold transition-all"
-        :class="imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+    <div class="flex items-center gap-2 m-[18px_14px_18px] p-1 border border-border rounded-lg bg-muted">
+      <button
+        type="button"
+        :class="[
+          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
+          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
+        ]"
         @click="emit('select-image-mode', 'imagio')"
       >
         Imagio
-      </Button>
-      <Button
-        variant="ghost"
-        class="flex-1 min-h-[34px] px-3 rounded-md text-[13px] font-extrabold transition-all"
-        :class="imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+      </button>
+      <button
+        type="button"
+        :class="[
+          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
+          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
+        ]"
         @click="emit('select-image-mode', 'canvas')"
       >
         画布
-      </Button>
+      </button>
     </div>
 
     <!-- Workspace section -->

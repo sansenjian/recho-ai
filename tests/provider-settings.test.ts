@@ -246,6 +246,32 @@ describe('provider settings service', () => {
     })
   })
 
+  it('throws in strict mode when the matching chat provider cannot be decrypted', async () => {
+    providerRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'chat',
+        name: 'Broken Chat',
+        base_url: 'https://chat.example.test/v1/',
+        enabled: true,
+        priority: 20,
+        default_model: 'gpt-4o',
+        timeout_ms: 90000,
+        retry_count: 2,
+        api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
+        api_key_preview: 'sk-...cret',
+        created_at: '2026-06-29T00:00:00Z',
+        updated_at: '2026-06-29T00:00:00Z',
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('gpt-4o', { strict: true })).rejects.toMatchObject({
+      message: 'runtime_chat_provider_unavailable',
+      status: 503,
+    })
+  })
+
   it('does not match unrelated slash-model namespaces', async () => {
     const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
     providerRows = [

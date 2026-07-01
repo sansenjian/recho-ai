@@ -56,7 +56,18 @@ const compactModelLabel = computed(() => {
   return label.replace(/^DeepSeek\s+/, '').replace(/\s+Flash$/, ' Flash')
 })
 
-const canSubmit = computed(() => Boolean(inputValue.value.trim() || props.activeSkill))
+const activeSkillOption = computed(() => {
+  if (!props.activeSkill) return null
+  return (props.skills || []).find(skill => skill.name === props.activeSkill) || null
+})
+
+const skillOnlyFallbackText = computed(() => {
+  if (!props.activeSkill) return ''
+  const label = activeSkillOption.value?.description || props.activeSkill
+  return `使用 /${props.activeSkill} ${label}`
+})
+
+const canSubmit = computed(() => Boolean(inputValue.value.trim() || skillOnlyFallbackText.value))
 
 function modelStatusLabel(model: ModelOption) {
   if (model.status === 'recommended') return '推荐'
@@ -138,7 +149,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 function handleSubmit() {
   const trimmed = inputValue.value.trim()
-  if (!trimmed && !props.activeSkill) return
+  const fallbackText = skillOnlyFallbackText.value
+  if (!trimmed && !fallbackText) return
 
   // Support inline "/skill query" format
   const parsed = tryParseSlashCommand(trimmed)
@@ -146,7 +158,7 @@ function handleSubmit() {
     emit('selectSkill', parsed.skill)
     emit('submit', parsed.query)
   } else {
-    emit('submit', trimmed)
+    emit('submit', trimmed || fallbackText)
   }
 
   inputValue.value = ''

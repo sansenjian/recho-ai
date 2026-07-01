@@ -76,10 +76,12 @@ func TestParseJSONCreditCostClampsTinyPositiveValues(t *testing.T) {
 	}
 
 	for _, raw := range tests {
-		got := parseJSONCreditCost(raw, 0.5)
-		if got != 0.01 {
-			t.Fatalf("expected minimum billable cost for %s, got %v", string(raw), got)
-		}
+		t.Run(string(raw), func(t *testing.T) {
+			got := parseJSONCreditCost(raw, 0.5)
+			if got != 0.01 {
+				t.Fatalf("expected minimum billable cost for %s, got %v", string(raw), got)
+			}
+		})
 	}
 }
 

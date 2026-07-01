@@ -1103,12 +1103,12 @@ onUnmounted(() => {
   <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
     <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
       <!-- Top workspace switcher -->
-      <div class="absolute top-0 left-0 right-0 z-20 flex items-center gap-2 mx-3.5 mt-4 p-1 w-max border border-border rounded-lg bg-muted pointer-events-auto non-selectable max-md:relative max-md:top-auto max-md:left-auto max-md:right-auto max-md:w-auto max-md:mx-2.5 max-md:mt-2.5 max-sm:mx-2 max-sm:mt-2 max-sm:gap-1 max-sm:p-[3px]">
+      <div class="z-20 flex shrink-0 items-center gap-1 px-4 h-10 border-b border-border bg-card max-md:px-2.5 max-sm:px-2">
         <button
           type="button"
           :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1.5 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer transition-all duration-200 max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5 max-sm:text-xs',
-            activeWorkspace === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
+            activeWorkspace === 'canvas' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
           ]"
           @click="selectWorkspace('canvas')"
         >
@@ -1118,8 +1118,8 @@ onUnmounted(() => {
         <button
           type="button"
           :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1.5 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer transition-all duration-200 max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5 max-sm:text-xs',
-            activeWorkspace === 'gallery' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
+            activeWorkspace === 'gallery' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
           ]"
           @click="selectWorkspace('gallery')"
         >
@@ -1132,7 +1132,7 @@ onUnmounted(() => {
       <div class="flex flex-1 min-h-0 min-w-0">
         <!-- Sidebar: only in canvas workspace mode -->
         <template v-if="activeWorkspace === 'canvas'">
-          <div v-if="currentImageMode === 'imagio'" class="pt-[60px] max-md:pt-2.5">
+          <div v-if="currentImageMode === 'imagio'" class="min-h-0">
             <ImagioSidebar
               :image-mode="currentImageMode"
               :history-images="historyImages"
@@ -1144,7 +1144,7 @@ onUnmounted(() => {
               @clear-history="clearHistory"
             />
           </div>
-          <div v-else class="pt-[60px] max-md:pt-2.5">
+          <div v-else class="min-h-0">
             <ImageCanvasSidebar
               :active-workspace="activeWorkspace"
               :image-mode="currentImageMode"
@@ -1160,7 +1160,7 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden pt-[60px] max-md:pt-2.5">
+        <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden">
           <template v-if="currentImageMode === 'imagio'">
             <ImagioView
               :can-select-generation-count="props.canSelectGenerationCount"
@@ -1291,7 +1291,7 @@ onUnmounted(() => {
           </template>
         </section>
 
-        <div v-else class="pt-[60px] max-md:pt-2.5">
+        <div v-else class="flex flex-col flex-1 min-h-0 min-w-0 pt-2.5">
           <ImageCanvasGalleryStage
             v-model:query="galleryQuery"
             v-model:filter="galleryFilter"
@@ -1322,89 +1322,95 @@ onUnmounted(() => {
     <!-- Right side: settings panel (only in imagio mode) -->
     <aside
       v-if="activeWorkspace === 'canvas' && currentImageMode === 'imagio'"
-      class="w-80 shrink-0 px-5 py-6 border-l border-border bg-card overflow-y-auto min-h-0 max-lg:hidden"
+      class="w-[280px] shrink-0 px-6 py-6 border-l border-border/60 bg-background/80 backdrop-blur-[20px] overflow-y-auto min-h-0 max-lg:hidden"
     >
-      <h3 class="mb-6 text-base font-extrabold text-foreground">参数设置</h3>
+      <h3 class="mb-6 text-base font-semibold text-foreground">图片生成</h3>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">模型</label>
+      <!-- 模型 -->
+      <div class="mb-5">
+        <label class="block mb-2 text-xs font-medium text-muted-foreground">模型</label>
         <div v-if="imagioModelOptions.length" class="grid grid-cols-2 gap-2">
-          <Button
+          <button
             v-for="opt in imagioModelOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
             :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              imageModel === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
+              'h-8 px-2 text-xs font-medium rounded-lg border transition-all duration-200',
+              imageModel === opt.value
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
             ]"
             @click="imageModel = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
-        <span v-else class="text-muted-foreground text-xs font-bold">加载中...</span>
+        <span v-else class="text-muted-foreground text-xs font-medium">加载中...</span>
       </div>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">分辨率</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+      <!-- 分辨率 -->
+      <div class="mb-5">
+        <label class="block mb-2 text-xs font-medium text-muted-foreground">分辨率</label>
+        <div class="flex gap-2 flex-wrap">
+          <button
             v-for="opt in imagioResolutionOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
             :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              resolution === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
+              resolution === opt.value
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
             ]"
             @click="resolution = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Auto 交由模型选择；1K/2K/4K 按比例缩放</p>
       </div>
 
-      <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">尺寸 / 比例</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+      <!-- 尺寸 / 比例 -->
+      <div class="mb-5">
+        <label class="block mb-2 text-xs font-medium text-muted-foreground">尺寸 / 比例</label>
+        <div class="flex gap-2 flex-wrap">
+          <button
             v-for="opt in imagioAspectRatioOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
             :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              aspectRatio === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
+              aspectRatio === opt.value
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
             ]"
             @click="aspectRatio = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
       </div>
 
+      <!-- 质量 -->
       <div class="mb-6">
-        <label class="block mb-2.5 text-muted-foreground text-[13px] font-bold">质量</label>
-        <div class="grid grid-cols-4 gap-2">
-          <Button
+        <label class="block mb-2 text-xs font-medium text-muted-foreground">质量</label>
+        <div class="flex gap-2 flex-wrap">
+          <button
             v-for="opt in imagioQualityOptions"
             :key="opt.value"
             type="button"
-            variant="outline"
-            size="sm"
             :class="[
-              'min-h-9 px-2 text-xs font-bold transition-all duration-200',
-              quality === opt.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground',
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
+              quality === opt.value
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
             ]"
             @click="quality = opt.value"
           >
             {{ opt.label }}
-          </Button>
+          </button>
         </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Low 用于快速草稿，Medium/High 用于最终出图</p>
       </div>
     </aside>
 

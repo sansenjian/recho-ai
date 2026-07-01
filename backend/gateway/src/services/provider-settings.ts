@@ -460,7 +460,15 @@ export async function getRuntimeChatProvider(
   options: { strict?: boolean } = {},
 ): Promise<RuntimeChatProvider | null> {
   const client = getSupabaseAdminClient()
-  if (!client) return null
+  if (!client) {
+    if (options.strict) {
+      throw new ProviderSettingsError('runtime_chat_provider_unavailable', {
+        status: 503,
+        publicMessage: 'Chat Provider 配置暂时不可用，请稍后重试。',
+      })
+    }
+    return null
+  }
 
   try {
     const { data, error } = await client
@@ -496,17 +504,29 @@ export async function getRuntimeChatProvider(
       return true
     })
 
+    let candidateError: unknown = null
     for (const row of candidates) {
       try {
         const provider = runtimeChatProviderFromRow(row)
         if (provider) return provider
       } catch (err) {
+        candidateError = err
         console.warn('[provider-settings] skipping invalid runtime chat provider row:', safeErrorDetail(err))
       }
     }
 
+    if (options.strict && (candidates.length > 0 || candidateError)) {
+      throw new ProviderSettingsError('runtime_chat_provider_unavailable', {
+        status: 503,
+        publicMessage: candidateError ? publicSecretCryptoError(candidateError) : 'Chat Provider 配置暂时不可用，请稍后重试。',
+      })
+    }
+
     return null
   } catch (err) {
+    if (err instanceof ProviderSettingsError) {
+      throw err
+    }
     console.warn('[provider-settings] chat provider lookup failed:', safeErrorDetail(err))
     if (options.strict) {
       throw new ProviderSettingsError('runtime_chat_provider_unavailable', {

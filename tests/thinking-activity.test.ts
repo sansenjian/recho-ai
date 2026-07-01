@@ -49,7 +49,12 @@ describe('ThinkingActivity', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('思考已停止')
-    expect(wrapper.text()).toContain('已停止')
+    const toggle = wrapper.find('[data-slot="button"]')
+    const badge = toggle.find('[data-slot="badge"]')
+
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.text()).toContain('思考已停止')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('已停止')
   })
 })

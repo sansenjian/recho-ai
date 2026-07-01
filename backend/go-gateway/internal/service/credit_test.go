@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 
@@ -53,15 +54,30 @@ func TestCreditServiceFallsBackForInvalidAppSettingsPrices(t *testing.T) {
 
 	tests := []float64{0, -1, math.NaN(), math.Inf(1)}
 	for _, dynamicCost := range tests {
-		creditSvc := NewCreditService(nil, stubImageCreditCostProvider{cost: dynamicCost})
+		t.Run(formatFloatForTestName(dynamicCost), func(t *testing.T) {
+			creditSvc := NewCreditService(nil, stubImageCreditCostProvider{cost: dynamicCost})
 
-		costPerImage, totalCost := creditSvc.GetCreditCost(context.Background(), 2)
+			costPerImage, totalCost := creditSvc.GetCreditCost(context.Background(), 2)
 
-		if costPerImage != 0.75 {
-			t.Fatalf("expected fallback cost 0.75 for %v, got %v", dynamicCost, costPerImage)
-		}
-		if totalCost != 1.5 {
-			t.Fatalf("expected fallback total 1.5 for %v, got %v", dynamicCost, totalCost)
-		}
+			if costPerImage != 0.75 {
+				t.Fatalf("expected fallback cost 0.75 for %v, got %v", dynamicCost, costPerImage)
+			}
+			if totalCost != 1.5 {
+				t.Fatalf("expected fallback total 1.5 for %v, got %v", dynamicCost, totalCost)
+			}
+		})
+	}
+}
+
+func formatFloatForTestName(value float64) string {
+	switch {
+	case math.IsNaN(value):
+		return "NaN"
+	case math.IsInf(value, 1):
+		return "Inf"
+	case math.IsInf(value, -1):
+		return "-Inf"
+	default:
+		return fmt.Sprintf("%g", value)
 	}
 }
