@@ -30,6 +30,7 @@ var SupabaseJWKSURL = FirstNonEmpty(
 	os.Getenv("SUPABASE_JWKS_URL"),
 	jwksURLFromSupabaseURL(SupabaseURL),
 )
+
 // SupabaseJWTIssuer is the expected JWT `iss` claim. Defaults to SUPABASE_JWT_ISSUER,
 // falling back to SUPABASE_URL. When empty (e.g. in tests/local dev), issuer
 // validation is skipped.
@@ -66,17 +67,11 @@ var ImageGenBaseURL = parseEnvString("IMAGE_GEN_BASE_URL", "https://lucen.plus/v
 var ImageCreditCostPerImage = parseEnvFloat("IMAGE_CREDIT_COST_PER_IMAGE", 0.5)
 var ImageResponsesModel = parseEnvString("IMAGE_RESPONSES_MODEL", "gpt-image-2")
 var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gpt-image-2")
-
-// Chat and analytics config. Chat is optional while Go runs as an image sidecar.
-var ChatBaseURL = FirstNonEmpty(
-	os.Getenv("CHAT_BASE_URL"),
-	os.Getenv("ANALYSIS_URL"),
+var ProviderAPIKeyMasterKey = FirstNonEmpty(
+	os.Getenv("PROVIDER_API_KEY_MASTER_KEY"),
+	os.Getenv("API_KEY_MASTER_KEY"),
+	os.Getenv("API_KEY_ENCRYPTION_KEY"),
 )
-var ChatAPIKey = FirstNonEmpty(
-	os.Getenv("CHAT_API_KEY"),
-	os.Getenv("ANALYSIS_API_KEY"),
-)
-var AnalysisURL = os.Getenv("ANALYSIS_URL")
 
 // Analytics config
 var ImageAnalyticsEnabled = parseEnvBool("IMAGE_ANALYTICS_ENABLED", false)

@@ -8,9 +8,14 @@ import (
 	"go-gateway/internal/repository"
 )
 
+type ImageCreditCostProvider interface {
+	ImageCreditCostPerImage(ctx context.Context) (float64, error)
+}
+
 // CreditService handles credit business logic
 type CreditService struct {
-	repo *repository.CreditRepository
+	repo         *repository.CreditRepository
+	costProvider ImageCreditCostProvider
 }
 
 // CreditReservation holds credit reservation info for a generation request.
@@ -21,8 +26,12 @@ type CreditReservation struct {
 }
 
 // NewCreditService creates a new credit service
-func NewCreditService(repo *repository.CreditRepository) *CreditService {
-	return &CreditService{repo: repo}
+func NewCreditService(repo *repository.CreditRepository, providers ...ImageCreditCostProvider) *CreditService {
+	var provider ImageCreditCostProvider
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
+	return &CreditService{repo: repo, costProvider: provider}
 }
 
 // GetBalance retrieves a user's credit balance
@@ -43,7 +52,7 @@ func (s *CreditService) ReserveCredits(
 	userID string,
 	imageCount int,
 ) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error) {
-	creditCostPerImage = config.ImageCreditCostPerImage
+	creditCostPerImage = s.imageCreditCostPerImage(ctx)
 	totalCost = roundToTwoDecimals(float64(imageCount) * creditCostPerImage)
 
 	if totalCost <= 0 {
@@ -101,8 +110,8 @@ func (s *CreditService) AddCredits(
 }
 
 // GetCreditCost calculates the credit cost for image generation
-func (s *CreditService) GetCreditCost(imageCount int) (costPerImage, totalCost float64) {
-	costPerImage = config.ImageCreditCostPerImage
+func (s *CreditService) GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64) {
+	costPerImage = s.imageCreditCostPerImage(ctx)
 	totalCost = roundToTwoDecimals(float64(imageCount) * costPerImage)
 	return costPerImage, totalCost
 }
@@ -119,6 +128,21 @@ func (s *CreditService) ReserveAmount(
 		return "", 0, nil
 	}
 	return s.repo.ReserveCredits(ctx, userID, amount, metadata)
+}
+
+func (s *CreditService) imageCreditCostPerImage(ctx context.Context) float64 {
+	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
+	if s == nil || s.costProvider == nil {
+		return fallback
+	}
+	cost, err := s.costProvider.ImageCreditCostPerImage(ctx)
+	if err != nil {
+		return fallback
+	}
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
+		return fallback
+	}
+	return normalizeImageCreditCostPerImageWithFallback(cost, fallback)
 }
 
 // roundToTwoDecimals rounds a float to two decimal places

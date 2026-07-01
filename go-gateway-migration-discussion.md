@@ -1,5 +1,8 @@
 # recho-ai 后端架构演进讨论整理
 
+> 文档状态：历史讨论记录。当前主线以 [docs/recho-ai-architecture-current-and-target.md](./docs/recho-ai-architecture-current-and-target.md) 为准。
+> 本文用于保留当时的方案比较，不代表最终职责边界。
+
 ## 当前架构：双网关并行
 
 recho-ai 后端目前包含两个并行网关：

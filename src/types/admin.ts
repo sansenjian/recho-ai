@@ -241,6 +241,34 @@ export interface AdminAppSettings {
   availableImageModels: Array<{ id: string; name: string }>
 }
 
+export type ProviderKind = 'chat' | 'image'
+
+export interface AdminProviderSetting {
+  id: string
+  kind: ProviderKind
+  name: string
+  baseUrl: string
+  enabled: boolean
+  priority: number
+  defaultModel: string | null
+  imageModel: string | null
+  editModel: string | null
+  timeoutMs: number
+  retryCount: number
+  supportsWebpReferences: boolean
+  notes: string | null
+  apiKeyConfigured: boolean
+  apiKeyPreview: string | null
+  source: 'database' | 'env'
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface AdminProviderSettingsState {
+  providers: AdminProviderSetting[]
+  tableAvailable: boolean
+}
+
 export interface AdminUserRule {
   id: string
   userId: string | null

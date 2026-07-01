@@ -31,7 +31,7 @@ import (
 type imageCreditService interface {
 	ReserveCredits(ctx context.Context, userID string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
 	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
-	GetCreditCost(imageCount int) (costPerImage, totalCost float64)
+	GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64)
 }
 
 type imageStorageService interface {
@@ -54,12 +54,17 @@ type imageIdempotencyService interface {
 	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string)
 }
 
+type imageProviderSettingsService interface {
+	ImageProvider(ctx context.Context) (service.ImageProviderConfig, error)
+}
+
 // ImageHandler handles image-related endpoints
 type ImageHandler struct {
-	creditService  imageCreditService
-	storageService imageStorageService
-	idempotencySvc imageIdempotencyService // optional, nil disables idempotency
-	httpClient     *http.Client            // reused HTTP client for upstream image API calls
+	creditService       imageCreditService
+	storageService      imageStorageService
+	idempotencySvc      imageIdempotencyService      // optional, nil disables idempotency
+	providerSettingsSvc imageProviderSettingsService // optional, nil uses env config
+	httpClient          *http.Client                 // reused HTTP client for upstream image API calls
 }
 
 // NewImageHandler creates a new image handler.
@@ -75,6 +80,11 @@ func NewImageHandler(
 		idempotencySvc: idempotencySvc,
 		httpClient:     &http.Client{Timeout: 360 * time.Second},
 	}
+}
+
+func (h *ImageHandler) WithProviderSettings(providerSettingsSvc imageProviderSettingsService) *ImageHandler {
+	h.providerSettingsSvc = providerSettingsSvc
+	return h
 }
 
 // ImageGenRequest represents the image generation request
@@ -123,6 +133,8 @@ type ImageResult struct {
 	GenerationBatchID string                          `json:"generationBatchId,omitempty"`
 	StoragePath       string                          `json:"storagePath,omitempty"`
 	URL               string                          `json:"url,omitempty"`
+	TemporaryURL      string                          `json:"temporaryUrl,omitempty"`
+	PersistenceStatus string                          `json:"persistenceStatus,omitempty"`
 	DataURL           string                          `json:"dataUrl,omitempty"`
 	PreviewURL        string                          `json:"previewUrl,omitempty"`
 	PreviewPath       string                          `json:"previewPath,omitempty"`
@@ -146,6 +158,45 @@ type ImageResult struct {
 	Timestamp         string                          `json:"timestamp"`
 	Width             int                             `json:"width,omitempty"`
 	Height            int                             `json:"height,omitempty"`
+}
+
+type imageSource struct {
+	URL    string
+	Base64 string
+	Mime   string
+}
+
+type generatedImageRecord struct {
+	result ImageResult
+	source imageSource
+}
+
+type imageGenerationMetadata struct {
+	BatchID             string
+	UserID              string
+	DisplayPrompt       string
+	SystemPrompt        string
+	ModelPrompt         string
+	Size                string
+	AspectRatio         string
+	Resolution          string
+	Quality             string
+	ImageModel          string
+	References          []service.ImageHistoryReference
+	ReferenceCount      int
+	Visibility          string
+	FundingSource       string
+	CreditCost          float64
+	CreditTransactionID string
+}
+
+type asyncPersistenceJob struct {
+	images            []generatedImageRecord
+	metadata          imageGenerationMetadata
+	creditReservation *service.CreditReservation
+	userID            string
+	user              *middleware.User
+	idempotencyKey    string
 }
 
 type referenceUploadResponse struct {
@@ -202,7 +253,15 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	// --- Idempotency check ---
 	idemKey := r.Header.Get("Idempotency-Key")
-	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+	if user != nil && user.ID != "" && h.creditService != nil && strings.TrimSpace(idemKey) == "" {
+		response.Error(w, http.StatusBadRequest, "缺少 Idempotency-Key，请刷新后重试。")
+		return
+	}
+	if idemKey != "" && user != nil && user.ID != "" {
+		if h.idempotencySvc == nil {
+			response.Error(w, http.StatusServiceUnavailable, "幂等服务暂时不可用，请稍后重试。")
+			return
+		}
 		outcome, err := h.idempotencySvc.Acquire(r.Context(), user.ID, idemKey, "image_generate", rawBody)
 		if err != nil {
 			// Returning 503 prevents proceeding without idempotency protection,
@@ -239,13 +298,34 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	costPerImage := config.ImageCreditCostPerImage
 	totalCost := roundToTwoDecimals(float64(count) * costPerImage)
 	if h.creditService != nil {
-		costPerImage, totalCost = h.creditService.GetCreditCost(count)
+		costPerImage, totalCost = h.creditService.GetCreditCost(r.Context(), count)
+	}
+
+	providerCfg, err := h.resolveImageProvider(r.Context())
+	if err != nil {
+		log.Printf("[image] provider config unavailable: %v", err)
+		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+			refundCtx, refundCancel := withRefundContext()
+			defer refundCancel()
+			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
+		}
+		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 配置暂时不可用。")
+		return
+	}
+	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
+		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
+			refundCtx, refundCancel := withRefundContext()
+			defer refundCancel()
+			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
+		}
+		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 尚未配置，请联系管理员。")
+		return
 	}
 
 	// Check and reserve credits if user is authenticated
 	var creditReservation *service.CreditReservation
 	if user != nil && user.ID != "" && h.creditService != nil {
-		txID, newBalance, _, cost, err := h.creditService.ReserveCredits(r.Context(), user.ID, count)
+		txID, newBalance, reservedCostPerImage, cost, err := h.creditService.ReserveCredits(r.Context(), user.ID, count)
 		if err != nil {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
 				// Mark idempotency as failed so the client can retry after topping up
@@ -267,12 +347,13 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				Balance:       newBalance,
 			}
 			totalCost = cost
+			costPerImage = reservedCostPerImage
 		}
 	}
 
 	// Call image generation API
 	ctx := r.Context()
-	images, err := h.callImageAPI(ctx, req, count, aspectRatio, resolution, quality)
+	images, err := h.callImageAPI(ctx, req, count, aspectRatio, resolution, quality, providerCfg)
 	if err != nil {
 		log.Printf("[image] generation failed: %v", err)
 		// Full refund on complete failure
@@ -305,6 +386,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			} else {
 				totalCost = roundToTwoDecimals(totalCost - refundAmount)
 				creditReservation.Balance = newBalance
+				creditReservation.Amount = totalCost
 			}
 		}
 	}
@@ -326,107 +408,29 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batchID := "batch_" + randomID()
-	responseImages := make([]ImageResult, 0, len(images))
-	// Track IDs of images whose history rows were successfully persisted so that
-	// a mid-batch failure can rollback the already-saved records atomically.
-	var savedHistoryIDs []string
-	for _, image := range images {
-		image.UserID = userID
-		image.GenerationBatchID = batchID
-		image.Prompt = displayPrompt
-		image.UserPrompt = displayPrompt
-		image.SystemPrompt = req.SystemPrompt
-		image.ModelPrompt = modelPrompt
-		image.References = references
-		image.ReferenceCount = len(references)
-		image.Visibility = visibility
-		image.FundingSource = fundingSource
-		image.CreditCost = creditCost
-		image.Size = size
-		image.AspectRatio = aspectRatio
-		image.Resolution = resolution
-		image.Quality = quality
-		image.Timestamp = time.Now().UTC().Format(time.RFC3339)
-		if image.PreviewURL == "" {
-			image.PreviewURL = image.URL
-		}
-		if h.storageService != nil {
-			generatedAt := time.Now().UTC()
-			if parsed, err := time.Parse(time.RFC3339, image.Timestamp); err == nil {
-				generatedAt = parsed
-			}
-			historyItem := service.ImageHistoryItem{
-				ID:                  image.ID,
-				UserID:              userID,
-				GenerationBatchID:   batchID,
-				Prompt:              displayPrompt,
-				UserPrompt:          displayPrompt,
-				SystemPrompt:        req.SystemPrompt,
-				ModelPrompt:         modelPrompt,
-				StoragePath:         image.StoragePath,
-				URL:                 image.URL,
-				PreviewURL:          image.PreviewURL,
-				PreviewPath:         image.PreviewPath,
-				ThumbnailURL:        image.ThumbnailURL,
-				ThumbnailPath:       image.ThumbnailPath,
-				Size:                size,
-				AspectRatio:         aspectRatio,
-				Resolution:          resolution,
-				Quality:             quality,
-				ImageModel:          config.ImageResponsesImageModel,
-				RevisedPrompt:       image.RevisedPrompt,
-				Width:               image.Width,
-				Height:              image.Height,
-				Timestamp:           generatedAt,
-				References:          references,
-				ReferenceCount:      len(references),
-				Visibility:          visibility,
-				FundingSource:       fundingSource,
-				CreditCost:          creditCost,
-				CreditTransactionID: creditTransactionID,
-			}
-			if err := h.storageService.SaveImageHistory(r.Context(), &historyItem, userID); err != nil {
-				log.Printf("[image] 503: SaveImageHistory failed: %v", err)
-				// Log orphaned S3 objects for the failed image — the DB row was never
-				// persisted, so these objects are unreferenced.
-				log.Printf("[image] orphaned S3 objects for %s (history save failed): storagePath=%s previewPath=%s thumbnailPath=%s", image.ID, image.StoragePath, image.PreviewPath, image.ThumbnailPath)
-
-				if creditReservation != nil {
-					// Detached context for rollback, S3 cleanup, and refund — created
-					// right before use to avoid timeout expiry from the long-running
-					// image generation upstream, and independent of client cancellation.
-					refundCtx, refundCancel := withRefundContext()
-					defer refundCancel()
-
-					// Rollback previously saved history records for this batch so the
-					// batch is handled atomically — either all persist or none do.
-					for _, savedID := range savedHistoryIDs {
-						if _, delErr := h.storageService.DeleteImageHistory(refundCtx, savedID, userID); delErr != nil {
-							log.Printf("[image] failed to clean up saved history record %s during batch rollback: %v", savedID, delErr)
-						}
-					}
-
-					// Best-effort S3 cleanup for the current failed image's orphaned objects.
-					h.storageService.CleanupObjects(image.StoragePath, image.PreviewPath, image.ThumbnailPath)
-
-					_, refundErr := h.creditService.RefundCredits(refundCtx, userID, creditReservation.TransactionID, creditReservation.Amount, "history_save_failed")
-					if refundErr != nil {
-						log.Printf("[image] failed to refund credits after history save failure: %v", refundErr)
-					}
-					if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
-						h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
-					}
-					response.Error(w, http.StatusServiceUnavailable, "私有图片保存失败，已退回额度，请稍后重试。")
-					return
-				}
-				// Best-effort: non-credit (guest / free) flows continue without history
-				// persistence; the orphaned S3 objects are logged above.
-				log.Printf("[image-history] save skipped: %v", err)
-			} else {
-				savedHistoryIDs = append(savedHistoryIDs, image.ID)
-			}
-		}
-		responseImages = append(responseImages, image)
+	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
+	metadata := imageGenerationMetadata{
+		BatchID:             batchID,
+		UserID:              userID,
+		DisplayPrompt:       displayPrompt,
+		SystemPrompt:        req.SystemPrompt,
+		ModelPrompt:         modelPrompt,
+		Size:                size,
+		AspectRatio:         aspectRatio,
+		Resolution:          resolution,
+		Quality:             quality,
+		ImageModel:          imageModel,
+		References:          references,
+		ReferenceCount:      len(references),
+		Visibility:          visibility,
+		FundingSource:       fundingSource,
+		CreditCost:          creditCost,
+		CreditTransactionID: creditTransactionID,
+	}
+	preparedImages := h.prepareGeneratedImages(images, metadata)
+	responseImages := make([]ImageResult, 0, len(preparedImages))
+	for _, image := range preparedImages {
+		responseImages = append(responseImages, image.result)
 	}
 	// Build response
 	resp := ImageGenResponse{
@@ -447,6 +451,17 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			txID = creditReservation.TransactionID
 		}
 		h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "image_generate", 200, resp, txID)
+	}
+
+	if len(preparedImages) > 0 {
+		h.persistGeneratedImagesAsync(asyncPersistenceJob{
+			images:            preparedImages,
+			metadata:          metadata,
+			creditReservation: creditReservation,
+			userID:            userID,
+			user:              user,
+			idempotencyKey:    idemKey,
+		})
 	}
 
 	response.JSON(w, http.StatusOK, resp)
@@ -566,8 +581,25 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(image.Data)
 }
 
+func (h *ImageHandler) resolveImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
+	if h.providerSettingsSvc == nil {
+		return service.DefaultImageProviderConfig(), nil
+	}
+	return h.providerSettingsSvc.ImageProvider(ctx)
+}
+
+func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {
+	if edits && strings.TrimSpace(provider.EditModel) != "" {
+		return strings.TrimSpace(provider.EditModel)
+	}
+	if strings.TrimSpace(provider.ImageModel) != "" {
+		return strings.TrimSpace(provider.ImageModel)
+	}
+	return strings.TrimSpace(config.ImageResponsesImageModel)
+}
+
 // callImageAPI calls the image generation API
-func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, count int, aspectRatio, resolution, quality string) ([]ImageResult, error) {
+func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, count int, aspectRatio, resolution, quality string, provider service.ImageProviderConfig) ([]generatedImageRecord, error) {
 	// Build API request
 	size := determineSize(resolution, aspectRatio)
 
@@ -575,9 +607,11 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	// responses. If a format/response_format field is added to the request
 	// in the future, derive the MIME type from that field here.
 	imageMime := "image/png"
+	usesEdits := len(req.References) > 0
+	imageModel := imageModelForRequest(provider, usesEdits)
 
 	apiReq := map[string]any{
-		"model":   config.ImageResponsesImageModel,
+		"model":   imageModel,
 		"prompt":  req.Prompt,
 		"n":       count,
 		"size":    size,
@@ -589,10 +623,19 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	if client == nil {
 		client = &http.Client{Timeout: 360 * time.Second}
 	}
-	maxRetries := 3
+	if provider.Timeout > 0 && client.Timeout != provider.Timeout {
+		client = &http.Client{Timeout: provider.Timeout}
+	}
+	maxRetries := provider.RetryCount
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	if maxRetries > 10 {
+		maxRetries = 10
+	}
 	urlPath := "/images/generations"
 	var bodyFactory func() (io.Reader, string, error)
-	if len(req.References) > 0 {
+	if usesEdits {
 		urlPath = "/images/edits"
 		bodyFactory = func() (io.Reader, string, error) {
 			return h.imageEditBody(ctx, apiReq, req.References)
@@ -626,12 +669,12 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		if err != nil {
 			return nil, err
 		}
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", config.ImageGenBaseURL+urlPath, bodyReader)
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(provider.BaseURL, "/")+urlPath, bodyReader)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", contentType)
-		httpReq.Header.Set("Authorization", "Bearer "+config.ImageGenAPIKey)
+		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
 
 		resp, err = client.Do(httpReq)
 		if err != nil {
@@ -674,81 +717,40 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Process results
-	results := make([]ImageResult, 0, len(apiResp.Data))
-	storageFailures := 0
+	// Process provider results only. Permanent storage is handled asynchronously
+	// after the frontend receives the temporary provider URL/data.
+	results := make([]generatedImageRecord, 0, len(apiResp.Data))
 	for i, item := range apiResp.Data {
 		result := ImageResult{
 			ID:            fmt.Sprintf("img_%d_%d_%s", time.Now().UnixNano(), i, randomID()),
 			RevisedPrompt: item.RevisedPrompt,
 		}
-		storedOK := false
 
-		// Store image and get URLs
 		if item.URL != "" {
-			// Download and store image
-			stored, err := h.storageService.StoreFromURL(ctx, item.URL, fmt.Sprintf("generated/%s", result.ID))
-			if err == nil && stored != nil {
-				result.URL = stored.PublicURL
-				result.PreviewURL = stored.PreviewURL
-				result.ThumbnailURL = stored.ThumbnailURL
-				result.StoragePath = stored.StoragePath
-				result.PreviewPath = stored.PreviewPath
-				result.ThumbnailPath = stored.ThumbnailPath
-				result.Width = stored.Width
-				result.Height = stored.Height
-				result.Bytes = stored.Bytes
-				storedOK = true
-			} else {
-				// Keep the fallback to the original URL, but surface the storage failure.
-				if err != nil {
-					log.Printf("[image] storage failed for %s: %v", item.URL, err)
-				} else {
-					log.Printf("[image] storage returned nil for %s", item.URL)
-				}
-				result.URL = item.URL // Fallback to original URL
-				result.PreviewURL = item.URL
-			}
+			result.URL = item.URL
+			result.TemporaryURL = item.URL
+			result.PreviewURL = item.URL
+			result.PersistenceStatus = "processing"
+			results = append(results, generatedImageRecord{
+				result: result,
+				source: imageSource{
+					URL:  item.URL,
+					Mime: imageMime,
+				},
+			})
 		} else if item.Base64 != "" {
-			// Decode base64 and store
-			decoded, err := base64.StdEncoding.DecodeString(item.Base64)
-			if err == nil {
-				stored, err := h.storageService.StoreFromBuffer(ctx, decoded, imageMime, fmt.Sprintf("generated/%s", result.ID))
-				if err == nil && stored != nil {
-					result.URL = stored.PublicURL
-					result.PreviewURL = stored.PreviewURL
-					result.ThumbnailURL = stored.ThumbnailURL
-					result.StoragePath = stored.StoragePath
-					result.PreviewPath = stored.PreviewPath
-					result.ThumbnailPath = stored.ThumbnailPath
-					result.Width = stored.Width
-					result.Height = stored.Height
-					result.Bytes = stored.Bytes
-					storedOK = true
-				} else {
-					if err != nil {
-						log.Printf("[image] storage failed for base64 image %s: %v", result.ID, err)
-					} else {
-						log.Printf("[image] storage returned nil for base64 image %s", result.ID)
-					}
-					// Fallback: return as data URL so the frontend can still display the image
-					result.DataURL = "data:" + imageMime + ";base64," + item.Base64
-					result.URL = result.DataURL
-					result.PreviewURL = result.DataURL
-				}
-			} else {
-				log.Printf("[image] base64 decode failed for %s: %v", result.ID, err)
-			}
+			result.DataURL = "data:" + imageMime + ";base64," + item.Base64
+			result.URL = result.DataURL
+			result.PreviewURL = result.DataURL
+			result.PersistenceStatus = "processing"
+			results = append(results, generatedImageRecord{
+				result: result,
+				source: imageSource{
+					Base64: item.Base64,
+					Mime:   imageMime,
+				},
+			})
 		}
-
-		if !storedOK {
-			storageFailures++
-		}
-		results = append(results, result)
-	}
-
-	if len(results) > 0 && storageFailures == len(results) {
-		log.Printf("[image] warning: all %d image(s) failed storage, falling back to source URLs", storageFailures)
 	}
 
 	// Truncate to requested count if provider returned more.
@@ -759,6 +761,163 @@ func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, co
 	}
 
 	return results, nil
+}
+
+func (h *ImageHandler) prepareGeneratedImages(images []generatedImageRecord, metadata imageGenerationMetadata) []generatedImageRecord {
+	now := time.Now().UTC().Format(time.RFC3339)
+	prepared := make([]generatedImageRecord, 0, len(images))
+	for _, image := range images {
+		image.result.UserID = metadata.UserID
+		image.result.GenerationBatchID = metadata.BatchID
+		image.result.Prompt = metadata.DisplayPrompt
+		image.result.UserPrompt = metadata.DisplayPrompt
+		image.result.SystemPrompt = metadata.SystemPrompt
+		image.result.ModelPrompt = metadata.ModelPrompt
+		image.result.References = metadata.References
+		image.result.ReferenceCount = metadata.ReferenceCount
+		image.result.Visibility = metadata.Visibility
+		image.result.FundingSource = metadata.FundingSource
+		image.result.CreditCost = metadata.CreditCost
+		image.result.Size = metadata.Size
+		image.result.AspectRatio = metadata.AspectRatio
+		image.result.Resolution = metadata.Resolution
+		image.result.Quality = metadata.Quality
+		image.result.Timestamp = now
+		if image.result.PreviewURL == "" {
+			image.result.PreviewURL = image.result.URL
+		}
+		prepared = append(prepared, image)
+	}
+	return prepared
+}
+
+func (h *ImageHandler) persistGeneratedImagesAsync(job asyncPersistenceJob) {
+	if h.storageService == nil || len(job.images) == 0 {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		savedHistoryIDs := make([]string, 0, len(job.images))
+		for _, image := range job.images {
+			persisted, err := h.persistGeneratedImage(ctx, image)
+			if err != nil {
+				log.Printf("[image] async persistence failed for %s: %v", image.result.ID, err)
+				h.handleAsyncPersistenceFailure(job, savedHistoryIDs, image)
+				return
+			}
+
+			historyItem := h.historyItemForGeneratedImage(persisted, job.metadata)
+			if err := h.storageService.SaveImageHistory(ctx, &historyItem, job.userID); err != nil {
+				log.Printf("[image] async SaveImageHistory failed for %s: %v", persisted.ID, err)
+				h.handleAsyncPersistenceFailure(job, savedHistoryIDs, generatedImageRecord{
+					result: persisted,
+					source: image.source,
+				})
+				return
+			}
+			savedHistoryIDs = append(savedHistoryIDs, persisted.ID)
+		}
+	}()
+}
+
+func (h *ImageHandler) persistGeneratedImage(ctx context.Context, image generatedImageRecord) (ImageResult, error) {
+	persisted := image.result
+	var stored *service.StoredImage
+	var err error
+
+	if image.source.URL != "" {
+		stored, err = h.storageService.StoreFromURL(ctx, image.source.URL, fmt.Sprintf("generated/%s", image.result.ID))
+	} else if image.source.Base64 != "" {
+		decoded, decodeErr := base64.StdEncoding.DecodeString(image.source.Base64)
+		if decodeErr != nil {
+			return persisted, fmt.Errorf("base64 decode failed: %w", decodeErr)
+		}
+		stored, err = h.storageService.StoreFromBuffer(ctx, decoded, firstNonEmpty(image.source.Mime, "image/png"), fmt.Sprintf("generated/%s", image.result.ID))
+	} else {
+		return persisted, fmt.Errorf("missing provider image source")
+	}
+	if err != nil {
+		return persisted, err
+	}
+	if stored == nil || stored.StoragePath == "" {
+		return persisted, fmt.Errorf("storage returned empty result")
+	}
+
+	persisted.URL = stored.PublicURL
+	persisted.DataURL = ""
+	persisted.TemporaryURL = image.source.URL
+	persisted.PersistenceStatus = "persisted"
+	persisted.PreviewURL = stored.PreviewURL
+	persisted.ThumbnailURL = stored.ThumbnailURL
+	persisted.StoragePath = stored.StoragePath
+	persisted.PreviewPath = stored.PreviewPath
+	persisted.ThumbnailPath = stored.ThumbnailPath
+	persisted.Width = stored.Width
+	persisted.Height = stored.Height
+	persisted.Bytes = stored.Bytes
+	return persisted, nil
+}
+
+func (h *ImageHandler) historyItemForGeneratedImage(image ImageResult, metadata imageGenerationMetadata) service.ImageHistoryItem {
+	generatedAt := time.Now().UTC()
+	if parsed, err := time.Parse(time.RFC3339, image.Timestamp); err == nil {
+		generatedAt = parsed
+	}
+
+	return service.ImageHistoryItem{
+		ID:                  image.ID,
+		UserID:              metadata.UserID,
+		GenerationBatchID:   metadata.BatchID,
+		Prompt:              metadata.DisplayPrompt,
+		UserPrompt:          metadata.DisplayPrompt,
+		SystemPrompt:        metadata.SystemPrompt,
+		ModelPrompt:         metadata.ModelPrompt,
+		StoragePath:         image.StoragePath,
+		URL:                 image.URL,
+		PreviewURL:          image.PreviewURL,
+		PreviewPath:         image.PreviewPath,
+		ThumbnailURL:        image.ThumbnailURL,
+		ThumbnailPath:       image.ThumbnailPath,
+		Size:                metadata.Size,
+		AspectRatio:         metadata.AspectRatio,
+		Resolution:          metadata.Resolution,
+		Quality:             metadata.Quality,
+		ImageModel:          metadata.ImageModel,
+		RevisedPrompt:       image.RevisedPrompt,
+		Width:               image.Width,
+		Height:              image.Height,
+		Timestamp:           generatedAt,
+		References:          metadata.References,
+		ReferenceCount:      metadata.ReferenceCount,
+		Visibility:          metadata.Visibility,
+		FundingSource:       metadata.FundingSource,
+		CreditCost:          metadata.CreditCost,
+		CreditTransactionID: metadata.CreditTransactionID,
+	}
+}
+
+func (h *ImageHandler) handleAsyncPersistenceFailure(job asyncPersistenceJob, savedHistoryIDs []string, failedImage generatedImageRecord) {
+	ctx, cancel := withRefundContext()
+	defer cancel()
+
+	for _, savedID := range savedHistoryIDs {
+		if _, delErr := h.storageService.DeleteImageHistory(ctx, savedID, job.userID); delErr != nil {
+			log.Printf("[image] failed to clean up saved history record %s during async rollback: %v", savedID, delErr)
+		}
+	}
+	h.storageService.CleanupObjects(failedImage.result.StoragePath, failedImage.result.PreviewPath, failedImage.result.ThumbnailPath)
+
+	if job.creditReservation != nil && h.creditService != nil && job.user != nil && job.user.ID != "" {
+		if _, refundErr := h.creditService.RefundCredits(ctx, job.user.ID, job.creditReservation.TransactionID, job.creditReservation.Amount, "async_history_save_failed"); refundErr != nil {
+			log.Printf("[image] failed to refund credits after async persistence failure: %v", refundErr)
+		}
+	}
+	if job.idempotencyKey != "" && job.user != nil && job.user.ID != "" && h.idempotencySvc != nil {
+		h.idempotencySvc.Fail(ctx, job.user.ID, job.idempotencyKey, "image_generate")
+	}
 }
 
 func (h *ImageHandler) imageEditBody(ctx context.Context, fields map[string]any, references []ImageGenReference) (io.Reader, string, error) {

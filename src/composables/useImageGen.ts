@@ -1,4 +1,4 @@
-import { ref, toRaw, watch } from 'vue'
+import { onScopeDispose, ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
 import { useCredits } from './useCredits'
 import { ensureAppConfig } from './useAppConfig'
@@ -15,6 +15,8 @@ const MAX_GALLERY_HISTORY = 240
 const HISTORY_PAGE_SIZE = 12
 const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
+const PRIVATE_HISTORY_REFRESH_DELAY_MS = 5 * 60_000
+const PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS = 5
 type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 export type { ImageHistoryScope }
 
@@ -60,9 +62,18 @@ function plainReference(reference: ImageGenReference): ImageGenReference | null 
   }
 }
 
+function createIdempotencyKey() {
+  const random = globalThis.crypto?.randomUUID?.()
+  return random || `img_${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
+
+function hasProcessingPrivateImages(images: GeneratedImage[]) {
+  return images.some(image => image.persistenceStatus === 'processing' && !image.storagePath)
+}
+
 function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   const raw = toRaw(image) as GeneratedImage
-  if (!raw?.id || (!raw?.dataUrl && !raw?.storagePath && !raw?.previewUrl && !raw?.thumbnailUrl)) return null
+  if (!raw?.id || (!raw?.dataUrl && !raw?.storagePath && !raw?.previewUrl && !raw?.thumbnailUrl && !raw?.url && !raw?.temporaryUrl)) return null
 
   const references = Array.isArray(raw.references)
     ? raw.references
@@ -73,6 +84,9 @@ function plainHistoryImage(image: GeneratedImage): GeneratedImage | null {
   return {
     id: String(raw.id),
     ...(raw.userId !== undefined ? { userId: raw.userId ? String(raw.userId) : null } : {}),
+    ...(raw.url ? { url: String(raw.url) } : {}),
+    ...(raw.temporaryUrl ? { temporaryUrl: String(raw.temporaryUrl) } : {}),
+    ...(raw.persistenceStatus ? { persistenceStatus: String(raw.persistenceStatus) } : {}),
     ...(raw.dataUrl ? { dataUrl: String(raw.dataUrl) } : {}),
     ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
     ...(raw.previewUrl ? { previewUrl: String(raw.previewUrl) } : {}),
@@ -470,6 +484,29 @@ export function useImageGen() {
   const generatedImages = ref<GeneratedImage[]>(loadLegacyHistory())
   const galleryImages = ref<GeneratedImage[]>([])
   let historyLoadSeq = 0
+  let privateHistoryRefreshTimer: number | null = null
+  let privateHistoryRefreshAttempts = 0
+
+  function clearPrivateHistoryRefreshTimer() {
+    if (privateHistoryRefreshTimer !== null) {
+      window.clearTimeout(privateHistoryRefreshTimer)
+      privateHistoryRefreshTimer = null
+    }
+  }
+
+  function schedulePrivateHistoryRefresh(resetAttempts = false) {
+    if (!user.value?.id) return
+    if (resetAttempts) {
+      privateHistoryRefreshAttempts = 0
+    }
+    if (privateHistoryRefreshAttempts >= PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS) return
+    clearPrivateHistoryRefreshTimer()
+    privateHistoryRefreshTimer = window.setTimeout(() => {
+      privateHistoryRefreshTimer = null
+      privateHistoryRefreshAttempts += 1
+      void refreshPrivateHistory()
+    }, PRIVATE_HISTORY_REFRESH_DELAY_MS)
+  }
 
   async function refreshPrivateHistory() {
     const seq = ++historyLoadSeq
@@ -485,6 +522,10 @@ export function useImageGen() {
       nextHistoryOffset.value = remoteHistory.nextOffset
       if (!identity.userId) {
         void saveHistory(generatedImages.value)
+      } else if (hasProcessingPrivateImages(generatedImages.value)) {
+        schedulePrivateHistoryRefresh()
+      } else {
+        privateHistoryRefreshAttempts = 0
       }
     } finally {
       if (seq === historyLoadSeq) {
@@ -496,10 +537,16 @@ export function useImageGen() {
   watch(
     () => user.value?.id || null,
     () => {
+      clearPrivateHistoryRefreshTimer()
+      privateHistoryRefreshAttempts = 0
       void refreshPrivateHistory()
     },
     { immediate: true },
   )
+
+  onScopeDispose(() => {
+    clearPrivateHistoryRefreshTimer()
+  })
 
   async function generate(prompt: string, options: ImageGenOptions = {}): Promise<GeneratedImage[] | null> {
     if (isGenerating.value) {
@@ -533,10 +580,12 @@ export function useImageGen() {
         ...options,
         references: requestReferences,
       }
+      const idempotencyKey = createIdempotencyKey()
       const res = await fetch(imageApiUrl('/api/image/generate'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ prompt, ...requestOptions }),
@@ -552,7 +601,7 @@ export function useImageGen() {
         setCreditBalance(data.creditBalance.balance)
       }
       const images = (data.images || [])
-        .filter(image => image?.dataUrl || image?.previewUrl || image?.thumbnailUrl || image?.storagePath)
+        .filter(image => image?.dataUrl || image?.previewUrl || image?.thumbnailUrl || image?.storagePath || image?.url || image?.temporaryUrl)
       if (!images.length) {
         throw new Error('no image returned')
       }
@@ -567,6 +616,9 @@ export function useImageGen() {
       generatedImages.value = uniqueHistory([...imagesWithReferences, ...generatedImages.value])
       if (user.value?.id) {
         hasMoreHistory.value = true
+        if (hasProcessingPrivateImages(imagesWithReferences)) {
+          schedulePrivateHistoryRefresh(true)
+        }
       } else {
         void saveHistory(generatedImages.value)
       }

@@ -4,7 +4,8 @@ This file provides guidance to Codex and Claude Code when working with code in t
 
 ## Development Commands
 
-- `npm run dev` — Start the Express gateway and Vite dev server together.
+- `npm run dev` — Start the Express gateway, Go gateway, and Vite dev server together. Vite proxies `/api` to Node; Node proxies Go-owned routes to Go via `GO_GATEWAY_BASE_URL`.
+- `npm run dev:node` — Start only the Express gateway and Vite dev server. Legacy Node image generation is disabled in this mode.
 - `npm run dev:frontend` — Start only the Vite dev server (port 5173, proxies `/api` to port 3000).
 - `npm run dev:backend` — Start only the gateway from `backend/gateway/src/index.ts` (port 3000).
 - `npm run build` — Run TypeScript check (`vue-tsc -b`) then bundle with Vite.
@@ -37,8 +38,8 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 
 - `backend/gateway/src/index.ts` — Express gateway entrypoint.
 - `backend/gateway/src/routes/chat.ts` — `/api/chat` route with model selection, skill prompt handling, retry behavior, and streaming response.
-- `backend/gateway/src/routes/image.ts` — `/api/image/generate` route with reference image download, SSRF protection (`isInternalUrl`), and upstream proxying.
-- `backend/gateway/src/routes/go-sidecar.ts` — Proxy route to the Go gateway with timeout cleanup and client-disconnect abort handling.
+- `backend/gateway/src/routes/image.ts` — Node fallback image routes. Reference upload/storage proxy remain for compatibility, while `/api/image/generate` returns a 503 migration message when Go sidecar proxy is not enabled.
+- `backend/gateway/src/routes/go-sidecar.ts` — Proxies Go-owned routes (`/api/image/*`, `/api/credits*`, selected `/api/config/*`) to the Go gateway with timeout cleanup and client-disconnect abort handling.
 - `backend/gateway/src/services/chat-loop.ts` — Streaming tool-call loop that normalizes SSE events for the frontend.
 - `backend/gateway/src/mcp/manager.ts` — MCP connection manager and OpenAI-compatible tool schema adapter.
 - `backend/gateway/skills/index.json` — Built-in skill definitions surfaced to the frontend.
@@ -52,7 +53,7 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 
 ### Database
 
-- **PostgreSQL** via Supabase. Key tables: `image_generations`, `image_history`, `image_attempts`, `users` (with credits), `admin_announcements`.
+- **PostgreSQL** via Supabase. Key tables: `image_generations`, `image_history`, `image_attempts`, `users` (with credits), `app_settings`, `provider_settings`, `admin_announcements`.
 - Go gateway uses `pgx` for direct TCP connections; Node gateway uses Supabase JS SDK for management operations.
 
 ## Conventions
@@ -79,4 +80,4 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 - `ChatMessage.vue` handles layout differences between roles: assistant messages include a numbered blue avatar badge and left-aligned text; user messages are right-aligned with a wrapper containing text + action buttons below it.
 - `ChatInput.vue` owns the auto-expanding textarea and emits typed events to `App.vue`.
 - `ImageCanvas.vue` uses a custom pan/zoom canvas with HTML nodes positioned absolutely. Nodes support drag, resize, and connect via SVG bezier curves. Right sidebar is hidden in canvas mode per `project_memory.md` constraints.
-- `AdminView.vue` provides management dashboards for images, generation attempts, and storage overview with filterable tables and metric cards.
+- `AdminView.vue` provides management dashboards for images, generation attempts, storage overview, runtime settings, and provider/API key configuration.

@@ -9,7 +9,6 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "credits:create": "tsx src/scripts/create-credit-codes.ts",
-    "backfill:image-history": "tsx src/scripts/backfill-image-history.ts",
     "normalize:image-prompts": "tsx src/scripts/normalize-image-prompts.ts"
   },
   "dependencies": {

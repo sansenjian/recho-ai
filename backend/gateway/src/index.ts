@@ -9,10 +9,8 @@ import skillsRouter from './routes/skills.js'
 import toolsRouter from './routes/tools.js'
 import healthRouter from './routes/health.js'
 import imageRouter from './routes/image.js'
-import imageHistoryRouter from './routes/image-history.js'
 import imageEventsRouter from './routes/image-events.js'
 import configRouter from './routes/config.js'
-import creditsRouter from './routes/credits.js'
 import adminCreditsRouter from './routes/admin-credits.js'
 import adminImagesRouter from './routes/admin-images.js'
 import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
@@ -81,10 +79,8 @@ app.use('/api', chatRouter)
 app.use('/api', skillsRouter)
 app.use('/api', toolsRouter)
 app.use('/api', imageRouter)
-app.use('/api', imageHistoryRouter)
 app.use('/api', imageEventsRouter)
 app.use('/api', configRouter)
-app.use('/api', creditsRouter)
 app.use('/api', adminCreditsRouter)
 app.use('/api', adminImagesRouter)
 app.use('/api', adminImageAttemptsRouter)

@@ -8,6 +8,7 @@ import {
   tencentCosObjectUrl,
 } from '../clients/tencent-cos.js'
 import sharp from 'sharp'
+import path from 'node:path'
 
 const DATA_URL_RE = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i
 const IMAGE_FILE_SIZE_LIMIT = '32MB'
@@ -356,7 +357,9 @@ export async function storePreviewBuffer(
     .rotate()
     .webp({ quality: 86 })
     .toBuffer()
-  const previewPath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.preview.webp`
+  const basePath = safePathPart(pathHint)
+  const name = path.basename(basePath)
+  const previewPath = `${basePath}/${name}.preview.webp`
   const stored = await uploadStorageBuffer(previewBuffer, 'image/webp', previewPath, options)
   if (!stored) return null
 
@@ -377,7 +380,9 @@ export async function storeThumbnailBuffer(
     .resize({ width: 480, height: 480, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 72 })
     .toBuffer()
-  const thumbnailPath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.thumb.webp`
+  const basePath = safePathPart(pathHint)
+  const name = path.basename(basePath)
+  const thumbnailPath = `${basePath}/${name}.thumb.webp`
   const stored = await uploadStorageBuffer(thumbnailBuffer, 'image/webp', thumbnailPath, options)
   if (!stored) return null
 
@@ -395,7 +400,9 @@ export async function storeImageBuffer(
   options: StoreImageOptions = {},
 ): Promise<StoredImage | null> {
   const original = await originalStorageImage(buffer, mime)
-  const storagePath = `${safePathPart(pathHint).replace(/\.[a-z0-9]+$/i, '')}.${original.extension}`
+  const basePath = safePathPart(pathHint)
+  const name = path.basename(basePath)
+  const storagePath = `${basePath}/${name}.${original.extension}`
   const stored = await uploadStorageBuffer(original.buffer, original.mime, storagePath, options)
   if (!stored) return null
 

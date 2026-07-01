@@ -19,6 +19,7 @@ describe('useAppConfig', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         imageEventsEnabled: true,
         canvasContextEnabled: true,
+        imageCreditCostPerImage: 0.75,
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -28,6 +29,7 @@ describe('useAppConfig', () => {
       imageEventsEnabled: false,
       canvasContextEnabled: false,
       guestGenerationEnabled: true,
+      imageCreditCostPerImage: 1,
       availableImageModels: [],
       defaultImageModel: '',
     })
@@ -35,6 +37,7 @@ describe('useAppConfig', () => {
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
+      imageCreditCostPerImage: 0.75,
       availableImageModels: [],
       defaultImageModel: '',
     })

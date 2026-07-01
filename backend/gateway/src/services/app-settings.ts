@@ -558,6 +558,7 @@ export async function publicAppConfig() {
     imageEventsEnabled: settings.imageEventsEnabled,
     canvasContextEnabled: settings.canvasContextEnabled,
     guestGenerationEnabled: settings.guestGenerationEnabled,
+    imageCreditCostPerImage: settings.imageCreditCostPerImage,
     availableImageModels: settings.availableImageModels,
     defaultImageModel: settings.imageResponsesImageModel,
   }

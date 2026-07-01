@@ -32,6 +32,11 @@ export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL
 export const KIMI_API_KEY = process.env.KIMI_API_KEY
 export const KIMI_BASE_URL = process.env.KIMI_BASE_URL
 
+export const PROVIDER_API_KEY_MASTER_KEY = process.env.PROVIDER_API_KEY_MASTER_KEY ||
+  process.env.API_KEY_MASTER_KEY ||
+  process.env.API_KEY_ENCRYPTION_KEY ||
+  ''
+
 export const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
 export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
   process.env.UPABASE_PUBLISHABLE_KEY ||

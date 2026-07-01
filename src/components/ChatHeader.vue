@@ -24,6 +24,8 @@ const props = defineProps<{
   authEmail: string
   authReady: boolean
   authLoading: boolean
+  canUseChat: boolean
+  isCheckingChatAccess: boolean
 }>()
 
 const authLabel = computed(() => {
@@ -31,7 +33,21 @@ const authLabel = computed(() => {
   return props.authEmail.split('@')[0] || props.authEmail
 })
 
-defineEmits<{
+const chatButtonTitle = computed(() => {
+  if (!props.showImagePanel) return '对话'
+  if (!props.authEmail) return '登录管理员账号后进入 Chat'
+  if (props.isCheckingChatAccess) return '正在检查 Chat 权限'
+  if (!props.canUseChat) return '仅管理员可进入 Chat'
+  return '对话'
+})
+
+const chatButtonDisabled = computed(() => (
+  props.showImagePanel &&
+  Boolean(props.authEmail) &&
+  (props.isCheckingChatAccess || !props.canUseChat)
+))
+
+const emit = defineEmits<{
   toggleSidebar: []
   toggleAgentPanel: []
   toggleImagePanel: []
@@ -40,6 +56,17 @@ defineEmits<{
   toggleSettings: []
   openAuth: []
 }>()
+
+function handleChatButtonClick() {
+  if (!props.showImagePanel) return
+  if (!props.authEmail) {
+    emit('openAuth')
+    return
+  }
+  if (chatButtonDisabled.value) return
+  emit('toggleImagePanel')
+}
+
 </script>
 
 <template>
@@ -78,10 +105,12 @@ defineEmits<{
               : 'text-muted-foreground hover:bg-background hover:text-foreground',
           )"
           :aria-pressed="!showImagePanel"
-          @click="!showImagePanel ? undefined : $emit('toggleImagePanel')"
+          :disabled="chatButtonDisabled"
+          :title="chatButtonTitle"
+          @click="handleChatButtonClick"
         >
           <MessageSquare class="h-3.5 w-3.5" />
-          <span>对话</span>
+          <span>{{ showImagePanel && authEmail && isCheckingChatAccess ? '检查中' : '对话' }}</span>
         </Button>
         <Button
           variant="ghost"

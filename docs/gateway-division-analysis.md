@@ -25,7 +25,7 @@
                   │ 端口 3001 │  │ chat / skills │
                   │           │  │ tools / admin │
                   │ 图片/额度  │  │ health / 代理  │
-                  │ 配置/聊天  │  │               │
+                  │ 配置读取   │  │               │
                   └─────┬─────┘  └──────────────┘
                         │
                   直连 PostgreSQL
@@ -39,7 +39,7 @@ Node.js `go-sidecar.ts` 根据 `GO_GATEWAY_BASE_URL` 环境变量决定是否将
 | `/api/credits*` | CreditsHandler | 已代理（生产运行中） |
 | `/api/config/app` | ConfigHandler | 已代理（生产运行中） |
 | `/api/config/supabase` | ConfigHandler | 已代理（生产运行中） |
-| `/api/chat` | ChatHandler | **未代理** |
+| `/api/chat` | 无 | Go 侧已删除，Chat 仅归 Node |
 
 ---
 
@@ -104,16 +104,16 @@ Node.js `go-sidecar.ts` 根据 `GO_GATEWAY_BASE_URL` 环境变量决定是否将
 | **管理后台**（credits/images/attempts/system/announcements） | 低流量、高变更频率。CRUD + PostgREST 完全满足，无需迁移 |
 | **图片事件分析** | 低流量。用户行为追踪、事件存储 |
 
-### Chat 端点：暂不迁移
+### Chat 端点：不迁移
 
-Go 的 `ChatHandler` 当前仅为轻量实现（约 200 行），缺少：
+Go 侧 `/api/chat` 能力已删除，Chat 只由 Node Gateway 负责。原因是 Chat 的产品能力不只是流式转发，还包括：
 - Skill system prompt 注入
 - MCP 工具列表获取和 schema 转换
 - TAOR 工具调用循环（agentic loop）
 - 模型路由和负载均衡
 - 重试/限流逻辑
 
-这些能力深度依赖 Node.js 的 Skill Loader 和 MCP Manager 模块，短中期不适合迁移。Go ChatHandler 可在未来作为纯流式转发代理（不参与 Skill/MCP），或保持现状作为可选项。
+这些能力深度依赖 Node.js 的 Skill Loader 和 MCP Manager 模块。Go 不再保留纯转发版本，避免形成第二套不完整 Chat 行为。
 
 ---
 
@@ -137,9 +137,7 @@ Go 的 `ChatHandler` 当前仅为轻量实现（约 200 行），缺少：
 
 ### 第 3 阶段（短期 — 1~3 个月）
 
-- [ ] 评估 Go ChatHandler 迁移可行性
-  - 先实现纯转发模式（不引入 Skill/MCP）
-  - 如 Node 侧 Chat 负载成为瓶颈，优先迁移流式转发部分
+- [x] 删除 Go `/api/chat` 能力，Chat 仅保留在 Node Gateway
 - [ ] Go 侧增加请求追踪（OpenTelemetry / 结构化日志）
 - [ ] Node 侧 admin 模块拆分独立路由文件（如规模增长）
 - [ ] 统一错误码体系（Go ↔ Node 对齐）
@@ -149,7 +147,7 @@ Go 的 `ChatHandler` 当前仅为轻量实现（约 200 行），缺少：
 ### 第 4 阶段（中期 — 3~6 个月）
 
 - [ ] 如团队具备 Rust/Wasm 能力，评估图片处理迁移到 wasm
-- [ ] Go ChatHandler 接入 Skill 系统（通过 HTTP 调用 Node 侧 Skill API）
+- [ ] 如 Node 侧 Chat 负载成为瓶颈，优先优化 Node Gateway 或拆专用 Node Chat Worker，而不是在 Go 重建 Skill/MCP 链路
 - [ ] 数据库直连监控指标接入 Render dashboard
 
 ### 第 5 阶段（长期 — 6 个月+）
@@ -167,7 +165,7 @@ Go 的 `ChatHandler` 当前仅为轻量实现（约 200 行），缺少：
 1. **Skill 系统**是 Node.js 生态的原生产物 — Markdown 解析、动态 system prompt 拼接、工具白名单过滤 — 在 Go 中重建需大量工程投入，收益有限
 2. **MCP Manager** 依赖 Node.js MCP SDK（`@modelcontextprotocol/sdk`），Go 端无等价生态
 3. **Admin 模块**流量极低、全 CRUD — 用 PostgREST HTTP 完全够用，迁移到 Go 投入产出比低
-4. **Go ChatHandler 的 Skill/MCP 缺失** — 短期只能做纯转发，反而增加架构复杂度
+4. **Go 不保留 ChatHandler** — 纯转发会制造第二套不完整行为，Chat/MCP/Skill 统一留在 Node
 
 ### 为什么选择 pgx 直连而非 PostgREST HTTP？
 

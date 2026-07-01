@@ -20,6 +20,11 @@ const expanded = ref(shouldAutoExpand.value)
 const contentEl = ref<HTMLElement | null>(null)
 const contentId = `thinking-content-${Math.random().toString(36).slice(2)}`
 const lines = computed(() => normalized.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+const statusLabel = computed(() => {
+  if (props.status === 'running') return '思考中'
+  if (props.status === 'cancelled') return '思考已停止'
+  return '思考已完成'
+})
 const preview = computed(() => {
   const first = lines.value[0] || ''
   return first.length > 96 ? `${first.slice(0, 96)}...` : first
@@ -66,7 +71,7 @@ watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], asyn
       <span class="flex min-w-0 flex-1 flex-col gap-0.5">
         <span class="flex items-center gap-1.5">
           <span class="shrink-0 text-[11px] font-semibold text-foreground">
-            {{ status === 'running' ? '思考中' : '思考已完成' }}
+            {{ statusLabel }}
           </span>
           <Badge
             v-if="status === 'cancelled'"

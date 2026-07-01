@@ -100,12 +100,12 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
 <template>
   <aside class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-lg:w-[220px] max-md:hidden">
     <!-- Mode switch: Imagio / 画布 -->
-    <div class="flex items-center gap-2 mx-3.5 my-[18px] p-1 border border-border rounded-lg bg-muted text-sm font-extrabold">
+    <div class="flex items-center gap-2 mx-3.5 my-[18px] p-1 border border-border rounded-lg bg-muted">
       <button
         type="button"
         :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
+          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
         ]"
         @click="emit('select-image-mode', 'imagio')"
       >
@@ -114,8 +114,8 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
       <button
         type="button"
         :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'hover:text-foreground',
+          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
+          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
         ]"
         @click="emit('select-image-mode', 'canvas')"
       >

@@ -18,15 +18,14 @@ import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
+import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
+import { useAdminAccess } from '../composables/useAdminAccess'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
-import { useCredits } from '../composables/useCredits'
 import { apiUrl } from '../lib/api-base'
 import { hasFileTransfer } from '../lib/image-canvas-utils'
-import { formatCreditAmount } from '../utils/credit-format'
 import type { RouteWorkspace } from '../router'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Image as ImageIcon, X } from '@lucide/vue'
 
@@ -44,23 +43,17 @@ const { isLoading, runState, runStatusLabel, activeToolCalls, completedToolCalls
 const {
   user,
   userEmail,
-  authError,
-  authNotice,
   isAuthReady,
   isAuthLoading,
   initAuth,
-  submitAuth,
-  signInWithGitHub,
-  signOut,
 } = useAuthSession()
 const {
-  creditBalance,
-  isLoadingCredits,
-  isRedeemingCredits,
-  creditError,
-  creditNotice,
-  redeemCredits,
-} = useCredits()
+  isAdminReady,
+  isAdmin,
+  isCheckingAdmin,
+  ensureAdminAccess,
+  resetAdminAccess,
+} = useAdminAccess()
 const {
   announcement,
   shouldShowAnnouncement,
@@ -142,23 +135,40 @@ function currentRouteWorkspace(): RouteWorkspace {
   return workspace === 'chat' || workspace === 'image' ? workspace : 'image'
 }
 
-function requireChatAccess(nextPath = '/chat') {
-  if (user.value) return true
+async function requireChatAccess(nextPath = '/chat') {
+  if (isAdmin.value) return true
   pendingAuthPath.value = nextPath
-  openAuthDialog('signIn')
+  if (!user.value) {
+    openAuthDialog('signIn')
+  } else {
+    const allowed = isAdminReady.value ? isAdmin.value : await ensureAdminAccess()
+    if (allowed) return true
+    window.alert('只有管理员可以进入 Chat。')
+  }
   return false
 }
 
-function syncWorkspaceFromRoute() {
+async function syncWorkspaceFromRoute() {
   const workspace = currentRouteWorkspace()
-  if (workspace === 'chat' && !user.value) {
+  if (workspace === 'chat' && user.value && !isAdmin.value && isAuthReady.value) {
+    const allowed = isAdminReady.value ? isAdmin.value : await ensureAdminAccess()
+    if (allowed) {
+      showImagePanel.value = false
+      showAgentPanel.value = false
+      imageWorkspace.value = 'canvas'
+      return
+    }
+  }
+
+  if (workspace === 'chat' && (!user.value || !isAdmin.value)) {
     showImagePanel.value = true
     showAgentPanel.value = false
     imageWorkspace.value = 'canvas'
     imageMode.value = 'imagio'
     if (isAuthReady.value) {
       pendingAuthPath.value = '/chat'
-      openAuthDialog('signIn')
+      if (!user.value) openAuthDialog('signIn')
+      else window.alert('只有管理员可以进入 Chat。')
       void router.replace('/image')
     }
     return
@@ -177,17 +187,17 @@ function syncWorkspaceFromRoute() {
 
 async function toggleAgentPanel() {
   if (currentRouteWorkspace() !== 'chat') {
-    if (!requireChatAccess('/chat')) return
+    if (!await requireChatAccess('/chat')) return
     await router.push('/chat')
   }
   showAgentPanel.value = !showAgentPanel.value
 }
-function toggleImagePanel() {
+async function toggleImagePanel() {
   if (currentRouteWorkspace() === 'chat') {
     void router.push('/image')
     return
   }
-  if (!requireChatAccess('/chat')) return
+  if (!await requireChatAccess('/chat')) return
   void router.push('/chat')
 }
 
@@ -234,20 +244,10 @@ function selectSkill(name: string | null) { activeSkill.value = name }
 type AuthMode = 'signIn' | 'signUp'
 const showAuthDialog = ref(false)
 const authMode = ref<AuthMode>('signIn')
-const authEmailDraft = ref('')
-const authPasswordDraft = ref('')
-const redeemCodeDraft = ref('')
 const pendingAuthPath = ref<string | null>(null)
-const creditBalanceLabel = computed(() => (
-  isLoadingCredits.value && creditBalance.value === null
-    ? '...'
-    : formatCreditAmount(creditBalance.value)
-))
 
 function openAuthDialog(mode: AuthMode = 'signIn') {
   authMode.value = mode
-  authEmailDraft.value = userEmail.value
-  authPasswordDraft.value = ''
   showAuthDialog.value = true
 }
 
@@ -256,9 +256,12 @@ function closeAuthDialog() {
   showAuthDialog.value = false
 }
 
-async function handleAuthSubmit() {
-  const ok = await submitAuth(authMode.value, authEmailDraft.value.trim(), authPasswordDraft.value)
-  if (ok && authMode.value === 'signIn') {
+watch(() => user.value?.id || null, (nextUserId, previousUserId) => {
+  resetAdminAccess()
+  if (nextUserId) {
+    void ensureAdminAccess()
+  }
+  if (nextUserId && !previousUserId && showAuthDialog.value) {
     const nextPath = pendingAuthPath.value
     pendingAuthPath.value = null
     showAuthDialog.value = false
@@ -266,26 +269,7 @@ async function handleAuthSubmit() {
       void router.push(nextPath)
     }
   }
-}
-
-async function handleGitHubAuth() {
-  const ok = await signInWithGitHub(pendingAuthPath.value || route.fullPath || '/image')
-  if (ok) {
-    showAuthDialog.value = false
-  }
-}
-
-async function handleSignOut() {
-  await signOut()
-  showAuthDialog.value = false
-}
-
-async function handleRedeemCredits() {
-  const ok = await redeemCredits(redeemCodeDraft.value)
-  if (ok) {
-    redeemCodeDraft.value = ''
-  }
-}
+})
 
 // --- Image upload ---
 const pendingImages = ref<string[]>([])
@@ -392,7 +376,7 @@ function onPaste(e: ClipboardEvent) {
 
 // --- Submit ---
 async function handleSubmit(value: string) {
-  if (!requireChatAccess('/chat')) return
+  if (!await requireChatAccess('/chat')) return
   await submitMessage(
     value,
     currentModel.value.id,
@@ -440,7 +424,7 @@ watch(() => messages.value[messages.value.length - 1]?.content, () => {
 watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
 watch(isLoading, (v) => { scrollSmooth = !v })
 watch([() => route.meta.workspace, () => user.value?.id || null, isAuthReady], () => {
-  syncWorkspaceFromRoute()
+  void syncWorkspaceFromRoute()
 }, { immediate: true })
 
 // --- Keyboard ---
@@ -470,9 +454,11 @@ onUnmounted(() => {
 function handleChangeModel(m: typeof AVAILABLE_MODELS[number]) { currentModel.value = m }
 function handleNewChat() { createConversation(); showSidebar.value = false }
 function handleImageToChat(dataUrl: string) {
-  if (!requireChatAccess('/chat')) return
-  pendingImages.value = [...pendingImages.value, dataUrl]
-  void router.push('/chat')
+  void (async () => {
+    if (!await requireChatAccess('/chat')) return
+    pendingImages.value = [...pendingImages.value, dataUrl]
+    void router.push('/chat')
+  })()
 }
 function handleImageWorkspaceChange(mode: ImageWorkspace) {
   imageWorkspace.value = mode
@@ -520,6 +506,8 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         :auth-email="userEmail"
         :auth-ready="isAuthReady"
         :auth-loading="isAuthLoading"
+        :can-use-chat="isAdmin"
+        :is-checking-chat-access="isCheckingAdmin"
         @toggle-sidebar="toggleSidebar"
         @toggle-agent-panel="toggleAgentPanel"
         @toggle-image-panel="toggleImagePanel"
@@ -639,79 +627,12 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
       @close="markAnnouncementRead()"
     />
 
-    <!-- Auth Dialog -->
-    <div
+    <AuthPanel
       v-if="showAuthDialog"
-      class="fixed inset-0 z-[220] grid place-items-center p-6 bg-black/32 backdrop-blur-lg max-md:items-end max-md:p-3"
-      @click.self="closeAuthDialog"
-    >
-      <section class="w-full max-w-[420px] p-5 rounded-lg bg-card shadow-lg max-md:max-w-none max-md:p-4" role="dialog" aria-modal="true" aria-label="账号">
-        <header class="flex items-start justify-between gap-3.5 mb-4">
-          <div>
-            <span class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">账号</span>
-            <h2 class="mt-1 text-[17px] font-bold text-foreground tracking-tight">{{ user ? '账号信息' : (authMode === 'signIn' ? '登录 Recho' : '创建账号') }}</h2>
-          </div>
-          <Button variant="ghost" size="icon" class="text-muted-foreground hover:text-foreground shadow-sm" title="关闭" @click="closeAuthDialog">
-            <X :size="16" />
-          </Button>
-        </header>
-
-        <!-- Auth Profile -->
-        <div v-if="user" class="grid gap-2.5">
-          <span class="text-xs font-semibold text-muted-foreground">已登录</span>
-          <strong class="overflow-hidden text-sm font-semibold text-foreground text-ellipsis whitespace-nowrap">{{ userEmail }}</strong>
-          <div class="grid gap-2.5 p-3.5 rounded-lg bg-muted">
-            <div class="flex items-center justify-between gap-3">
-              <span class="text-xs font-semibold text-muted-foreground">额度</span>
-              <strong class="text-xl font-semibold text-foreground tracking-tight leading-none">{{ creditBalanceLabel }}</strong>
-            </div>
-            <form class="grid grid-cols-[1fr_auto] gap-2" @submit.prevent="handleRedeemCredits">
-              <Input
-                v-model="redeemCodeDraft"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="兑换码"
-                :disabled="isRedeemingCredits"
-                class="h-9"
-              />
-              <Button type="submit" :disabled="isRedeemingCredits || !redeemCodeDraft.trim()" class="h-9 px-3.5">
-                {{ isRedeemingCredits ? '兑换中' : '兑换' }}
-              </Button>
-            </form>
-            <p v-if="creditNotice" class="text-xs font-semibold leading-snug text-foreground">{{ creditNotice }}</p>
-            <p v-if="creditError" class="text-xs font-semibold leading-snug text-destructive">{{ creditError }}</p>
-          </div>
-          <Button variant="outline" :disabled="isAuthLoading" @click="handleSignOut">退出登录</Button>
-        </div>
-
-        <!-- Auth Form -->
-        <form v-else class="grid gap-3" @submit.prevent="handleAuthSubmit">
-          <label class="grid gap-1.5 text-xs font-semibold text-foreground">
-            <span>邮箱</span>
-            <Input v-model="authEmailDraft" type="email" autocomplete="email" placeholder="you@example.com" />
-          </label>
-          <label class="grid gap-1.5 text-xs font-semibold text-foreground">
-            <span>密码</span>
-            <Input v-model="authPasswordDraft" type="password" autocomplete="current-password" placeholder="至少 6 位密码" />
-          </label>
-
-          <p v-if="authError" class="text-xs leading-snug text-destructive">{{ authError }}</p>
-          <p v-else-if="authNotice" class="text-xs leading-snug text-muted-foreground">{{ authNotice }}</p>
-
-          <Button type="submit" :disabled="isAuthLoading" class="w-full">
-            {{ isAuthLoading ? '处理中...' : (authMode === 'signIn' ? '登录' : '创建账号') }}
-          </Button>
-
-          <Button variant="outline" type="button" :disabled="isAuthLoading" class="w-full" @click="handleGitHubAuth">
-            使用 GitHub 登录
-          </Button>
-
-          <Button variant="ghost" type="button" class="w-full" @click="authMode = authMode === 'signIn' ? 'signUp' : 'signIn'">
-            {{ authMode === 'signIn' ? '没有账号，创建一个' : '已有账号，去登录' }}
-          </Button>
-        </form>
-      </section>
-    </div>
+      v-model="showAuthDialog"
+      :initial-mode="authMode"
+      :redirect-path="pendingAuthPath || route.fullPath || '/image'"
+      @close="closeAuthDialog"
+    />
   </div>
 </template>

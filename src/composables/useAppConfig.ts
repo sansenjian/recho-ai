@@ -10,6 +10,7 @@ export interface PublicAppConfig {
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
   guestGenerationEnabled: boolean
+  imageCreditCostPerImage: number
   availableImageModels: ImageModelOption[]
   defaultImageModel: string
 }
@@ -18,6 +19,7 @@ const fallbackConfig: PublicAppConfig = {
   imageEventsEnabled: false,
   canvasContextEnabled: false,
   guestGenerationEnabled: true,
+  imageCreditCostPerImage: 1,
   availableImageModels: [],
   defaultImageModel: '',
 }
@@ -46,6 +48,9 @@ function normalizeConfig(value: unknown): PublicAppConfig {
     guestGenerationEnabled: typeof record.guestGenerationEnabled === 'boolean'
       ? record.guestGenerationEnabled
       : fallbackConfig.guestGenerationEnabled,
+    imageCreditCostPerImage: typeof record.imageCreditCostPerImage === 'number' && Number.isFinite(record.imageCreditCostPerImage)
+      ? Math.max(0.01, Math.round(record.imageCreditCostPerImage * 100) / 100)
+      : fallbackConfig.imageCreditCostPerImage,
     availableImageModels: normalizeImageModels(record.availableImageModels),
     defaultImageModel: typeof record.defaultImageModel === 'string'
       ? record.defaultImageModel
@@ -88,6 +93,7 @@ export function useAppConfig() {
     imageEventsEnabled: computed(() => config.value.imageEventsEnabled),
     canvasContextEnabled: computed(() => config.value.canvasContextEnabled),
     guestGenerationEnabled: computed(() => config.value.guestGenerationEnabled),
+    imageCreditCostPerImage: computed(() => config.value.imageCreditCostPerImage),
     availableImageModels: computed(() => config.value.availableImageModels),
     defaultImageModel: computed(() => config.value.defaultImageModel),
     ensureAppConfig,

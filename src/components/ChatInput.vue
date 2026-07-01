@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import type { ModelOption } from '../types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, ChevronDown, X, Languages, Code, FileText, Search, Square, Send } from '@lucide/vue'
+import { Plus, ChevronDown, X, Languages, Code, FileText, Search, Square, Send, Check } from '@lucide/vue'
 
 interface SkillOption {
   name: string
@@ -55,6 +55,19 @@ const compactModelLabel = computed(() => {
   const label = props.currentModel?.label || '模型'
   return label.replace(/^DeepSeek\s+/, '').replace(/\s+Flash$/, ' Flash')
 })
+
+const activeSkillOption = computed(() => {
+  if (!props.activeSkill) return null
+  return (props.skills || []).find(skill => skill.name === props.activeSkill) || null
+})
+
+const skillOnlyFallbackText = computed(() => {
+  if (!props.activeSkill) return ''
+  const label = activeSkillOption.value?.description || props.activeSkill
+  return `使用 /${props.activeSkill} ${label}`
+})
+
+const canSubmit = computed(() => Boolean(inputValue.value.trim() || skillOnlyFallbackText.value))
 
 function modelStatusLabel(model: ModelOption) {
   if (model.status === 'recommended') return '推荐'
@@ -136,7 +149,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 function handleSubmit() {
   const trimmed = inputValue.value.trim()
-  if (!trimmed && !props.activeSkill) return
+  const fallbackText = skillOnlyFallbackText.value
+  if (!trimmed && !fallbackText) return
 
   // Support inline "/skill query" format
   const parsed = tryParseSlashCommand(trimmed)
@@ -144,7 +158,7 @@ function handleSubmit() {
     emit('selectSkill', parsed.skill)
     emit('submit', parsed.query)
   } else {
-    emit('submit', trimmed)
+    emit('submit', trimmed || fallbackText)
   }
 
   inputValue.value = ''
@@ -267,9 +281,7 @@ function skillIcon(name: string) {
                 </span>
                 <span class="hidden text-[11px] text-muted-foreground">{{ m.hint }}</span>
                 <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
-                  <svg v-if="m.id === currentModel?.id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
+                  <Check v-if="m.id === currentModel?.id" class="h-[18px] w-[18px]" />
                 </span>
               </button>
             </div>
@@ -289,7 +301,7 @@ function skillIcon(name: string) {
             v-else
             size="icon"
             class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!inputValue.trim()"
+            :disabled="!canSubmit"
             title="发送"
             @click="handleSubmit"
           >

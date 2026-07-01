@@ -4,6 +4,7 @@ let tableCounts: Record<string, number> = {}
 let tableErrors: Record<string, unknown> = {}
 let appSettingRows: Array<Record<string, unknown>> = []
 let adminUserRows: Array<Record<string, unknown>> = []
+let providerRows: Array<Record<string, unknown>> = []
 
 vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['admin@example.test'],
@@ -16,7 +17,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   IMAGE_RESPONSES_IMAGE_MODEL: 'gpt-image-2',
   IMAGE_EVENTS_ENABLED: true,
   CANVAS_CONTEXT_ENABLED: true,
-  IMAGE_GEN_API_KEY: 'sk-secret-image-key-that-must-not-leak',
+  IMAGE_GEN_API_KEY: '',
   IMAGE_GEN_BASE_URL: '',
   OPENAI_API_KEY: '',
   OPENAI_BASE_URL: '',
@@ -77,6 +78,29 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         }
       }
 
+      if (table === 'provider_settings') {
+        return {
+          select: vi.fn((_columns: string, options?: { head?: boolean }) => {
+            if (options?.head) {
+              return Promise.resolve({
+                count: tableCounts[table] ?? providerRows.length,
+                error: tableErrors[table] ?? null,
+              })
+            }
+            return {
+              order: vi.fn(() => ({
+                order: vi.fn(() => ({
+                  order: vi.fn(async () => ({
+                    data: providerRows,
+                    error: tableErrors[table] ?? null,
+                  })),
+                })),
+              })),
+            }
+          }),
+        }
+      }
+
       return {
         select: vi.fn(async () => ({
           count: tableCounts[table] ?? 0,
@@ -93,6 +117,7 @@ describe('admin system status helpers', () => {
     tableErrors = {}
     appSettingRows = []
     adminUserRows = []
+    providerRows = []
     vi.resetModules()
   })
 
@@ -107,6 +132,7 @@ describe('admin system status helpers', () => {
       image_generation_contexts: 7,
       image_events: 8,
       app_settings: 6,
+      provider_settings: 1,
       admin_users: 1,
       announcements: 1,
     }
@@ -120,6 +146,25 @@ describe('admin system status helpers', () => {
         user_id: 'admin-user-id',
         email: null,
         enabled: true,
+      },
+    ]
+    providerRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'image',
+        name: 'Configured Image Provider',
+        base_url: 'https://image.example.test/v1',
+        enabled: true,
+        priority: 10,
+        image_model: 'gpt-image-2',
+        edit_model: 'gpt-image-2',
+        timeout_ms: 360000,
+        retry_count: 3,
+        supports_webp_references: true,
+        api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
+        api_key_preview: 'sk-...cret',
+        created_at: '2026-06-29T00:00:00Z',
+        updated_at: '2026-06-29T00:00:00Z',
       },
     ]
 
@@ -147,12 +192,13 @@ describe('admin system status helpers', () => {
         tableAvailable: true,
       },
     })
-    expect(status.data.tables).toHaveLength(10)
+    expect(status.data.tables).toHaveLength(11)
     expect(status.data.tables.every(table => table.status === 'ok')).toBe(true)
     expect(status.warnings).toEqual([])
 
     const serialized = JSON.stringify(status)
     expect(serialized).not.toContain('sk-secret')
+    expect(serialized).not.toContain('sk-...cret')
     expect(serialized).not.toContain('secret-bucket-name')
     expect(serialized).not.toContain('admin@example.test')
     expect(serialized).not.toContain('admin-user-id')

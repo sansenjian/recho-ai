@@ -65,15 +65,17 @@ func main() {
 	var redeemService *service.RedeemService
 	var idempotencyService *service.IdempotencyService
 	var appSettingsService *service.AppSettingsService
-	if creditRepo != nil {
-		creditService = service.NewCreditService(creditRepo)
-		redeemService = service.NewRedeemService(redeemRepo)
-	}
+	var providerSettingsService *service.ProviderSettingsService
 	if idempotencyRepo != nil {
 		idempotencyService = service.NewIdempotencyService(idempotencyRepo)
 	}
 	if db != nil {
 		appSettingsService = service.NewAppSettingsService(db.Pool())
+		providerSettingsService = service.NewProviderSettingsService(db.Pool())
+	}
+	if creditRepo != nil {
+		creditService = service.NewCreditService(creditRepo, appSettingsService)
+		redeemService = service.NewRedeemService(redeemRepo)
 	}
 
 	// Initialize image processor and S3 uploader
@@ -86,9 +88,6 @@ func main() {
 		storageService = service.NewStorageService(db.Pool(), imageProcessor, s3Uploader)
 	}
 
-	// Initialize chat service. Chat remains optional while Go is used as an image sidecar.
-	chatService := service.NewChatService(config.ChatBaseURL, config.ChatAPIKey, config.AnalysisURL)
-
 	// Initialize handlers
 	healthHandler := handler.NewHealthHandler(db)
 	var configHandler *handler.ConfigHandler
@@ -98,8 +97,8 @@ func main() {
 		configHandler = handler.NewConfigHandler(nil, log.Default())
 	}
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
-	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService)
-	chatHandler := handler.NewChatHandler(chatService, creditService, config.AnalysisURL)
+	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService).
+		WithProviderSettings(providerSettingsService)
 
 	// Setup router
 	r := chi.NewRouter()
@@ -139,11 +138,6 @@ func main() {
 		// Image generation endpoints
 		r.Route("/image", func(r chi.Router) {
 			imageHandler.RegisterRoutes(r)
-		})
-
-		// Chat endpoints
-		r.Route("/chat", func(r chi.Router) {
-			r.Mount("/", chatHandler.Routes())
 		})
 	})
 

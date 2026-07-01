@@ -63,7 +63,7 @@ function handleCanvasImport(event: Event) {
       </Button>
     </div>
 
-    <Button variant="ghost" size="icon" type="button" title="复位视图" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="emit('fit-view')">
+    <Button variant="ghost" size="icon" type="button" title="复位视图" aria-label="复位视图" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="emit('fit-view')">
       <RotateCcw class="h-[18px] w-[18px]" />
     </Button>
 
@@ -75,15 +75,15 @@ function handleCanvasImport(event: Event) {
       @change="handleCanvasImport"
     >
 
-    <Button variant="ghost" size="icon" type="button" title="导入画布 JSON，默认追加；按住 Shift 替换" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="openCanvasImportPicker">
+    <Button variant="ghost" size="icon" type="button" title="导入画布 JSON，默认追加；按住 Shift 替换" aria-label="导入画布 JSON" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="openCanvasImportPicker">
       <Upload class="h-[18px] w-[18px]" />
     </Button>
 
-    <Button variant="ghost" size="icon" type="button" title="导出画布 JSON" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="emit('export-canvas')">
+    <Button variant="ghost" size="icon" type="button" title="导出画布 JSON" aria-label="导出画布 JSON" class="h-[34px] w-[34px] max-md:h-[44px] max-md:w-[44px]" @click="emit('export-canvas')">
       <Download class="h-[18px] w-[18px]" />
     </Button>
 
-    <Button variant="ghost" size="icon" type="button" title="清空画布" class="h-[34px] w-[34px] hover:text-destructive max-md:h-[44px] max-md:w-[44px]" @click="emit('clear-canvas')">
+    <Button variant="ghost" size="icon" type="button" title="清空画布" aria-label="清空画布" class="h-[34px] w-[34px] hover:text-destructive max-md:h-[44px] max-md:w-[44px]" @click="emit('clear-canvas')">
       <Trash2 class="h-[18px] w-[18px]" />
     </Button>
 

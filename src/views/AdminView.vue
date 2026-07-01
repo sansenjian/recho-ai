@@ -37,6 +37,8 @@ import type {
   AdminImageStorageStat,
   AdminLedgerEntry,
   AdminOverview,
+  AdminProviderSetting,
+  AdminProviderSettingsState,
   AdminSystemStatus,
   AdminTransaction,
   AdminRole,
@@ -114,6 +116,7 @@ const createdCodes = ref<AdminCode[]>([])
 const overview = ref<AdminOverview | null>(null)
 const systemStatus = ref<AdminSystemStatus | null>(null)
 const appSettings = ref<AdminAppSettings | null>(null)
+const providerSettings = ref<AdminProviderSettingsState | null>(null)
 const adminUserRules = ref<AdminUserRule[]>([])
 const adminAccess = ref<AdminAccessSummary | null>(null)
 const currentAdminRole = ref<AdminRole>('operator')
@@ -145,6 +148,7 @@ const announcementsLoading = ref(false)
 const announcementActionId = ref<string | null>(null)
 const codeRedemptionsLoading = ref(false)
 const adminRuleActionId = ref<string | null>(null)
+const providerActionId = ref<string | null>(null)
 const adjustAmount = ref(10)
 const adjustNote = ref('')
 
@@ -158,6 +162,24 @@ const settingsForm = ref<AdminAppSettings>({
   freeGenerationEnabled: true,
   guestGenerationEnabled: true,
   availableImageModels: [],
+})
+
+const providerForm = ref({
+  id: '',
+  kind: 'image' as 'chat' | 'image',
+  name: '',
+  baseUrl: '',
+  apiKey: '',
+  clearApiKey: false,
+  enabled: true,
+  priority: 100,
+  defaultModel: '',
+  imageModel: 'gpt-image-2',
+  editModel: 'gpt-image-2',
+  timeoutMs: 360000,
+  retryCount: 3,
+  supportsWebpReferences: true,
+  notes: '',
 })
 
 const adminUserForm = ref({
@@ -190,6 +212,11 @@ const settingsPricePreview = computed(() => [
   { label: '4 张', value: settingsPricePerImage.value * 4 },
   { label: '8 张', value: settingsPricePerImage.value * 8 },
 ])
+
+const providerRows = computed(() => providerSettings.value?.providers || [])
+const imageProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'image'))
+const chatProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'chat'))
+const editingProvider = computed(() => providerForm.value.id ? providerRows.value.find(provider => provider.id === providerForm.value.id) || null : null)
 
 const imageCostConfidenceLabel = computed(() => {
   const confidence = overview.value?.imageCost?.confidence || 'none'
@@ -305,6 +332,71 @@ function syncSettingsForm(settings: AdminAppSettings) {
   appSettings.value = settings
   settingsForm.value = { ...settings }
   settingsLoaded.value = true
+}
+
+function resetProviderForm(kind: 'chat' | 'image' = 'image') {
+  providerForm.value = {
+    id: '',
+    kind,
+    name: '',
+    baseUrl: '',
+    apiKey: '',
+    clearApiKey: false,
+    enabled: true,
+    priority: 100,
+    defaultModel: kind === 'chat' ? 'gpt-4o-mini' : '',
+    imageModel: kind === 'image' ? 'gpt-image-2' : '',
+    editModel: kind === 'image' ? 'gpt-image-2' : '',
+    timeoutMs: kind === 'image' ? 360000 : 60000,
+    retryCount: 3,
+    supportsWebpReferences: kind === 'image',
+    notes: '',
+  }
+}
+
+function editProvider(provider: AdminProviderSetting) {
+  providerForm.value = {
+    id: provider.source === 'database' ? provider.id : '',
+    kind: provider.kind,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    apiKey: '',
+    clearApiKey: false,
+    enabled: provider.enabled,
+    priority: provider.priority,
+    defaultModel: provider.defaultModel || '',
+    imageModel: provider.imageModel || '',
+    editModel: provider.editModel || '',
+    timeoutMs: provider.timeoutMs,
+    retryCount: provider.retryCount,
+    supportsWebpReferences: provider.supportsWebpReferences,
+    notes: provider.notes || '',
+  }
+}
+
+function providerPayload() {
+  return {
+    kind: providerForm.value.kind,
+    name: providerForm.value.name,
+    baseUrl: providerForm.value.baseUrl,
+    apiKey: providerForm.value.apiKey,
+    clearApiKey: providerForm.value.clearApiKey,
+    enabled: providerForm.value.enabled,
+    priority: providerForm.value.priority,
+    defaultModel: providerForm.value.defaultModel,
+    imageModel: providerForm.value.imageModel,
+    editModel: providerForm.value.editModel,
+    timeoutMs: providerForm.value.timeoutMs,
+    retryCount: providerForm.value.retryCount,
+    supportsWebpReferences: providerForm.value.supportsWebpReferences,
+    notes: providerForm.value.notes,
+  }
+}
+
+function providerStatusLabel(provider: AdminProviderSetting) {
+  if (provider.enabled && provider.apiKeyConfigured) return '已启用'
+  if (provider.enabled && !provider.apiKeyConfigured) return '缺少 Key'
+  return '已停用'
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -439,9 +531,11 @@ async function refreshSettings() {
       settings: AdminAppSettings
       adminUsers: AdminUserRule[]
       adminAccess: AdminAccessSummary
+      providerSettings: AdminProviderSettingsState
       currentAdminRole?: AdminRole | null
     }>('/api/admin/settings')
     syncSettingsForm(data.settings)
+    providerSettings.value = data.providerSettings
     adminUserRules.value = data.adminUsers
     adminAccess.value = data.adminAccess
     currentAdminRole.value = data.currentAdminRole || 'operator'
@@ -479,6 +573,39 @@ async function saveSettings() {
     setError(error)
   } finally {
     settingsSaving.value = false
+  }
+}
+
+async function saveProvider() {
+  if (!canManageAdminUsers.value) {
+    errorMessage.value = t('settings.onlySeniorCanManage')
+    return
+  }
+  providerActionId.value = providerForm.value.id || 'new'
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const isUpdate = Boolean(providerForm.value.id)
+    const data = await apiJson<{
+      provider: AdminProviderSetting
+      providerSettings: AdminProviderSettingsState
+    }>(
+      isUpdate
+        ? `/api/admin/settings/providers/${encodeURIComponent(providerForm.value.id)}`
+        : '/api/admin/settings/providers',
+      {
+        method: isUpdate ? 'PATCH' : 'POST',
+        body: JSON.stringify(providerPayload()),
+      },
+    )
+    providerSettings.value = data.providerSettings
+    resetProviderForm(providerForm.value.kind)
+    noticeMessage.value = `Provider 已保存：${data.provider.name}`
+    await refreshSystem()
+  } catch (error) {
+    setError(error, 'Provider 配置保存失败，请稍后重试。')
+  } finally {
+    providerActionId.value = null
   }
 }
 
@@ -1654,6 +1781,134 @@ onMounted(async () => {
                 </label>
                 <Button type="submit" :disabled="settingsSaving || !settingsLoaded">{{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}</Button>
               </form>
+            </div>
+
+            <!-- Provider Config -->
+            <div class="rounded-md bg-[var(--surface)] shadow-sm border border-[var(--border)] p-5">
+              <div class="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 class="text-sm font-semibold tracking-tight">Provider / API Key</h2>
+                  <span class="block mt-0.5 text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? '数据库配置' : '仅环境变量兜底' }}</span>
+                </div>
+                <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
+              </div>
+
+              <form v-if="canManageAdminUsers" class="flex flex-col gap-3" @submit.prevent="saveProvider">
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">类型</span>
+                  <select v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]" @change="resetProviderForm(providerForm.kind)">
+                    <option value="image">Image</option>
+                    <option value="chat">Chat</option>
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">名称</span>
+                  <input v-model.trim="providerForm.name" type="text" placeholder="lucen image / OpenAI" required class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">Base URL</span>
+                  <input v-model.trim="providerForm.baseUrl" type="url" placeholder="https://example.com/v1" required class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">API Key</span>
+                  <input v-model.trim="providerForm.apiKey" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? `保持当前 ${editingProvider.apiKeyPreview || ''}` : '输入 API key'" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                </label>
+                <label v-if="editingProvider?.apiKeyConfigured" class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="providerForm.clearApiKey" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">清空当前 API Key</span>
+                </label>
+                <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1">
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">优先级</span>
+                    <input v-model.number="providerForm.priority" type="number" min="0" max="10000" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">超时 ms</span>
+                    <input v-model.number="providerForm.timeoutMs" type="number" min="1000" max="1200000" step="1000" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">重试</span>
+                    <input v-model.number="providerForm.retryCount" type="number" min="0" max="10" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  </label>
+                </div>
+                <label v-if="providerForm.kind === 'chat'" class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">默认 Chat 模型</span>
+                  <input v-model.trim="providerForm.defaultModel" type="text" placeholder="gpt-4o-mini" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                </label>
+                <template v-else>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">生图模型</span>
+                    <input v-model.trim="providerForm.imageModel" type="text" placeholder="gpt-image-2" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">编辑模型</span>
+                    <input v-model.trim="providerForm.editModel" type="text" placeholder="gpt-image-2" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                  </label>
+                  <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                    <input v-model="providerForm.supportsWebpReferences" type="checkbox" class="w-auto min-h-auto">
+                    <span class="text-[13px]">支持 WebP 参考图</span>
+                  </label>
+                </template>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-[var(--text-muted)]">备注</span>
+                  <input v-model.trim="providerForm.notes" type="text" placeholder="用途、限额或供应商说明" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                </label>
+                <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
+                  <input v-model="providerForm.enabled" type="checkbox" class="w-auto min-h-auto">
+                  <span class="text-[13px]">启用</span>
+                </label>
+                <div class="flex gap-2 flex-wrap">
+                  <Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : (providerForm.id ? '保存 Provider' : '新增 Provider') }}</Button>
+                  <Button variant="outline" type="button" @click="resetProviderForm(providerForm.kind)">重置</Button>
+                </div>
+              </form>
+              <p v-else class="text-[13px] text-[var(--text-muted)] mb-3">{{ t('settings.noManagePermission') }}</p>
+
+              <div class="w-full overflow-x-auto rounded-md border border-[var(--border)] mt-4">
+                <table class="w-full min-w-[720px] border-collapse text-[13px]">
+                  <thead>
+                    <tr>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">类型</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">名称</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">模型</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">Key</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">状态</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="provider in providerRows" :key="provider.id" class="border-b border-[var(--border)] hover:bg-[var(--hover-bg)]">
+                      <td class="px-3 py-2">{{ provider.kind }}</td>
+                      <td class="px-3 py-2">
+                        <div class="font-semibold">{{ provider.name }}</div>
+                        <div class="text-xs text-[var(--text-muted)]">{{ provider.baseUrl }}</div>
+                      </td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ provider.kind === 'image' ? (provider.imageModel || '-') : (provider.defaultModel || '-') }}</td>
+                      <td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || '已配置' : '未配置' }}</td>
+                      <td class="px-3 py-2">
+                        <Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge>
+                      </td>
+                      <td class="px-3 py-2">
+                        <Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">编辑</Button>
+                      </td>
+                    </tr>
+                    <tr v-if="!providerRows.length">
+                      <td colspan="6" class="text-center text-[var(--text-muted)] py-6 px-3">暂无 Provider 配置</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="grid grid-cols-2 gap-px bg-[var(--border)] border border-[var(--border)] rounded-md overflow-hidden mt-3">
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">Image Providers</span>
+                  <strong class="block text-xl font-semibold tracking-tight leading-tight">{{ imageProviderRows.length }}</strong>
+                </div>
+                <div class="p-3 bg-[var(--surface)]">
+                  <span class="block text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1">Chat Providers</span>
+                  <strong class="block text-xl font-semibold tracking-tight leading-tight">{{ chatProviderRows.length }}</strong>
+                </div>
+              </div>
             </div>
 
             <!-- Admin Users -->

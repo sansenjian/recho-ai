@@ -26,6 +26,7 @@ const proxiedRoutes = [
   /^\/image\/references(?:\/|$)/,
   /^\/image\/storage(?:\/|$)/,
   /^\/image\/generate(?:\/|$)/,
+  /^\/image\/history(?:\/|$)/,
   /^\/credits(?:\/|$)/,
   /^\/config\/app(?:\/|$)/,
   /^\/config\/supabase(?:\/|$)/,
@@ -175,9 +176,10 @@ router.use(async (req: Request, res: Response, next) => {
 
     res.status(upstream.status)
     upstream.headers.forEach((value, key) => {
-      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding'].includes(key.toLowerCase())) return
+      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding', 'x-accel-buffering'].includes(key.toLowerCase())) return
       res.setHeader(key, value)
     })
+    res.setHeader('X-Accel-Buffering', 'no')
 
     if (!upstream.body) {
       if (trackImageAttempt) {
