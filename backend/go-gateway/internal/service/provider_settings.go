@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,12 +31,21 @@ func NewProviderSettingsService(pool *pgxpool.Pool) *ProviderSettingsService {
 	return &ProviderSettingsService{pool: pool}
 }
 
-const imageProviderQuery = `
+const (
+	defaultImageProviderTimeout     = 360 * time.Second
+	minImageProviderTimeout         = time.Second
+	defaultImageProviderTimeoutMS   = int(defaultImageProviderTimeout / time.Millisecond)
+	minImageProviderTimeoutMS       = int(minImageProviderTimeout / time.Millisecond)
+	imageProviderEncryptedAPIKeySQL = "coalesce(ps.api_key_encrypted, '')"
+	imageProviderLegacyAPIKeySQL    = "coalesce(to_jsonb(ps)->>'api_key', '')"
+)
+
+var imageProviderQuery = fmt.Sprintf(`
 	select
 		ps.name,
 		ps.base_url,
-		coalesce(ps.api_key_encrypted, ''),
-		coalesce(to_jsonb(ps)->>'api_key', ''),
+		%s,
+		%s,
 		coalesce(ps.image_model, ''),
 		coalesce(ps.edit_model, ''),
 		ps.timeout_ms,
@@ -44,12 +54,13 @@ const imageProviderQuery = `
 	from public.provider_settings ps
 	where ps.kind = 'image'
 		and ps.enabled = true
-		and (
-			coalesce(ps.api_key_encrypted, '') <> ''
-			or coalesce(to_jsonb(ps)->>'api_key', '') <> ''
-		)
+		and %s
 	order by ps.priority asc, ps.updated_at desc
-`
+`, imageProviderEncryptedAPIKeySQL, imageProviderLegacyAPIKeySQL, imageProviderAPIKeyFilterSQL())
+
+func imageProviderAPIKeyFilterSQL() string {
+	return fmt.Sprintf("(\n\t\t\t%s <> ''\n\t\t\tor %s <> ''\n\t\t)", imageProviderEncryptedAPIKeySQL, imageProviderLegacyAPIKeySQL)
+}
 
 func DefaultImageProviderConfig() ImageProviderConfig {
 	return ImageProviderConfig{
@@ -58,7 +69,7 @@ func DefaultImageProviderConfig() ImageProviderConfig {
 		APIKey:                 strings.TrimSpace(config.ImageGenAPIKey),
 		ImageModel:             strings.TrimSpace(config.ImageResponsesImageModel),
 		EditModel:              strings.TrimSpace(config.ImageResponsesImageModel),
-		Timeout:                360 * time.Second,
+		Timeout:                defaultImageProviderTimeout,
 		RetryCount:             3,
 		SupportsWebpReferences: true,
 		Source:                 "env",
@@ -109,8 +120,8 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 		}
 		cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, fallback.ImageModel)
 		cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
-		if timeoutMs < 1000 {
-			timeoutMs = 360000
+		if timeoutMs < minImageProviderTimeoutMS {
+			timeoutMs = defaultImageProviderTimeoutMS
 		}
 		cfg.Timeout = time.Duration(timeoutMs) * time.Millisecond
 		if cfg.RetryCount < 0 {
@@ -150,6 +161,9 @@ func providerAPIKeyFromSettings(encryptedAPIKey, legacyAPIKey string) (string, e
 		apiKey, err := DecryptProviderSecret(encryptedAPIKey)
 		if err == nil && strings.TrimSpace(apiKey) != "" {
 			return apiKey, nil
+		}
+		if err == nil {
+			err = ErrProviderCiphertextInvalid
 		}
 		if legacyAPIKey == "" {
 			return "", err

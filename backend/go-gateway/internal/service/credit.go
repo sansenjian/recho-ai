@@ -136,20 +136,18 @@ func (s *CreditService) ReserveAmount(
 
 func (s *CreditService) imageCreditCostPerImage(ctx context.Context) float64 {
 	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
-	if s == nil || s.costProvider == nil {
-		return fallback
-	}
-	cost, err := s.costProvider.ImageCreditCostPerImage(ctx)
+	cost, err := s.normalizedImageCreditCostPerImage(ctx)
 	if err != nil {
 		return fallback
 	}
-	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
-		return fallback
-	}
-	return normalizeImageCreditCostPerImageWithFallback(cost, fallback)
+	return cost
 }
 
 func (s *CreditService) reserveImageCreditCostPerImage(ctx context.Context) (float64, error) {
+	return s.normalizedImageCreditCostPerImage(ctx)
+}
+
+func (s *CreditService) normalizedImageCreditCostPerImage(ctx context.Context) (float64, error) {
 	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
 	if s == nil || s.costProvider == nil {
 		return fallback, nil
@@ -159,7 +157,7 @@ func (s *CreditService) reserveImageCreditCostPerImage(ctx context.Context) (flo
 		return 0, fmt.Errorf("image credit cost unavailable: %w", err)
 	}
 	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
-		return 0, fmt.Errorf("image credit cost invalid")
+		return 0, fmt.Errorf("image credit cost invalid: %v", cost)
 	}
 	return normalizeImageCreditCostPerImageWithFallback(cost, fallback), nil
 }

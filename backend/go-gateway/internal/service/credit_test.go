@@ -63,6 +63,22 @@ func TestCreditServiceReserveCreditsFailsWhenAppSettingsUnavailable(t *testing.T
 	}
 }
 
+func TestCreditServiceReserveCreditsFailsForInvalidAppSettingsPrice(t *testing.T) {
+	creditSvc := NewCreditService(
+		repository.NewCreditRepository(nil),
+		stubImageCreditCostProvider{cost: math.NaN()},
+	)
+
+	_, _, _, _, err := creditSvc.ReserveCredits(context.Background(), "00000000-0000-0000-0000-000000000001", 1)
+
+	if err == nil {
+		t.Fatal("expected reserve to fail when app settings price is invalid")
+	}
+	if !strings.Contains(err.Error(), "image credit cost") || !strings.Contains(err.Error(), "NaN") {
+		t.Fatalf("expected image credit cost error with rejected value, got %v", err)
+	}
+}
+
 func TestCreditServiceFallsBackForInvalidAppSettingsPrices(t *testing.T) {
 	original := config.ImageCreditCostPerImage
 	config.ImageCreditCostPerImage = 0.75
