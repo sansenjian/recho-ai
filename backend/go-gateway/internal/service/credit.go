@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"go-gateway/internal/config"
@@ -52,7 +53,10 @@ func (s *CreditService) ReserveCredits(
 	userID string,
 	imageCount int,
 ) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error) {
-	creditCostPerImage = s.imageCreditCostPerImage(ctx)
+	creditCostPerImage, err = s.reserveImageCreditCostPerImage(ctx)
+	if err != nil {
+		return "", 0, 0, 0, err
+	}
 	totalCost = roundToTwoDecimals(float64(imageCount) * creditCostPerImage)
 
 	if totalCost <= 0 {
@@ -132,17 +136,30 @@ func (s *CreditService) ReserveAmount(
 
 func (s *CreditService) imageCreditCostPerImage(ctx context.Context) float64 {
 	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
-	if s == nil || s.costProvider == nil {
-		return fallback
-	}
-	cost, err := s.costProvider.ImageCreditCostPerImage(ctx)
+	cost, err := s.normalizedImageCreditCostPerImage(ctx)
 	if err != nil {
 		return fallback
 	}
-	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
-		return fallback
+	return cost
+}
+
+func (s *CreditService) reserveImageCreditCostPerImage(ctx context.Context) (float64, error) {
+	return s.normalizedImageCreditCostPerImage(ctx)
+}
+
+func (s *CreditService) normalizedImageCreditCostPerImage(ctx context.Context) (float64, error) {
+	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
+	if s == nil || s.costProvider == nil {
+		return fallback, nil
 	}
-	return normalizeImageCreditCostPerImageWithFallback(cost, fallback)
+	cost, err := s.costProvider.ImageCreditCostPerImage(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("image credit cost unavailable: %w", err)
+	}
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost <= 0 {
+		return 0, fmt.Errorf("image credit cost invalid: %v", cost)
+	}
+	return normalizeImageCreditCostPerImageWithFallback(cost, fallback), nil
 }
 
 // roundToTwoDecimals rounds a float to two decimal places
