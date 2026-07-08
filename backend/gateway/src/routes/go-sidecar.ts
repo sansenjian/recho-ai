@@ -147,14 +147,17 @@ router.use(async (req: Request, res: Response, next) => {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
 
-  // Abort upstream request when client disconnects. Clear the timeout so the
-  // timer doesn't fire after we've already aborted, tying the controller's
-  // lifecycle explicitly to the request.
-  req.on('close', () => {
-    if (!res.writableEnded) {
-      clearTimeout(timeout)
-      controller.abort()
-    }
+  const abortUpstream = () => {
+    clearTimeout(timeout)
+    controller.abort()
+  }
+
+  // `req.close` also fires after a POST request body is read normally, so using
+  // it here aborts healthy proxied writes. Abort only on an interrupted upload
+  // or when the response connection closes before the response is fully sent.
+  req.on('aborted', abortUpstream)
+  res.on('close', () => {
+    if (!res.writableEnded) abortUpstream()
   })
 
   const startedAt = Date.now()
