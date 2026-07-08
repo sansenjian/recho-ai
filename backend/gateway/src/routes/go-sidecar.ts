@@ -152,11 +152,12 @@ router.use(async (req: Request, res: Response, next) => {
     controller.abort()
   }
 
-  // `req.close` also fires after a POST request body is read normally, so using
-  // it here aborts healthy proxied writes. Abort only on an interrupted upload
-  // or when the response connection closes before the response is fully sent.
-  req.on('aborted', abortUpstream)
-  res.on('close', () => {
+  // `req.close` also fires after a POST request body is read normally. Only
+  // abort uploads that closed before Node marked the body as complete.
+  req.once('close', () => {
+    if (req.destroyed && !req.complete) abortUpstream()
+  })
+  res.once('close', () => {
     if (!res.writableEnded) abortUpstream()
   })
 

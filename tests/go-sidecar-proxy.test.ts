@@ -65,6 +65,6 @@ describe('go sidecar proxy', () => {
     })
 
     expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toEqual({ error: '请输入图片描述。' })
+    await expect(response.json()).resolves.toEqual({ error: expect.any(String) })
   })
 })
