@@ -21,6 +21,9 @@ import {
 import { GROUP_COLORS } from '../src/types'
 import type { Message } from '../src/types'
 
+const CONVERSATION_SAVE_DEBOUNCE_MS = 500
+const originalVisibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+
 function makeMsg(role: 'user' | 'assistant', content: string): Message {
   return { id: Date.now(), role, content, timestamp: 'now' }
 }
@@ -46,14 +49,19 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  vi.runOnlyPendingTimers()
+  if (originalVisibilityStateDescriptor) {
+    Object.defineProperty(document, 'visibilityState', originalVisibilityStateDescriptor)
+  } else {
+    delete (document as any).visibilityState
+  }
+  vi.clearAllTimers()
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
 async function runDebouncedConversationSave() {
   await nextTick()
-  await vi.advanceTimersByTimeAsync(500)
+  await vi.advanceTimersByTimeAsync(CONVERSATION_SAVE_DEBOUNCE_MS)
 }
 
 function setVisibilityState(state: DocumentVisibilityState) {
@@ -387,7 +395,7 @@ describe('chat store', () => {
 
       expect(setItem).not.toHaveBeenCalledWith('recho-conversations', expect.any(String))
 
-      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(CONVERSATION_SAVE_DEBOUNCE_MS)
       expect(setItem).toHaveBeenCalledWith('recho-conversations', expect.any(String))
     })
 
