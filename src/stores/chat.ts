@@ -229,13 +229,9 @@ export function assignToGroup(convId: string, groupId: string | null) {
   if (conv) conv.groupId = groupId
 }
 
-// 页面生命周期事件：在页面隐藏/卸载时刷写挂起的持久化，防止 debounce 窗口内的改动丢失
+// 页面真正卸载时刷写挂起的持久化，防止 debounce 窗口内的改动丢失。
+// visibilitychange 只代表切到后台，保留 debounce 可避免在该事件中同步序列化大量会话。
 if (typeof window !== 'undefined') {
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      flushPendingSave()
-    }
-  })
   window.addEventListener('beforeunload', flushPendingSave)
   window.addEventListener('pagehide', flushPendingSave)
 }
