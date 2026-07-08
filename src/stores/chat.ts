@@ -73,7 +73,7 @@ function saveConversations(_convs: Conversation[]) {
   }, 500)
 }
 
-// 页面隐藏/关闭时立即刷写挂起的 debounce，避免在 500ms 窗口内丢失最近的会话改动
+// 仅由 beforeunload/pagehide 这类真正离开页面的事件调用；visibilitychange 继续走 debounce。
 function flushPendingSave() {
   if (saveConversationsTimer !== null) {
     clearTimeout(saveConversationsTimer)
@@ -229,13 +229,9 @@ export function assignToGroup(convId: string, groupId: string | null) {
   if (conv) conv.groupId = groupId
 }
 
-// 页面生命周期事件：在页面隐藏/卸载时刷写挂起的持久化，防止 debounce 窗口内的改动丢失
+// 页面真正卸载时通过 flushPendingSave 刷写挂起的持久化，防止 debounce 窗口内的改动丢失。
+// visibilitychange 只代表切到后台，不注册立即刷写处理，继续保留 debounce 行为。
 if (typeof window !== 'undefined') {
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      flushPendingSave()
-    }
-  })
   window.addEventListener('beforeunload', flushPendingSave)
   window.addEventListener('pagehide', flushPendingSave)
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import {
   conversations,
@@ -21,11 +21,15 @@ import {
 import { GROUP_COLORS } from '../src/types'
 import type { Message } from '../src/types'
 
+const CONVERSATION_SAVE_DEBOUNCE_MS = 500
+const originalVisibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+
 function makeMsg(role: 'user' | 'assistant', content: string): Message {
   return { id: Date.now(), role, content, timestamp: 'now' }
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers()
   localStorage.clear()
   groups.value = []
   conversations.value = [
@@ -41,7 +45,31 @@ beforeEach(async () => {
   ]
   activeConversationId.value = 1
   await nextTick()
+  vi.clearAllTimers()
 })
+
+afterEach(() => {
+  if (originalVisibilityStateDescriptor) {
+    Object.defineProperty(document, 'visibilityState', originalVisibilityStateDescriptor)
+  } else {
+    delete (document as any).visibilityState
+  }
+  vi.clearAllTimers()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
+
+async function runDebouncedConversationSave() {
+  await nextTick()
+  await vi.advanceTimersByTimeAsync(CONVERSATION_SAVE_DEBOUNCE_MS)
+}
+
+function setVisibilityState(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: state,
+  })
+}
 
 describe('chat store', () => {
   describe('createConversation', () => {
@@ -58,8 +86,8 @@ describe('chat store', () => {
     })
 
     it('adds to the front of the list', () => {
-      createConversation()
-      expect(conversations.value[0].id).toBeGreaterThan(1)
+      const conv = createConversation()
+      expect(conversations.value[0].id).toBe(conv.id)
       expect(conversations.value[1].id).toBe(1)
     })
   })
@@ -83,7 +111,7 @@ describe('chat store', () => {
       expect(conversations.value.length).toBe(2)
 
       switchConversation(1)
-      await nextTick()
+      await runDebouncedConversationSave()
       expect(conversations.value.length).toBe(2)
     })
 
@@ -93,7 +121,7 @@ describe('chat store', () => {
       expect(conversations.value.length).toBe(2)
 
       switchConversation(1)
-      await nextTick()
+      await runDebouncedConversationSave()
       expect(conversations.value.length).toBe(2)
     })
 
@@ -105,7 +133,7 @@ describe('chat store', () => {
 
     it('save: empty conversations are not persisted to localStorage', async () => {
       createConversation()
-      await nextTick()
+      await runDebouncedConversationSave()
       const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
       expect(saved.length).toBe(1)
       expect(saved.every((c: any) => c.messages.length > 0 || c.systemPrompt)).toBe(true)
@@ -114,7 +142,7 @@ describe('chat store', () => {
     it('save: conversations with messages are persisted', async () => {
       const conv = createConversation()
       conv.messages.push(makeMsg('user', 'persist me'))
-      await nextTick()
+      await runDebouncedConversationSave()
       const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
       const savedConv = saved.find((c: any) => c.id === conv.id)
       expect(savedConv).toBeDefined()
@@ -124,7 +152,7 @@ describe('chat store', () => {
     it('save: conversations with systemPrompt are persisted', async () => {
       const conv = createConversation()
       updateSystemPrompt(conv.id, 'persist prompt')
-      await nextTick()
+      await runDebouncedConversationSave()
       const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
       expect(saved.length).toBeGreaterThanOrEqual(1)
       const savedConv = saved.find((c: any) => c.id === conv.id)
@@ -319,7 +347,7 @@ describe('chat store', () => {
         ],
       })
 
-      await nextTick()
+      await runDebouncedConversationSave()
 
       const saved = JSON.parse(localStorage.getItem('recho-conversations') || '[]')
       expect(saved[0].schemaVersion).toBe(2)
@@ -352,6 +380,34 @@ describe('chat store', () => {
       expect(conversations.value[0].messages[1].blocks).toBeUndefined()
       expect(conversations.value[0].messages[1].thinking).toBe('旧思考')
       expect(conversations.value[0].messages[1].toolCalls?.[0].status).toBe('done')
+    })
+  })
+
+  describe('conversation persistence lifecycle events', () => {
+    it('does not synchronously persist pending conversations when the page becomes hidden', async () => {
+      const setItem = vi.spyOn(Storage.prototype, 'setItem')
+      conversations.value[0].messages.push(makeMsg('assistant', 'pending hidden save'))
+      await nextTick()
+      setItem.mockClear()
+
+      setVisibilityState('hidden')
+      window.dispatchEvent(new Event('visibilitychange'))
+
+      expect(setItem).not.toHaveBeenCalledWith('recho-conversations', expect.any(String))
+
+      await vi.advanceTimersByTimeAsync(CONVERSATION_SAVE_DEBOUNCE_MS)
+      expect(setItem).toHaveBeenCalledWith('recho-conversations', expect.any(String))
+    })
+
+    it('synchronously persists pending conversations before page unload', async () => {
+      const setItem = vi.spyOn(Storage.prototype, 'setItem')
+      conversations.value[0].messages.push(makeMsg('assistant', 'pending unload save'))
+      await nextTick()
+      setItem.mockClear()
+
+      window.dispatchEvent(new Event('pagehide'))
+
+      expect(setItem).toHaveBeenCalledWith('recho-conversations', expect.any(String))
     })
   })
 })
