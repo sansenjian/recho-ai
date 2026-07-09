@@ -134,6 +134,7 @@ type stubImageIdempotencyService struct {
 	failCalls     []string
 	failCh        chan string
 	completeCalls []string
+	completeCh    chan string
 }
 
 func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error) {
@@ -153,6 +154,9 @@ func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey,
 
 func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) {
 	s.completeCalls = append(s.completeCalls, scope)
+	if s.completeCh != nil {
+		s.completeCh <- scope
+	}
 }
 
 type stubProviderSettingsService struct {
@@ -407,7 +411,7 @@ func TestImageGenerateFastReturnsTemporaryURLAndPersistsHistoryAsync(t *testing.
 			}, nil
 		},
 	}
-	idemSvc := &stubImageIdempotencyService{}
+	idemSvc := &stubImageIdempotencyService{completeCh: make(chan string, 1)}
 	h := NewImageHandler(creditSvc, storageSvc, idemSvc)
 
 	origBaseURL := config.ImageGenBaseURL
@@ -454,8 +458,10 @@ func TestImageGenerateFastReturnsTemporaryURLAndPersistsHistoryAsync(t *testing.
 	if image.StoragePath != "" || image.ThumbnailPath != "" {
 		t.Fatalf("expected no permanent storage paths before async persistence, got %#v", image)
 	}
-	if len(idemSvc.completeCalls) != 1 || idemSvc.completeCalls[0] != "image_generate" {
-		t.Fatalf("expected idempotency complete call, got %#v", idemSvc.completeCalls)
+	select {
+	case scope := <-idemSvc.completeCh:
+		t.Fatalf("idempotency completed before async persistence succeeded: %s", scope)
+	default:
 	}
 
 	select {
@@ -488,6 +494,17 @@ func TestImageGenerateFastReturnsTemporaryURLAndPersistsHistoryAsync(t *testing.
 	case <-time.After(time.Second):
 		t.Fatalf("expected async history save")
 	}
+	select {
+	case scope := <-idemSvc.completeCh:
+		if scope != "image_generate" {
+			t.Fatalf("expected idempotency complete for image_generate, got %q", scope)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected idempotency complete after async persistence")
+	}
+	if len(idemSvc.completeCalls) != 1 || idemSvc.completeCalls[0] != "image_generate" {
+		t.Fatalf("expected idempotency complete call, got %#v", idemSvc.completeCalls)
+	}
 }
 
 func TestImageGenerateRejectsIdempotencyKeyWhenServiceUnavailable(t *testing.T) {
@@ -509,6 +526,43 @@ func TestImageGenerateRejectsIdempotencyKeyWhenServiceUnavailable(t *testing.T) 
 	}
 	if len(creditSvc.reserveCalls) != 0 {
 		t.Fatalf("expected no reserve calls when idempotency service is missing, got %d", len(creditSvc.reserveCalls))
+	}
+}
+
+func TestImageHandlerTreatsTypedNilServicesAsUnavailable(t *testing.T) {
+	var creditSvc *service.CreditService
+	var storageSvc *service.StorageService
+	var idemSvc *service.IdempotencyService
+	h := NewImageHandler(creditSvc, storageSvc, idemSvc)
+
+	raw := []byte(`{"prompt":"test prompt","count":1}`)
+	generateReq := httptest.NewRequest(http.MethodPost, "/api/image/generate", bytes.NewReader(raw))
+	generateReq = generateReq.WithContext(middleware.WithUser(generateReq.Context(), &middleware.User{ID: "user_123"}))
+	generateReq.Header.Set("Content-Type", "application/json")
+	generateReq.Header.Set("Idempotency-Key", "idem-typed-nil")
+	generateRes := httptest.NewRecorder()
+
+	h.Generate(generateRes, generateReq)
+
+	if generateRes.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected typed-nil storage to return 503, got %d body=%s", generateRes.Code, generateRes.Body.String())
+	}
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/image/history?limit=12&offset=0&scope=mine", nil)
+	historyReq = historyReq.WithContext(middleware.WithUser(historyReq.Context(), &middleware.User{ID: "user_123"}))
+	historyRes := httptest.NewRecorder()
+
+	h.ListHistory(historyRes, historyReq)
+
+	if historyRes.Code != http.StatusOK {
+		t.Fatalf("expected typed-nil storage history fallback to return 200, got %d body=%s", historyRes.Code, historyRes.Body.String())
+	}
+	var body ImageHistoryListResponse
+	if err := json.Unmarshal(historyRes.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Persistence || body.Total != 0 || len(body.Images) != 0 {
+		t.Fatalf("expected empty non-persistent history fallback, got %#v", body)
 	}
 }
 
