@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -53,9 +54,9 @@ type ImageResult = orchestrator.ImageResult
 // 以及 Diagnostics 报告各服务可用性。
 type ImageHandler struct {
 	orch           *orchestrator.ImageOrchestrator
-	storageService orchestrator.StorageService      // 薄 CRUD/代理方法直接使用
-	creditService  orchestrator.CreditService       // 仅 Diagnostics 报告可用性
-	idempotencySvc orchestrator.IdempotencyService  // 仅 Diagnostics 报告可用性
+	storageService orchestrator.StorageService     // 薄 CRUD/代理方法直接使用
+	creditService  orchestrator.CreditService      // 仅 Diagnostics 报告可用性
+	idempotencySvc orchestrator.IdempotencyService // 仅 Diagnostics 报告可用性
 	httpClient     *http.Client                    // 仅 Diagnostics 报告可用性
 }
 
@@ -65,6 +66,9 @@ func NewImageHandler(
 	storageService orchestrator.StorageService,
 	idempotencySvc orchestrator.IdempotencyService,
 ) *ImageHandler {
+	creditService = normalizeCreditService(creditService)
+	storageService = normalizeStorageService(storageService)
+	idempotencySvc = normalizeIdempotencyService(idempotencySvc)
 	orch := orchestrator.NewImageOrchestrator(creditService, storageService, idempotencySvc)
 	return &ImageHandler{
 		orch:           orch,
@@ -72,6 +76,40 @@ func NewImageHandler(
 		creditService:  creditService,
 		idempotencySvc: idempotencySvc,
 		httpClient:     &http.Client{},
+	}
+}
+
+func normalizeCreditService(service orchestrator.CreditService) orchestrator.CreditService {
+	if dependencyIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func normalizeStorageService(service orchestrator.StorageService) orchestrator.StorageService {
+	if dependencyIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func normalizeIdempotencyService(service orchestrator.IdempotencyService) orchestrator.IdempotencyService {
+	if dependencyIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func dependencyIsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
 	}
 }
 

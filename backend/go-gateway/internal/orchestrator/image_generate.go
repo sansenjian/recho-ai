@@ -15,6 +15,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -45,9 +46,9 @@ func NewImageOrchestrator(
 	idempotency IdempotencyService,
 ) *ImageOrchestrator {
 	return &ImageOrchestrator{
-		credit:      credit,
-		storage:     storage,
-		idempotency: idempotency,
+		credit:      normalizeCreditService(credit),
+		storage:     normalizeStorageService(storage),
+		idempotency: normalizeIdempotencyService(idempotency),
 		httpClient:  &http.Client{Timeout: 360 * time.Second},
 		logger:      log.Default(),
 	}
@@ -55,8 +56,49 @@ func NewImageOrchestrator(
 
 // WithProviderSettings 注入图片 Provider 配置源。返回自身以支持链式调用。
 func (o *ImageOrchestrator) WithProviderSettings(provider ProviderSettingsService) *ImageOrchestrator {
-	o.provider = provider
+	o.provider = normalizeProviderSettingsService(provider)
 	return o
+}
+
+func normalizeCreditService(service CreditService) CreditService {
+	if resourceIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func normalizeStorageService(service StorageService) StorageService {
+	if resourceIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func normalizeIdempotencyService(service IdempotencyService) IdempotencyService {
+	if resourceIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func normalizeProviderSettingsService(service ProviderSettingsService) ProviderSettingsService {
+	if resourceIsNil(service) {
+		return nil
+	}
+	return service
+}
+
+func resourceIsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 // WithLogger 覆盖默认 logger。
@@ -164,6 +206,7 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 				return nil, &StatusError{Code: http.StatusPaymentRequired, Message: "额度不足。"}
 			}
 			o.logger.Printf("[image] 503: failed to reserve credits: %v", err)
+			o.failIdempotency(user, idemKey)
 			return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "额度服务暂时不可用，请稍后重试。"}
 		}
 		reservation = &service.CreditReservation{
@@ -264,18 +307,15 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		}{Balance: reservation.Balance}
 	}
 
-	// --- 缓存幂等响应 ---
-	if idemKey != "" && user != nil && user.ID != "" && o.idempotency != nil {
-		txID := ""
-		if reservation != nil {
-			txID = reservation.TransactionID
-		}
-		o.idempotency.Complete(ctx, user.ID, idemKey, "image_generate", http.StatusOK, resp, txID)
-	}
-
 	// --- 异步持久化（saga）—— 不阻塞响应 ---
+	txID := ""
+	if reservation != nil {
+		txID = reservation.TransactionID
+	}
 	if len(preparedImages) > 0 {
-		o.persistAsyncSaga(preparedImages, metadata, reservation, userID, user, idemKey)
+		o.persistAsyncSaga(preparedImages, metadata, reservation, userID, user, idemKey, resp, txID)
+	} else {
+		o.completeIdempotency(ctx, user, idemKey, resp, txID)
 	}
 
 	return resp, nil
@@ -289,6 +329,15 @@ func (o *ImageOrchestrator) failIdempotency(user *middleware.User, idemKey strin
 	ctx, cancel := withRefundContext()
 	defer cancel()
 	o.idempotency.Fail(ctx, user.ID, idemKey, "image_generate")
+}
+
+// completeIdempotency stores the replay response only after all required side
+// effects for a successful request have completed.
+func (o *ImageOrchestrator) completeIdempotency(ctx context.Context, user *middleware.User, idemKey string, resp *GenResponse, transactionID string) {
+	if idemKey == "" || user == nil || user.ID == "" || o.idempotency == nil {
+		return
+	}
+	o.idempotency.Complete(ctx, user.ID, idemKey, "image_generate", http.StatusOK, resp, transactionID)
 }
 
 // resolveImageProvider 解析图片 Provider 配置。
@@ -314,6 +363,8 @@ func (o *ImageOrchestrator) persistAsyncSaga(
 	userID string,
 	user *middleware.User,
 	idempotencyKey string,
+	response *GenResponse,
+	transactionID string,
 ) {
 	if o.storage == nil || len(images) == 0 {
 		return
@@ -328,9 +379,8 @@ func (o *ImageOrchestrator) persistAsyncSaga(
 		defer cancel()
 
 		runner := saga.NewRunner(o.logger)
-		// 每张图记录已上传的对象路径与已保存的历史 ID，供补偿使用
+		// 每张图记录已上传的对象路径，供补偿使用
 		uploadedPathsByImage := make([][]string, len(imagesCopy))
-		savedHistoryIDs := make([]string, 0, len(imagesCopy))
 
 		for i := range imagesCopy {
 			idx := i
@@ -356,21 +406,19 @@ func (o *ImageOrchestrator) persistAsyncSaga(
 			})
 
 			// 步骤 2：保存历史记录 —— 补偿：删除该历史记录
+			historyID := imagesCopy[idx].result.ID
 			runner.Add(saga.Step{
 				Name: fmt.Sprintf("save-history-%d", idx),
 				Do: func(ctx context.Context) error {
 					historyItem := o.historyItemForGeneratedImage(imagesCopy[idx].result, metadata)
 					if err := o.storage.SaveImageHistory(ctx, &historyItem, userID); err != nil {
-						return fmt.Errorf("save history %s: %w", imagesCopy[idx].result.ID, err)
+						return fmt.Errorf("save history %s: %w", historyID, err)
 					}
-					savedHistoryIDs = append(savedHistoryIDs, imagesCopy[idx].result.ID)
 					return nil
 				},
 				Compensate: func(ctx context.Context) error {
-					for _, id := range savedHistoryIDs {
-						if _, err := o.storage.DeleteImageHistory(ctx, id, userID); err != nil {
-							o.logger.Printf("[image] failed to clean up saved history record %s during rollback: %v", id, err)
-						}
+					if _, err := o.storage.DeleteImageHistory(ctx, historyID, userID); err != nil {
+						o.logger.Printf("[image] failed to clean up saved history record %s during rollback: %v", historyID, err)
 					}
 					return nil
 				},
@@ -382,6 +430,7 @@ func (o *ImageOrchestrator) persistAsyncSaga(
 			o.handleAsyncPersistenceFailure(reservation, user, idempotencyKey)
 			return
 		}
+		o.completeIdempotency(ctx, user, idempotencyKey, response, transactionID)
 		o.logger.Printf("[image] async persistence saga completed: %d image(s)", len(imagesCopy))
 	}()
 }
