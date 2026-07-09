@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { CanvasNode, ImageViewerState } from '../lib/image-canvas-model'
 import { clamp } from '../lib/image-canvas-utils'
+import { hasImageSource, imageSourceUrl } from '../lib/authenticated-image-source'
 import { galleryFileName, galleryPrompt, previewImageUrl } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 
@@ -33,6 +34,9 @@ export function useImageCanvasViewer(options: UseImageCanvasViewerOptions) {
       imageViewer.value = {
         ...imageViewer.value,
         imageUrl,
+        ...(image.storagePath ? { storagePath: image.storagePath } : {}),
+        ...(image.previewPath ? { previewPath: image.previewPath } : {}),
+        ...(image.thumbnailPath ? { thumbnailPath: image.thumbnailPath } : {}),
         title: galleryFileName(image).replace(/\.[a-z0-9]{2,5}$/i, ''),
         caption: galleryPrompt(image),
         loadingPreview: false,
@@ -45,13 +49,18 @@ export function useImageCanvasViewer(options: UseImageCanvasViewerOptions) {
   }
 
   async function openImageViewer(node: CanvasNode) {
-    if (!node.imageUrl) return
+    if (!hasImageSource(node, 'preview')) return
     const seq = ++imageViewerLoadSeq
     const sourceNode = { ...node }
     const historyImage = options.historyImageForNode(sourceNode)
-    const immediateUrl = historyImage ? previewImageUrl(historyImage) || node.imageUrl : node.imageUrl
+    const immediateUrl = historyImage
+      ? previewImageUrl(historyImage) || imageSourceUrl(sourceNode, 'preview')
+      : imageSourceUrl(sourceNode, 'preview')
     imageViewer.value = {
       imageUrl: immediateUrl,
+      ...(historyImage?.storagePath || node.storagePath ? { storagePath: historyImage?.storagePath || node.storagePath } : {}),
+      ...(historyImage?.previewPath ? { previewPath: historyImage.previewPath } : {}),
+      ...(historyImage?.thumbnailPath ? { thumbnailPath: historyImage.thumbnailPath } : {}),
       title: node.title,
       caption: imageAltText(node),
       zoom: 1,
@@ -67,6 +76,9 @@ export function useImageCanvasViewer(options: UseImageCanvasViewerOptions) {
         imageViewer.value = {
           ...imageViewer.value,
           imageUrl,
+          ...(historyImage?.storagePath ? { storagePath: historyImage.storagePath } : {}),
+          ...(historyImage?.previewPath ? { previewPath: historyImage.previewPath } : {}),
+          ...(historyImage?.thumbnailPath ? { thumbnailPath: historyImage.thumbnailPath } : {}),
           loadingPreview: false,
         }
       }).catch(() => {

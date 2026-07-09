@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ExternalLink, Plus, Download, MessageCircle } from '@lucide/vue'
 import {
-  displayImageUrl,
-  displayReferenceUrl,
   formatGalleryDate,
   galleryOptionLabel,
   galleryPrompt,
@@ -11,6 +9,7 @@ import {
   type GalleryOption,
 } from '../lib/image-gallery'
 import type { GeneratedImage, ImageQuality, ImageResolution } from '../types/image'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 
 defineProps<{
   image: GeneratedImage
@@ -51,12 +50,12 @@ const emit = defineEmits<{
         {{ galleryReferenceCount(image) }} 张参考
       </span>
       <span class="block h-full w-full overflow-hidden">
-        <img
-          :src="displayImageUrl(image)"
+        <AuthenticatedImage
+          :source="image"
           :alt="galleryPrompt(image)"
           loading="lazy"
           class="block h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.03]"
-        >
+        />
       </span>
     </button>
     <div class="p-2.5 max-[460px]:p-2">
@@ -73,14 +72,14 @@ const emit = defineEmits<{
         </span>
       </div>
       <div v-if="galleryReferences(image).length" class="mt-1.5 flex gap-1">
-        <img
+        <AuthenticatedImage
           v-for="reference in galleryReferences(image).slice(0, 3)"
           :key="reference.id || reference.title"
-          :src="displayReferenceUrl(reference)"
+          :source="reference"
           :alt="reference.title || '参考图'"
           loading="lazy"
           class="h-6 w-6 rounded border border-border bg-card object-cover"
-        >
+        />
       </div>
       <div class="mt-2 flex items-center justify-between gap-1">
         <div class="flex gap-1">

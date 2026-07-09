@@ -16,6 +16,8 @@ import type {
   NodeResolution,
   ResizeCorner,
 } from '../lib/image-canvas-model'
+import { hasImageSource } from '../lib/authenticated-image-source'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 
 type NodeOption<T extends string | number> = {
   value: T
@@ -82,6 +84,10 @@ const vRichContent = createRichContentDirective((id, title) => props.resolveMent
 
 function isHandleConnected(handle: InputHandle) {
   return Boolean(props.connectedHandles[handle])
+}
+
+function canDisplayImage(node: CanvasNode) {
+  return hasImageSource(node, 'preview')
 }
 
 function emitMentionCaret(event: Event, field: MentionField) {
@@ -155,7 +161,11 @@ function emitTextContent(event: Event) {
           :class="{ active: mentionState?.activeIndex === index }"
           @pointerdown.prevent="emit('insert-mention', node, imageNode)"
         >
-          <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
+          <AuthenticatedImage
+            v-if="canDisplayImage(imageNode)"
+            :source="imageNode"
+            :alt="imageNode.title"
+          />
           <span>{{ imageNode.title }}</span>
           <small>{{ imageNode.content || imageNode.fileName || '图片参考' }}</small>
         </button>
@@ -176,15 +186,16 @@ function emitTextContent(event: Event) {
         @pointerdown.stop.prevent="emit('start-connection', $event, node, 'image-in')"
         @pointerup.stop.prevent="emit('finish-connection', $event, node, 'image-in')"
       />
-      <div class="image-preview" :class="{ empty: !node.imageUrl, generated: isGeneratedImageNode }">
-        <img
-          v-if="node.imageUrl"
-          :src="node.imageUrl"
+      <div class="image-preview" :class="{ empty: !canDisplayImage(node), generated: isGeneratedImageNode }">
+        <AuthenticatedImage
+          v-if="canDisplayImage(node)"
+          :source="node"
+          mode="preview"
           :alt="imageAlt"
           loading="lazy"
           @load="emit('image-load', node, $event)"
           @dblclick.stop="emit('open-image-viewer', node)"
-        >
+        />
         <button v-else class="pick-image" type="button" @click.stop="emit('choose-image', node.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="26" height="26">
             <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -193,7 +204,7 @@ function emitTextContent(event: Event) {
           </svg>
         </button>
         <button
-          v-if="node.imageUrl"
+          v-if="canDisplayImage(node)"
           class="zoom-image"
           type="button"
           title="放大查看"
@@ -206,7 +217,7 @@ function emitTextContent(event: Event) {
             <path d="M8.8 11h4.4" />
           </svg>
         </button>
-        <button v-if="node.imageUrl" class="replace-image" type="button" title="替换图片" @click.stop="emit('choose-image', node.id)">
+        <button v-if="canDisplayImage(node)" class="replace-image" type="button" title="替换图片" @click.stop="emit('choose-image', node.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
             <path d="M21 12a9 9 0 1 1-3-6.7" />
             <path d="M21 4v6h-6" />
@@ -236,17 +247,17 @@ function emitTextContent(event: Event) {
         @pointerdown.stop
       />
       <div class="image-node-actions">
-        <button type="button" :disabled="!node.imageUrl" @click.stop="emit('create-continuation', node)">继续</button>
+        <button type="button" :disabled="!canDisplayImage(node)" @click.stop="emit('create-continuation', node)">继续</button>
         <button
           type="button"
-          :disabled="!node.imageUrl || isDownloading"
+          :disabled="!canDisplayImage(node) || isDownloading"
           @pointerenter="emit('preload-download', node)"
           @focus="emit('preload-download', node)"
           @click.stop="emit('download', node)"
         >
           {{ isDownloading ? '下载中' : '下载' }}
         </button>
-        <button type="button" :disabled="!node.imageUrl" @click.stop="emit('send-to-chat', node)">对话</button>
+        <button type="button" :disabled="!canDisplayImage(node)" @click.stop="emit('send-to-chat', node)">对话</button>
       </div>
       <span
         class="node-handle output"
@@ -310,7 +321,11 @@ function emitTextContent(event: Event) {
               :class="{ active: mentionState?.activeIndex === index }"
               @pointerdown.prevent="emit('insert-mention', node, imageNode)"
             >
-              <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.title">
+              <AuthenticatedImage
+                v-if="canDisplayImage(imageNode)"
+                :source="imageNode"
+                :alt="imageNode.title"
+              />
               <span>{{ imageNode.title }}</span>
               <small>{{ imageNode.content || imageNode.fileName || '图片参考' }}</small>
             </button>
@@ -323,7 +338,11 @@ function emitTextContent(event: Event) {
             </div>
             <div class="reference-list">
               <div v-for="imageNode in referencedImageNodes" :key="imageNode.id" class="reference-chip">
-                <img v-if="imageNode.imageUrl" :src="imageNode.imageUrl" :alt="imageNode.content || imageNode.title">
+                <AuthenticatedImage
+                  v-if="canDisplayImage(imageNode)"
+                  :source="imageNode"
+                  :alt="imageNode.content || imageNode.title"
+                />
                 <span>{{ imageNode.title }} · {{ imageNode.content || imageNode.fileName || '参考图' }}</span>
               </div>
               <p v-if="!referencedImageNodes.length">暂无参考图，可输入 @图片1 引用</p>

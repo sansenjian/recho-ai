@@ -2,10 +2,11 @@
 import { computed, ref } from 'vue'
 import { Plus, GripVertical } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { displayImageUrl } from '../lib/image-gallery'
+import { hasDisplayImage } from '../lib/image-gallery'
 import { useCredits } from '../composables/useCredits'
 import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 
 interface Workspace {
   id: string
@@ -175,13 +176,13 @@ refreshCredits()
           class="grid grid-cols-[44px_1fr] items-center gap-2.5 w-full px-2 py-1.5 border-0 rounded-md bg-transparent cursor-pointer text-left transition-colors hover:bg-accent"
           @click="emit('use-history-image', image)"
         >
-          <img
-            v-if="displayImageUrl(image)"
-            :src="displayImageUrl(image)"
+          <AuthenticatedImage
+            v-if="hasDisplayImage(image)"
+            :source="image"
             :alt="image.prompt"
             loading="lazy"
             class="w-11 h-11 rounded-md object-cover border border-border"
-          >
+          />
           <div v-else class="w-11 h-11 rounded-md bg-muted" />
           <div class="flex flex-col gap-[3px] min-w-0">
             <span class="overflow-hidden text-foreground text-xs font-bold text-ellipsis whitespace-nowrap">

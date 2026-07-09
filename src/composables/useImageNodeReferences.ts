@@ -1,5 +1,6 @@
 import { compressReferenceImageDataUrl } from '../lib/image-canvas-utils'
 import { previewImageUrl } from '../lib/image-gallery'
+import { hasImageSource } from '../lib/authenticated-image-source'
 import type { CanvasNode } from '../lib/image-canvas-model'
 import type { GeneratedImage, ImageGenReference } from '../types/image'
 import type { ImageHistoryScope } from './useImageGen'
@@ -59,7 +60,7 @@ export function useImageNodeReferences(options: UseImageNodeReferencesOptions) {
 
   async function buildReferences(node: CanvasNode) {
     const imageNodes = options.referencedImageNodes(node)
-      .filter((item): item is CanvasNode & { imageUrl: string } => Boolean(item.imageUrl))
+      .filter(item => hasImageSource(item, 'preview'))
 
     const references = await Promise.all(imageNodes.map(async (item): Promise<ImageGenReference> => {
       const storageReference = await storageReferenceForNode(item)
