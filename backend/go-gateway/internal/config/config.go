@@ -2,9 +2,14 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
+
+var _ = loadEnvFiles()
 
 // Server config
 var Port = parseEnvInt("PORT", 3000)
@@ -19,12 +24,7 @@ var CorsOrigin = parseEnvString("CORS_ORIGIN", "http://localhost:5173")
 
 // Supabase config
 var SupabaseURL = os.Getenv("SUPABASE_URL")
-var SupabasePublishableKey = FirstNonEmpty(
-	os.Getenv("SUPABASE_PUBLISHABLE_KEY"),
-	os.Getenv("SUPABASE_ANON_KEY"),
-	os.Getenv("VITE_SUPABASE_PUBLISHABLE_KEY"),
-	os.Getenv("VITE_SUPABASE_ANON_KEY"),
-)
+var SupabasePublishableKey = supabasePublishableKeyFromEnv()
 var SupabaseServiceRoleKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 var SupabaseJWKSURL = FirstNonEmpty(
 	os.Getenv("SUPABASE_JWKS_URL"),
@@ -87,6 +87,90 @@ var AdminUserEmails = parseEnvStringSlice("ADMIN_USER_EMAILS", ",")
 // Diagnostics config — opt-in via ENABLE_DIAGNOSTICS=true. When disabled, the
 // /api/image/diagnostics endpoint is not registered at all.
 var EnableDiagnostics = parseEnvBool("ENABLE_DIAGNOSTICS", false)
+
+func loadEnvFiles() bool {
+	if isTestBinary() && strings.ToLower(os.Getenv("GO_GATEWAY_LOAD_ENV_IN_TESTS")) != "true" {
+		return false
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+	return loadEnvFilesFrom(cwd)
+}
+
+func loadEnvFilesFrom(cwd string) bool {
+	loaded := false
+	for _, path := range envCandidatePaths(cwd) {
+		if err := godotenv.Load(path); err == nil {
+			loaded = true
+		}
+	}
+	return loaded
+}
+
+func envCandidatePaths(cwd string) []string {
+	candidates := []string{filepath.Join(cwd, ".env")}
+	if repoRoot := findRepoRoot(cwd); repoRoot != "" {
+		candidates = append(candidates,
+			filepath.Join(repoRoot, "backend", "go-gateway", ".env"),
+			filepath.Join(repoRoot, "backend", "gateway", ".env"),
+			filepath.Join(repoRoot, ".env"),
+		)
+	}
+	return uniqueCleanPaths(candidates)
+}
+
+func findRepoRoot(start string) string {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return ""
+	}
+	for {
+		if pathExists(filepath.Join(dir, "package.json")) && pathExists(filepath.Join(dir, "backend", "gateway")) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func uniqueCleanPaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	unique := make([]string, 0, len(paths))
+	for _, path := range paths {
+		cleaned := filepath.Clean(path)
+		if _, ok := seen[cleaned]; ok {
+			continue
+		}
+		seen[cleaned] = struct{}{}
+		unique = append(unique, cleaned)
+	}
+	return unique
+}
+
+func isTestBinary() bool {
+	name := filepath.Base(os.Args[0])
+	return strings.HasSuffix(name, ".test") || strings.HasSuffix(name, ".test.exe")
+}
+
+func supabasePublishableKeyFromEnv() string {
+	return FirstNonEmpty(
+		os.Getenv("SUPABASE_PUBLISHABLE_KEY"),
+		os.Getenv("UPABASE_PUBLISHABLE_KEY"),
+		os.Getenv("SUPABASE_ANON_KEY"),
+		os.Getenv("VITE_SUPABASE_PUBLISHABLE_KEY"),
+		os.Getenv("VITE_SUPABASE_ANON_KEY"),
+	)
+}
 
 func CorsOrigins() []string {
 	origins := parseEnvStringSlice("CORS_ORIGIN", ",")

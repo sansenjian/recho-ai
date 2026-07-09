@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/joho/godotenv"
 
 	"go-gateway/internal/config"
 	"go-gateway/internal/handler"
@@ -24,11 +23,6 @@ import (
 )
 
 func main() {
-	// Load .env file if present
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
-	}
-
 	// Initialize libvips when CGO is available
 	initVips()
 	defer shutdownVips()
