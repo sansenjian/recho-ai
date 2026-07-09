@@ -2,17 +2,12 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
-	"math"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -23,180 +18,67 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go-gateway/internal/config"
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/orchestrator"
 	"go-gateway/internal/pkg/response"
-	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
-type imageCreditService interface {
-	ReserveCredits(ctx context.Context, userID string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
-	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
-	GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64)
-}
+// 本文件原是 1500 行的"上帝 handler"：HTTP 协议层、业务编排、外部调用、
+// 异步补偿全部塞在一起。现已按"资源 + 编排"分层重构：
+//   - 业务编排（额度预留 → 调 AI API → 异步持久化 + saga 补偿）下沉到
+//     internal/orchestrator，多点回滚由 saga 框架显式建模。
+//   - 本文件只保留 HTTP 协议层：解析请求、调用 orchestrator、写响应，
+//     以及不涉及编排的薄 CRUD/存储代理（UploadReference / ProxyStorage / history）。
+//
+// 类型别名（ImageGenResponse 等）保持 handler 包对外 API 不变，现有测试零改动。
 
-type imageStorageService interface {
-	StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error)
-	StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
-	StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
-	DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
-	SaveImageHistory(ctx context.Context, item *service.ImageHistoryItem, userID string) error
-	ListImageHistory(ctx context.Context, userID, scope string, limit, offset int) (*service.ImageHistory, error)
-	GetImageHistory(ctx context.Context, id, userID, scope string) (*service.ImageHistoryItem, error)
-	GetImageVisibilityByPath(ctx context.Context, storagePath string) (visibility string, ownerID string, err error)
-	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
-	ClearImageHistory(ctx context.Context, userID string) (int64, error)
-	CleanupObjects(paths ...string)
-}
+// --- 类型别名：re-export orchestrator 的 domain 类型，保持 handler 包 API 稳定 ---
 
-type imageIdempotencyService interface {
-	Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error)
-	Fail(ctx context.Context, userID, idemKey, scope string)
-	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string)
-}
+// ImageGenRequest 是图片生成请求体（与 orchestrator.GenRequest 等价）。
+type ImageGenRequest = orchestrator.GenRequest
 
-type imageProviderSettingsService interface {
-	ImageProvider(ctx context.Context) (service.ImageProviderConfig, error)
-}
+// ImageGenReference 表示一张参考图。
+type ImageGenReference = orchestrator.GenReference
 
-// ImageHandler handles image-related endpoints
+// ImageGenResponse 是图片生成响应体。
+type ImageGenResponse = orchestrator.GenResponse
+
+// ImageResult 表示一张生成结果。
+type ImageResult = orchestrator.ImageResult
+
+// ImageHandler 是图片相关的 HTTP handler。
+//
+// 业务编排委托给 orchestrator；本结构同时持有 storageService 等依赖，
+// 供 UploadReference / ProxyStorage / history 等薄 CRUD 方法直接使用，
+// 以及 Diagnostics 报告各服务可用性。
 type ImageHandler struct {
-	creditService       imageCreditService
-	storageService      imageStorageService
-	idempotencySvc      imageIdempotencyService      // optional, nil disables idempotency
-	providerSettingsSvc imageProviderSettingsService // optional, nil uses env config
-	httpClient          *http.Client                 // reused HTTP client for upstream image API calls
+	orch           *orchestrator.ImageOrchestrator
+	storageService orchestrator.StorageService      // 薄 CRUD/代理方法直接使用
+	creditService  orchestrator.CreditService       // 仅 Diagnostics 报告可用性
+	idempotencySvc orchestrator.IdempotencyService  // 仅 Diagnostics 报告可用性
+	httpClient     *http.Client                    // 仅 Diagnostics 报告可用性
 }
 
-// NewImageHandler creates a new image handler.
-// idempotencySvc may be nil to disable idempotency checks.
+// NewImageHandler 创建图片 handler。credit/storage/idempotency 可为 nil（表示禁用）。
 func NewImageHandler(
-	creditService imageCreditService,
-	storageService imageStorageService,
-	idempotencySvc imageIdempotencyService,
+	creditService orchestrator.CreditService,
+	storageService orchestrator.StorageService,
+	idempotencySvc orchestrator.IdempotencyService,
 ) *ImageHandler {
+	orch := orchestrator.NewImageOrchestrator(creditService, storageService, idempotencySvc)
 	return &ImageHandler{
-		creditService:  creditService,
+		orch:           orch,
 		storageService: storageService,
+		creditService:  creditService,
 		idempotencySvc: idempotencySvc,
-		httpClient:     &http.Client{Timeout: 360 * time.Second},
+		httpClient:     &http.Client{},
 	}
 }
 
-func (h *ImageHandler) WithProviderSettings(providerSettingsSvc imageProviderSettingsService) *ImageHandler {
-	h.providerSettingsSvc = providerSettingsSvc
+// WithProviderSettings 注入图片 Provider 配置源。返回自身以支持链式调用。
+func (h *ImageHandler) WithProviderSettings(providerSettingsSvc orchestrator.ProviderSettingsService) *ImageHandler {
+	h.orch = h.orch.WithProviderSettings(providerSettingsSvc)
 	return h
-}
-
-// ImageGenRequest represents the image generation request
-type ImageGenRequest struct {
-	Prompt        string              `json:"prompt"`
-	DisplayPrompt string              `json:"displayPrompt,omitempty"`
-	UserPrompt    string              `json:"userPrompt,omitempty"`
-	SystemPrompt  string              `json:"systemPrompt,omitempty"`
-	ModelPrompt   string              `json:"modelPrompt,omitempty"`
-	Size          string              `json:"size,omitempty"`
-	AspectRatio   string              `json:"aspectRatio,omitempty"`
-	Resolution    string              `json:"resolution,omitempty"`
-	Quality       string              `json:"quality,omitempty"`
-	Count         int                 `json:"count,omitempty"`
-	References    []ImageGenReference `json:"references,omitempty"`
-}
-
-// ImageGenReference represents a reference image
-type ImageGenReference struct {
-	ID            string `json:"id,omitempty"`
-	Title         string `json:"title,omitempty"`
-	DataUrl       string `json:"dataUrl,omitempty"`
-	StoragePath   string `json:"storagePath,omitempty"`
-	PreviewURL    string `json:"previewUrl,omitempty"`
-	PreviewPath   string `json:"previewPath,omitempty"`
-	ThumbnailURL  string `json:"thumbnailUrl,omitempty"`
-	ThumbnailPath string `json:"thumbnailPath,omitempty"`
-	Content       string `json:"content,omitempty"`
-	FileName      string `json:"fileName,omitempty"`
-}
-
-// ImageGenResponse represents the image generation response
-type ImageGenResponse struct {
-	Images        []ImageResult `json:"images"`
-	CreditCost    float64       `json:"creditCost,omitempty"`
-	TotalCost     float64       `json:"totalCost,omitempty"`
-	CreditBalance *struct {
-		Balance float64 `json:"balance"`
-	} `json:"creditBalance,omitempty"`
-}
-
-// ImageResult represents a generated image result
-type ImageResult struct {
-	ID                string                          `json:"id"`
-	UserID            string                          `json:"userId,omitempty"`
-	GenerationBatchID string                          `json:"generationBatchId,omitempty"`
-	StoragePath       string                          `json:"storagePath,omitempty"`
-	URL               string                          `json:"url,omitempty"`
-	TemporaryURL      string                          `json:"temporaryUrl,omitempty"`
-	PersistenceStatus string                          `json:"persistenceStatus,omitempty"`
-	DataURL           string                          `json:"dataUrl,omitempty"`
-	PreviewURL        string                          `json:"previewUrl,omitempty"`
-	PreviewPath       string                          `json:"previewPath,omitempty"`
-	ThumbnailURL      string                          `json:"thumbnailUrl,omitempty"`
-	ThumbnailPath     string                          `json:"thumbnailPath,omitempty"`
-	Prompt            string                          `json:"prompt"`
-	UserPrompt        string                          `json:"userPrompt,omitempty"`
-	SystemPrompt      string                          `json:"systemPrompt,omitempty"`
-	ModelPrompt       string                          `json:"modelPrompt,omitempty"`
-	References        []service.ImageHistoryReference `json:"references,omitempty"`
-	ReferenceCount    int                             `json:"referenceImageCount,omitempty"`
-	Bytes             int                             `json:"bytes,omitempty"`
-	Visibility        string                          `json:"visibility,omitempty"`
-	FundingSource     string                          `json:"fundingSource,omitempty"`
-	CreditCost        float64                         `json:"creditCost,omitempty"`
-	RevisedPrompt     string                          `json:"revisedPrompt,omitempty"`
-	Size              string                          `json:"size"`
-	AspectRatio       string                          `json:"aspectRatio,omitempty"`
-	Resolution        string                          `json:"resolution,omitempty"`
-	Quality           string                          `json:"quality,omitempty"`
-	Timestamp         string                          `json:"timestamp"`
-	Width             int                             `json:"width,omitempty"`
-	Height            int                             `json:"height,omitempty"`
-}
-
-type imageSource struct {
-	URL    string
-	Base64 string
-	Mime   string
-}
-
-type generatedImageRecord struct {
-	result ImageResult
-	source imageSource
-}
-
-type imageGenerationMetadata struct {
-	BatchID             string
-	UserID              string
-	DisplayPrompt       string
-	SystemPrompt        string
-	ModelPrompt         string
-	Size                string
-	AspectRatio         string
-	Resolution          string
-	Quality             string
-	ImageModel          string
-	References          []service.ImageHistoryReference
-	ReferenceCount      int
-	Visibility          string
-	FundingSource       string
-	CreditCost          float64
-	CreditTransactionID string
-}
-
-type asyncPersistenceJob struct {
-	images            []generatedImageRecord
-	metadata          imageGenerationMetadata
-	creditReservation *service.CreditReservation
-	userID            string
-	user              *middleware.User
-	idempotencyKey    string
 }
 
 type referenceUploadResponse struct {
@@ -207,10 +89,13 @@ const referenceUploadMaxBytes = 12 * 1024 * 1024
 const imageGenerateMaxBytes = 2 * 1024 * 1024
 
 // Generate handles POST /api/image/generate
+//
+// 瘦 handler：只负责 HTTP 协议层（访客开关、body 读取、prompt 校验），
+// 业务编排（幂等、额度、调 API、异步持久化）全部委托给 orchestrator。
 func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 
-	// Enforce guest and free generation toggles for anonymous users.
+	// 访客与免费生成开关
 	if user == nil && !config.GuestGenerationEnabled {
 		response.Error(w, http.StatusForbidden, "请先登录后再生成图片")
 		return
@@ -220,7 +105,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read raw body for idempotency fingerprint, then restore for JSON decoding
+	// 读取原始 body（用于幂等指纹），再恢复供 JSON 解码
 	body := http.MaxBytesReader(w, r.Body, imageGenerateMaxBytes)
 	defer body.Close()
 	rawBody, err := io.ReadAll(body)
@@ -240,7 +125,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate prompt
+	// 校验 prompt
 	if req.Prompt == "" {
 		response.Error(w, http.StatusBadRequest, "请输入图片描述。")
 		return
@@ -251,217 +136,27 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Idempotency check ---
 	idemKey := r.Header.Get("Idempotency-Key")
-	if user != nil && user.ID != "" && h.creditService != nil && strings.TrimSpace(idemKey) == "" {
-		response.Error(w, http.StatusBadRequest, "缺少 Idempotency-Key，请刷新后重试。")
-		return
-	}
-	if idemKey != "" && user != nil && user.ID != "" {
-		if h.idempotencySvc == nil {
-			response.Error(w, http.StatusServiceUnavailable, "幂等服务暂时不可用，请稍后重试。")
+
+	// 委托业务编排
+	resp, statusErr := h.orch.Generate(r.Context(), orchestrator.GenerateParams{
+		User:    user,
+		RawBody: rawBody,
+		IdemKey: idemKey,
+		Request: req,
+	})
+	if statusErr != nil {
+		// 幂等重放：直接写回缓存的原始字节
+		if statusErr.Body != nil {
+			for k, v := range statusErr.Headers {
+				w.Header().Set(k, v)
+			}
+			w.WriteHeader(statusErr.Code)
+			_, _ = w.Write(statusErr.Body)
 			return
 		}
-		outcome, err := h.idempotencySvc.Acquire(r.Context(), user.ID, idemKey, "image_generate", rawBody)
-		if err != nil {
-			// Returning 503 prevents proceeding without idempotency protection,
-			// which could lead to double-charging on retries.
-			log.Printf("[idempotency] acquire error: %v", err)
-			response.Error(w, http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试")
-			return
-		} else if outcome != nil {
-			if outcome.Conflict {
-				response.Error(w, http.StatusConflict, "请求正在处理中或使用相同的幂等键发送了不同的请求。")
-				return
-			}
-			if !outcome.Proceed && outcome.ReplayBody != nil {
-				// Replay cached response — no credit deduction, no API call
-				w.Header().Set("X-Idempotent-Replay", "true")
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(int(outcome.ReplayCode))
-				w.Write(outcome.ReplayBody)
-				return
-			}
-		}
-	}
-
-	// Normalize parameters
-	count := normalizeImageCount(req.Count)
-	aspectRatio := normalizeAspectRatio(req.AspectRatio)
-	resolution := normalizeResolution(req.Resolution)
-	quality := normalizeQuality(req.Quality)
-	size := determineSize(resolution, aspectRatio)
-	displayPrompt := firstNonEmpty(strings.TrimSpace(req.UserPrompt), strings.TrimSpace(req.DisplayPrompt), strings.TrimSpace(req.Prompt))
-	modelPrompt := firstNonEmpty(strings.TrimSpace(req.ModelPrompt), strings.TrimSpace(req.Prompt))
-
-	// Calculate credit cost
-	costPerImage := config.ImageCreditCostPerImage
-	totalCost := roundToTwoDecimals(float64(count) * costPerImage)
-	if h.creditService != nil {
-		costPerImage, totalCost = h.creditService.GetCreditCost(r.Context(), count)
-	}
-
-	providerCfg, err := h.resolveImageProvider(r.Context())
-	if err != nil {
-		log.Printf("[image] provider config unavailable: %v", err)
-		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
-			refundCtx, refundCancel := withRefundContext()
-			defer refundCancel()
-			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
-		}
-		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 配置暂时不可用。")
+		response.Error(w, statusErr.Code, statusErr.Message)
 		return
-	}
-	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
-		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
-			refundCtx, refundCancel := withRefundContext()
-			defer refundCancel()
-			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
-		}
-		response.Error(w, http.StatusServiceUnavailable, "图片 Provider 尚未配置，请联系管理员。")
-		return
-	}
-
-	// Check and reserve credits if user is authenticated
-	var creditReservation *service.CreditReservation
-	if user != nil && user.ID != "" && h.creditService != nil {
-		txID, newBalance, reservedCostPerImage, cost, err := h.creditService.ReserveCredits(r.Context(), user.ID, count)
-		if err != nil {
-			if errors.Is(err, repository.ErrInsufficientCredits) {
-				// Mark idempotency as failed so the client can retry after topping up
-				if idemKey != "" && h.idempotencySvc != nil {
-					refundCtx, refundCancel := withRefundContext()
-					defer refundCancel()
-					h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
-				}
-				response.Error(w, http.StatusPaymentRequired, "额度不足。")
-				return
-			}
-			log.Printf("[image] 503: failed to reserve credits: %v", err)
-			response.Error(w, http.StatusServiceUnavailable, "额度服务暂时不可用，请稍后重试。")
-			return
-		} else {
-			creditReservation = &service.CreditReservation{
-				TransactionID: txID,
-				Amount:        cost,
-				Balance:       newBalance,
-			}
-			totalCost = cost
-			costPerImage = reservedCostPerImage
-		}
-	}
-
-	// Call image generation API
-	ctx := r.Context()
-	images, err := h.callImageAPI(ctx, req, count, aspectRatio, resolution, quality, providerCfg)
-	if err != nil {
-		log.Printf("[image] generation failed: %v", err)
-		// Full refund on complete failure
-		refundCtx, refundCancel := withRefundContext()
-		defer refundCancel()
-		if creditReservation != nil {
-			_, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, creditReservation.Amount, "image_generation_failed")
-			if refundErr != nil {
-				log.Printf("[image] failed to refund credits after generation failure: %v", refundErr)
-			}
-		}
-		// Mark idempotency as failed so the client can retry
-		if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
-			h.idempotencySvc.Fail(refundCtx, user.ID, idemKey, "image_generate")
-		}
-		response.Error(w, http.StatusInternalServerError, "图片生成失败，请稍后重试。")
-		return
-	}
-
-	// Partial refund: if fewer images returned than requested, refund the difference
-	if creditReservation != nil && len(images) < count && count > 0 {
-		missingCount := count - len(images)
-		refundAmount := roundToTwoDecimals(float64(missingCount) * costPerImage)
-		if refundAmount > 0 {
-			refundCtx, refundCancel := withRefundContext()
-			defer refundCancel()
-			newBalance, refundErr := h.creditService.RefundCredits(refundCtx, user.ID, creditReservation.TransactionID, refundAmount, "partial_generation")
-			if refundErr != nil {
-				log.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
-			} else {
-				totalCost = roundToTwoDecimals(totalCost - refundAmount)
-				creditReservation.Balance = newBalance
-				creditReservation.Amount = totalCost
-			}
-		}
-	}
-
-	references := historyReferences(req.References)
-	visibility := "public"
-	fundingSource := "free"
-	creditCost := 0.0
-	var userID string
-	var creditTransactionID string
-	if user != nil {
-		userID = user.ID
-	}
-	if creditReservation != nil {
-		visibility = "private"
-		fundingSource = "credit"
-		creditCost = costPerImage
-		creditTransactionID = creditReservation.TransactionID
-	}
-
-	batchID := "batch_" + randomID()
-	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
-	metadata := imageGenerationMetadata{
-		BatchID:             batchID,
-		UserID:              userID,
-		DisplayPrompt:       displayPrompt,
-		SystemPrompt:        req.SystemPrompt,
-		ModelPrompt:         modelPrompt,
-		Size:                size,
-		AspectRatio:         aspectRatio,
-		Resolution:          resolution,
-		Quality:             quality,
-		ImageModel:          imageModel,
-		References:          references,
-		ReferenceCount:      len(references),
-		Visibility:          visibility,
-		FundingSource:       fundingSource,
-		CreditCost:          creditCost,
-		CreditTransactionID: creditTransactionID,
-	}
-	preparedImages := h.prepareGeneratedImages(images, metadata)
-	responseImages := make([]ImageResult, 0, len(preparedImages))
-	for _, image := range preparedImages {
-		responseImages = append(responseImages, image.result)
-	}
-	// Build response
-	resp := ImageGenResponse{
-		Images:     responseImages,
-		CreditCost: costPerImage,
-		TotalCost:  totalCost,
-	}
-	if creditReservation != nil {
-		resp.CreditBalance = &struct {
-			Balance float64 `json:"balance"`
-		}{Balance: creditReservation.Balance}
-	}
-
-	// Cache response for future idempotent replays
-	if idemKey != "" && user != nil && user.ID != "" && h.idempotencySvc != nil {
-		txID := ""
-		if creditReservation != nil {
-			txID = creditReservation.TransactionID
-		}
-		h.idempotencySvc.Complete(r.Context(), user.ID, idemKey, "image_generate", 200, resp, txID)
-	}
-
-	if len(preparedImages) > 0 {
-		h.persistGeneratedImagesAsync(asyncPersistenceJob{
-			images:            preparedImages,
-			metadata:          metadata,
-			creditReservation: creditReservation,
-			userID:            userID,
-			user:              user,
-			idempotencyKey:    idemKey,
-		})
 	}
 
 	response.JSON(w, http.StatusOK, resp)
@@ -581,404 +276,6 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(image.Data)
 }
 
-func (h *ImageHandler) resolveImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
-	if h.providerSettingsSvc == nil {
-		return service.DefaultImageProviderConfig(), nil
-	}
-	return h.providerSettingsSvc.ImageProvider(ctx)
-}
-
-func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {
-	if edits && strings.TrimSpace(provider.EditModel) != "" {
-		return strings.TrimSpace(provider.EditModel)
-	}
-	if strings.TrimSpace(provider.ImageModel) != "" {
-		return strings.TrimSpace(provider.ImageModel)
-	}
-	return strings.TrimSpace(config.ImageResponsesImageModel)
-}
-
-// callImageAPI calls the image generation API
-func (h *ImageHandler) callImageAPI(ctx context.Context, req ImageGenRequest, count int, aspectRatio, resolution, quality string, provider service.ImageProviderConfig) ([]generatedImageRecord, error) {
-	// Build API request
-	size := determineSize(resolution, aspectRatio)
-
-	// Image format MIME type. The API currently returns PNG for b64_json
-	// responses. If a format/response_format field is added to the request
-	// in the future, derive the MIME type from that field here.
-	imageMime := "image/png"
-	usesEdits := len(req.References) > 0
-	imageModel := imageModelForRequest(provider, usesEdits)
-
-	apiReq := map[string]any{
-		"model":   imageModel,
-		"prompt":  req.Prompt,
-		"n":       count,
-		"size":    size,
-		"quality": mapQualityToAPI(quality),
-	}
-
-	// Shared HTTP client with retry logic
-	client := h.httpClient
-	if client == nil {
-		client = &http.Client{Timeout: 360 * time.Second}
-	}
-	if provider.Timeout > 0 && client.Timeout != provider.Timeout {
-		client = &http.Client{Timeout: provider.Timeout}
-	}
-	maxRetries := provider.RetryCount
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-	if maxRetries > 10 {
-		maxRetries = 10
-	}
-	urlPath := "/images/generations"
-	var bodyFactory func() (io.Reader, string, error)
-	if usesEdits {
-		urlPath = "/images/edits"
-		bodyFactory = func() (io.Reader, string, error) {
-			return h.imageEditBody(ctx, apiReq, req.References)
-		}
-	} else {
-		reqBody, err := json.Marshal(apiReq)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
-		}
-		bodyFactory = func() (io.Reader, string, error) {
-			return bytes.NewReader(reqBody), "application/json", nil
-		}
-	}
-
-	var resp *http.Response
-	var body []byte
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			// Exponential backoff: 1s, 2s, 4s
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
-			case <-time.After(backoff):
-			}
-			log.Printf("[image] retrying API call (attempt %d/%d)", attempt+1, maxRetries+1)
-		}
-
-		bodyReader, contentType, err := bodyFactory()
-		if err != nil {
-			return nil, err
-		}
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(provider.BaseURL, "/")+urlPath, bodyReader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		httpReq.Header.Set("Content-Type", contentType)
-		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
-
-		resp, err = client.Do(httpReq)
-		if err != nil {
-			if attempt < maxRetries {
-				log.Printf("[image] API call error (will retry): %v", err)
-				continue
-			}
-			return nil, fmt.Errorf("failed to call image API: %w", err)
-		}
-
-		body, err = io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response: %w", err)
-		}
-
-		// Retry on transient failures
-		if isTransientStatus(resp.StatusCode) && attempt < maxRetries {
-			log.Printf("[image] API returned %d (will retry)", resp.StatusCode)
-			continue
-		}
-
-		break
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var apiResp struct {
-		Data []struct {
-			URL           string `json:"url,omitempty"`
-			Base64        string `json:"b64_json,omitempty"`
-			RevisedPrompt string `json:"revised_prompt,omitempty"`
-		} `json:"data"`
-	}
-
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Process provider results only. Permanent storage is handled asynchronously
-	// after the frontend receives the temporary provider URL/data.
-	results := make([]generatedImageRecord, 0, len(apiResp.Data))
-	for i, item := range apiResp.Data {
-		result := ImageResult{
-			ID:            fmt.Sprintf("img_%d_%d_%s", time.Now().UnixNano(), i, randomID()),
-			RevisedPrompt: item.RevisedPrompt,
-		}
-
-		if item.URL != "" {
-			result.URL = item.URL
-			result.TemporaryURL = item.URL
-			result.PreviewURL = item.URL
-			result.PersistenceStatus = "processing"
-			results = append(results, generatedImageRecord{
-				result: result,
-				source: imageSource{
-					URL:  item.URL,
-					Mime: imageMime,
-				},
-			})
-		} else if item.Base64 != "" {
-			result.DataURL = "data:" + imageMime + ";base64," + item.Base64
-			result.URL = result.DataURL
-			result.PreviewURL = result.DataURL
-			result.PersistenceStatus = "processing"
-			results = append(results, generatedImageRecord{
-				result: result,
-				source: imageSource{
-					Base64: item.Base64,
-					Mime:   imageMime,
-				},
-			})
-		}
-	}
-
-	// Truncate to requested count if provider returned more.
-	// Guard count > 0 to prevent slice panic on malformed requests.
-	if count > 0 && len(results) > count {
-		log.Printf("[image] provider returned %d image(s); keeping %d", len(results), count)
-		results = results[:count]
-	}
-
-	return results, nil
-}
-
-func (h *ImageHandler) prepareGeneratedImages(images []generatedImageRecord, metadata imageGenerationMetadata) []generatedImageRecord {
-	now := time.Now().UTC().Format(time.RFC3339)
-	prepared := make([]generatedImageRecord, 0, len(images))
-	for _, image := range images {
-		image.result.UserID = metadata.UserID
-		image.result.GenerationBatchID = metadata.BatchID
-		image.result.Prompt = metadata.DisplayPrompt
-		image.result.UserPrompt = metadata.DisplayPrompt
-		image.result.SystemPrompt = metadata.SystemPrompt
-		image.result.ModelPrompt = metadata.ModelPrompt
-		image.result.References = metadata.References
-		image.result.ReferenceCount = metadata.ReferenceCount
-		image.result.Visibility = metadata.Visibility
-		image.result.FundingSource = metadata.FundingSource
-		image.result.CreditCost = metadata.CreditCost
-		image.result.Size = metadata.Size
-		image.result.AspectRatio = metadata.AspectRatio
-		image.result.Resolution = metadata.Resolution
-		image.result.Quality = metadata.Quality
-		image.result.Timestamp = now
-		if image.result.PreviewURL == "" {
-			image.result.PreviewURL = image.result.URL
-		}
-		prepared = append(prepared, image)
-	}
-	return prepared
-}
-
-func (h *ImageHandler) persistGeneratedImagesAsync(job asyncPersistenceJob) {
-	if h.storageService == nil || len(job.images) == 0 {
-		return
-	}
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-
-		savedHistoryIDs := make([]string, 0, len(job.images))
-		for _, image := range job.images {
-			persisted, err := h.persistGeneratedImage(ctx, image)
-			if err != nil {
-				log.Printf("[image] async persistence failed for %s: %v", image.result.ID, err)
-				h.handleAsyncPersistenceFailure(job, savedHistoryIDs, image)
-				return
-			}
-
-			historyItem := h.historyItemForGeneratedImage(persisted, job.metadata)
-			if err := h.storageService.SaveImageHistory(ctx, &historyItem, job.userID); err != nil {
-				log.Printf("[image] async SaveImageHistory failed for %s: %v", persisted.ID, err)
-				h.handleAsyncPersistenceFailure(job, savedHistoryIDs, generatedImageRecord{
-					result: persisted,
-					source: image.source,
-				})
-				return
-			}
-			savedHistoryIDs = append(savedHistoryIDs, persisted.ID)
-		}
-	}()
-}
-
-func (h *ImageHandler) persistGeneratedImage(ctx context.Context, image generatedImageRecord) (ImageResult, error) {
-	persisted := image.result
-	var stored *service.StoredImage
-	var err error
-
-	if image.source.URL != "" {
-		stored, err = h.storageService.StoreFromURL(ctx, image.source.URL, fmt.Sprintf("generated/%s", image.result.ID))
-	} else if image.source.Base64 != "" {
-		decoded, decodeErr := base64.StdEncoding.DecodeString(image.source.Base64)
-		if decodeErr != nil {
-			return persisted, fmt.Errorf("base64 decode failed: %w", decodeErr)
-		}
-		stored, err = h.storageService.StoreFromBuffer(ctx, decoded, firstNonEmpty(image.source.Mime, "image/png"), fmt.Sprintf("generated/%s", image.result.ID))
-	} else {
-		return persisted, fmt.Errorf("missing provider image source")
-	}
-	if err != nil {
-		return persisted, err
-	}
-	if stored == nil || stored.StoragePath == "" {
-		return persisted, fmt.Errorf("storage returned empty result")
-	}
-
-	persisted.URL = stored.PublicURL
-	persisted.DataURL = ""
-	persisted.TemporaryURL = image.source.URL
-	persisted.PersistenceStatus = "persisted"
-	persisted.PreviewURL = stored.PreviewURL
-	persisted.ThumbnailURL = stored.ThumbnailURL
-	persisted.StoragePath = stored.StoragePath
-	persisted.PreviewPath = stored.PreviewPath
-	persisted.ThumbnailPath = stored.ThumbnailPath
-	persisted.Width = stored.Width
-	persisted.Height = stored.Height
-	persisted.Bytes = stored.Bytes
-	return persisted, nil
-}
-
-func (h *ImageHandler) historyItemForGeneratedImage(image ImageResult, metadata imageGenerationMetadata) service.ImageHistoryItem {
-	generatedAt := time.Now().UTC()
-	if parsed, err := time.Parse(time.RFC3339, image.Timestamp); err == nil {
-		generatedAt = parsed
-	}
-
-	return service.ImageHistoryItem{
-		ID:                  image.ID,
-		UserID:              metadata.UserID,
-		GenerationBatchID:   metadata.BatchID,
-		Prompt:              metadata.DisplayPrompt,
-		UserPrompt:          metadata.DisplayPrompt,
-		SystemPrompt:        metadata.SystemPrompt,
-		ModelPrompt:         metadata.ModelPrompt,
-		StoragePath:         image.StoragePath,
-		URL:                 image.URL,
-		PreviewURL:          image.PreviewURL,
-		PreviewPath:         image.PreviewPath,
-		ThumbnailURL:        image.ThumbnailURL,
-		ThumbnailPath:       image.ThumbnailPath,
-		Size:                metadata.Size,
-		AspectRatio:         metadata.AspectRatio,
-		Resolution:          metadata.Resolution,
-		Quality:             metadata.Quality,
-		ImageModel:          metadata.ImageModel,
-		RevisedPrompt:       image.RevisedPrompt,
-		Width:               image.Width,
-		Height:              image.Height,
-		Timestamp:           generatedAt,
-		References:          metadata.References,
-		ReferenceCount:      metadata.ReferenceCount,
-		Visibility:          metadata.Visibility,
-		FundingSource:       metadata.FundingSource,
-		CreditCost:          metadata.CreditCost,
-		CreditTransactionID: metadata.CreditTransactionID,
-	}
-}
-
-func (h *ImageHandler) handleAsyncPersistenceFailure(job asyncPersistenceJob, savedHistoryIDs []string, failedImage generatedImageRecord) {
-	ctx, cancel := withRefundContext()
-	defer cancel()
-
-	for _, savedID := range savedHistoryIDs {
-		if _, delErr := h.storageService.DeleteImageHistory(ctx, savedID, job.userID); delErr != nil {
-			log.Printf("[image] failed to clean up saved history record %s during async rollback: %v", savedID, delErr)
-		}
-	}
-	h.storageService.CleanupObjects(failedImage.result.StoragePath, failedImage.result.PreviewPath, failedImage.result.ThumbnailPath)
-
-	if job.creditReservation != nil && h.creditService != nil && job.user != nil && job.user.ID != "" {
-		if _, refundErr := h.creditService.RefundCredits(ctx, job.user.ID, job.creditReservation.TransactionID, job.creditReservation.Amount, "async_history_save_failed"); refundErr != nil {
-			log.Printf("[image] failed to refund credits after async persistence failure: %v", refundErr)
-		}
-	}
-	if job.idempotencyKey != "" && job.user != nil && job.user.ID != "" && h.idempotencySvc != nil {
-		h.idempotencySvc.Fail(ctx, job.user.ID, job.idempotencyKey, "image_generate")
-	}
-}
-
-func (h *ImageHandler) imageEditBody(ctx context.Context, fields map[string]any, references []ImageGenReference) (io.Reader, string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	for key, value := range fields {
-		if err := writer.WriteField(key, fmt.Sprint(value)); err != nil {
-			return nil, "", err
-		}
-	}
-
-	for index, reference := range references {
-		data, mime, err := h.referenceImageBytes(ctx, reference)
-		if err != nil {
-			return nil, "", err
-		}
-		fileName := reference.FileName
-		if fileName == "" {
-			fileName = fmt.Sprintf("reference_%d.%s", index+1, extensionForMime(mime))
-		}
-		part, err := writer.CreateFormFile("image[]", fileName)
-		if err != nil {
-			return nil, "", err
-		}
-		if _, err := part.Write(data); err != nil {
-			return nil, "", err
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, "", err
-	}
-	return bytes.NewReader(body.Bytes()), writer.FormDataContentType(), nil
-}
-
-func (h *ImageHandler) referenceImageBytes(ctx context.Context, reference ImageGenReference) ([]byte, string, error) {
-	if reference.StoragePath != "" {
-		if h.storageService == nil {
-			return nil, "", fmt.Errorf("storage service unavailable")
-		}
-		image, err := h.storageService.DownloadImage(ctx, reference.StoragePath)
-		if err != nil {
-			return nil, "", err
-		}
-		if image == nil || len(image.Data) == 0 {
-			return nil, "", fmt.Errorf("reference image not found")
-		}
-		return image.Data, firstNonEmpty(image.Mime, mimeFromPath(reference.StoragePath)), nil
-	}
-	if reference.DataUrl != "" {
-		data, mime, err := dataURLBytes(reference.DataUrl)
-		if err != nil {
-			return nil, "", err
-		}
-		return data, mime, nil
-	}
-	return nil, "", fmt.Errorf("reference image is missing image data")
-}
-
-// ImageHistoryListResponse represents the image history list response
 type ImageHistoryListResponse struct {
 	Images      []service.ImageHistoryItem `json:"images"`
 	Total       int                        `json:"total"`
@@ -1187,140 +484,7 @@ func (h *ImageHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, status)
 }
 
-// Helper functions
-
-func normalizeImageCount(count int) int {
-	switch count {
-	case 2, 4, 8:
-		return count
-	default:
-		return 1
-	}
-}
-
-func normalizeAspectRatio(ratio string) string {
-	switch ratio {
-	case "1:1", "3:2", "2:3", "16:9", "9:16":
-		return ratio
-	default:
-		return "1:1"
-	}
-}
-
-func normalizeResolution(res string) string {
-	switch res {
-	case "1k", "2k", "4k":
-		return res
-	default:
-		return "1k"
-	}
-}
-
-func normalizeQuality(q string) string {
-	switch q {
-	case "low", "medium", "high":
-		return q
-	default:
-		return "medium"
-	}
-}
-
-func mapQualityToAPI(q string) string {
-	switch q {
-	case "low":
-		return "standard"
-	case "high":
-		return "hd"
-	default:
-		return "standard"
-	}
-}
-
-func determineSize(resolution, aspectRatio string) string {
-	sizes := map[string]map[string]string{
-		"1k": {
-			"auto": "1024x1024",
-			"1:1":  "1024x1024",
-			"3:2":  "1536x1024",
-			"2:3":  "1024x1536",
-			"16:9": "1536x864",
-			"9:16": "864x1536",
-		},
-		"2k": {
-			"auto": "2048x2048",
-			"1:1":  "2048x2048",
-			"3:2":  "2160x1440",
-			"2:3":  "1440x2160",
-			"16:9": "2048x1152",
-			"9:16": "1152x2048",
-		},
-		"4k": {
-			"auto": "3840x2160",
-			"1:1":  "2880x2880",
-			"3:2":  "3520x2336",
-			"2:3":  "2336x3520",
-			"16:9": "3840x2160",
-			"9:16": "2160x3840",
-		},
-	}
-
-	if sizes, ok := sizes[resolution]; ok {
-		if size, ok := sizes[aspectRatio]; ok {
-			return size
-		}
-	}
-	return "1024x1024"
-}
-
-func roundToTwoDecimals(val float64) float64 {
-	return math.Round(val*100) / 100
-}
-
-func randomID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b[:])
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func historyReferences(references []ImageGenReference) []service.ImageHistoryReference {
-	result := make([]service.ImageHistoryReference, 0, len(references))
-	for index, reference := range references {
-		if reference.DataUrl == "" && reference.StoragePath == "" && reference.PreviewURL == "" && reference.ThumbnailURL == "" {
-			continue
-		}
-		id := reference.ID
-		if id == "" {
-			id = fmt.Sprintf("reference_%d", index+1)
-		}
-		title := reference.Title
-		if title == "" {
-			title = fmt.Sprintf("参考图%d", index+1)
-		}
-		result = append(result, service.ImageHistoryReference{
-			ID:            id,
-			Title:         title,
-			StoragePath:   reference.StoragePath,
-			PreviewURL:    reference.PreviewURL,
-			PreviewPath:   reference.PreviewPath,
-			ThumbnailURL:  reference.ThumbnailURL,
-			ThumbnailPath: reference.ThumbnailPath,
-			Content:       reference.Content,
-			FileName:      reference.FileName,
-		})
-	}
-	return result
-}
+// --- HTTP-only helpers（业务 helper 已迁移到 orchestrator 包） ---
 
 func requestContentType(r *http.Request) string {
 	mime := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
@@ -1443,48 +607,19 @@ func mimeFromPath(storagePath string) string {
 	}
 }
 
-func dataURLBytes(value string) ([]byte, string, error) {
-	if !strings.HasPrefix(value, "data:") {
-		return nil, "", fmt.Errorf("invalid data url")
+func randomID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	parts := strings.SplitN(value, ",", 2)
-	if len(parts) != 2 {
-		return nil, "", fmt.Errorf("invalid data url")
-	}
-	meta := strings.TrimPrefix(parts[0], "data:")
-	mime := "image/png"
-	if meta != "" {
-		mime = strings.Split(meta, ";")[0]
-	}
-	if !isAllowedReferenceMime(mime) {
-		return nil, "", fmt.Errorf("unsupported reference image MIME type: %s", mime)
-	}
-	if strings.Contains(meta, ";base64") {
-		data, err := base64.StdEncoding.DecodeString(parts[1])
-		return data, mime, err
-	}
-	decoded, err := url.QueryUnescape(parts[1])
-	if err != nil {
-		return nil, "", err
-	}
-	return []byte(decoded), mime, nil
+	return hex.EncodeToString(b[:])
 }
 
-// isTransientStatus returns true for HTTP status codes that indicate a transient
-// failure worth retrying (request timeout, rate limit, server errors).
-func isTransientStatus(code int) bool {
-	switch code {
-	case 408, 429, 502, 503, 504:
-		return true
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
 	}
-	return false
-}
-
-// withRefundContext creates a detached context for refund and idempotency-fail
-// operations. The request context is cancelled when the client disconnects, which
-// would cause refund DB calls to fail — leaving the user permanently out of pocket.
-// Each call site creates a fresh context right before use so the timeout window
-// starts at the moment of the actual operation, not at request ingress.
-func withRefundContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+	return ""
 }
