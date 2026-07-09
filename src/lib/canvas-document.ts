@@ -32,6 +32,7 @@ export interface CanvasDocumentNode {
   imageUrl?: string
   imageWidth?: number
   imageHeight?: number
+  storagePath?: string
   fileName?: string
   sourceImageId?: string
   sourceHistoryScope?: ImageHistoryScope
@@ -253,6 +254,7 @@ function serializableCanvasNode(node: CanvasRuntimeNode): CanvasDocumentNode {
     ...(exportableImageUrl(node.imageUrl) ? { imageUrl: exportableImageUrl(node.imageUrl) } : {}),
     ...(typeof node.imageWidth === 'number' ? { imageWidth: node.imageWidth } : {}),
     ...(typeof node.imageHeight === 'number' ? { imageHeight: node.imageHeight } : {}),
+    ...(node.storagePath ? { storagePath: node.storagePath } : {}),
     ...(node.fileName ? { fileName: node.fileName } : {}),
     ...(node.sourceImageId ? { sourceImageId: node.sourceImageId } : {}),
     ...(node.sourceHistoryScope ? { sourceHistoryScope: node.sourceHistoryScope } : {}),
@@ -287,6 +289,7 @@ function normalizeImportedNode(
     ...(exportableImageUrl(raw.imageUrl) ? { imageUrl: exportableImageUrl(raw.imageUrl) } : {}),
     ...(typeof raw.imageWidth === 'number' ? { imageWidth: raw.imageWidth } : {}),
     ...(typeof raw.imageHeight === 'number' ? { imageHeight: raw.imageHeight } : {}),
+    ...(raw.storagePath ? { storagePath: String(raw.storagePath) } : {}),
     ...(raw.fileName ? { fileName: String(raw.fileName) } : {}),
     ...(raw.sourceImageId ? { sourceImageId: String(raw.sourceImageId) } : {}),
     ...(raw.sourceHistoryScope === 'public' || raw.sourceHistoryScope === 'mine' ? { sourceHistoryScope: raw.sourceHistoryScope } : {}),

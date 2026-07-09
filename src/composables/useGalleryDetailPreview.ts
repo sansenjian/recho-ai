@@ -110,6 +110,9 @@ export function useGalleryDetailPreview(options: UseGalleryDetailPreviewOptions)
     const sourceImage = galleryDetail.value
     return {
       imageUrl,
+      ...(sourceImage.storagePath ? { storagePath: sourceImage.storagePath } : {}),
+      ...(sourceImage.previewPath ? { previewPath: sourceImage.previewPath } : {}),
+      ...(sourceImage.thumbnailPath ? { thumbnailPath: sourceImage.thumbnailPath } : {}),
       title: viewerTitle(sourceImage),
       caption: galleryPrompt(sourceImage),
       zoom: 1,

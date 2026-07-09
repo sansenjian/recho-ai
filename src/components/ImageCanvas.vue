@@ -47,6 +47,7 @@ import {
   isGeneratedImageNode,
   updateNodeImageDimensions,
 } from '../lib/image-canvas-utils'
+import { hasImageSource } from '../lib/authenticated-image-source'
 import {
   galleryFileName,
   galleryParamItems as buildGalleryParamItems,
@@ -969,12 +970,12 @@ function historyImageForNode(node: ImageDownloadNode) {
 }
 
 function handleDownload(node: CanvasNode) {
-  if (!node.imageUrl) return
+  if (!hasImageSource(node, 'preview')) return
   void downloadTarget(nodeTarget(node))
 }
 
 async function sendNodeImageToChat(node: CanvasNode) {
-  if (!node.imageUrl) return
+  if (!hasImageSource(node, 'preview')) return
   const imageUrl = await resolveNodePreviewImageUrl(node)
   if (!imageUrl) {
     error.value = '预览图加载失败，请稍后重试。'
@@ -1417,6 +1418,7 @@ onUnmounted(() => {
     <ImageGalleryDetailModal
       v-if="galleryDetail"
       :image-url="galleryDetailImageUrl(galleryDetail)"
+      :image-source="galleryDetail"
       :image-alt="galleryPrompt(galleryDetail)"
       :image-title="galleryFileName(galleryDetail).replace(/\.[a-z0-9]{2,5}$/i, '')"
       :prompt="galleryPrompt(galleryDetail)"

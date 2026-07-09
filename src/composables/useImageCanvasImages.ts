@@ -9,7 +9,7 @@ import {
   readImageDimensions,
   readImageFileAsDataUrl,
 } from '../lib/image-canvas-utils'
-import { previewImageUrl } from '../lib/image-gallery'
+import { hasDisplayImage, previewImageUrl } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 import type { ImageHistoryScope } from './useImageGen'
 
@@ -153,7 +153,7 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
       previewUrl = previewImageUrl(detail)
     }
 
-    if (!previewUrl) {
+    if (!hasDisplayImage(detail)) {
       options.setError('图片加载失败，请稍后重试。')
       return
     }
@@ -164,7 +164,7 @@ export function useImageCanvasImages(options: UseImageCanvasImagesOptions) {
     options.createImageNode(point.x, point.y, {
       title: options.nextImageTitle(),
       content: '',
-      imageUrl: previewUrl,
+      ...(previewUrl ? { imageUrl: previewUrl } : {}),
       storagePath: detail.storagePath,
       sourceImageId: detail.id,
       sourceHistoryScope: scope,

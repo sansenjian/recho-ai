@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ZoomIn, X, Plus, Download, MessageCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { displayReferenceUrl } from '../lib/image-gallery'
 import type { GalleryParam, GalleryReference } from '../lib/image-canvas-model'
+import type { AuthenticatedImageSource } from '../lib/authenticated-image-source'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 
 defineProps<{
   imageUrl: string
+  imageSource?: AuthenticatedImageSource | null
   imageAlt: string
   imageTitle: string
   prompt: string
@@ -40,8 +42,10 @@ const emit = defineEmits<{
         @pointerdown.stop
       >
         <section class="relative flex items-center justify-center min-w-0 min-h-0 p-3.5 bg-[#f8fafc] max-md:p-3">
-          <img
+          <AuthenticatedImage
+            :source="imageSource"
             :src="imageUrl"
+            mode="preview"
             :alt="imageAlt"
             :class="{ 'saturate-[0.92]': isLoadingPreview }"
             draggable="false"
@@ -51,7 +55,7 @@ const emit = defineEmits<{
               backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0',
               backgroundSize: '20px 20px',
             }"
-          >
+          />
           <span
             v-if="isLoadingPreview"
             class="absolute left-6 bottom-[22px] inline-flex items-center min-h-[30px] px-2.5 border border-white/[0.46] rounded-full bg-[rgba(15,23,42,0.72)] text-white text-xs font-black backdrop-blur-sm"
@@ -110,12 +114,12 @@ const emit = defineEmits<{
                 :key="reference.id || reference.title"
                 class="min-w-0"
               >
-                <img
-                  :src="displayReferenceUrl(reference)"
+                <AuthenticatedImage
+                  :source="reference"
                   :alt="reference.title || '参考图'"
                   loading="lazy"
                   class="w-full aspect-square border border-border rounded-lg object-cover"
-                >
+                />
                 <figcaption class="mt-[5px] overflow-hidden text-muted-foreground text-[10px] font-extrabold text-ellipsis whitespace-nowrap">
                   {{ reference.title || reference.fileName || '参考图' }}
                 </figcaption>

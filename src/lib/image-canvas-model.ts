@@ -119,6 +119,9 @@ export interface MentionState {
 
 export interface ImageViewerState {
   imageUrl: string
+  storagePath?: string
+  previewPath?: string
+  thumbnailPath?: string
   title: string
   caption: string
   zoom: number

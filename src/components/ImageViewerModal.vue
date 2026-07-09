@@ -2,6 +2,7 @@
 import { ZoomOut, ZoomIn, Download, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { ImageViewerState } from '../lib/image-canvas-model'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 
 defineProps<{
   viewer: ImageViewerState
@@ -104,8 +105,10 @@ function handleWheel(event: WheelEvent) {
           class="grid place-items-center min-h-0 overflow-auto p-6 max-md:p-3"
           @wheel.prevent="handleWheel"
         >
-          <img
+          <AuthenticatedImage
+            :source="viewer"
             :src="viewer.imageUrl"
+            mode="preview"
             :alt="viewer.caption"
             :style="{
               width: `${Math.round(viewer.zoom * 100)}%`,
@@ -113,7 +116,7 @@ function handleWheel(event: WheelEvent) {
             }"
             draggable="false"
             class="min-w-0 min-h-0 object-contain select-none"
-          >
+          />
         </div>
       </div>
     </div>

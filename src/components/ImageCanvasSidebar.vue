@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { MINI_MAP_VIEW, type CanvasNodeType, type WorkspaceMode } from '../lib/image-canvas-model'
-import { displayImageUrl } from '../lib/image-gallery'
+import { hasDisplayImage } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Plus, GripVertical, Type, Image, Sparkles } from '@lucide/vue'
@@ -229,13 +230,13 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
             class="grid grid-cols-[44px_1fr] items-center gap-2.5 w-full px-2 py-1.5 border-0 rounded-md bg-transparent cursor-pointer text-left transition-colors duration-150 hover:bg-accent"
             @click="emit('use-history-image', image)"
           >
-            <img
-              v-if="displayImageUrl(image)"
-              :src="displayImageUrl(image)"
+            <AuthenticatedImage
+              v-if="hasDisplayImage(image)"
+              :source="image"
               :alt="image.prompt"
               loading="lazy"
               class="w-11 h-11 rounded-md object-cover border border-border"
-            >
+            />
             <div v-else class="w-11 h-11 rounded-md bg-muted" />
             <div class="flex flex-col gap-[3px] min-w-0">
               <span class="overflow-hidden text-foreground text-xs font-bold text-ellipsis whitespace-nowrap">{{ image.prompt || image.size }}</span>

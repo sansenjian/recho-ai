@@ -5,6 +5,7 @@ import type {
   ImageResolution,
 } from '../types/image'
 import type { GalleryParam, GalleryReference } from './image-canvas-model'
+import { hasImageSource, imageSourceUrl } from './authenticated-image-source'
 
 export interface GalleryOption<T extends string> {
   value: T
@@ -52,15 +53,19 @@ export function galleryReferenceCount(image: GeneratedImage) {
 }
 
 export function displayImageUrl(image: GeneratedImage) {
-  return image.thumbnailUrl || image.previewUrl || image.dataUrl || ''
+  return imageSourceUrl(image, 'thumbnail')
 }
 
 export function previewImageUrl(image: GeneratedImage) {
-  return image.previewUrl || image.thumbnailUrl || image.dataUrl || ''
+  return imageSourceUrl(image, 'preview')
 }
 
 export function displayReferenceUrl(reference: GalleryReference) {
-  return reference.thumbnailUrl || reference.previewUrl || reference.dataUrl || ''
+  return imageSourceUrl(reference, 'thumbnail')
+}
+
+export function hasDisplayImage(image: GeneratedImage | GalleryReference) {
+  return hasImageSource(image, 'thumbnail')
 }
 
 export function formatGalleryDate(timestamp: string) {
