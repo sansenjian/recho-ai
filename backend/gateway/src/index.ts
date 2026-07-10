@@ -17,6 +17,7 @@ import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
 import adminSystemRouter from './routes/admin-system.js'
 import adminAnnouncementsRouter from './routes/admin-announcements.js'
 import goSidecarRouter from './routes/go-sidecar.js'
+import { privateNetworkAccessMiddleware } from './middleware/private-network-access.js'
 
 const app = express()
 
@@ -37,6 +38,7 @@ app.use((req, res, next) => {
   next()
 })
 
+app.use(privateNetworkAccessMiddleware)
 app.use(cors({
   origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN
 }))
