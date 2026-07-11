@@ -13,6 +13,7 @@ import {
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
 import { safeErrorDetail } from '../services/safe-error.js'
+import { apiErrorBody } from '../services/api-error.js'
 
 const router = Router()
 const GO_GATEWAY_BASE_URL = (process.env.GO_GATEWAY_BASE_URL || '').replace(/\/+$/, '')
@@ -180,7 +181,7 @@ router.use(async (req: Request, res: Response, next) => {
 
     res.status(upstream.status)
     upstream.headers.forEach((value, key) => {
-      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding', 'x-accel-buffering'].includes(key.toLowerCase())) return
+      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding', 'x-accel-buffering', 'x-request-id'].includes(key.toLowerCase())) return
       res.setHeader(key, value)
     })
     res.setHeader('X-Accel-Buffering', 'no')
@@ -228,13 +229,14 @@ router.use(async (req: Request, res: Response, next) => {
   } catch (err: any) {
     console.error('[go-sidecar] proxy failed:', err?.message || err)
     const status = err?.name === 'AbortError' ? 504 : 502
+    const code = status === 504 ? 'GO_SIDECAR_TIMEOUT' : 'GO_SIDECAR_UNAVAILABLE'
     if (trackImageAttempt) {
       void recordProxyFailure(req, err, status, startedAt).catch((recordErr) => {
         console.warn('[go-sidecar] image attempt failure record skipped:', safeErrorDetail(recordErr))
       })
     }
     if (!res.headersSent) {
-      res.status(status).json({ error: 'Go image service is temporarily unavailable.' })
+      res.status(status).json(apiErrorBody(req, code, 'Go image service is temporarily unavailable.'))
     }
   } finally {
     clearTimeout(timeout)
