@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { performance } from 'node:perf_hooks'
 import type { Request, RequestHandler } from 'express'
 
 export const REQUEST_ID_HEADER = 'X-Request-ID'
@@ -16,6 +17,20 @@ export const requestObservabilityMiddleware: RequestHandler = (req, res, next) =
   const id = REQUEST_ID_PATTERN.test(candidate) ? candidate : randomUUID()
 
   req.headers['x-request-id'] = id
+  const startedAt = performance.now()
   res.setHeader(REQUEST_ID_HEADER, id)
+  res.once('finish', () => {
+    console.info(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      service: 'node-gateway',
+      event: 'request.completed',
+      requestId: id,
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    }))
+  })
   next()
 }

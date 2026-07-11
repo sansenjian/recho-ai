@@ -1,6 +1,6 @@
 import http from 'node:http'
 import express from 'express'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   REQUEST_ID_HEADER,
   requestId,
@@ -13,8 +13,12 @@ type TestServer = {
 }
 
 async function listen(server: http.Server): Promise<TestServer> {
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', resolve)
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
   })
 
   const address = server.address()
@@ -39,6 +43,9 @@ function createApp() {
   app.use(requestObservabilityMiddleware)
   app.get('/request-id', (req, res) => {
     res.json({ requestId: requestId(req) })
+  })
+  app.post('/test', express.text({ type: '*/*' }), (_req, res) => {
+    res.status(201).json({ ok: true })
   })
   return app
 }
@@ -77,5 +84,75 @@ describe('request observability middleware', () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     )
     await expect(response.json()).resolves.toEqual({ requestId: responseRequestId })
+  })
+
+  it('logs a safe structured completion event', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const testServer = await listen(http.createServer(createApp()))
+    servers.push(testServer.server)
+
+    try {
+      const response = await fetch(`${testServer.url}/test?secret=not-logged`, {
+        method: 'POST',
+        headers: {
+          [REQUEST_ID_HEADER]: 'req_observability_test',
+          Authorization: 'Bearer authorization-secret',
+          Cookie: 'session=cookie-secret',
+          'X-Body-Sensitive': 'header-body-secret',
+          'Content-Type': 'text/plain',
+        },
+        body: 'body-secret-value',
+      })
+
+      expect(response.status).toBe(201)
+      expect(info).toHaveBeenCalledTimes(1)
+      expect(info.mock.calls[0]).toHaveLength(1)
+
+      const line = info.mock.calls[0][0]
+      expect(typeof line).toBe('string')
+      const event = JSON.parse(line as string)
+      expect(event).toMatchObject({
+        level: 'info',
+        service: 'node-gateway',
+        event: 'request.completed',
+        requestId: 'req_observability_test',
+        method: 'POST',
+        path: '/test',
+        statusCode: 201,
+      })
+      expect(event.timestamp).toEqual(expect.any(String))
+      expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp)
+      expect(event.durationMs).toEqual(expect.any(Number))
+      expect(event.durationMs).toBeGreaterThanOrEqual(0)
+      expect(Number.isInteger(event.durationMs)).toBe(true)
+      expect(line).not.toContain('secret=not-logged')
+      expect(line).not.toContain('authorization-secret')
+      expect(line).not.toContain('cookie-secret')
+      expect(line).not.toContain('header-body-secret')
+      expect(line).not.toContain('body-secret-value')
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  it('includes the request ID in standardized API error bodies', async () => {
+    const { apiErrorBody } = await import('../backend/gateway/src/services/api-error')
+    const app = express()
+    app.use(requestObservabilityMiddleware)
+    app.get('/error-body', (req, res) => {
+      res.json(apiErrorBody(req, 'GO_SIDECAR_UNAVAILABLE', 'unavailable'))
+    })
+    const testServer = await listen(http.createServer(app))
+    servers.push(testServer.server)
+
+    const response = await fetch(`${testServer.url}/error-body`, {
+      headers: { [REQUEST_ID_HEADER]: 'req_error_test' },
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      error: 'unavailable',
+      code: 'GO_SIDECAR_UNAVAILABLE',
+      requestId: 'req_error_test',
+    })
   })
 })
