@@ -18,6 +18,7 @@ export const requestObservabilityMiddleware: RequestHandler = (req, res, next) =
 
   req.headers['x-request-id'] = id
   const startedAt = performance.now()
+  const path = req.path
   res.setHeader(REQUEST_ID_HEADER, id)
   res.once('finish', () => {
     console.info(JSON.stringify({
@@ -27,7 +28,7 @@ export const requestObservabilityMiddleware: RequestHandler = (req, res, next) =
       event: 'request.completed',
       requestId: id,
       method: req.method,
-      path: req.path,
+      path,
       statusCode: res.statusCode,
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
     }))

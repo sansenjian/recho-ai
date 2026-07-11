@@ -21,6 +21,7 @@ import {
   REQUEST_ID_HEADER,
   requestObservabilityMiddleware,
 } from './middleware/request-observability.js'
+import { requestBodyErrorMiddleware } from './middleware/request-body-errors.js'
 import { apiErrorBody } from './services/api-error.js'
 
 const app = express()
@@ -54,30 +55,7 @@ app.use(cors({
 app.use('/api', goSidecarRouter)
 
 app.use(express.json({ limit: '50mb' }))
-
-// Explicit JSON parser for the image generation endpoint so large bodies with
-// many data-URI reference images are not rejected by a generic body size limit,
-// and we surface parsing errors as clean JSON responses rather than closed
-// connections from the default error handler.
-app.use('/api/image/generate', express.json({ limit: '50mb' }))
-app.use('/api/image/generate', (err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (err && err.type === 'entity.parse.failed') {
-    console.warn('[image] request body parse failed', err?.message)
-    res.status(400).json(apiErrorBody(req, 'INVALID_REQUEST_BODY', '请求体解析失败，请检查输入是否为合法 JSON。'))
-    return
-  }
-  if (err && (err.status === 413 || err.type === 'entity.too.large')) {
-    console.warn('[image] request body too large', err?.message)
-    res.status(413).json(apiErrorBody(req, 'REQUEST_BODY_TOO_LARGE', '请求体过大，请减少参考图数量或压缩图片后重试。'))
-    return
-  }
-  if (err) {
-    console.warn('[image] request body error', err?.status, err?.message)
-    res.status(err.status || 400).json(apiErrorBody(req, 'INVALID_REQUEST_BODY', '请求体读取失败，请稍后重试。'))
-    return
-  }
-  res.status(500).json(apiErrorBody(req, 'INTERNAL_ERROR', '未知错误'))
-})
+app.use('/api', requestBodyErrorMiddleware)
 
 // Initialize clients
 initClients()
