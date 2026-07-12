@@ -43,8 +43,8 @@ type StorageService interface {
 // IdempotencyService 描述幂等控制资源操作。
 type IdempotencyService interface {
 	Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error)
-	Fail(ctx context.Context, userID, idemKey, scope string)
-	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string)
+	Fail(ctx context.Context, userID, idemKey, scope string) error
+	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error
 }
 
 // ProviderSettingsService 描述图片 Provider 配置读取。

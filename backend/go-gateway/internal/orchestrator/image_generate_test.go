@@ -120,22 +120,24 @@ func (s *testIdempotencyService) Acquire(ctx context.Context, userID, idemKey, s
 	return &service.IdempotencyOutcome{Proceed: true}, nil
 }
 
-func (s *testIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) {
+func (s *testIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) error {
 	s.mu.Lock()
 	s.fails = append(s.fails, scope)
 	s.mu.Unlock()
 	if s.failCh != nil {
 		s.failCh <- scope
 	}
+	return nil
 }
 
-func (s *testIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) {
+func (s *testIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error {
 	s.mu.Lock()
 	s.completes = append(s.completes, scope)
 	s.mu.Unlock()
 	if s.completeCh != nil {
 		s.completeCh <- scope
 	}
+	return nil
 }
 
 func (s *testIdempotencyService) completeCount() int {

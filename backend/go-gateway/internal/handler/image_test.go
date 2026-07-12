@@ -145,18 +145,20 @@ func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemK
 	return &service.IdempotencyOutcome{Proceed: true}, nil
 }
 
-func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) {
+func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) error {
 	s.failCalls = append(s.failCalls, scope)
 	if s.failCh != nil {
 		s.failCh <- scope
 	}
+	return nil
 }
 
-func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) {
+func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error {
 	s.completeCalls = append(s.completeCalls, scope)
 	if s.completeCh != nil {
 		s.completeCh <- scope
 	}
+	return nil
 }
 
 type stubProviderSettingsService struct {
