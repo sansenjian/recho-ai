@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"database/sql"
-	"errors"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,18 +30,46 @@ const maxImageSize = 100 * 1024 * 1024 // 100MB
 
 // StorageService handles image storage operations
 type StorageService struct {
-	pool      *pgxpool.Pool
-	client    *http.Client // reused HTTP client for downloading upstream images
-	processor *ImageProcessor
-	uploader  *S3Uploader
+	pool        *pgxpool.Pool
+	client      *http.Client // reused HTTP client for downloading upstream images
+	processor   *ImageProcessor
+	uploader    *S3Uploader
+	objectStore storageObjectStore
+	db          storageDB
+}
+
+// storageObjectStore is the narrow object-store contract used by staging and
+// strict cleanup. The concrete uploader remains available for operations that
+// need direct access to its S3 client.
+type storageObjectStore interface {
+	Upload(context.Context, string, []byte, string) (string, error)
+	Delete(context.Context, string) error
+	PublicURL(string) string
+}
+
+// storageDB is the narrow database contract used by history persistence and
+// worker cleanup. *pgxpool.Pool satisfies this interface in production.
+type storageDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 // NewStorageService creates a new storage service
 func NewStorageService(pool *pgxpool.Pool, processor *ImageProcessor, uploader *S3Uploader) *StorageService {
+	var objectStore storageObjectStore
+	if uploader != nil {
+		objectStore = uploader
+	}
+	var db storageDB
+	if pool != nil {
+		db = pool
+	}
 	return &StorageService{
-		pool:      pool,
-		processor: processor,
-		uploader:  uploader,
+		pool:        pool,
+		processor:   processor,
+		uploader:    uploader,
+		objectStore: objectStore,
+		db:          db,
 		client: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -63,6 +94,14 @@ type StoredImage struct {
 type DownloadedImage struct {
 	Data []byte
 	Mime string
+}
+
+// StagedImage describes an exact, unprocessed object written to storage.
+type StagedImage struct {
+	StoragePath string
+	Mime        string
+	Bytes       int
+	SHA256      string
 }
 
 // ImageHistory represents image history data
@@ -116,6 +155,149 @@ type ImageHistoryReference struct {
 	ThumbnailPath string `json:"thumbnailPath,omitempty"`
 	Content       string `json:"content,omitempty"`
 	FileName      string `json:"fileName,omitempty"`
+}
+
+func (s *StorageService) objectStoreClient() storageObjectStore {
+	if s.objectStore != nil {
+		return s.objectStore
+	}
+	if s.uploader != nil {
+		return s.uploader
+	}
+	return nil
+}
+
+func (s *StorageService) databaseClient() storageDB {
+	if s.db != nil {
+		return s.db
+	}
+	if s.pool != nil {
+		return s.pool
+	}
+	return nil
+}
+
+// StageFromURL downloads an image without transforming it and stages the raw
+// bytes at the exact caller-supplied storage path.
+func (s *StorageService) StageFromURL(ctx context.Context, sourceURL, storagePath string) (*StagedImage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download request: %w", err)
+	}
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download image: status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image data: %w", err)
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
+	}
+
+	return s.StageFromBuffer(ctx, data, inferImageMime(resp.Header.Get("Content-Type")), storagePath)
+}
+
+// StageFromBuffer uploads raw image bytes at an exact storage path and
+// returns a checksum of the bytes that were handed to the object store.
+func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*StagedImage, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("image data is empty")
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
+	}
+	if strings.TrimSpace(storagePath) == "" {
+		return nil, fmt.Errorf("storage path is required")
+	}
+	store := s.objectStoreClient()
+	if store == nil {
+		return nil, fmt.Errorf("storage object store is not configured")
+	}
+
+	// Keep an owned copy so an uploader cannot mutate the caller's buffer while
+	// the checksum and reported size are being derived.
+	payload := append([]byte(nil), data...)
+	sum := sha256.Sum256(payload)
+	if _, err := store.Upload(ctx, storagePath, payload, mime); err != nil {
+		return nil, fmt.Errorf("failed to stage image: %w", err)
+	}
+
+	return &StagedImage{
+		StoragePath: storagePath,
+		Mime:        mime,
+		Bytes:       len(payload),
+		SHA256:      hex.EncodeToString(sum[:]),
+	}, nil
+}
+
+// DeleteObjects strictly removes every non-empty path. All paths are
+// attempted even when one deletion fails; errors are returned to the caller.
+func (s *StorageService) DeleteObjects(ctx context.Context, paths ...string) error {
+	store := s.objectStoreClient()
+	needsDeletion := false
+	for _, storagePath := range paths {
+		if strings.TrimSpace(storagePath) != "" {
+			needsDeletion = true
+			break
+		}
+	}
+	if !needsDeletion {
+		return nil
+	}
+	if store == nil {
+		return fmt.Errorf("storage object store is not configured")
+	}
+
+	var errs []error
+	for _, storagePath := range paths {
+		if strings.TrimSpace(storagePath) == "" {
+			continue
+		}
+		if err := store.Delete(ctx, storagePath); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete object %q: %w", storagePath, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// DeleteImageHistoryByID removes one history row and then strictly cleans up
+// its stored objects. It is intended for worker paths that must surface
+// cleanup failures instead of silently leaving orphaned objects.
+func (s *StorageService) DeleteImageHistoryByID(ctx context.Context, id string) error {
+	db := s.databaseClient()
+	if db == nil {
+		return fmt.Errorf("storage database is not configured")
+	}
+
+	var storagePath, previewPath, thumbnailPath string
+	row := db.QueryRow(ctx, `
+		SELECT COALESCE(storage_path, ''), COALESCE(preview_path, ''), COALESCE(thumbnail_path, '')
+		FROM image_generations
+		WHERE id = $1
+	`, id)
+	if err := row.Scan(&storagePath, &previewPath, &thumbnailPath); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("failed to query image history %q: %w", id, err)
+	}
+
+	if _, err := db.Exec(ctx, `DELETE FROM image_generations WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("failed to delete image history %q: %w", id, err)
+	}
+	return s.DeleteObjects(ctx, storagePath, previewPath, thumbnailPath)
 }
 
 // StoreFromURL downloads an image from URL, processes it, and stores it.
@@ -334,7 +516,8 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 
 // SaveImageHistory saves an image generation to history
 func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistoryItem, userID string) error {
-	if s.pool == nil {
+	db := s.databaseClient()
+	if db == nil {
 		return nil
 	}
 
@@ -378,34 +561,58 @@ func (s *StorageService) SaveImageHistory(ctx context.Context, item *ImageHistor
 	if item.CreditTransactionID != "" {
 		creditTxID = item.CreditTransactionID
 	}
-	insertUserID := nullableString(userID)
+	insertUserID := nullableString(firstNonEmpty(userID, item.UserID))
 
 	query := `
 		INSERT INTO image_generations (
 			id, user_id, generation_batch_id, prompt, user_prompt, system_prompt,
-			model_prompt, revised_prompt, storage_path, preview_url, preview_path,
+			model_prompt, revised_prompt, data_url, storage_path, preview_url, preview_path,
 			thumbnail_url, thumbnail_path, size, aspect_ratio, resolution, quality,
 			reference_images, reference_count, image_model, image_width, image_height,
 			original_bytes, visibility, funding_source, credit_cost, credit_transaction_id,
 			expires_at, generated_at
 		) VALUES (
-			$1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20,
-			$21, $22, $23, $24, $25, $26, $27::uuid, $28, $29
+			$1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+			$12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21,
+			$22, $23, $24, $25, $26, $27, $28::uuid, $29, $30
 		)
 		ON CONFLICT (id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			generation_batch_id = EXCLUDED.generation_batch_id,
 			prompt = EXCLUDED.prompt,
+			user_prompt = EXCLUDED.user_prompt,
+			system_prompt = EXCLUDED.system_prompt,
+			model_prompt = EXCLUDED.model_prompt,
+			revised_prompt = EXCLUDED.revised_prompt,
+			data_url = EXCLUDED.data_url,
 			storage_path = EXCLUDED.storage_path,
 			preview_url = EXCLUDED.preview_url,
+			preview_path = EXCLUDED.preview_path,
+			thumbnail_url = EXCLUDED.thumbnail_url,
+			thumbnail_path = EXCLUDED.thumbnail_path,
+			size = EXCLUDED.size,
+			aspect_ratio = EXCLUDED.aspect_ratio,
+			resolution = EXCLUDED.resolution,
+			quality = EXCLUDED.quality,
+			image_model = EXCLUDED.image_model,
 			reference_images = EXCLUDED.reference_images,
-			reference_count = EXCLUDED.reference_count
+			reference_count = EXCLUDED.reference_count,
+			image_width = EXCLUDED.image_width,
+			image_height = EXCLUDED.image_height,
+			original_bytes = EXCLUDED.original_bytes,
+			visibility = EXCLUDED.visibility,
+			funding_source = EXCLUDED.funding_source,
+			credit_cost = EXCLUDED.credit_cost,
+			credit_transaction_id = EXCLUDED.credit_transaction_id,
+			expires_at = EXCLUDED.expires_at,
+			generated_at = EXCLUDED.generated_at
 	`
 
-	_, err = s.pool.Exec(ctx, query,
+	_, err = db.Exec(ctx, query,
 		item.ID, insertUserID, nullableString(item.GenerationBatchID),
 		item.Prompt, nullableString(firstNonEmpty(item.UserPrompt, item.Prompt)),
 		nullableString(item.SystemPrompt), nullableString(firstNonEmpty(item.ModelPrompt, item.Prompt)),
-		nullableString(item.RevisedPrompt), nullableString(item.StoragePath),
+		nullableString(item.RevisedPrompt), nullableString(item.URL), nullableString(item.StoragePath),
 		nullableString(item.PreviewURL), nullableString(item.PreviewPath),
 		nullableString(item.ThumbnailURL), nullableString(item.ThumbnailPath),
 		item.Size, nullableString(item.AspectRatio), nullableString(item.Resolution),
@@ -743,6 +950,20 @@ func mimeFromStoragePath(storagePath string) string {
 	case ".webp":
 		return "image/webp"
 	case ".gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
+}
+
+func inferImageMime(contentType string) string {
+	contentType = strings.ToLower(contentType)
+	switch {
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		return "image/jpeg"
+	case strings.Contains(contentType, "webp"):
+		return "image/webp"
+	case strings.Contains(contentType, "gif"):
 		return "image/gif"
 	default:
 		return "image/png"
