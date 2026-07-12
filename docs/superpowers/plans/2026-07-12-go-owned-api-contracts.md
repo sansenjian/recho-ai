@@ -48,7 +48,7 @@ Excluded:
 - Create: `tests/helpers/go-owned-contract.ts`
 - Create: `tests/go-owned-api-contract.test.ts`
 
-- [ ] **Step 1: Write failing loader tests**
+- [x] **Step 1: Write failing loader tests**
 
 Create tests that call `loadGoOwnedContract()` and assert:
 
@@ -67,7 +67,7 @@ expect(materializeContractPath('/api/image/storage/*')).toBe('/api/image/storage
 
 The loader must reject duplicate IDs, duplicate method/path pairs, paths outside `/api`, and request kinds other than `none`, `json`, or `binary`.
 
-- [ ] **Step 2: Run the loader test and verify RED**
+- [x] **Step 2: Run the loader test and verify RED**
 
 ```bash
 npm test -- tests/go-owned-api-contract.test.ts
@@ -75,7 +75,7 @@ npm test -- tests/go-owned-api-contract.test.ts
 
 Expected: FAIL because the contract and loader do not exist.
 
-- [ ] **Step 3: Create the focused contract**
+- [x] **Step 3: Create the focused contract**
 
 Use this top-level shape:
 
@@ -124,7 +124,7 @@ config-supabase: GET /api/config/supabase -> 200, keys configured/url/publishabl
 credits-unauthorized: GET /api/credits -> 401, keys error/code, code UNAUTHORIZED
 ```
 
-- [ ] **Step 4: Implement the TypeScript loader**
+- [x] **Step 4: Implement the TypeScript loader**
 
 Expose:
 
@@ -135,9 +135,9 @@ export function validateGoOwnedContract(value: unknown): GoOwnedContract
 export function materializeContractPath(path: string): string
 ```
 
-Use `readFile(new URL('../../contracts/go-owned-api.json', import.meta.url), 'utf8')` and `JSON.parse`. Validation errors must name the invalid field or duplicate route.
+Use `readFile(resolve(process.cwd(), 'contracts/go-owned-api.json'), 'utf8')` and `JSON.parse`. Vitest transforms `import.meta.url` to a non-file scheme, so the repository-root path is intentional. Validation errors must name the invalid field or duplicate route.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 ```bash
 npm test -- tests/go-owned-api-contract.test.ts
@@ -152,7 +152,7 @@ Expected: contract validation tests pass.
 **Files:**
 - Create: `tests/go-sidecar-contract.test.ts`
 
-- [ ] **Step 1: Write the failing proxy iteration test**
+- [x] **Step 1: Write the failing proxy iteration test**
 
 Start one controlled upstream HTTP server and one Express server using:
 
@@ -165,7 +165,7 @@ For every contract route, send a request to `materializeContractPath(route.path)
 
 Assert the upstream observes the exact method, path, query, request ID, Authorization header, route-specific headers, and body.
 
-- [ ] **Step 2: Run the proxy contract test and verify RED**
+- [x] **Step 2: Run the proxy contract test and verify RED**
 
 ```bash
 npm test -- tests/go-sidecar-contract.test.ts
@@ -173,11 +173,11 @@ npm test -- tests/go-sidecar-contract.test.ts
 
 Expected: FAIL until the shared fixture is wired into a real proxy server. A missing proxy regex must surface as a 404.
 
-- [ ] **Step 3: Complete the controlled proxy fixture**
+- [x] **Step 3: Complete the controlled proxy fixture**
 
 Return JSON with the route's first success status and echo the request ID. Preserve the Node response request ID even if the upstream sends a different value. Restore `GO_GATEWAY_BASE_URL` and close every HTTP server after the test. Do not use `vi.resetModules`.
 
-- [ ] **Step 4: Verify Node proxy contracts and commit**
+- [x] **Step 4: Verify Node proxy contracts and commit**
 
 ```bash
 npm test -- tests/go-owned-api-contract.test.ts tests/go-sidecar-contract.test.ts tests/go-sidecar-proxy.test.ts
@@ -191,7 +191,7 @@ git commit -m "test(gateway): verify go-owned proxy contract"
 **Files:**
 - Create: `backend/go-gateway/internal/handler/contract_test.go`
 
-- [ ] **Step 1: Write the failing Go route tests**
+- [x] **Step 1: Write the failing Go route tests**
 
 Define test-only structs matching the JSON and resolve the contract path with `runtime.Caller`. Register:
 
@@ -209,11 +209,11 @@ r.Route("/api", func(r chi.Router) {
 
 Use `chi.Walk` to collect method/path pairs and assert every contracted route exists. Ignore conditional diagnostics.
 
-- [ ] **Step 2: Add failing live-scenario handler tests**
+- [x] **Step 2: Add failing live-scenario handler tests**
 
 For every shared live scenario, call the chi router with a request ID. Assert status, response request ID, all required JSON keys, and `expectedCode` when present.
 
-- [ ] **Step 3: Run Go contract tests and verify RED**
+- [x] **Step 3: Run Go contract tests and verify RED**
 
 ```bash
 cd backend/go-gateway
@@ -222,7 +222,7 @@ go test ./internal/handler -run Contract -count=1
 
 Expected: FAIL until the loader, route walking, and scenario assertions exist.
 
-- [ ] **Step 4: Implement helpers, verify GREEN, and commit**
+- [x] **Step 4: Implement helpers, verify GREEN, and commit**
 
 Keep all helpers in `contract_test.go`; no production contract package is needed.
 
@@ -240,7 +240,7 @@ git commit -m "test(go-gateway): verify shared API contract"
 - Modify: `package.json`
 - Create: `.github/workflows/contracts.yml`
 
-- [ ] **Step 1: Write the failing live integration harness**
+- [x] **Step 1: Write the failing live integration harness**
 
 Build the Go server into an OS temp directory:
 
@@ -252,7 +252,7 @@ await execFileAsync('go', ['build', '-o', binaryPath, './cmd/server/...'], {
 
 Start the binary with the temp directory as `cwd`, a reserved port, no database URLs, and `DB_CONNECT_MAX_RETRIES=1`. Wait for `/health` with bounded polling, then start a real Express server using the production Sidecar router and run the shared live scenarios through Node.
 
-- [ ] **Step 2: Run the live test and verify RED**
+- [x] **Step 2: Run the live test and verify RED**
 
 ```bash
 npm test -- tests/go-sidecar-live-contract.test.ts
@@ -260,11 +260,11 @@ npm test -- tests/go-sidecar-live-contract.test.ts
 
 Expected: FAIL until process startup, polling, proxy startup, assertions, and cleanup are implemented.
 
-- [ ] **Step 3: Complete deterministic cleanup**
+- [x] **Step 3: Complete deterministic cleanup**
 
 Capture Go stdout/stderr for diagnostics. In `afterAll`, close Node, terminate Go, await exit with a timeout, restore environment variables, and remove the temp directory. Give the Go build hook 120 seconds and each scenario 20 seconds. Fail early if the Go child exits before health succeeds.
 
-- [ ] **Step 4: Add focused npm and CI commands**
+- [x] **Step 4: Add focused npm and CI commands**
 
 Add to `package.json`:
 
@@ -282,7 +282,7 @@ cd backend/go-gateway && go test ./internal/handler -run Contract -count=1
 cd backend/go-gateway && go build ./cmd/server/...
 ```
 
-- [ ] **Step 5: Verify and commit live contracts**
+- [x] **Step 5: Verify and commit live contracts**
 
 ```bash
 npm run test:contracts
@@ -297,7 +297,7 @@ git commit -m "test(contract): add live node-go verification"
 - Modify: `docs/optimization-plan-1-3-4-5-6.md`
 - Modify: `docs/superpowers/plans/2026-07-12-go-owned-api-contracts.md`
 
-- [ ] **Step 1: Run focused verification**
+- [x] **Step 1: Run focused verification**
 
 ```bash
 npm run test:contracts
@@ -306,7 +306,7 @@ cd backend/gateway && npm run typecheck && npm run build
 cd backend/go-gateway && go test ./internal/handler -run Contract -count=1
 ```
 
-- [ ] **Step 2: Run Go and root verification**
+- [x] **Step 2: Run Go and root verification**
 
 ```bash
 cd backend/go-gateway && go test ./... -count=1
@@ -317,11 +317,11 @@ npm test
 
 Expected: all Go tests and builds pass; root build passes; root Vitest has no new failure beyond the known `tests/admin-images.test.ts` fixture mismatch.
 
-- [ ] **Step 3: Update item 4 status**
+- [x] **Step 3: Update item 4 status**
 
 Mark the shared contract, Node proxy coverage, Go handler coverage, live Node-to-Go smoke test, and CI workflow as implemented. Record that Provider/Supabase/storage-backed success scenarios remain deferred until persistent job fixtures exist.
 
-- [ ] **Step 4: Self-review and commit documentation**
+- [x] **Step 4: Self-review and commit documentation**
 
 ```bash
 rg -n "T[B]D|T[O]DO|implement l[a]ter|add appropri[a]te|handle edge c[a]ses" docs/superpowers/plans/2026-07-12-go-owned-api-contracts.md
@@ -329,3 +329,27 @@ git diff --check
 git add docs/optimization-plan-1-3-4-5-6.md docs/superpowers/plans/2026-07-12-go-owned-api-contracts.md
 git commit -m "docs: track go-owned contract rollout"
 ```
+
+## Implementation record
+
+Completed on 2026-07-12:
+
+- `21d131c` - shared JSON contract, TypeScript loader, and validation tests.
+- `5385038` - Node Sidecar verification for every contracted method/path/header/body combination.
+- `61aed4c` - Go chi route walking and real Handler scenario verification.
+- `ff1f4d4` - real Node-to-Go process smoke test, focused npm script, and GitHub Actions workflow.
+
+Actual verification:
+
+- `npm run test:contracts`: 3 files and 6 tests passed.
+- Sidecar regression tests: 11 tests passed.
+- Node Gateway typecheck and build: passed.
+- Go `go test ./... -count=1`: all packages passed.
+- Go server and root production builds: passed.
+- Root Vitest: 194 passed; only the pre-existing `tests/admin-images.test.ts` fixture mismatch failed.
+
+Deferred contract depth:
+
+- Provider, Supabase, and object-storage-backed success scenarios.
+- Complete nested schemas for generated images, history records, and credit responses.
+- Long-stream and multipart boundary cases already covered by dedicated tests but not duplicated in the shared JSON.
