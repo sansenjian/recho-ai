@@ -1,6 +1,8 @@
 import http from 'node:http'
 import express from 'express'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { requestObservabilityMiddleware } from '../backend/gateway/src/middleware/request-observability'
+import goSidecarRouter from '../backend/gateway/src/routes/go-sidecar'
 
 type TestServer = {
   server: http.Server
@@ -26,6 +28,14 @@ async function close(server: http.Server) {
     server.close((err) => err ? reject(err) : resolve())
     server.closeAllConnections?.()
   })
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name]
+  } else {
+    process.env[name] = value
+  }
 }
 
 function deferred<T>() {
@@ -59,14 +69,6 @@ describe('go sidecar proxy', () => {
 
   async function startProxy(goGatewayBaseUrl: string) {
     process.env.GO_GATEWAY_BASE_URL = goGatewayBaseUrl
-    vi.resetModules()
-    const [
-      { default: goSidecarRouter },
-      { requestObservabilityMiddleware },
-    ] = await Promise.all([
-      import('../backend/gateway/src/routes/go-sidecar'),
-      import('../backend/gateway/src/middleware/request-observability'),
-    ])
 
     const app = express()
     app.use(requestObservabilityMiddleware)
@@ -77,10 +79,9 @@ describe('go sidecar proxy', () => {
   }
 
   afterEach(async () => {
-    process.env.GO_GATEWAY_BASE_URL = originalGoGatewayBaseUrl
-    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = originalProxyTimeoutMs
+    restoreEnv('GO_GATEWAY_BASE_URL', originalGoGatewayBaseUrl)
+    restoreEnv('GO_GATEWAY_PROXY_TIMEOUT_MS', originalProxyTimeoutMs)
     await Promise.all(servers.splice(0).map(close))
-    vi.resetModules()
   })
 
   it('preserves the request ID through the sidecar request and response', async () => {
