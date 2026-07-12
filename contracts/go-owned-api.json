@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "requestIdHeader": "X-Request-ID",
+  "forwardHeaders": [
+    "Authorization",
+    "X-Request-ID",
+    "Idempotency-Key",
+    "Content-Type",
+    "X-Reference-ID",
+    "X-Reference-Title",
+    "X-Reference-Filename"
+  ],
+  "errorStatuses": [400, 401, 402, 403, 404, 409, 413, 415, 422, 429, 500, 502, 503, 504],
+  "routes": [
+    {
+      "id": "config-app",
+      "method": "GET",
+      "path": "/api/config/app",
+      "requestKind": "none",
+      "headers": [],
+      "successStatuses": [200]
+    },
+    {
+      "id": "config-supabase",
+      "method": "GET",
+      "path": "/api/config/supabase",
+      "requestKind": "none",
+      "headers": [],
+      "successStatuses": [200]
+    },
+    {
+      "id": "credits-balance",
+      "method": "GET",
+      "path": "/api/credits",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "credits-redeem",
+      "method": "POST",
+      "path": "/api/credits/redeem",
+      "requestKind": "json",
+      "headers": ["Authorization", "Idempotency-Key", "Content-Type"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-reference-upload",
+      "method": "POST",
+      "path": "/api/image/references",
+      "requestKind": "binary",
+      "headers": [
+        "Authorization",
+        "Content-Type",
+        "X-Reference-ID",
+        "X-Reference-Title",
+        "X-Reference-Filename"
+      ],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-storage",
+      "method": "GET",
+      "path": "/api/image/storage/*",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-generate",
+      "method": "POST",
+      "path": "/api/image/generate",
+      "requestKind": "json",
+      "headers": ["Authorization", "Idempotency-Key", "Content-Type"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-history-list",
+      "method": "GET",
+      "path": "/api/image/history",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-history-detail",
+      "method": "GET",
+      "path": "/api/image/history/{id}",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-history-delete",
+      "method": "DELETE",
+      "path": "/api/image/history/{id}",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    },
+    {
+      "id": "image-history-clear",
+      "method": "DELETE",
+      "path": "/api/image/history",
+      "requestKind": "none",
+      "headers": ["Authorization"],
+      "successStatuses": [200]
+    }
+  ],
+  "liveScenarios": [
+    {
+      "id": "config-app",
+      "method": "GET",
+      "path": "/api/config/app",
+      "expectedStatus": 200,
+      "requiredJsonKeys": [
+        "imageEventsEnabled",
+        "canvasContextEnabled",
+        "guestGenerationEnabled",
+        "imageCreditCostPerImage",
+        "availableImageModels",
+        "defaultImageModel"
+      ]
+    },
+    {
+      "id": "config-supabase",
+      "method": "GET",
+      "path": "/api/config/supabase",
+      "expectedStatus": 200,
+      "requiredJsonKeys": ["configured", "url", "publishableKey"]
+    },
+    {
+      "id": "credits-unauthorized",
+      "method": "GET",
+      "path": "/api/credits",
+      "expectedStatus": 401,
+      "requiredJsonKeys": ["error", "code"],
+      "expectedCode": "UNAUTHORIZED"
+    }
+  ]
+}
