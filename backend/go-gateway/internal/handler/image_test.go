@@ -81,6 +81,22 @@ func (s *stubImageStorageService) StoreFromBufferAtPath(ctx context.Context, dat
 	return nil, nil
 }
 
+func (s *stubImageStorageService) StageFromURL(ctx context.Context, sourceURL, storagePath string) (*service.StagedImage, error) {
+	return &service.StagedImage{StoragePath: storagePath, Mime: "image/png", Bytes: 1, SHA256: "test-sha"}, nil
+}
+
+func (s *stubImageStorageService) StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*service.StagedImage, error) {
+	return &service.StagedImage{StoragePath: storagePath, Mime: mime, Bytes: len(data), SHA256: "test-sha"}, nil
+}
+
+func (s *stubImageStorageService) DeleteObjects(ctx context.Context, paths ...string) error {
+	return nil
+}
+
+func (s *stubImageStorageService) DeleteImageHistoryByID(ctx context.Context, id string) error {
+	return nil
+}
+
 func (s *stubImageStorageService) DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
 	return nil, nil
 }

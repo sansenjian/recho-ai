@@ -1,8 +1,10 @@
 # Recho-AI 优化计划：1、3、4、5、6
 
-> 文档状态：实施中（第 3 项第一阶段已完成）
+> 文档状态：实施中（第 1 项原子启动/退款一致性和第 5 项 durable job/worker 主流程已完成）
 > 基线日期：2026-07-11
 > 适用范围：图片幂等与积分一致性、全链路可观测性、双网关契约测试、图片任务编排、IndexedDB 会话持久化
+
+> 当前执行范围：优先完成生图链路（第 1、5 项，以及第 3、4 项中直接服务 `/api/image/*` 的部分）。IndexedDB 和其他非生图优化暂缓。
 
 ## 结论
 
@@ -40,11 +42,11 @@
 
 | 编号 | 优化项 | 当前状态 | 主要剩余工作 |
 |---|---|---|---|
-| 1 | 图片幂等与积分一致性 | 部分完成 | 持久化任务状态、崩溃恢复、原子状态转换、退款待处理与对账 Worker |
-| 3 | Node/Go 全链路可观测性 | 第一阶段已完成 | 领域错误码、任务/额度/Provider 关联字段、指标导出与告警 |
-| 4 | 双网关契约测试 | 第一阶段已完成 | Provider/数据库/存储成功场景与更深响应 Schema |
-| 5 | 图片任务编排下沉 | 主体完成 | 去除仅依赖 goroutine 的持久化任务、加强领域边界与故障恢复 |
-| 6 | IndexedDB 会话持久化 | 未实施 | Repository、数据库结构、无损迁移、懒加载、Blob 附件与异常恢复 |
+| 1 | 图片幂等与积分一致性 | 生图主链路已完成 | 对账与孤立对象清理、长期任务告警 |
+| 3 | Node/Go 全链路可观测性 | 生图相关第一阶段已完成 | 生图任务/额度/Provider 关联字段、领域错误码和指标告警 |
+| 4 | 双网关契约测试 | 生图基础契约已完成 | `/api/image/*` 成功/失败/持久化/退款场景 |
+| 5 | 图片任务编排下沉 | durable job/worker 主流程完成 | 领域错误码、对账入口和逐步移除兼容 saga |
+| 6 | IndexedDB 会话持久化 | 暂缓 | 后续再处理聊天会话 Repository、迁移和附件 |
 
 已核实的关键文件：
 
@@ -77,7 +79,7 @@
 - `idempotency_keys` 使用 `(user_id, idem_key, scope)` 唯一约束。
 - 已完成记录会比较请求指纹：相同请求可以重放，不同请求返回冲突。仍在处理中的记录会返回冲突；过期、超时或失败记录目前会被新请求重领，并覆盖旧指纹，因此尚未保证“同一 Key 永远只能对应同一请求体”。
 - `reserve_user_credits` 使用数据库原子更新预扣额度。
-- `refund_user_credits` 与 Go Repository 会先统计累计退款再写入退款记录，可以阻止顺序执行的重复退款；统计和插入尚未形成并发原子上限，并发退款仍需要数据库锁或单条原子状态转换保护。
+- `refund_user_credits` 使用原始生图交易的事务级 advisory lock，累计退款检查与流水插入已形成并发原子上限。
 - 图片编排在 Provider 失败、部分返回和异步持久化失败时尝试退款。
 - 对象上传和历史保存已通过 Saga 反向补偿。
 
@@ -85,7 +87,7 @@
 
 当前一致性仍依赖进程内执行窗口：
 
-- `idempotency_keys` 获取和额度预扣是两个独立数据库操作，不是同一个事务状态转换。
+- `idempotency_keys` 获取仍是单独的前置声明，但对额度生图的 processing claim、额度预扣、初始 staging job 和 transaction 绑定已由 `start_image_generation_job` 在同一个数据库事务中完成。
 - 异步持久化运行在 goroutine 中，Render 重启或进程退出时任务会丢失。
 - 退款失败主要记录日志，没有持久化的 `refund_pending` 状态供 Worker 重试。
 - `processing` 幂等记录可以被超时重领，但无法单独证明旧 Provider 调用是否已经成功。
@@ -129,13 +131,13 @@ updated_at
 
 ### 实施步骤
 
-1. 建立持久化图片任务状态。
+1. [x] 建立持久化图片任务状态。
    - 在调用 Provider 前写入任务记录。
    - 每次状态转换使用带旧状态条件的更新。
    - 为 Worker 增加 `locked_until` 和重试计数。
 
-2. 收紧额度与任务的数据库事务边界。
-   - 创建任务、绑定幂等键、预扣额度和写账务流水应由同一个 RPC 或数据库事务完成。
+2. [x] 收紧额度与任务的数据库事务边界。
+   - `start_image_generation_job` 将 processing claim、预扣额度、写入 staging job 和幂等 transaction ID 绑定放入同一个 RPC 事务。
    - 不允许先查询余额再扣减。
    - 完成和退款都使用幂等状态转换。
 
@@ -372,28 +374,50 @@ HTTP Handler
       -> IdempotencyService
       -> ProviderSettingsService
       -> StorageService
-      -> Saga Runner
+      -> ImageJobRepository (staging/lease/manifest)
+          -> ImageJobWorker
+              -> StorageService / CreditService / IdempotencyService
 ```
 
-[image.go](../backend/go-gateway/internal/handler/image.go) 主要负责请求读取、校验、身份上下文和 HTTP 响应；[image_generate.go](../backend/go-gateway/internal/orchestrator/image_generate.go) 负责幂等、额度、Provider 调用、异步持久化和补偿。
+[image.go](../backend/go-gateway/internal/handler/image.go) 主要负责请求读取、校验、身份上下文和 HTTP 响应；[image_generate.go](../backend/go-gateway/internal/orchestrator/image_generate.go) 负责幂等、额度、Provider 调用和 durable staging；`image_job_processor.go`/`image_job_worker.go` 负责可恢复持久化、退款和补偿。兼容 saga 仅作为显式 rollout fallback。
 
 ### 剩余加固
 
-1. 将异步持久化从“只有 goroutine”升级为“持久化任务 + Worker”。
-2. 让编排层写入明确的任务状态和阶段结果。
-3. 将 Provider 调用封装为显式接口，统一超时、重试和错误分类。
-4. 让存储操作返回可补偿的对象清单，避免调用方猜测路径。
-5. 将额度与任务状态的数据库操作收敛到清晰事务边界。
-6. 保持接口定义在使用方附近，不引入通用 `BaseRepository` 或过度领域框架。
+1. [x] 将异步持久化从“只有 goroutine”升级为“持久化任务 + Worker”。
+2. [x] 让编排层写入明确的任务状态和阶段结果。
+3. [x] Provider 调用继续通过显式接口，并由任务阶段统一超时、重试和错误分类。
+4. [x] 存储操作返回可补偿的对象清单，manifest 保留确定路径和校验信息。
+5. [ ] 将额度与任务状态的数据库操作收敛到清晰事务边界（归入第 1 项）。
+6. [x] 保持接口定义在使用方附近，不引入通用 `BaseRepository` 或过度领域框架。
 
 ### 实施方式
 
-不要再次进行大规模搬迁。后续 PR 应以行为加固为主：
+后续改动继续以行为加固为主：
 
-- 先增加当前成功、失败、部分退款和 Saga 回滚的特征测试。
-- 再引入持久化任务 Repository 和 Worker。
 - 保持 Handler 的请求/响应行为不变。
-- 最后将第 1 项的一致性状态机接入编排层。
+- 将额度事务、并发退款上限和对账入口接入现有 Job 状态机。
+- 在迁移和观测确认后移除兼容 saga，而不是再次进行大规模搬迁。
+
+### 图片一致性与 Durable Job 实施结果（2026-07-12）
+
+已完成并接入 Go Gateway：
+
+- `image_generation_jobs` 作为持久化任务事实来源，状态包含 `staging`、`persistence_pending`、`persistence_processing`、`refund_pending`、`completed`、`failed` 和 `refunded`。
+- 请求路径先创建带租约的 staging job，再逐张上传原始对象并保存版本化 manifest，全部成功后才激活任务。
+- manifest 只保存对象路径、SHA-256、大小和生成元数据，不保存 Provider URL、Base64 或密钥。
+- `ImageJobProcessor` 按 `staged -> stored -> history_saved` 阶段恢复；每个阶段使用 owner + `lease_token` + 未过期 `locked_until` fencing。
+- `ImageJobWorker` 使用 `FOR UPDATE SKIP LOCKED`、heartbeat、持久化退避重试和 `refund_pending` 退款重试；丢失租约或取消时不再执行终态写入、退款或清理。
+- 补偿状态转换同时保存最新 manifest，终态后清理 staging 与已知永久对象；历史写入使用现有 upsert 语义。
+- 新增退款 RPC 原子化 migration：按原始生图交易使用事务级 advisory lock，串行累计退款计算与退款流水插入，避免并发 Worker 超额退款。
+- 新增 `start_image_generation_job` RPC：在 Provider 调用前原子完成幂等 claim、额度预扣和 staging job 创建；未知网络结果重试时复用原任务，不重复扣费。
+- 已登录额度生图复用预先创建的 staging job；Provider 失败进入 durable `refund_pending`，不再依赖请求进程直接退款；部分返回的退款金额和 returned count 会在 staging 租约内记录。
+- Go `main` 默认启动 Worker，可通过 `IMAGE_JOB_WORKER_ENABLED=false` 在迁移 rollout 期间保留兼容 saga 路径，并在 graceful shutdown 时等待 Worker 退出。
+- 关键故障注入测试覆盖 manifest 恢复、校验和、重试、退款失败、租约丢失、慢退款和正常 heartbeat 停止。
+
+仍待后续可靠性工作：
+
+- 对账/孤立对象扫描尚未建立独立入口；staging 上传后 manifest 写入失败的极端窗口需要对账任务兜底。
+- 兼容 saga 只在显式关闭 Worker 或数据库不可用时保留，待部署迁移和观测确认后再移除。
 
 ### 验收标准
 
@@ -404,6 +428,8 @@ HTTP Handler
 - 代码移动与一致性规则变化位于不同 PR，便于定位回归。
 
 ## 6. IndexedDB 会话持久化
+
+> 当前暂缓：本阶段只验收生图链路，不推进聊天会话持久化。
 
 ### 目标
 

@@ -184,7 +184,7 @@ func TestSaveManifestReturnsErrJobLeaseLostWhenNoRowMatches(t *testing.T) {
 	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 0")}
 	repo := &ImageGenerationJobRepository{db: db}
 
-	err := repo.SaveStagingManifest(context.Background(), "job-1", "lease-1", json.RawMessage(`{"images":[]}`), time.Minute)
+	err := repo.SaveStagingManifest(context.Background(), "job-1", "worker-1", "lease-1", json.RawMessage(`{"images":[]}`), time.Minute)
 	if !errors.Is(err, ErrJobLeaseLost) {
 		t.Fatalf("SaveStagingManifest() error = %v, want ErrJobLeaseLost", err)
 	}
@@ -192,7 +192,109 @@ func TestSaveManifestReturnsErrJobLeaseLostWhenNoRowMatches(t *testing.T) {
 		t.Fatalf("expected one Exec call, got %d", len(db.execSQL))
 	}
 	sql := normalizedSQL(db.execSQL[0])
-	requireSQLFragments(t, sql, "status = 'staging'", "lease_token")
+	requireSQLFragments(t, sql, "status = 'staging'", "locked_by", "lease_token", "locked_until > now()")
+}
+
+func TestSaveStagingManifestPassesJSONAsText(t *testing.T) {
+	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	if err := repo.SaveStagingManifest(context.Background(), "job-1", "worker-1", "lease-1", json.RawMessage(`{"images":[]}`), time.Minute); err != nil {
+		t.Fatalf("SaveStagingManifest() error = %v", err)
+	}
+	if len(db.execArg) != 1 || len(db.execArg[0]) < 4 {
+		t.Fatalf("unexpected Exec args: %#v", db.execArg)
+	}
+	if _, ok := db.execArg[0][3].(string); !ok {
+		t.Fatalf("manifest arg type = %T, want string for jsonb cast", db.execArg[0][3])
+	}
+}
+
+func TestRecordStagingRefundUsesLeaseFenceAndUpdatesReturnedCount(t *testing.T) {
+	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	if err := repo.RecordStagingRefund(context.Background(), "job-1", "worker-1", "lease-1", 1.25, 1, time.Minute); err != nil {
+		t.Fatalf("RecordStagingRefund() error = %v", err)
+	}
+	requireSQLFragments(t, normalizedSQL(db.execSQL[0]),
+		"refunded_amount = least(reserved_amount, refunded_amount + $4)",
+		"returned_count = $5",
+		"status = 'staging'",
+		"locked_by",
+		"lease_token",
+		"locked_until > now()",
+	)
+}
+
+func TestCreateStagingCanRecoverAnAmbiguousBatchInsert(t *testing.T) {
+	db := &fakeImageJobDB{queryRow: fakeImageJobRow{scan: scanClaimedJob}}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	_, err := repo.CreateStaging(context.Background(), CreateImageGenerationJob{
+		GenerationBatchID: "batch-1",
+		RequestID:         "request-1",
+		RequestedCount:    1,
+		ReturnedCount:     1,
+		MaxAttempts:       3,
+		LockOwner:         "request-1",
+		LeaseDuration:     time.Minute,
+		ResultManifest:    json.RawMessage(`{"images":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateStaging() error = %v", err)
+	}
+	if len(db.querySQL) != 1 {
+		t.Fatalf("expected one QueryRow call, got %d", len(db.querySQL))
+	}
+	requireSQLFragments(t, normalizedSQL(db.querySQL[0]),
+		"on conflict (generation_batch_id) do update",
+		"set generation_batch_id = excluded.generation_batch_id",
+	)
+}
+
+func TestStartWithCreditUsesAtomicImageJobRPC(t *testing.T) {
+	db := &fakeImageJobDB{queryRow: fakeImageJobRow{scan: func(dest ...any) error {
+		if len(dest) != 6 {
+			return errors.New("unexpected start result column count")
+		}
+		values := []any{
+			"job-1", "staging", "lease-1", time.Unix(101, 0).UTC(), float64(9), "tx-1",
+		}
+		for i, value := range values {
+			if err := assignScanValue(dest[i], value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	started, err := repo.StartWithCredit(context.Background(), StartImageGenerationJobInput{
+		UserID:            "user-1",
+		IdempotencyKey:    "idem-1",
+		RequestHash:       strings.Repeat("a", 64),
+		GenerationBatchID: "batch-1",
+		RequestID:         "request-1",
+		RequestedCount:    1,
+		ReservedAmount:    1,
+		ResultManifest:    json.RawMessage(`{"version":1,"images":[]}`),
+		LockOwner:         "request-1",
+		LeaseDuration:     time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("StartWithCredit() error = %v", err)
+	}
+	if started == nil || started.Job == nil || started.Job.ID != "job-1" || started.TransactionID != "tx-1" {
+		t.Fatalf("StartWithCredit() result = %#v", started)
+	}
+	if len(db.querySQL) != 1 {
+		t.Fatalf("expected one QueryRow call, got %d", len(db.querySQL))
+	}
+	sql := normalizedSQL(db.querySQL[0])
+	if !strings.Contains(sql, "public.start_image_generation_job") {
+		t.Fatalf("expected atomic RPC call, got %s", sql)
+	}
 }
 
 func TestMarkCompletedRequiresProcessingStatusAndLeaseToken(t *testing.T) {
@@ -215,6 +317,7 @@ func TestMarkCompletedRequiresProcessingStatusAndLeaseToken(t *testing.T) {
 		"status = 'persistence_processing'",
 		"locked_by",
 		"lease_token",
+		"locked_until > now()",
 		"status = 'completed'",
 	)
 	if !containsStringArg(db.execArg[0], "worker-1") || !containsStringArg(db.execArg[0], "lease-1") {
@@ -226,13 +329,14 @@ func TestQueueCompensationClearsLeaseAndPreservesError(t *testing.T) {
 	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 1")}
 	repo := &ImageGenerationJobRepository{db: db}
 
-	err := repo.QueueCompensation(context.Background(), "job-1", "worker-1", "lease-1", "persist_failed", "storage unavailable")
+	err := repo.QueueCompensation(context.Background(), "job-1", "worker-1", "lease-1", json.RawMessage(`{"images":[]}`), "persist_failed", "storage unavailable")
 	if err != nil {
 		t.Fatalf("QueueCompensation() error = %v", err)
 	}
 	sql := normalizedSQL(db.execSQL[0])
 	requireSQLFragments(t, sql,
 		"status in ('staging', 'persistence_processing')",
+		"result_manifest = $4::jsonb",
 		"status = 'refund_pending'",
 		"locked_by = null",
 		"lease_token = null",
@@ -240,10 +344,42 @@ func TestQueueCompensationClearsLeaseAndPreservesError(t *testing.T) {
 		"next_attempt_at = now()",
 		"last_error_code",
 		"last_error_detail",
+		"locked_until > now()",
 	)
 	if !containsStringArg(db.execArg[0], "persist_failed") || !containsStringArg(db.execArg[0], "storage unavailable") {
 		t.Fatalf("QueueCompensation() args = %#v, want error code/detail", db.execArg[0])
 	}
+}
+
+func TestRenewLeaseRefusesExpiredLease(t *testing.T) {
+	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 0")}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	err := repo.RenewLease(context.Background(), "job-1", "worker-1", "lease-1", time.Minute)
+	if !errors.Is(err, ErrJobLeaseLost) {
+		t.Fatalf("RenewLease() error = %v, want ErrJobLeaseLost", err)
+	}
+	if len(db.execSQL) != 1 {
+		t.Fatalf("expected one Exec call, got %d", len(db.execSQL))
+	}
+	requireSQLFragments(t, normalizedSQL(db.execSQL[0]), "locked_by", "lease_token", "locked_until > now()")
+}
+
+func TestRecordRefundUsesLeaseFenceAndCapsAtReservedAmount(t *testing.T) {
+	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	if err := repo.RecordRefund(context.Background(), "job-1", "worker-1", "lease-1", 1.25); err != nil {
+		t.Fatalf("RecordRefund() error = %v", err)
+	}
+	sql := normalizedSQL(db.execSQL[0])
+	requireSQLFragments(t, sql,
+		"refunded_amount = least(reserved_amount, refunded_amount + $4)",
+		"status = 'refund_pending'",
+		"locked_by",
+		"lease_token",
+		"locked_until > now()",
+	)
 }
 
 func containsStringArg(args []any, want string) bool {

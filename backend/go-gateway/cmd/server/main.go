@@ -17,6 +17,7 @@ import (
 	"go-gateway/internal/config"
 	"go-gateway/internal/handler"
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/orchestrator"
 	"go-gateway/internal/pkg/supabase"
 	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
@@ -48,10 +49,12 @@ func main() {
 	var creditRepo *repository.CreditRepository
 	var redeemRepo *repository.RedeemRepository
 	var idempotencyRepo *repository.IdempotencyRepository
+	var imageJobRepo *repository.ImageGenerationJobRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
 		redeemRepo = repository.NewRedeemRepository(db.Pool())
 		idempotencyRepo = repository.NewIdempotencyRepository(db.Pool())
+		imageJobRepo = repository.NewImageGenerationJobRepository(db.Pool())
 	}
 
 	// Initialize services
@@ -93,6 +96,33 @@ func main() {
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService).
 		WithProviderSettings(providerSettingsService)
+	if config.ImageJobWorkerEnabled && imageJobRepo != nil {
+		imageHandler.WithImageJobStore(imageJobRepo)
+	}
+
+	// The durable worker is the source of truth for post-provider staging,
+	// history upserts, and credit compensation. Keep its lifecycle independent
+	// from request contexts so client disconnects cannot abandon a job.
+	var imageWorkerCancel context.CancelFunc
+	var imageWorkerDone chan struct{}
+	if config.ImageJobWorkerEnabled && imageJobRepo != nil && storageService != nil {
+		worker := orchestrator.NewImageJobWorkerWithServices(
+			imageJobRepo,
+			storageService,
+			idempotencyService,
+			creditService,
+			orchestrator.ImageJobWorkerOptions{},
+		)
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		imageWorkerCancel = cancelWorker
+		imageWorkerDone = make(chan struct{})
+		go func() {
+			defer close(imageWorkerDone)
+			if err := worker.Run(workerCtx); err != nil {
+				log.Printf("Image job worker stopped: %v", err)
+			}
+		}()
+	}
 
 	// Setup router
 	r := chi.NewRouter()
@@ -159,6 +189,14 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	if imageWorkerCancel != nil {
+		imageWorkerCancel()
+		select {
+		case <-imageWorkerDone:
+		case <-time.After(5 * time.Second):
+			log.Println("Timed out waiting for image job worker shutdown")
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

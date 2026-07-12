@@ -70,6 +70,29 @@ type CreateImageGenerationJob struct {
 	LeaseDuration       time.Duration
 }
 
+// StartImageGenerationJobInput contains the data atomically bound to an
+// existing processing idempotency claim and a new credit reservation.
+type StartImageGenerationJobInput struct {
+	UserID            string
+	IdempotencyKey    string
+	RequestHash       string
+	GenerationBatchID string
+	RequestID         string
+	RequestedCount    int
+	ReservedAmount    float64
+	CreditMetadata    map[string]any
+	ResultManifest    json.RawMessage
+	LockOwner         string
+	LeaseDuration     time.Duration
+}
+
+// ImageGenerationJobStart is returned by the atomic start RPC.
+type ImageGenerationJobStart struct {
+	Job           *ImageGenerationJob
+	Balance       float64
+	TransactionID string
+}
+
 // ImageGenerationJobRepository implements token-fenced job transitions.
 type ImageGenerationJobRepository struct {
 	db imageJobDB
@@ -78,6 +101,99 @@ type ImageGenerationJobRepository struct {
 // NewImageGenerationJobRepository creates a repository backed by a pgx pool.
 func NewImageGenerationJobRepository(pool *pgxpool.Pool) *ImageGenerationJobRepository {
 	return &ImageGenerationJobRepository{db: pool}
+}
+
+// StartWithCredit atomically validates the processing idempotency claim,
+// reserves credits, and creates the initial staging job.
+func (r *ImageGenerationJobRepository) StartWithCredit(
+	ctx context.Context,
+	input StartImageGenerationJobInput,
+) (*ImageGenerationJobStart, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image generation job database client is nil")
+	}
+	manifest := input.ResultManifest
+	if len(manifest) == 0 {
+		manifest = json.RawMessage(`{}`)
+	}
+	metadata, err := marshalMetadata(input.CreditMetadata)
+	if err != nil {
+		return nil, err
+	}
+	leaseSeconds := int(input.LeaseDuration / time.Second)
+	if leaseSeconds <= 0 {
+		leaseSeconds = 1
+	}
+
+	query := `
+		SELECT job_id, status, lease_token, locked_until, balance, transaction_id
+		FROM public.start_image_generation_job(
+			$1::uuid, $2, $3, $4, $5, $6, $7::numeric,
+			$8::jsonb, $9::jsonb, $10, $11
+		)
+	`
+	var (
+		jobID         string
+		status        string
+		leaseToken    *string
+		lockedUntil   *time.Time
+		balance       float64
+		transactionID string
+	)
+	if err := r.db.QueryRow(
+		ctx,
+		query,
+		input.UserID,
+		input.IdempotencyKey,
+		input.RequestHash,
+		input.GenerationBatchID,
+		input.RequestID,
+		input.RequestedCount,
+		input.ReservedAmount,
+		metadata,
+		string(manifest),
+		input.LockOwner,
+		leaseSeconds,
+	).Scan(&jobID, &status, &leaseToken, &lockedUntil, &balance, &transactionID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || isCreditError(err, "insufficient_credits") {
+			return nil, ErrInsufficientCredits
+		}
+		return nil, fmt.Errorf("start image generation job: %w", err)
+	}
+
+	userID := input.UserID
+	idempotencyKey := input.IdempotencyKey
+	requestHash := input.RequestHash
+	creditTransactionID := transactionID
+	return &ImageGenerationJobStart{
+		Job: &ImageGenerationJob{
+			ID:                  jobID,
+			GenerationBatchID:   input.GenerationBatchID,
+			RequestID:           input.RequestID,
+			Status:              status,
+			UserID:              &userID,
+			IdempotencyKey:      &idempotencyKey,
+			RequestHash:         &requestHash,
+			CreditTransactionID: &creditTransactionID,
+			ReservedAmount:      input.ReservedAmount,
+			RequestedCount:      input.RequestedCount,
+			ReturnedCount:       0,
+			MaxAttempts:         5,
+			ResultManifest:      append(json.RawMessage(nil), manifest...),
+			LockedBy:            optionalRepositoryString(input.LockOwner),
+			LeaseToken:          leaseToken,
+			LockedUntil:         lockedUntil,
+		},
+		Balance:       balance,
+		TransactionID: transactionID,
+	}, nil
+}
+
+func optionalRepositoryString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 const imageGenerationJobColumns = `
@@ -199,6 +315,8 @@ func (r *ImageGenerationJobRepository) CreateStaging(
             gen_random_uuid(),
             now() + make_interval(secs => $13)
         )
+        ON CONFLICT (generation_batch_id) DO UPDATE
+        SET generation_batch_id = EXCLUDED.generation_batch_id
         RETURNING %s`, imageGenerationJobColumns)
 
 	job, err := scanImageGenerationJob(r.db.QueryRow(
@@ -214,7 +332,7 @@ func (r *ImageGenerationJobRepository) CreateStaging(
 		input.RequestedCount,
 		input.ReturnedCount,
 		input.MaxAttempts,
-		manifest,
+		string(manifest),
 		input.LockOwner,
 		input.LeaseDuration.Seconds(),
 	))
@@ -224,29 +342,33 @@ func (r *ImageGenerationJobRepository) CreateStaging(
 	return job, nil
 }
 
-// SaveStagingManifest refreshes a staging lease using the lease token as the
-// fencing predicate. The owner is intentionally not part of this API.
+// SaveStagingManifest refreshes a staging lease using both owner and lease
+// token as the fencing predicates.
 func (r *ImageGenerationJobRepository) SaveStagingManifest(
 	ctx context.Context,
 	jobID string,
+	ownerID string,
 	leaseToken string,
 	manifest json.RawMessage,
 	lease time.Duration,
 ) error {
 	query := `
         UPDATE public.image_generation_jobs
-        SET result_manifest = $3::jsonb,
-            locked_until = now() + make_interval(secs => $4),
+		SET result_manifest = $4::jsonb,
+		    returned_count = jsonb_array_length(COALESCE($4::jsonb->'images', '[]'::jsonb)),
+		    locked_until = now() + make_interval(secs => $5),
             updated_at = now()
         WHERE id = $1
           AND status = 'staging'
-          AND lease_token = $2`
-	return r.execFenced(ctx, "save staging manifest", query, jobID, leaseToken, manifest, lease.Seconds())
+          AND locked_by = $2
+          AND lease_token = $3
+          AND locked_until > now()`
+	return r.execFenced(ctx, "save staging manifest", query, jobID, ownerID, leaseToken, string(manifest), lease.Seconds())
 }
 
 // Activate moves a staged job into the persistence queue and releases its
 // staging lease.
-func (r *ImageGenerationJobRepository) Activate(ctx context.Context, jobID, leaseToken string) error {
+func (r *ImageGenerationJobRepository) Activate(ctx context.Context, jobID, ownerID, leaseToken string) error {
 	query := `
         UPDATE public.image_generation_jobs
         SET status = 'persistence_pending',
@@ -257,8 +379,35 @@ func (r *ImageGenerationJobRepository) Activate(ctx context.Context, jobID, leas
             updated_at = now()
         WHERE id = $1
           AND status = 'staging'
-          AND lease_token = $2`
-	return r.execFenced(ctx, "activate image generation job", query, jobID, leaseToken)
+          AND locked_by = $2
+          AND lease_token = $3
+          AND locked_until > now()`
+	return r.execFenced(ctx, "activate image generation job", query, jobID, ownerID, leaseToken)
+}
+
+// RecordStagingRefund persists a partial provider refund and returned count
+// before the job is handed to the persistence worker.
+func (r *ImageGenerationJobRepository) RecordStagingRefund(
+	ctx context.Context,
+	jobID,
+	ownerID,
+	leaseToken string,
+	amount float64,
+	returnedCount int,
+	lease time.Duration,
+) error {
+	query := `
+        UPDATE public.image_generation_jobs
+        SET refunded_amount = LEAST(reserved_amount, refunded_amount + $4),
+            returned_count = $5,
+            locked_until = now() + make_interval(secs => $6),
+            updated_at = now()
+        WHERE id = $1
+          AND status = 'staging'
+          AND locked_by = $2
+          AND lease_token = $3
+          AND locked_until > now()`
+	return r.execFenced(ctx, "record staging image refund", query, jobID, ownerID, leaseToken, amount, returnedCount, lease.Seconds())
 }
 
 // ClaimNext atomically claims the next ready or expired job. The CTE and
@@ -323,7 +472,8 @@ func (r *ImageGenerationJobRepository) RenewLease(
         WHERE id = $1
           AND status IN ('staging', 'persistence_processing', 'refund_pending')
           AND locked_by = $2
-          AND lease_token = $3`
+		  AND lease_token = $3
+		  AND locked_until > now()`
 	return r.execFenced(ctx, "renew image generation job lease", query, jobID, workerID, leaseToken, lease.Seconds())
 }
 
@@ -345,8 +495,9 @@ func (r *ImageGenerationJobRepository) SaveProcessingManifest(
         WHERE id = $1
           AND status = 'persistence_processing'
           AND locked_by = $2
-          AND lease_token = $3`
-	return r.execFenced(ctx, "save processing manifest", query, jobID, workerID, leaseToken, manifest, lease.Seconds())
+		  AND lease_token = $3
+		  AND locked_until > now()`
+	return r.execFenced(ctx, "save processing manifest", query, jobID, workerID, leaseToken, string(manifest), lease.Seconds())
 }
 
 // SchedulePersistenceRetry returns a processing job to the pending queue.
@@ -372,7 +523,8 @@ func (r *ImageGenerationJobRepository) SchedulePersistenceRetry(
         WHERE id = $1
           AND status = 'persistence_processing'
           AND locked_by = $2
-          AND lease_token = $3`
+		  AND lease_token = $3
+		  AND locked_until > now()`
 	return r.execFenced(ctx, "schedule persistence retry", query, jobID, workerID, leaseToken, next, code, detail)
 }
 
@@ -380,27 +532,33 @@ func (r *ImageGenerationJobRepository) SchedulePersistenceRetry(
 // compensation is attempted.
 func (r *ImageGenerationJobRepository) QueueCompensation(
 	ctx context.Context,
-	jobID,
-	ownerID,
-	leaseToken,
-	code,
+	jobID string,
+	ownerID string,
+	leaseToken string,
+	manifest json.RawMessage,
+	code string,
 	detail string,
 ) error {
 	query := `
         UPDATE public.image_generation_jobs
-        SET status = 'refund_pending',
+        SET result_manifest = $4::jsonb,
+            status = 'refund_pending',
             locked_by = NULL,
             lease_token = NULL,
             locked_until = NULL,
             next_attempt_at = now(),
-            last_error_code = $4,
-            last_error_detail = $5,
+            last_error_code = $5,
+            last_error_detail = $6,
             updated_at = now()
         WHERE id = $1
           AND status IN ('staging', 'persistence_processing')
           AND locked_by = $2
-          AND lease_token = $3`
-	return r.execFenced(ctx, "queue image generation compensation", query, jobID, ownerID, leaseToken, code, detail)
+          AND lease_token = $3
+          AND locked_until > now()`
+	if len(manifest) == 0 {
+		manifest = json.RawMessage(`{}`)
+	}
+	return r.execFenced(ctx, "queue image generation compensation", query, jobID, ownerID, leaseToken, string(manifest), code, detail)
 }
 
 // ScheduleCompensationRetry releases a refund worker lease and leaves the job
@@ -427,8 +585,31 @@ func (r *ImageGenerationJobRepository) ScheduleCompensationRetry(
         WHERE id = $1
           AND status = 'refund_pending'
           AND locked_by = $2
-          AND lease_token = $3`
+		  AND lease_token = $3
+		  AND locked_until > now()`
 	return r.execFenced(ctx, "schedule compensation retry", query, jobID, workerID, leaseToken, next, code, detail)
+}
+
+// RecordRefund durably records an externally applied refund while retaining
+// refund_pending status. This prevents a later retry (for example, when the
+// idempotency service is unavailable) from issuing the same refund again.
+func (r *ImageGenerationJobRepository) RecordRefund(
+	ctx context.Context,
+	jobID,
+	workerID,
+	leaseToken string,
+	amount float64,
+) error {
+	query := `
+        UPDATE public.image_generation_jobs
+        SET refunded_amount = LEAST(reserved_amount, refunded_amount + $4),
+            updated_at = now()
+        WHERE id = $1
+          AND status = 'refund_pending'
+          AND locked_by = $2
+		  AND lease_token = $3
+		  AND locked_until > now()`
+	return r.execFenced(ctx, "record image generation refund", query, jobID, workerID, leaseToken, amount)
 }
 
 // MarkCompleted records the final manifest/response and releases the lease.
@@ -453,8 +634,9 @@ func (r *ImageGenerationJobRepository) MarkCompleted(
         WHERE id = $1
           AND status = 'persistence_processing'
           AND locked_by = $2
-          AND lease_token = $3`
-	return r.execFenced(ctx, "mark image generation job completed", query, jobID, workerID, leaseToken, manifest, response)
+		  AND lease_token = $3
+		  AND locked_until > now()`
+	return r.execFenced(ctx, "mark image generation job completed", query, jobID, workerID, leaseToken, string(manifest), string(response))
 }
 
 // MarkFailed marks a job failed after its compensation work is complete.
@@ -474,11 +656,13 @@ func (r *ImageGenerationJobRepository) MarkFailed(
             locked_until = NULL,
             last_error_code = $4,
             last_error_detail = $5,
+            completed_at = now(),
             updated_at = now()
         WHERE id = $1
           AND status = 'refund_pending'
           AND locked_by = $2
-          AND lease_token = $3`
+		  AND lease_token = $3
+		  AND locked_until > now()`
 	return r.execFenced(ctx, "mark image generation job failed", query, jobID, workerID, leaseToken, code, detail)
 }
 
@@ -502,6 +686,7 @@ func (r *ImageGenerationJobRepository) MarkRefunded(
         WHERE id = $1
           AND status = 'refund_pending'
           AND locked_by = $2
-          AND lease_token = $3`
+		  AND lease_token = $3
+		  AND locked_until > now()`
 	return r.execFenced(ctx, "mark image generation job refunded", query, jobID, workerID, leaseToken, refundedAmount)
 }

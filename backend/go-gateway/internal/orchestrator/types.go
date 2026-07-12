@@ -4,7 +4,7 @@
 //   - 资源服务（credit / storage / imagegen / idempotency）只做单步原子操作，
 //     通过接口注入，彼此不知道对方存在。
 //   - ImageOrchestrator 只组合资源，不实现资源细节。
-//   - 异步持久化用 saga 显式建模，补偿动作集中管理，避免散落回滚点。
+//   - durable staging job 与兼容 saga 都通过显式补偿边界建模，避免散落回滚点。
 //
 // 该包不导入 net/http 之外的 HTTP 概念；HTTP 状态码通过 StatusError 返回，
 // 由 handler 层负责真正的 HTTP 响应写入。
@@ -12,7 +12,10 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -30,6 +33,10 @@ type StorageService interface {
 	StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error)
 	StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
 	StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
+	StageFromURL(ctx context.Context, sourceURL, storagePath string) (*service.StagedImage, error)
+	StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*service.StagedImage, error)
+	DeleteObjects(ctx context.Context, paths ...string) error
+	DeleteImageHistoryByID(ctx context.Context, id string) error
 	DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
 	SaveImageHistory(ctx context.Context, item *service.ImageHistoryItem, userID string) error
 	ListImageHistory(ctx context.Context, userID, scope string, limit, offset int) (*service.ImageHistory, error)
@@ -38,6 +45,27 @@ type StorageService interface {
 	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
 	ClearImageHistory(ctx context.Context, userID string) (int64, error)
 	CleanupObjects(paths ...string)
+}
+
+// ImageJobEnqueuer is the request-path subset of the durable image job
+// repository. The worker owns processing and completion after activation.
+type ImageJobEnqueuer interface {
+	CreateStaging(ctx context.Context, input repository.CreateImageGenerationJob) (*repository.ImageGenerationJob, error)
+	SaveStagingManifest(ctx context.Context, jobID, ownerID, leaseToken string, manifest json.RawMessage, lease time.Duration) error
+	Activate(ctx context.Context, jobID, ownerID, leaseToken string) error
+	QueueCompensation(ctx context.Context, jobID, ownerID, leaseToken string, manifest json.RawMessage, code, detail string) error
+}
+
+// ImageJobCreditStarter atomically binds the existing idempotency claim,
+// credit reservation, and initial staging job before the provider is called.
+type ImageJobCreditStarter interface {
+	StartWithCredit(ctx context.Context, input repository.StartImageGenerationJobInput) (*repository.ImageGenerationJobStart, error)
+}
+
+// ImageJobStagingRefundRecorder records a partial provider refund while the
+// request still owns the staging lease.
+type ImageJobStagingRefundRecorder interface {
+	RecordStagingRefund(ctx context.Context, jobID, ownerID, leaseToken string, amount float64, returnedCount int, lease time.Duration) error
 }
 
 // IdempotencyService 描述幂等控制资源操作。
@@ -120,11 +148,11 @@ type ImageResult struct {
 	RevisedPrompt     string                          `json:"revisedPrompt,omitempty"`
 	Size              string                          `json:"size"`
 	AspectRatio       string                          `json:"aspectRatio,omitempty"`
-	Resolution        string          `json:"resolution,omitempty"`
-	Quality           string          `json:"quality,omitempty"`
-	Timestamp         string          `json:"timestamp"`
-	Width             int             `json:"width,omitempty"`
-	Height            int             `json:"height,omitempty"`
+	Resolution        string                          `json:"resolution,omitempty"`
+	Quality           string                          `json:"quality,omitempty"`
+	Timestamp         string                          `json:"timestamp"`
+	Width             int                             `json:"width,omitempty"`
+	Height            int                             `json:"height,omitempty"`
 }
 
 // --- 错误类型 ---
@@ -176,4 +204,45 @@ type imageGenerationMetadata struct {
 	FundingSource       string
 	CreditCost          float64
 	CreditTransactionID string
+	TotalCost           float64
+	CreditBalance       *float64
+}
+
+// imageJobManifest is the durable hand-off payload between the request path
+// and the persistence worker. Provider source URLs/base64 are deliberately
+// kept out of this JSON and remain request-local until staged.
+type imageJobManifest struct {
+	Version  int                     `json:"version"`
+	Metadata imageJobMetadata        `json:"metadata"`
+	Images   []imageJobManifestImage `json:"images"`
+}
+
+type imageJobMetadata struct {
+	BatchID             string                          `json:"batchId"`
+	UserID              string                          `json:"userId,omitempty"`
+	DisplayPrompt       string                          `json:"displayPrompt,omitempty"`
+	SystemPrompt        string                          `json:"systemPrompt,omitempty"`
+	ModelPrompt         string                          `json:"modelPrompt,omitempty"`
+	Size                string                          `json:"size,omitempty"`
+	AspectRatio         string                          `json:"aspectRatio,omitempty"`
+	Resolution          string                          `json:"resolution,omitempty"`
+	Quality             string                          `json:"quality,omitempty"`
+	ImageModel          string                          `json:"imageModel,omitempty"`
+	References          []service.ImageHistoryReference `json:"references,omitempty"`
+	ReferenceCount      int                             `json:"referenceCount,omitempty"`
+	Visibility          string                          `json:"visibility,omitempty"`
+	FundingSource       string                          `json:"fundingSource,omitempty"`
+	CreditCost          float64                         `json:"creditCost,omitempty"`
+	CreditTransactionID string                          `json:"creditTransactionId,omitempty"`
+	TotalCost           float64                         `json:"totalCost,omitempty"`
+	CreditBalance       *float64                        `json:"creditBalance,omitempty"`
+}
+
+type imageJobManifestImage struct {
+	Result       ImageResult `json:"result"`
+	StagedPath   string      `json:"stagedPath,omitempty"`
+	StagedMime   string      `json:"stagedMime,omitempty"`
+	StagedBytes  int         `json:"stagedBytes,omitempty"`
+	StagedSHA256 string      `json:"stagedSha256,omitempty"`
+	Phase        string      `json:"phase"`
 }

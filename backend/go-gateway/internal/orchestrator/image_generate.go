@@ -26,14 +26,17 @@ import (
 	"go-gateway/internal/service"
 )
 
-// ImageOrchestrator 编排图片生成管线：额度预留 → 调 AI API → 异步持久化（含补偿）。
+// ImageOrchestrator 编排图片生成管线：额度预留 → 调 AI API → durable staging
+// enqueue（或兼容的异步 saga）→ 持久化补偿。
 //
 // 它不持有任何 HTTP 概念，只通过资源接口操作外部副作用。
-// 所有多点回滚逻辑通过 saga 显式建模，集中在 persistAsyncSaga 里。
+// Durable jobs own recoverable compensation; persistAsyncSaga remains only as
+// the temporary compatibility path while worker wiring rolls out.
 type ImageOrchestrator struct {
 	credit      CreditService
 	storage     StorageService
 	idempotency IdempotencyService
+	jobStore    ImageJobEnqueuer
 	provider    ProviderSettingsService
 	httpClient  *http.Client
 	logger      *log.Logger
@@ -57,6 +60,14 @@ func NewImageOrchestrator(
 // WithProviderSettings 注入图片 Provider 配置源。返回自身以支持链式调用。
 func (o *ImageOrchestrator) WithProviderSettings(provider ProviderSettingsService) *ImageOrchestrator {
 	o.provider = normalizeProviderSettingsService(provider)
+	return o
+}
+
+// WithImageJobStore configures the durable staging-job repository. When it is
+// absent, Generate keeps the legacy asynchronous saga for compatibility until
+// durable worker wiring is enabled in the main process.
+func (o *ImageOrchestrator) WithImageJobStore(store ImageJobEnqueuer) *ImageOrchestrator {
+	o.jobStore = normalizeImageJobStore(store)
 	return o
 }
 
@@ -88,6 +99,13 @@ func normalizeProviderSettingsService(service ProviderSettingsService) ProviderS
 	return service
 }
 
+func normalizeImageJobStore(store ImageJobEnqueuer) ImageJobEnqueuer {
+	if resourceIsNil(store) {
+		return nil
+	}
+	return store
+}
+
 func resourceIsNil(value any) bool {
 	if value == nil {
 		return true
@@ -111,16 +129,17 @@ func (o *ImageOrchestrator) WithLogger(logger *log.Logger) *ImageOrchestrator {
 
 // GenerateParams 封装单次 Generate 调用的全部入参。
 type GenerateParams struct {
-	User    *middleware.User
-	RawBody []byte
-	IdemKey string
-	Request GenRequest
+	User      *middleware.User
+	RawBody   []byte
+	IdemKey   string
+	RequestID string
+	Request   GenRequest
 }
 
 // Generate 执行图片生成编排。
 //
 // 返回值：
-//   - *GenResponse: 成功时的响应（已被 idempotency 缓存，并触发异步持久化）
+//   - *GenResponse: 成功时的响应（staging job 激活后返回；兼容路径触发异步持久化）
 //   - *StatusError: 业务错误，携带 HTTP 状态码供 handler 直接使用
 //
 // 关键行为（与原 handler.Generate 保持一致）：
@@ -128,11 +147,12 @@ type GenerateParams struct {
 //  2. 预留额度：失败返回 402（不足）或 503（服务不可用）
 //  3. 调 AI API：失败全量退款 + 标记幂等失败，返回 500
 //  4. 部分退款：返回图少于请求时按比例退款
-//  5. 异步持久化：goroutine 内用 saga 执行 持久化→存历史；失败反向补偿
+//  5. 持久化：优先创建并激活 durable staging job；未配置 job store 时保留 saga 兼容路径
 func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams) (*GenResponse, *StatusError) {
 	user := params.User
 	req := params.Request
 	idemKey := params.IdemKey
+	requestID := ensureRequestID(params.RequestID)
 
 	// 存储服务可用性
 	if o.storage == nil {
@@ -196,9 +216,58 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片 Provider 尚未配置，请联系管理员。"}
 	}
 
-	// --- 预留额度 ---
+	// --- 构建初始任务 metadata ---
+	references := historyReferences(req.References)
+	visibility := "public"
+	fundingSource := "free"
+	creditCost := 0.0
+	var userID string
+	if user != nil {
+		userID = user.ID
+	}
+	usesCredits := userID != "" && o.credit != nil && totalCost > 0
+	if usesCredits {
+		visibility = "private"
+		fundingSource = "credit"
+		creditCost = costPerImage
+	}
+
+	batchID := "batch_" + randomID()
+	metadata := imageGenerationMetadata{
+		BatchID:        batchID,
+		UserID:         userID,
+		DisplayPrompt:  displayPrompt,
+		SystemPrompt:   req.SystemPrompt,
+		ModelPrompt:    modelPrompt,
+		Size:           size,
+		AspectRatio:    aspectRatio,
+		Resolution:     resolution,
+		Quality:        quality,
+		ImageModel:     imageModelForRequest(providerCfg, len(req.References) > 0),
+		References:     references,
+		ReferenceCount: len(references),
+		Visibility:     visibility,
+		FundingSource:  fundingSource,
+		CreditCost:     creditCost,
+		TotalCost:      totalCost,
+	}
+
+	// --- 原子预留额度并创建 staging job ---
 	var reservation *service.CreditReservation
-	if user != nil && user.ID != "" && o.credit != nil {
+	var stagingJob *repository.ImageGenerationJob
+	if usesCredits && o.jobStore != nil {
+		started, startErr := o.startCreditImageJob(ctx, metadata, user, idemKey, params.RawBody, requestID, count, totalCost, costPerImage)
+		if startErr != nil {
+			return nil, startErr
+		}
+		stagingJob = started.Job
+		reservation = &service.CreditReservation{
+			TransactionID: started.TransactionID,
+			Amount:        totalCost,
+			Balance:       started.Balance,
+		}
+		metadata.CreditTransactionID = started.TransactionID
+	} else if usesCredits {
 		txID, newBalance, reservedCostPerImage, cost, err := o.credit.ReserveCredits(ctx, user.ID, count)
 		if err != nil {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
@@ -216,22 +285,29 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		}
 		totalCost = cost
 		costPerImage = reservedCostPerImage
+		metadata.CreditCost = costPerImage
+		metadata.CreditTransactionID = txID
+		metadata.TotalCost = totalCost
+	}
+
+	if o.jobStore != nil && stagingJob == nil {
+		var startErr *StatusError
+		stagingJob, startErr = o.createInitialImageJob(ctx, metadata, user, idemKey, params.RawBody, requestID, count, reservation)
+		if startErr != nil {
+			return nil, startErr
+		}
 	}
 
 	// --- 调 AI API（不可逆步骤，无补偿）---
 	images, ierr := o.callImageAPI(ctx, req, count, aspectRatio, resolution, quality, providerCfg)
 	if ierr != nil {
 		o.logger.Printf("[image] generation failed: %v", ierr)
-		// 全额退款
-		if reservation != nil {
-			refundCtx, refundCancel := withRefundContext()
-			_, refundErr := o.credit.RefundCredits(refundCtx, user.ID, reservation.TransactionID, reservation.Amount, "image_generation_failed")
-			refundCancel()
-			if refundErr != nil {
-				o.logger.Printf("[image] failed to refund credits after generation failure: %v", refundErr)
-			}
+		if stagingJob != nil {
+			manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+			o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "provider_failed", ierr.Error())
+		} else {
+			o.handleImmediateCompensation(reservation, user, idemKey, "image_generation_failed")
 		}
-		o.failIdempotency(user, idemKey)
 		return nil, &StatusError{Code: http.StatusInternalServerError, Message: "图片生成失败，请稍后重试。"}
 	}
 
@@ -245,50 +321,35 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 			refundCancel()
 			if refundErr != nil {
 				o.logger.Printf("[image] failed to refund credits for partial generation (%d/%d): %v", len(images), count, refundErr)
+				if stagingJob != nil {
+					manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+					return nil, o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "partial_refund_failed", refundErr.Error())
+				}
 			} else {
 				totalCost = roundToTwoDecimals(totalCost - refundAmount)
 				reservation.Balance = newBalance
 				reservation.Amount = totalCost
+				metadata.TotalCost = totalCost
+				if stagingJob != nil {
+					recorder, ok := o.jobStore.(ImageJobStagingRefundRecorder)
+					if !ok || resourceIsNil(recorder) {
+						err := errors.New("image job store does not support staging refund records")
+						manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+						return nil, o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "partial_refund_record_unavailable", err.Error())
+					}
+					leaseToken := imageJobLeaseToken(stagingJob)
+					if err := recorder.RecordStagingRefund(ctx, stagingJob.ID, requestID, leaseToken, refundAmount, len(images), stagingJobLeaseDuration); err != nil {
+						manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+						return nil, o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "partial_refund_record_failed", err.Error())
+					}
+				}
 			}
 		}
 	}
 
 	// --- 构建 metadata + 预备响应 ---
-	references := historyReferences(req.References)
-	visibility := "public"
-	fundingSource := "free"
-	creditCost := 0.0
-	var userID string
-	var creditTransactionID string
-	if user != nil {
-		userID = user.ID
-	}
 	if reservation != nil {
-		visibility = "private"
-		fundingSource = "credit"
-		creditCost = costPerImage
-		creditTransactionID = reservation.TransactionID
-	}
-
-	batchID := "batch_" + randomID()
-	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
-	metadata := imageGenerationMetadata{
-		BatchID:             batchID,
-		UserID:              userID,
-		DisplayPrompt:       displayPrompt,
-		SystemPrompt:        req.SystemPrompt,
-		ModelPrompt:         modelPrompt,
-		Size:                size,
-		AspectRatio:         aspectRatio,
-		Resolution:          resolution,
-		Quality:             quality,
-		ImageModel:          imageModel,
-		References:          references,
-		ReferenceCount:      len(references),
-		Visibility:          visibility,
-		FundingSource:       fundingSource,
-		CreditCost:          creditCost,
-		CreditTransactionID: creditTransactionID,
+		metadata.CreditTransactionID = reservation.TransactionID
 	}
 	preparedImages := o.prepareGeneratedImages(images, metadata)
 
@@ -302,6 +363,8 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		TotalCost:  totalCost,
 	}
 	if reservation != nil {
+		balance := reservation.Balance
+		metadata.CreditBalance = &balance
 		resp.CreditBalance = &struct {
 			Balance float64 `json:"balance"`
 		}{Balance: reservation.Balance}
@@ -313,8 +376,21 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		txID = reservation.TransactionID
 	}
 	if len(preparedImages) > 0 {
-		o.persistAsyncSaga(preparedImages, metadata, reservation, userID, user, idemKey, resp, txID)
+		if o.jobStore != nil {
+			if statusErr := o.enqueueImageJob(ctx, stagingJob, preparedImages, metadata, reservation, user, idemKey, params.RawBody, requestID, count); statusErr != nil {
+				return nil, statusErr
+			}
+		} else {
+			// Durable worker wiring removes this compatibility path once every
+			// orchestrator instance has the persistence worker configured.
+			o.persistAsyncSaga(preparedImages, metadata, reservation, userID, user, idemKey, resp, txID)
+		}
 	} else {
+		if stagingJob != nil {
+			manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+			o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "provider_empty_result", "provider returned no usable images")
+			return nil, &StatusError{Code: http.StatusInternalServerError, Message: "图片生成失败，请稍后重试。"}
+		}
 		o.completeIdempotency(ctx, user, idemKey, resp, txID)
 	}
 
@@ -328,7 +404,347 @@ func (o *ImageOrchestrator) failIdempotency(user *middleware.User, idemKey strin
 	}
 	ctx, cancel := withRefundContext()
 	defer cancel()
-	o.idempotency.Fail(ctx, user.ID, idemKey, "image_generate")
+	if err := o.idempotency.Fail(ctx, user.ID, idemKey, "image_generate"); err != nil {
+		o.logger.Printf("[idempotency] failed to mark request failed: %v", err)
+	}
+}
+
+const stagingJobLeaseDuration = 10 * time.Minute
+
+func ensureRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "request-local-" + randomID()
+	}
+	return value
+}
+
+func optionalStringPointer(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func imageJobManifestJSON(manifest imageJobManifest) json.RawMessage {
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return json.RawMessage(`{"version":1,"metadata":{},"images":[]}`)
+	}
+	return data
+}
+
+func imageJobLeaseToken(job *repository.ImageGenerationJob) string {
+	if job == nil || job.LeaseToken == nil {
+		return ""
+	}
+	return strings.TrimSpace(*job.LeaseToken)
+}
+
+func (o *ImageOrchestrator) startCreditImageJob(
+	ctx context.Context,
+	metadata imageGenerationMetadata,
+	user *middleware.User,
+	idempotencyKey string,
+	rawBody []byte,
+	requestID string,
+	requestedCount int,
+	reservedAmount float64,
+	costPerImage float64,
+) (*repository.ImageGenerationJobStart, *StatusError) {
+	starter, ok := o.jobStore.(ImageJobCreditStarter)
+	if !ok || resourceIsNil(starter) {
+		o.failIdempotency(user, idempotencyKey)
+		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务服务暂不支持原子扣费，请稍后重试。"}
+	}
+	manifest := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+	input := repository.StartImageGenerationJobInput{
+		UserID:            user.ID,
+		IdempotencyKey:    idempotencyKey,
+		RequestHash:       service.HashBody(rawBody),
+		GenerationBatchID: metadata.BatchID,
+		RequestID:         requestID,
+		RequestedCount:    requestedCount,
+		ReservedAmount:    reservedAmount,
+		CreditMetadata: map[string]any{
+			"count":              requestedCount,
+			"creditCostPerImage": costPerImage,
+			"totalCost":          reservedAmount,
+		},
+		ResultManifest: manifest,
+		LockOwner:      requestID,
+		LeaseDuration:  stagingJobLeaseDuration,
+	}
+	started, err := starter.StartWithCredit(ctx, input)
+	if err != nil && ctx.Err() == nil {
+		retryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		started, err = starter.StartWithCredit(retryCtx, input)
+		cancel()
+	}
+	if err != nil {
+		if errors.Is(err, repository.ErrInsufficientCredits) {
+			o.failIdempotency(user, idempotencyKey)
+			return nil, &StatusError{Code: http.StatusPaymentRequired, Message: "额度不足。"}
+		}
+		o.logger.Printf("[image] failed to atomically start image job: %v", err)
+		o.failIdempotency(user, idempotencyKey)
+		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "额度服务暂时不可用，请稍后重试。"}
+	}
+	if started == nil || started.Job == nil || strings.TrimSpace(started.Job.ID) == "" || imageJobLeaseToken(started.Job) == "" {
+		o.failIdempotency(user, idempotencyKey)
+		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务初始化失败，请稍后重试。"}
+	}
+	return started, nil
+}
+
+func (o *ImageOrchestrator) createInitialImageJob(
+	ctx context.Context,
+	metadata imageGenerationMetadata,
+	user *middleware.User,
+	idempotencyKey string,
+	rawBody []byte,
+	requestID string,
+	requestedCount int,
+	reservation *service.CreditReservation,
+) (*repository.ImageGenerationJob, *StatusError) {
+	manifest := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+	var idempotencyPtr *string
+	var requestHashPtr *string
+	if strings.TrimSpace(idempotencyKey) != "" {
+		idempotencyPtr = optionalStringPointer(idempotencyKey)
+		requestHashPtr = optionalStringPointer(service.HashBody(rawBody))
+	}
+	input := repository.CreateImageGenerationJob{
+		GenerationBatchID: metadata.BatchID,
+		RequestID:         requestID,
+		UserID:            optionalStringPointer(metadata.UserID),
+		IdempotencyKey:    idempotencyPtr,
+		RequestHash:       requestHashPtr,
+		ReservedAmount:    0,
+		RequestedCount:    requestedCount,
+		ReturnedCount:     0,
+		MaxAttempts:       5,
+		ResultManifest:    manifest,
+		LockOwner:         requestID,
+		LeaseDuration:     stagingJobLeaseDuration,
+	}
+	if reservation != nil {
+		input.CreditTransactionID = optionalStringPointer(reservation.TransactionID)
+		input.ReservedAmount = reservation.Amount
+	}
+	job, err := o.jobStore.CreateStaging(ctx, input)
+	if err != nil && ctx.Err() == nil {
+		retryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		job, err = o.jobStore.CreateStaging(retryCtx, input)
+		cancel()
+	}
+	if err != nil {
+		o.logger.Printf("[image] failed to create initial staging job: %v", err)
+		o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
+		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片持久化任务排队失败，请稍后重试。"}
+	}
+	if job == nil || strings.TrimSpace(job.ID) == "" || imageJobLeaseToken(job) == "" {
+		o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
+		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务初始化失败，请稍后重试。"}
+	}
+	return job, nil
+}
+
+// enqueueImageJob creates and fully stages a durable persistence job before
+// returning the temporary provider response. Provider URLs/base64 stay in the
+// request-local generatedImageRecord and never enter the durable manifest.
+func (o *ImageOrchestrator) enqueueImageJob(
+	ctx context.Context,
+	job *repository.ImageGenerationJob,
+	images []generatedImageRecord,
+	metadata imageGenerationMetadata,
+	reservation *service.CreditReservation,
+	user *middleware.User,
+	idempotencyKey string,
+	rawBody []byte,
+	requestID string,
+	requestedCount int,
+) *StatusError {
+	manifest := imageJobManifestFor(images, metadata)
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		o.logger.Printf("[image] failed to marshal staging manifest: %v", err)
+		return o.handleStagingFailure(nil, true, manifestJSON, requestID, reservation, user, idempotencyKey, "manifest_encode_failed", err.Error())
+	}
+
+	if job == nil {
+		return o.handleStagingFailure(nil, true, manifestJSON, requestID, reservation, user, idempotencyKey, "job_create_failed", "staging job is missing")
+	}
+	leaseToken := imageJobLeaseToken(job)
+	if job == nil || strings.TrimSpace(job.ID) == "" || leaseToken == "" {
+		err := errors.New("staging job returned without id or lease token")
+		o.logger.Printf("[image] %v", err)
+		return o.handleStagingFailure(job, job == nil, manifestJSON, requestID, reservation, user, idempotencyKey, "job_create_invalid", err.Error())
+	}
+
+	for index := range images {
+		storagePath := fmt.Sprintf("staging/image-jobs/%s/%s.source", metadata.BatchID, images[index].result.ID)
+		staged, stageErr := o.stageGeneratedImage(ctx, images[index], storagePath)
+		if stageErr != nil {
+			o.logger.Printf("[image] failed to stage image %s: %v", images[index].result.ID, stageErr)
+			return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "staging_failed", stageErr.Error())
+		}
+		if staged == nil || strings.TrimSpace(staged.StoragePath) == "" {
+			err := errors.New("storage returned empty staged image")
+			o.logger.Printf("[image] failed to stage image %s: %v", images[index].result.ID, err)
+			return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "staging_failed", err.Error())
+		}
+
+		manifest.Images[index].StagedPath = staged.StoragePath
+		manifest.Images[index].StagedMime = staged.Mime
+		manifest.Images[index].StagedBytes = staged.Bytes
+		manifest.Images[index].StagedSHA256 = staged.SHA256
+		manifest.Images[index].Phase = "staged"
+		manifestJSON, err = json.Marshal(manifest)
+		if err != nil {
+			o.logger.Printf("[image] failed to marshal staged manifest: %v", err)
+			return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "manifest_encode_failed", err.Error())
+		}
+		if err := o.jobStore.SaveStagingManifest(ctx, job.ID, requestID, leaseToken, manifestJSON, stagingJobLeaseDuration); err != nil {
+			o.logger.Printf("[image] failed to save staged manifest: %v", err)
+			return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "manifest_save_failed", err.Error())
+		}
+	}
+
+	if err := o.jobStore.Activate(ctx, job.ID, requestID, leaseToken); err != nil {
+		o.logger.Printf("[image] failed to activate staging job %s: %v", job.ID, err)
+		return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "activation_failed", err.Error())
+	}
+	return nil
+}
+
+func (o *ImageOrchestrator) stageGeneratedImage(ctx context.Context, image generatedImageRecord, storagePath string) (*service.StagedImage, error) {
+	if image.source.URL != "" {
+		return o.storage.StageFromURL(ctx, image.source.URL, storagePath)
+	}
+	if image.source.Base64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(image.source.Base64)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode failed: %w", err)
+		}
+		return o.storage.StageFromBuffer(ctx, decoded, firstNonEmpty(image.source.Mime, "image/png"), storagePath)
+	}
+	return nil, errors.New("missing provider image source")
+}
+
+func imageJobManifestFor(images []generatedImageRecord, metadata imageGenerationMetadata) imageJobManifest {
+	manifest := imageJobManifest{
+		Version:  1,
+		Metadata: imageJobMetadataFor(metadata),
+		Images:   make([]imageJobManifestImage, 0, len(images)),
+	}
+	for _, image := range images {
+		result := image.result
+		result.URL = ""
+		result.TemporaryURL = ""
+		result.DataURL = ""
+		result.PreviewURL = ""
+		result.PreviewPath = ""
+		result.ThumbnailURL = ""
+		result.ThumbnailPath = ""
+		result.StoragePath = ""
+		manifest.Images = append(manifest.Images, imageJobManifestImage{
+			Result: result,
+			Phase:  "awaiting_stage",
+		})
+	}
+	return manifest
+}
+
+func imageJobMetadataFor(metadata imageGenerationMetadata) imageJobMetadata {
+	return imageJobMetadata{
+		BatchID:             metadata.BatchID,
+		UserID:              metadata.UserID,
+		DisplayPrompt:       metadata.DisplayPrompt,
+		SystemPrompt:        metadata.SystemPrompt,
+		ModelPrompt:         metadata.ModelPrompt,
+		Size:                metadata.Size,
+		AspectRatio:         metadata.AspectRatio,
+		Resolution:          metadata.Resolution,
+		Quality:             metadata.Quality,
+		ImageModel:          metadata.ImageModel,
+		References:          metadata.References,
+		ReferenceCount:      metadata.ReferenceCount,
+		Visibility:          metadata.Visibility,
+		FundingSource:       metadata.FundingSource,
+		CreditCost:          metadata.CreditCost,
+		CreditTransactionID: metadata.CreditTransactionID,
+		TotalCost:           metadata.TotalCost,
+		CreditBalance:       metadata.CreditBalance,
+	}
+}
+
+func (o *ImageOrchestrator) handleStagingFailure(
+	job *repository.ImageGenerationJob,
+	allowImmediateCompensation bool,
+	manifest json.RawMessage,
+	requestID string,
+	reservation *service.CreditReservation,
+	user *middleware.User,
+	idempotencyKey string,
+	code string,
+	detail string,
+) *StatusError {
+	queued := false
+	leaseToken := ""
+	jobID := ""
+	if job != nil {
+		jobID = strings.TrimSpace(job.ID)
+		if job.LeaseToken != nil {
+			leaseToken = strings.TrimSpace(*job.LeaseToken)
+		}
+	}
+	if o.jobStore != nil && jobID != "" && leaseToken != "" {
+		compensationCtx, cancel := withRefundContext()
+		queueErr := o.jobStore.QueueCompensation(compensationCtx, jobID, requestID, leaseToken, manifest, code, detail)
+		cancel()
+		if queueErr != nil {
+			o.logger.Printf("[image] failed to queue durable staging compensation for %s: %v", jobID, queueErr)
+		} else {
+			queued = true
+		}
+	}
+	if !queued {
+		// For an existing durable row, an error while fencing compensation is
+		// ambiguous: the database may have committed the state change even if
+		// the request observed an error. Do not issue an immediate refund or
+		// release the idempotency key here, because a later worker reclaim could
+		// otherwise refund the same reservation twice or allow a duplicate call.
+		// When no row was created, the legacy immediate fallback is still the
+		// only way to release the provisional reservation.
+		if o.jobStore != nil && !allowImmediateCompensation {
+			o.logger.Printf("[image] durable compensation unavailable; leaving reservation and idempotency state pending (request_id=%s)", requestID)
+		} else {
+			o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
+		}
+	}
+	return &StatusError{Code: http.StatusServiceUnavailable, Message: "图片持久化任务排队失败，请稍后重试。"}
+}
+
+func (o *ImageOrchestrator) handleImmediateCompensation(
+	reservation *service.CreditReservation,
+	user *middleware.User,
+	idempotencyKey string,
+	reason string,
+) {
+	ctx, cancel := withRefundContext()
+	defer cancel()
+	if reservation != nil && o.credit != nil && user != nil && user.ID != "" {
+		if _, err := o.credit.RefundCredits(ctx, user.ID, reservation.TransactionID, reservation.Amount, reason); err != nil {
+			o.logger.Printf("[image] failed to refund credits after %s: %v", reason, err)
+		}
+	}
+	if idempotencyKey != "" && user != nil && user.ID != "" && o.idempotency != nil {
+		if err := o.idempotency.Fail(ctx, user.ID, idempotencyKey, "image_generate"); err != nil {
+			o.logger.Printf("[image] failed to mark idempotency failed after %s: %v", reason, err)
+		}
+	}
 }
 
 // completeIdempotency stores the replay response only after all required side
@@ -337,7 +753,9 @@ func (o *ImageOrchestrator) completeIdempotency(ctx context.Context, user *middl
 	if idemKey == "" || user == nil || user.ID == "" || o.idempotency == nil {
 		return
 	}
-	o.idempotency.Complete(ctx, user.ID, idemKey, "image_generate", http.StatusOK, resp, transactionID)
+	if err := o.idempotency.Complete(ctx, user.ID, idemKey, "image_generate", http.StatusOK, resp, transactionID); err != nil {
+		o.logger.Printf("[idempotency] failed to complete request: %v", err)
+	}
 }
 
 // resolveImageProvider 解析图片 Provider 配置。
@@ -442,17 +860,7 @@ func (o *ImageOrchestrator) handleAsyncPersistenceFailure(
 	user *middleware.User,
 	idempotencyKey string,
 ) {
-	ctx, cancel := withRefundContext()
-	defer cancel()
-
-	if reservation != nil && o.credit != nil && user != nil && user.ID != "" {
-		if _, refundErr := o.credit.RefundCredits(ctx, user.ID, reservation.TransactionID, reservation.Amount, "async_history_save_failed"); refundErr != nil {
-			o.logger.Printf("[image] failed to refund credits after async persistence failure: %v", refundErr)
-		}
-	}
-	if idempotencyKey != "" && user != nil && user.ID != "" && o.idempotency != nil {
-		o.idempotency.Fail(ctx, user.ID, idempotencyKey, "image_generate")
-	}
+	o.handleImmediateCompensation(reservation, user, idempotencyKey, "async_history_save_failed")
 }
 
 // persistGeneratedImage 持久化单张图：下载/解码 → 转码 → 上传三份。

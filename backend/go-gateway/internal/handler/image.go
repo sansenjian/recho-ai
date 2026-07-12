@@ -119,6 +119,13 @@ func (h *ImageHandler) WithProviderSettings(providerSettingsSvc orchestrator.Pro
 	return h
 }
 
+// WithImageJobStore injects the durable staging-job repository used by the
+// request path. It is optional until the persistence worker is wired in.
+func (h *ImageHandler) WithImageJobStore(jobStore orchestrator.ImageJobEnqueuer) *ImageHandler {
+	h.orch = h.orch.WithImageJobStore(jobStore)
+	return h
+}
+
 type referenceUploadResponse struct {
 	Reference ImageGenReference `json:"reference"`
 }
@@ -178,10 +185,11 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	// 委托业务编排
 	resp, statusErr := h.orch.Generate(r.Context(), orchestrator.GenerateParams{
-		User:    user,
-		RawBody: rawBody,
-		IdemKey: idemKey,
-		Request: req,
+		User:      user,
+		RawBody:   rawBody,
+		IdemKey:   idemKey,
+		RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")),
+		Request:   req,
 	})
 	if statusErr != nil {
 		// 幂等重放：直接写回缓存的原始字节
