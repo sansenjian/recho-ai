@@ -98,9 +98,9 @@ func main() {
 	r := chi.NewRouter()
 
 	// Global middleware
+	r.Use(middleware.RequestID)
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
-	r.Use(chiMiddleware.RequestID)
 
 	// CORS middleware
 	r.Use(cors.Handler(cors.Options{
