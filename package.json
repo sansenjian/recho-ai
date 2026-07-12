@@ -17,6 +17,7 @@
     "build": "vue-tsc -b && vite build",
     "postbuild": "node scripts/prepare-spa-fallbacks.mjs",
     "test": "vitest run",
+    "test:contracts": "vitest run tests/go-owned-api-contract.test.ts tests/go-sidecar-contract.test.ts tests/go-sidecar-live-contract.test.ts",
     "credits:create": "cd backend/gateway && npm run credits:create --",
     "test:watch": "vitest",
     "preview": "vite preview"
