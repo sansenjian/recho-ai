@@ -99,7 +99,7 @@ func main() {
 
 	// Global middleware
 	r.Use(middleware.RequestID)
-	r.Use(chiMiddleware.Logger)
+	r.Use(middleware.RequestLogger(os.Stdout))
 	r.Use(chiMiddleware.Recoverer)
 
 	// CORS middleware

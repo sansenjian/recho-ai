@@ -26,11 +26,11 @@ export const requestObservabilityMiddleware: RequestHandler = (req, res, next) =
       level: 'info',
       service: 'node-gateway',
       event: 'request.completed',
-      requestId: id,
+      request_id: id,
       method: req.method,
       path,
-      statusCode: res.statusCode,
-      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      status_code: res.statusCode,
+      duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
     }))
   })
   next()

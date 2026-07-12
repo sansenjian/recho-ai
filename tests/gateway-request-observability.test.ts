@@ -146,30 +146,30 @@ describe('request observability middleware', () => {
       expect(typeof line).toBe('string')
       const event = JSON.parse(line as string)
       expect(Object.keys(event).sort()).toEqual([
-        'durationMs',
+        'duration_ms',
         'event',
         'level',
         'method',
         'path',
-        'requestId',
+        'request_id',
         'service',
-        'statusCode',
+        'status_code',
         'timestamp',
       ])
       expect(event).toMatchObject({
         level: 'info',
         service: 'node-gateway',
         event: 'request.completed',
-        requestId: 'req_observability_test',
+        request_id: 'req_observability_test',
         method: 'POST',
         path: '/test',
-        statusCode: 201,
+        status_code: 201,
       })
       expect(event.timestamp).toEqual(expect.any(String))
       expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp)
-      expect(event.durationMs).toEqual(expect.any(Number))
-      expect(event.durationMs).toBeGreaterThanOrEqual(0)
-      expect(Number.isInteger(event.durationMs)).toBe(true)
+      expect(event.duration_ms).toEqual(expect.any(Number))
+      expect(event.duration_ms).toBeGreaterThanOrEqual(0)
+      expect(Number.isInteger(event.duration_ms)).toBe(true)
       expect(line).not.toContain('secret=not-logged')
       expect(line).not.toContain('authorization-secret')
       expect(line).not.toContain('cookie-secret')

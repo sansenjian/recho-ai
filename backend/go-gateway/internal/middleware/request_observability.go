@@ -3,7 +3,9 @@ package middleware
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -53,4 +55,45 @@ func newRequestID() string {
 	value[6] = (value[6] & 0x0f) | 0x40
 	value[8] = (value[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
+}
+
+type requestLogEvent struct {
+	Timestamp  string `json:"timestamp"`
+	Level      string `json:"level"`
+	Service    string `json:"service"`
+	Event      string `json:"event"`
+	RequestID  string `json:"request_id"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	StatusCode int    `json:"status_code"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// RequestLogger emits one safe JSON completion event without request headers,
+// query parameters, or bodies.
+func RequestLogger(out io.Writer) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			startedAt := time.Now()
+			wrapped := chiMiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			next.ServeHTTP(wrapped, r)
+
+			status := wrapped.Status()
+			if status == 0 {
+				status = http.StatusOK
+			}
+			_ = json.NewEncoder(out).Encode(requestLogEvent{
+				Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+				Level:      "info",
+				Service:    "go-gateway",
+				Event:      "request.completed",
+				RequestID:  chiMiddleware.GetReqID(r.Context()),
+				Method:     r.Method,
+				Path:       r.URL.Path,
+				StatusCode: status,
+				DurationMS: time.Since(startedAt).Milliseconds(),
+			})
+		})
+	}
 }
