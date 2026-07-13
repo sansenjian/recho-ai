@@ -135,10 +135,12 @@ func TestClaimNextUsesSkipLockedAndReturnsLeaseToken(t *testing.T) {
 	}
 	sql := normalizedSQL(db.querySQL[0])
 	requireSQLFragments(t, sql,
+		"select id as job_id",
 		"for update skip locked",
 		"gen_random_uuid()",
 		"status in ('persistence_pending', 'refund_pending')",
 		"refund_pending",
+		"where j.id = c.job_id",
 		"now()",
 	)
 }

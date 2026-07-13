@@ -492,7 +492,7 @@ func (r *ImageGenerationJobRepository) ClaimNext(
 ) (*ImageGenerationJob, error) {
 	query := fmt.Sprintf(`
         WITH candidate AS (
-            SELECT id
+            SELECT id AS job_id
             FROM public.image_generation_jobs
             WHERE (
                 status IN ('persistence_pending', 'refund_pending')
@@ -517,7 +517,7 @@ func (r *ImageGenerationJobRepository) ClaimNext(
             retry_count = retry_count + 1,
             updated_at = now()
         FROM candidate c
-        WHERE j.id = c.id
+        WHERE j.id = c.job_id
         RETURNING %s`, imageGenerationJobColumns)
 
 	job, err := scanImageGenerationJob(r.db.QueryRow(ctx, query, workerID, lease.Seconds()))
