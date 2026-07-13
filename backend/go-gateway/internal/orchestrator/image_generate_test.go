@@ -241,6 +241,77 @@ func TestIsLucenImageProvider(t *testing.T) {
 	}
 }
 
+func TestCallImageAPILucenRunsMultipleRequestsConcurrently(t *testing.T) {
+	const count = 2
+	started := make(chan map[string]any, count)
+	release := make(chan struct{})
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var payload map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		started <- payload
+		select {
+		case <-release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"aGVsbG8="}]}`)),
+		}, nil
+	})}
+
+	type callResult struct {
+		images []generatedImageRecord
+		err    error
+	}
+	done := make(chan callResult, 1)
+	go func() {
+		images, err := o.callImageAPI(
+			context.Background(),
+			GenRequest{Prompt: "two images"},
+			count,
+			"1:1",
+			"1k",
+			"medium",
+			service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", APIKey: "provider-key", ImageModel: "gpt-image-2"},
+		)
+		done <- callResult{images: images, err: err}
+	}()
+
+	for index := 0; index < count; index++ {
+		select {
+		case payload := <-started:
+			if len(payload) != 2 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
+				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected all Lucen requests to start before any response was released")
+		}
+	}
+	close(release)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("callImageAPI returned error: %v", result.err)
+		}
+		if len(result.images) != count {
+			t.Fatalf("expected %d images, got %#v", count, result.images)
+		}
+		for _, image := range result.images {
+			if image.source.Base64 != "aGVsbG8=" {
+				t.Fatalf("unexpected concurrent image source: %#v", image)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent Lucen requests did not complete")
+	}
+}
+
 func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
 	var payload map[string]any
 	o := NewImageOrchestrator(nil, nil, nil)
