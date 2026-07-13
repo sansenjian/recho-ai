@@ -19,7 +19,8 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "openai": "^4.85.4",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "undici": "^7.28.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

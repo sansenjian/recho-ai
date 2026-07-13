@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
+import { Agent } from 'undici'
 import { recordImageGenerationAttempt, type ImageGenerationAttempt } from '../services/image-attempts.js'
 import {
   firstImageID,
@@ -17,6 +18,12 @@ import { apiErrorBody } from '../services/api-error.js'
 
 const router = Router()
 const DEFAULT_PROXY_TIMEOUT_MS = 620_000
+// Undici otherwise aborts while waiting for headers after 300 seconds. The
+// route-level AbortController owns the total timeout for the full exchange.
+const goSidecarDispatcher = new Agent({
+  headersTimeout: 0,
+  bodyTimeout: 0,
+})
 
 const proxiedRoutes = [
   /^\/image\/references(?:\/|$)/,
@@ -187,7 +194,8 @@ router.use(async (req: Request, res: Response, next) => {
       body,
       duplex: body ? 'half' : undefined,
       signal: controller.signal,
-    } as RequestInit & { duplex?: 'half' })
+      dispatcher: goSidecarDispatcher,
+    } as RequestInit & { duplex?: 'half'; dispatcher: Agent })
 
     res.status(upstream.status)
     upstream.headers.forEach((value, key) => {

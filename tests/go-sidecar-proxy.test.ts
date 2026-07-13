@@ -38,6 +38,22 @@ async function close(server: http.Server) {
   })
 }
 
+async function getWithNodeHTTP(url: string) {
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const request = http.get(url, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode || 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+        })
+      })
+    })
+    request.on('error', reject)
+  })
+}
+
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) {
     delete process.env[name]
@@ -88,6 +104,7 @@ describe('go sidecar proxy', () => {
 
   afterEach(async () => {
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
     restoreEnv('GO_GATEWAY_BASE_URL', originalGoGatewayBaseUrl)
     restoreEnv('GO_GATEWAY_PROXY_TIMEOUT_MS', originalProxyTimeoutMs)
     await Promise.all(servers.splice(0).map(close))
@@ -155,6 +172,25 @@ describe('go sidecar proxy', () => {
       code: 'GO_SIDECAR_UNAVAILABLE',
       requestId: 'req_proxy_test',
     })
+  })
+
+  it('uses a dedicated fetch dispatcher for long-running sidecar requests', async () => {
+    const fetchSpy = vi.fn(async (_url: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
+      if (!init?.dispatcher) {
+        throw new TypeError('fetch failed before the application proxy timeout')
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+    const proxy = await startProxy('http://go-gateway.test')
+
+    const response = await getWithNodeHTTP(`${proxy.url}/api/image/history`)
+
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toEqual({ ok: true })
   })
 
   it('returns a correlated timeout error when the sidecar request is aborted', async () => {
