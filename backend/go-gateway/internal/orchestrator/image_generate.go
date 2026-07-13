@@ -1020,11 +1020,13 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	imageModel := imageModelForRequest(provider, usesEdits)
 
 	apiReq := map[string]any{
-		"model":   imageModel,
-		"prompt":  req.Prompt,
-		"n":       count,
-		"size":    size,
-		"quality": mapQualityToAPI(quality),
+		"model":  imageModel,
+		"prompt": req.Prompt,
+	}
+	if !isLucenImageProvider(provider.BaseURL) {
+		apiReq["n"] = count
+		apiReq["size"] = size
+		apiReq["quality"] = mapQualityToAPI(quality)
 	}
 
 	client := o.httpClient
@@ -1305,6 +1307,11 @@ func determineSize(resolution, aspectRatio string) string {
 		}
 	}
 	return "1024x1024"
+}
+
+func isLucenImageProvider(baseURL string) bool {
+	host := strings.ToLower(imageProviderName(baseURL))
+	return host == "lucen.plus" || strings.HasSuffix(host, ".lucen.plus")
 }
 
 func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {
