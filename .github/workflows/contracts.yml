@@ -35,6 +35,8 @@ jobs:
   contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,11 +51,6 @@ jobs:
         with:
           go-version-file: backend/go-gateway/go.mod
           cache-dependency-path: backend/go-gateway/go.sum
-
-      - name: Install Go image processing dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends pkg-config libvips-dev
 
       - name: Install frontend and test dependencies
         run: npm ci
