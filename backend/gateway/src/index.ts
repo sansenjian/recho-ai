@@ -17,8 +17,16 @@ import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
 import adminSystemRouter from './routes/admin-system.js'
 import adminAnnouncementsRouter from './routes/admin-announcements.js'
 import goSidecarRouter from './routes/go-sidecar.js'
+import {
+  REQUEST_ID_HEADER,
+  requestObservabilityMiddleware,
+} from './middleware/request-observability.js'
+import { requestBodyErrorMiddleware } from './middleware/request-body-errors.js'
+import { apiErrorBody } from './services/api-error.js'
 
 const app = express()
+
+app.use(requestObservabilityMiddleware)
 
 // Allow long-running requests (image generation can take several minutes).
 // req/res 层面设置为 10 分钟，再配合 server 级 socket timeout / keep-alive 设置。
@@ -29,7 +37,7 @@ app.use((req, res, next) => {
   res.on('timeout', () => {
     console.warn('[server] response timeout exceeded for', req.method, req.url)
     if (!res.headersSent) {
-      res.status(504).json({ error: '请求超时，请稍后重试。' })
+      res.status(504).json(apiErrorBody(req, 'GATEWAY_TIMEOUT', '请求超时，请稍后重试。'))
     } else {
       res.destroy()
     }
@@ -38,7 +46,8 @@ app.use((req, res, next) => {
 })
 
 app.use(cors({
-  origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN
+  origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN,
+  exposedHeaders: [REQUEST_ID_HEADER],
 }))
 
 // When deployed as a single Render backend, proxy Go-owned image/works routes
@@ -46,30 +55,7 @@ app.use(cors({
 app.use('/api', goSidecarRouter)
 
 app.use(express.json({ limit: '50mb' }))
-
-// Explicit JSON parser for the image generation endpoint so large bodies with
-// many data-URI reference images are not rejected by a generic body size limit,
-// and we surface parsing errors as clean JSON responses rather than closed
-// connections from the default error handler.
-app.use('/api/image/generate', express.json({ limit: '50mb' }))
-app.use('/api/image/generate', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (err && err.type === 'entity.parse.failed') {
-    console.warn('[image] request body parse failed', err?.message)
-    res.status(400).json({ error: '请求体解析失败，请检查输入是否为合法 JSON。' })
-    return
-  }
-  if (err && (err.status === 413 || err.type === 'entity.too.large')) {
-    console.warn('[image] request body too large', err?.message)
-    res.status(413).json({ error: '请求体过大，请减少参考图数量或压缩图片后重试。' })
-    return
-  }
-  if (err) {
-    console.warn('[image] request body error', err?.status, err?.message)
-    res.status(err.status || 400).json({ error: '请求体读取失败，请稍后重试。' })
-    return
-  }
-  res.status(500).json({ error: '未知错误' })
-})
+app.use('/api', requestBodyErrorMiddleware)
 
 // Initialize clients
 initClients()
@@ -93,10 +79,10 @@ app.get('/', (_req, res) => {
 })
 
 // Global error handler — must be the last middleware before routes start
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[gateway] unhandled error:', err)
   if (!res.headersSent) {
-    res.status(500).json({ error: 'Internal server error' })
+    res.status(500).json(apiErrorBody(req, 'INTERNAL_ERROR', 'Internal server error'))
   }
 })
 

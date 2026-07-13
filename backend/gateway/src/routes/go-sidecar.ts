@@ -13,14 +13,10 @@ import {
 import { getRequestUserId } from '../services/request-auth.js'
 import { requestIp, requestUserAgent } from '../services/request-ip.js'
 import { safeErrorDetail } from '../services/safe-error.js'
+import { apiErrorBody } from '../services/api-error.js'
 
 const router = Router()
-const GO_GATEWAY_BASE_URL = (process.env.GO_GATEWAY_BASE_URL || '').replace(/\/+$/, '')
 const DEFAULT_PROXY_TIMEOUT_MS = 620_000
-const parsedProxyTimeoutMs = Number(process.env.GO_GATEWAY_PROXY_TIMEOUT_MS)
-const PROXY_TIMEOUT_MS = Number.isFinite(parsedProxyTimeoutMs) && parsedProxyTimeoutMs > 0
-  ? parsedProxyTimeoutMs
-  : DEFAULT_PROXY_TIMEOUT_MS
 
 const proxiedRoutes = [
   /^\/image\/references(?:\/|$)/,
@@ -32,12 +28,21 @@ const proxiedRoutes = [
   /^\/config\/supabase(?:\/|$)/,
 ]
 
-function shouldProxy(path: string) {
-  return Boolean(GO_GATEWAY_BASE_URL) && proxiedRoutes.some(pattern => pattern.test(path))
+function goGatewayBaseUrl() {
+  return (process.env.GO_GATEWAY_BASE_URL || '').replace(/\/+$/, '')
 }
 
-function requestUrl(req: Request) {
-  return `${GO_GATEWAY_BASE_URL}/api${req.originalUrl.replace(/^\/api/, '')}`
+function proxyTimeoutMs() {
+  const configured = Number(process.env.GO_GATEWAY_PROXY_TIMEOUT_MS)
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PROXY_TIMEOUT_MS
+}
+
+function shouldProxy(path: string, baseUrl: string) {
+  return Boolean(baseUrl) && proxiedRoutes.some(pattern => pattern.test(path))
+}
+
+function requestUrl(req: Request, baseUrl: string) {
+  return `${baseUrl}/api${req.originalUrl.replace(/^\/api/, '')}`
 }
 
 function requestHeaders(req: Request) {
@@ -138,27 +143,33 @@ async function recordStreamedImageAttempt(req: Request, status: number, startedA
 }
 
 router.use(async (req: Request, res: Response, next) => {
-  if (!shouldProxy(req.path)) {
+  const baseUrl = goGatewayBaseUrl()
+  if (!shouldProxy(req.path, baseUrl)) {
     next()
     return
   }
 
   const body = requestBody(req)
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS)
+  let abortReason: 'timeout' | 'client_disconnect' | null = null
+  let timeout: ReturnType<typeof setTimeout>
 
-  const abortUpstream = () => {
+  const abortUpstream = (reason: 'timeout' | 'client_disconnect') => {
+    if (controller.signal.aborted) return
+    abortReason = reason
     clearTimeout(timeout)
     controller.abort()
   }
 
+  timeout = setTimeout(() => abortUpstream('timeout'), proxyTimeoutMs())
+
   // `req.close` also fires after a POST request body is read normally. Only
   // abort uploads that closed before Node marked the body as complete.
   req.once('close', () => {
-    if (req.destroyed && !req.complete) abortUpstream()
+    if (req.destroyed && !req.complete) abortUpstream('client_disconnect')
   })
   res.once('close', () => {
-    if (!res.writableEnded) abortUpstream()
+    if (!res.writableEnded) abortUpstream('client_disconnect')
   })
 
   const startedAt = Date.now()
@@ -170,7 +181,7 @@ router.use(async (req: Request, res: Response, next) => {
   res.setHeader('X-Accel-Buffering', 'no')
 
   try {
-    const upstream = await fetch(requestUrl(req), {
+    const upstream = await fetch(requestUrl(req, baseUrl), {
       method: req.method,
       headers: requestHeaders(req),
       body,
@@ -180,7 +191,7 @@ router.use(async (req: Request, res: Response, next) => {
 
     res.status(upstream.status)
     upstream.headers.forEach((value, key) => {
-      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding', 'x-accel-buffering'].includes(key.toLowerCase())) return
+      if (['connection', 'content-encoding', 'content-length', 'transfer-encoding', 'x-accel-buffering', 'x-request-id'].includes(key.toLowerCase())) return
       res.setHeader(key, value)
     })
     res.setHeader('X-Accel-Buffering', 'no')
@@ -226,15 +237,19 @@ router.use(async (req: Request, res: Response, next) => {
     const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
     await pipeline(responseStream, res)
   } catch (err: any) {
+    if (abortReason === 'client_disconnect') {
+      return
+    }
     console.error('[go-sidecar] proxy failed:', err?.message || err)
-    const status = err?.name === 'AbortError' ? 504 : 502
+    const status = abortReason === 'timeout' ? 504 : 502
+    const code = status === 504 ? 'GO_SIDECAR_TIMEOUT' : 'GO_SIDECAR_UNAVAILABLE'
     if (trackImageAttempt) {
       void recordProxyFailure(req, err, status, startedAt).catch((recordErr) => {
         console.warn('[go-sidecar] image attempt failure record skipped:', safeErrorDetail(recordErr))
       })
     }
     if (!res.headersSent) {
-      res.status(status).json({ error: 'Go image service is temporarily unavailable.' })
+      res.status(status).json(apiErrorBody(req, code, 'Go image service is temporarily unavailable.'))
     }
   } finally {
     clearTimeout(timeout)

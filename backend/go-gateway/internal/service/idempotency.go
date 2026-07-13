@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 
 	"go-gateway/internal/repository"
 )
@@ -26,11 +25,21 @@ type IdempotencyOutcome struct {
 
 // IdempotencyService provides idempotency for credit-consuming operations
 type IdempotencyService struct {
-	repo *repository.IdempotencyRepository
+	repo idempotencyRepository
+}
+
+type idempotencyRepository interface {
+	Acquire(ctx context.Context, userID, idemKey, scope, requestHash string) (*repository.AcquireResult, error)
+	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error
+	Fail(ctx context.Context, userID, idemKey, scope string) error
 }
 
 // NewIdempotencyService creates a new idempotency service
 func NewIdempotencyService(repo *repository.IdempotencyRepository) *IdempotencyService {
+	return newIdempotencyService(repo)
+}
+
+func newIdempotencyService(repo idempotencyRepository) *IdempotencyService {
 	return &IdempotencyService{repo: repo}
 }
 
@@ -97,10 +106,8 @@ func (s *IdempotencyService) Complete(
 	responseCode int16,
 	responseBody any,
 	transactionID string,
-) {
-	if err := s.repo.Complete(ctx, userID, idemKey, scope, responseCode, responseBody, transactionID); err != nil {
-		log.Printf("[idempotency] failed to store response for key=%s scope=%s: %v", idemKey, scope, err)
-	}
+) error {
+	return s.repo.Complete(ctx, userID, idemKey, scope, responseCode, responseBody, transactionID)
 }
 
 // Fail marks the idempotency record as failed, allowing future retries with the same key.
@@ -108,8 +115,6 @@ func (s *IdempotencyService) Complete(
 func (s *IdempotencyService) Fail(
 	ctx context.Context,
 	userID, idemKey, scope string,
-) {
-	if err := s.repo.Fail(ctx, userID, idemKey, scope); err != nil {
-		log.Printf("[idempotency] failed to mark failure for key=%s scope=%s: %v", idemKey, scope, err)
-	}
+) error {
+	return s.repo.Fail(ctx, userID, idemKey, scope)
 }

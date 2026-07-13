@@ -8,8 +8,17 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// idempotencyDB is the narrow database surface needed by idempotency
+// operations. Keeping the seam small makes ordering and failure behavior
+// testable without coupling tests to a live pool.
+type idempotencyDB interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
 
 // IdempotencyRecord represents a stored idempotency entry
 type IdempotencyRecord struct {
@@ -29,6 +38,7 @@ type IdempotencyRecord struct {
 // IdempotencyRepository handles idempotency key database operations
 type IdempotencyRepository struct {
 	pool *pgxpool.Pool
+	db   idempotencyDB
 }
 
 // NewIdempotencyRepository creates a new idempotency repository
@@ -36,9 +46,19 @@ func NewIdempotencyRepository(pool *pgxpool.Pool) *IdempotencyRepository {
 	return &IdempotencyRepository{pool: pool}
 }
 
-// processingTimeout is how long a "processing" record is considered valid.
-// After this duration, a stuck record is treated as failed and can be reclaimed.
-const processingTimeout = 5 * time.Minute
+// processingTimeout is how long a pre-job "processing" record is considered
+// valid. Once a durable image job exists, its staging lease owns liveness.
+const processingTimeout = 15 * time.Minute
+
+func (r *IdempotencyRepository) databaseClient() idempotencyDB {
+	if r.db != nil {
+		return r.db
+	}
+	if r.pool == nil {
+		return nil
+	}
+	return r.pool
+}
 
 // AcquireResult describes the outcome of an Acquire call
 type AcquireResult struct {
@@ -62,6 +82,11 @@ func (r *IdempotencyRepository) Acquire(
 	ctx context.Context,
 	userID, idemKey, scope, requestHash string,
 ) (*AcquireResult, error) {
+	db := r.databaseClient()
+	if db == nil {
+		return nil, errors.New("idempotency database client is nil")
+	}
+
 	// Try INSERT first — the common path for new requests
 	insertQuery := `
 		INSERT INTO idempotency_keys (user_id, idem_key, scope, request_hash, status)
@@ -71,10 +96,13 @@ func (r *IdempotencyRepository) Acquire(
 	`
 
 	var newID string
-	err := r.pool.QueryRow(ctx, insertQuery, userID, idemKey, scope, requestHash).Scan(&newID)
+	err := db.QueryRow(ctx, insertQuery, userID, idemKey, scope, requestHash).Scan(&newID)
 	if err == nil {
 		// INSERT succeeded — new key claimed
 		return &AcquireResult{Status: "new"}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("idempotency insert failed: %w", err)
 	}
 
 	// INSERT was suppressed by ON CONFLICT — look up the existing record
@@ -87,42 +115,56 @@ func (r *IdempotencyRepository) Acquire(
 		return &AcquireResult{Status: "new"}, nil
 	}
 
-	// Expired record — reclaim it
-	if time.Now().After(existing.ExpiresAt) {
-		if err := r.reclaim(ctx, existing.ID, requestHash); err != nil {
-			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
-		}
-		return &AcquireResult{Status: "new"}, nil
-	}
-
-	// Stale "processing" record (handler crashed or timed out) — reclaim
-	if existing.Status == "processing" && time.Since(existing.CreatedAt) > processingTimeout {
-		if err := r.reclaim(ctx, existing.ID, requestHash); err != nil {
-			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
-		}
-		return &AcquireResult{Status: "new"}, nil
-	}
-
-	// Still processing — tell caller to come back later
-	if existing.Status == "processing" {
+	// A key is bound to its request body for every record state. Check this
+	// before expiry, stale, or failed-record handling so a different body can
+	// never reclaim the existing row.
+	if existing.RequestHash != requestHash {
 		return &AcquireResult{Status: "conflict"}, nil
 	}
 
-	// Failed record — allow retry
-	if existing.Status == "failed" {
-		if err := r.reclaim(ctx, existing.ID, requestHash); err != nil {
-			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
-		}
-		return &AcquireResult{Status: "new"}, nil
-	}
-
-	// Completed — check fingerprint for replay vs conflict
+	// Completed matching requests replay the stored response regardless of the
+	// idempotency row's expiry timestamp.
 	if existing.Status == "completed" {
-		if existing.RequestHash == requestHash {
-			return &AcquireResult{Status: "replay", Record: existing}, nil
+		return &AcquireResult{Status: "replay", Record: existing}, nil
+	}
+
+	if existing.Status == "processing" {
+		expired := time.Now().After(existing.ExpiresAt)
+		stale := time.Since(existing.CreatedAt) > processingTimeout
+		if !expired && !stale {
+			return &AcquireResult{Status: "conflict"}, nil
 		}
-		// Same key, different request body — conflict
-		return &AcquireResult{Status: "conflict"}, nil
+
+		if scope == "image_generate" {
+			active, err := r.hasActiveImageJob(ctx, userID, idemKey, requestHash)
+			if err != nil {
+				return nil, fmt.Errorf("active image job lookup failed: %w", err)
+			}
+			if active {
+				return &AcquireResult{Status: "conflict"}, nil
+			}
+		}
+
+		reclaimed, err := r.reclaim(ctx, existing.ID, requestHash, existing.Status, existing.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
+		}
+		if !reclaimed {
+			return &AcquireResult{Status: "conflict"}, nil
+		}
+		return &AcquireResult{Status: "new"}, nil
+	}
+
+	// Failed records may be retried with the same request body.
+	if existing.Status == "failed" {
+		reclaimed, err := r.reclaim(ctx, existing.ID, requestHash, existing.Status, existing.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
+		}
+		if !reclaimed {
+			return &AcquireResult{Status: "conflict"}, nil
+		}
+		return &AcquireResult{Status: "new"}, nil
 	}
 
 	return &AcquireResult{Status: "conflict"}, nil
@@ -156,7 +198,11 @@ func (r *IdempotencyRepository) Complete(
 		  AND status = 'processing'
 	`
 
-	result, err := r.pool.Exec(ctx, query, userID, idemKey, scope, responseCode, bodyJSON, txID)
+	db := r.databaseClient()
+	if db == nil {
+		return errors.New("idempotency database client is nil")
+	}
+	result, err := db.Exec(ctx, query, userID, idemKey, scope, responseCode, bodyJSON, txID)
 	if err != nil {
 		return fmt.Errorf("failed to complete idempotency record: %w", err)
 	}
@@ -178,9 +224,16 @@ func (r *IdempotencyRepository) Fail(
 		  AND status = 'processing'
 	`
 
-	_, err := r.pool.Exec(ctx, query, userID, idemKey, scope)
+	db := r.databaseClient()
+	if db == nil {
+		return errors.New("idempotency database client is nil")
+	}
+	result, err := db.Exec(ctx, query, userID, idemKey, scope)
 	if err != nil {
 		return fmt.Errorf("failed to mark idempotency record as failed: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("idempotency record was not marked as failed because it was missing or not processing")
 	}
 	return nil
 }
@@ -198,7 +251,11 @@ func (r *IdempotencyRepository) findByUserKeyScope(
 	`
 
 	var rec IdempotencyRecord
-	err := r.pool.QueryRow(ctx, query, userID, idemKey, scope).Scan(
+	db := r.databaseClient()
+	if db == nil {
+		return nil, errors.New("idempotency database client is nil")
+	}
+	err := db.QueryRow(ctx, query, userID, idemKey, scope).Scan(
 		&rec.ID, &rec.UserID, &rec.Key, &rec.Scope, &rec.RequestHash, &rec.Status,
 		&rec.ResponseCode, &rec.ResponseBody, &rec.TransactionID, &rec.CreatedAt, &rec.ExpiresAt,
 	)
@@ -212,7 +269,13 @@ func (r *IdempotencyRepository) findByUserKeyScope(
 }
 
 // reclaim resets an existing record for reuse (expired, stale, or failed)
-func (r *IdempotencyRepository) reclaim(ctx context.Context, recordID, newRequestHash string) error {
+func (r *IdempotencyRepository) reclaim(
+	ctx context.Context,
+	recordID,
+	newRequestHash,
+	observedStatus string,
+	observedCreatedAt time.Time,
+) (bool, error) {
 	query := `
 		UPDATE idempotency_keys
 		SET status = 'processing',
@@ -223,8 +286,56 @@ func (r *IdempotencyRepository) reclaim(ctx context.Context, recordID, newReques
 		    created_at = now(),
 		    expires_at = now() + interval '24 hours'
 		WHERE id = $1
+		  AND status IN ('processing', 'failed')
+		  AND status = $3
+		  AND created_at = $4
 	`
 
-	_, err := r.pool.Exec(ctx, query, recordID, newRequestHash)
-	return err
+	db := r.databaseClient()
+	if db == nil {
+		return false, errors.New("idempotency database client is nil")
+	}
+	result, err := db.Exec(ctx, query, recordID, newRequestHash, observedStatus, observedCreatedAt)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
+// hasActiveImageJob checks whether durable image-generation work still owns
+// this idempotency key. A completed job is included because the stale
+// idempotency row cannot safely reconstruct its cached HTTP response.
+func (r *IdempotencyRepository) hasActiveImageJob(
+	ctx context.Context,
+	userID, idemKey, requestHash string,
+) (bool, error) {
+	query := `
+		SELECT 1
+		FROM public.image_generation_jobs
+		WHERE user_id = $1::uuid
+		  AND idempotency_key = $2
+		  AND request_hash = $3
+		  AND status IN (
+			'staging',
+			'persistence_pending',
+			'persistence_processing',
+			'completed',
+			'refund_pending'
+		  )
+		LIMIT 1
+	`
+
+	var marker int
+	db := r.databaseClient()
+	if db == nil {
+		return false, errors.New("idempotency database client is nil")
+	}
+	err := db.QueryRow(ctx, query, userID, idemKey, requestHash).Scan(&marker)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

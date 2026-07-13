@@ -11,6 +11,12 @@ type Response struct {
 	Error string `json:"error,omitempty"`
 }
 
+// ErrorResponse preserves the public error message and adds a stable code.
+type ErrorResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
 // CreditBalance represents a user's credit balance
 type CreditBalance struct {
 	Balance *float64 `json:"balance"`
@@ -18,7 +24,7 @@ type CreditBalance struct {
 
 // ImageGenerationResponse represents the image generation response
 type ImageGenerationResponse struct {
-	Images       []any        `json:"images"`
+	Images        []any          `json:"images"`
 	CreditBalance *CreditBalance `json:"creditBalance,omitempty"`
 }
 
@@ -30,9 +36,63 @@ type HealthResponse struct {
 
 // Error sends an error response
 func Error(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	JSON(w, status, ErrorBody(status, message))
+}
+
+// ErrorWithCode sends a stable domain code while preserving the standard
+// public error envelope.
+func ErrorWithCode(w http.ResponseWriter, status int, code, message string) {
+	if code == "" {
+		code = errorCodeForStatus(status)
+	}
+	JSON(w, status, ErrorResponse{Error: message, Code: code})
+}
+
+// ErrorBody builds the same error envelope for direct and persisted responses.
+func ErrorBody(status int, message string) ErrorResponse {
+	return ErrorResponse{
+		Error: message,
+		Code:  errorCodeForStatus(status),
+	}
+}
+
+func errorCodeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BAD_REQUEST"
+	case http.StatusUnauthorized:
+		return "UNAUTHORIZED"
+	case http.StatusPaymentRequired:
+		return "PAYMENT_REQUIRED"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusMethodNotAllowed:
+		return "METHOD_NOT_ALLOWED"
+	case http.StatusRequestTimeout:
+		return "REQUEST_TIMEOUT"
+	case http.StatusConflict:
+		return "CONFLICT"
+	case http.StatusRequestEntityTooLarge:
+		return "REQUEST_BODY_TOO_LARGE"
+	case http.StatusUnsupportedMediaType:
+		return "UNSUPPORTED_MEDIA_TYPE"
+	case http.StatusUnprocessableEntity:
+		return "UNPROCESSABLE_ENTITY"
+	case http.StatusTooManyRequests:
+		return "RATE_LIMITED"
+	case http.StatusInternalServerError:
+		return "INTERNAL_ERROR"
+	case http.StatusBadGateway:
+		return "BAD_GATEWAY"
+	case http.StatusServiceUnavailable:
+		return "SERVICE_UNAVAILABLE"
+	case http.StatusGatewayTimeout:
+		return "GATEWAY_TIMEOUT"
+	default:
+		return "HTTP_ERROR"
+	}
 }
 
 // JSON sends a JSON response

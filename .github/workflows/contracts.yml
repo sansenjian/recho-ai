@@ -1,0 +1,73 @@
+name: Gateway contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/contracts.yml'
+      - 'backend/gateway/**'
+      - 'backend/go-gateway/**'
+      - 'contracts/**'
+      - 'tests/go-owned-api-contract.test.ts'
+      - 'tests/go-sidecar-contract.test.ts'
+      - 'tests/go-sidecar-live-contract.test.ts'
+      - 'tests/helpers/go-owned-contract.ts'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/contracts.yml'
+      - 'backend/gateway/**'
+      - 'backend/go-gateway/**'
+      - 'contracts/**'
+      - 'tests/go-owned-api-contract.test.ts'
+      - 'tests/go-sidecar-contract.test.ts'
+      - 'tests/go-sidecar-live-contract.test.ts'
+      - 'tests/helpers/go-owned-contract.ts'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go-gateway/go.mod
+          cache-dependency-path: backend/go-gateway/go.sum
+
+      - name: Install frontend and test dependencies
+        run: npm ci
+
+      - name: Install Node Gateway dependencies
+        run: npm ci --prefix backend/gateway
+
+      - name: Run shared Node and live gateway contracts
+        run: npm run test:contracts
+
+      - name: Type-check Node Gateway
+        run: npm --prefix backend/gateway run typecheck
+
+      - name: Run Go handler contracts
+        working-directory: backend/go-gateway
+        run: go test ./internal/handler -run Contract -count=1
+
+      - name: Build Go Gateway
+        working-directory: backend/go-gateway
+        run: go build ./cmd/server/...

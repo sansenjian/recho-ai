@@ -364,25 +364,25 @@ describe('admin image helpers', () => {
       {
         id: 'img_1',
         storage_path: 'generated/img_1.webp',
-        size: '1 MB',
+        original_bytes: 1048576,
         credit_cost: 1.25,
       },
       {
         id: 'img_2',
         storage_path: 'cos://generated/img_2.webp',
-        size: '512 KB',
+        original_bytes: 524288,
         credit_cost: 0.5,
       },
       {
         id: 'img_3',
         storage_path: null,
-        size: '256 bytes',
+        original_bytes: 256,
         credit_cost: 0.105,
       },
       {
         id: 'img_4',
         storage_path: null,
-        size: null,
+        original_bytes: null,
         credit_cost: 0.105,
       },
     ]

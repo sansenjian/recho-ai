@@ -17,7 +17,9 @@ import (
 	"go-gateway/internal/config"
 	"go-gateway/internal/handler"
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/orchestrator"
 	"go-gateway/internal/pkg/supabase"
+	"go-gateway/internal/reconciliation"
 	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
@@ -48,10 +50,14 @@ func main() {
 	var creditRepo *repository.CreditRepository
 	var redeemRepo *repository.RedeemRepository
 	var idempotencyRepo *repository.IdempotencyRepository
+	var imageJobRepo *repository.ImageGenerationJobRepository
+	var imageReconciliationRepo *repository.ImageReconciliationRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
 		redeemRepo = repository.NewRedeemRepository(db.Pool())
 		idempotencyRepo = repository.NewIdempotencyRepository(db.Pool())
+		imageJobRepo = repository.NewImageGenerationJobRepository(db.Pool())
+		imageReconciliationRepo = repository.NewImageReconciliationRepository(db.Pool())
 	}
 
 	// Initialize services
@@ -93,14 +99,67 @@ func main() {
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService).
 		WithProviderSettings(providerSettingsService)
+	if config.ImageJobWorkerEnabled && imageJobRepo != nil {
+		imageHandler.WithImageJobStore(imageJobRepo)
+	}
+
+	// The durable worker is the source of truth for post-provider staging,
+	// history upserts, and credit compensation. Keep its lifecycle independent
+	// from request contexts so client disconnects cannot abandon a job.
+	var imageWorkerCancel context.CancelFunc
+	var imageWorkerDone chan struct{}
+	if config.ImageJobWorkerEnabled && imageJobRepo != nil && storageService != nil {
+		worker := orchestrator.NewImageJobWorkerWithServices(
+			imageJobRepo,
+			storageService,
+			idempotencyService,
+			creditService,
+			orchestrator.ImageJobWorkerOptions{},
+		)
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		imageWorkerCancel = cancelWorker
+		imageWorkerDone = make(chan struct{})
+		go func() {
+			defer close(imageWorkerDone)
+			if err := worker.Run(workerCtx); err != nil {
+				log.Printf("Image job worker stopped: %v", err)
+			}
+		}()
+	}
+
+	var imageReconciliationCancel context.CancelFunc
+	var imageReconciliationDone chan struct{}
+	if config.ImageReconciliationEnabled && imageReconciliationRepo != nil && storageService != nil {
+		reconciler := reconciliation.NewImageReconciler(
+			imageReconciliationRepo,
+			imageReconciliationStorageAdapter{storage: storageService},
+			reconciliation.Options{
+				StaleAfter:  time.Duration(config.ImageReconciliationStaleAfterSeconds) * time.Second,
+				OrphanGrace: time.Duration(config.ImageReconciliationOrphanGraceSeconds) * time.Second,
+				JobLimit:    500,
+			},
+		)
+		reconciliationCtx, cancelReconciliation := context.WithCancel(context.Background())
+		imageReconciliationCancel = cancelReconciliation
+		imageReconciliationDone = make(chan struct{})
+		go func() {
+			defer close(imageReconciliationDone)
+			runImageReconciliationLoop(
+				reconciliationCtx,
+				reconciler,
+				time.Duration(config.ImageReconciliationIntervalSeconds)*time.Second,
+				log.Default(),
+			)
+		}()
+	}
 
 	// Setup router
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(chiMiddleware.Logger)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RequestLogger(os.Stdout))
 	r.Use(chiMiddleware.Recoverer)
-	r.Use(chiMiddleware.RequestID)
 
 	// CORS middleware
 	r.Use(cors.Handler(cors.Options{
@@ -159,6 +218,22 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	if imageWorkerCancel != nil {
+		imageWorkerCancel()
+		select {
+		case <-imageWorkerDone:
+		case <-time.After(5 * time.Second):
+			log.Println("Timed out waiting for image job worker shutdown")
+		}
+	}
+	if imageReconciliationCancel != nil {
+		imageReconciliationCancel()
+		select {
+		case <-imageReconciliationDone:
+		case <-time.After(5 * time.Second):
+			log.Println("Timed out waiting for image reconciliation shutdown")
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

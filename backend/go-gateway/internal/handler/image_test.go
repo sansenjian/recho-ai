@@ -81,6 +81,22 @@ func (s *stubImageStorageService) StoreFromBufferAtPath(ctx context.Context, dat
 	return nil, nil
 }
 
+func (s *stubImageStorageService) StageFromURL(ctx context.Context, sourceURL, storagePath string) (*service.StagedImage, error) {
+	return &service.StagedImage{StoragePath: storagePath, Mime: "image/png", Bytes: 1, SHA256: "test-sha"}, nil
+}
+
+func (s *stubImageStorageService) StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*service.StagedImage, error) {
+	return &service.StagedImage{StoragePath: storagePath, Mime: mime, Bytes: len(data), SHA256: "test-sha"}, nil
+}
+
+func (s *stubImageStorageService) DeleteObjects(ctx context.Context, paths ...string) error {
+	return nil
+}
+
+func (s *stubImageStorageService) DeleteImageHistoryByID(ctx context.Context, id string) error {
+	return nil
+}
+
 func (s *stubImageStorageService) DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
 	return nil, nil
 }
@@ -145,18 +161,20 @@ func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemK
 	return &service.IdempotencyOutcome{Proceed: true}, nil
 }
 
-func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) {
+func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) error {
 	s.failCalls = append(s.failCalls, scope)
 	if s.failCh != nil {
 		s.failCh <- scope
 	}
+	return nil
 }
 
-func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) {
+func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error {
 	s.completeCalls = append(s.completeCalls, scope)
 	if s.completeCh != nil {
 		s.completeCh <- scope
 	}
+	return nil
 }
 
 type stubProviderSettingsService struct {
