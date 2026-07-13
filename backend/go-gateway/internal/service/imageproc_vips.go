@@ -128,7 +128,7 @@ func (p *vipsProcessor) exportOriginal(img *vips.ImageRef, originalData []byte, 
 	// width/height for orientation-corrected (5–8) images.
 	switch ext {
 	case "jpg":
-		buf, err := img.JpegExport(&vips.JpegExportParams{
+		buf, _, err := img.ExportJpeg(&vips.JpegExportParams{
 			Quality: originalQuality,
 		})
 		if err != nil {
@@ -156,21 +156,19 @@ func (p *vipsProcessor) exportPreview(img *vips.ImageRef) ([]byte, error) {
 func (p *vipsProcessor) exportThumbnail(img *vips.ImageRef) ([]byte, error) {
 	// InterestingNone keeps the aspect ratio and fits inside the box without cropping,
 	// matching sharp({ width: 480, height: 480, fit: 'inside' }).
-	thumb, err := img.Thumbnail(thumbnailMaxSize, thumbnailMaxSize, vips.InterestingNone)
-	if err != nil {
+	if err := img.Thumbnail(thumbnailMaxSize, thumbnailMaxSize, vips.InterestingNone); err != nil {
 		return nil, fmt.Errorf("failed to create thumbnail: %w", err)
 	}
-	defer thumb.Close()
 
-	buf, _, err := p.exportWebp(thumb, thumbnailQuality, false)
+	buf, _, err := p.exportWebp(img, thumbnailQuality, false)
 	return buf, err
 }
 
 func (p *vipsProcessor) exportWebp(img *vips.ImageRef, quality int, lossless bool) ([]byte, string, error) {
 	params := vips.NewWebpExportParams()
-	params.Q = quality
+	params.Quality = quality
 	params.Lossless = lossless
-	buf, err := img.WebpExport(params)
+	buf, _, err := img.ExportWebp(params)
 	if err != nil {
 		return nil, "", err
 	}

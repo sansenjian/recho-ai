@@ -63,12 +63,12 @@ begin
 
   -- Lock the idempotency row before checking/reusing the job. Acquire() has
   -- already created this row in processing state.
-  select id, request_hash, status
+  select ik.id, ik.request_hash, ik.status
     into v_idempotency_id, v_request_hash, v_idempotency_status
-    from public.idempotency_keys
-   where user_id = p_user_id
-     and idem_key = p_idem_key
-     and scope = 'image_generate'
+    from public.idempotency_keys as ik
+   where ik.user_id = p_user_id
+     and ik.idem_key = p_idem_key
+     and ik.scope = 'image_generate'
    for update;
 
   if not found then
@@ -83,14 +83,14 @@ begin
 
   -- A retry after a committed RPC must return the original job and must not
   -- reserve credits again.
-  select id, status, lease_token, locked_until, credit_transaction_id
+  select j.id, j.status, j.lease_token, j.locked_until, j.credit_transaction_id
     into v_existing_job_id, v_existing_status, v_existing_lease_token,
          v_existing_locked_until, v_existing_transaction_id
-    from public.image_generation_jobs
-   where user_id = p_user_id
-     and idempotency_key = p_idem_key
-     and request_hash = p_request_hash
-   order by created_at desc
+    from public.image_generation_jobs as j
+   where j.user_id = p_user_id
+     and j.idempotency_key = p_idem_key
+     and j.request_hash = p_request_hash
+   order by j.created_at desc
    limit 1
    for update;
 
@@ -109,13 +109,13 @@ begin
     return;
   end if;
 
-  select balance, transaction_id
+  select reservation.balance, reservation.transaction_id
     into v_balance, v_transaction_id
     from public.reserve_user_credits(
       p_user_id,
       round(p_reserved_amount, 2),
       coalesce(p_credit_metadata, '{}'::jsonb)
-    );
+    ) as reservation;
 
   insert into public.image_generation_jobs (
     generation_batch_id,
@@ -151,14 +151,17 @@ begin
     gen_random_uuid(),
     now() + make_interval(secs => greatest(p_lease_seconds, 1))
   )
-  returning id, status, lease_token, locked_until
+  returning image_generation_jobs.id,
+            image_generation_jobs.status,
+            image_generation_jobs.lease_token,
+            image_generation_jobs.locked_until
     into v_existing_job_id, v_existing_status, v_existing_lease_token,
          v_existing_locked_until;
 
-  update public.idempotency_keys
+  update public.idempotency_keys as ik
      set transaction_id = v_transaction_id
-   where id = v_idempotency_id
-     and status = 'processing';
+   where ik.id = v_idempotency_id
+     and ik.status = 'processing';
 
   return query
     select v_existing_job_id,
