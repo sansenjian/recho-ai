@@ -2,22 +2,34 @@ package reconciliation
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
 
 type fakeReconciliationStore struct {
-	staleJobs  []StaleImageJob
-	references []string
-	findings   []Finding
-	completed  *RunSummary
+	staleJobs      []StaleImageJob
+	references     []string
+	findings       []Finding
+	completed      *RunSummary
+	onBegin        func()
+	findErr        error
+	completeErr    error
+	completeCtxErr error
 }
 
 func (s *fakeReconciliationStore) BeginRun(context.Context, time.Time) (string, error) {
+	if s.onBegin != nil {
+		s.onBegin()
+	}
 	return "run-1", nil
 }
 
 func (s *fakeReconciliationStore) FindStaleJobs(context.Context, time.Time, int) ([]StaleImageJob, error) {
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
 	return append([]StaleImageJob(nil), s.staleJobs...), nil
 }
 
@@ -30,10 +42,11 @@ func (s *fakeReconciliationStore) RecordFinding(_ context.Context, finding Findi
 	return nil
 }
 
-func (s *fakeReconciliationStore) CompleteRun(_ context.Context, summary RunSummary) error {
+func (s *fakeReconciliationStore) CompleteRun(ctx context.Context, summary RunSummary) error {
 	copy := summary
 	s.completed = &copy
-	return nil
+	s.completeCtxErr = ctx.Err()
+	return s.completeErr
 }
 
 type fakeReconciliationStorage struct {
@@ -50,7 +63,7 @@ func (s *fakeReconciliationStorage) DeleteObjects(_ context.Context, paths ...st
 	return nil
 }
 
-func TestImageReconcilerAuditsStaleJobsAndDeletesOnlyOldUnreferencedObjects(t *testing.T) {
+func TestImageReconcilerAuditsStaleJobsAndOrphansWithoutUnsafeDeletion(t *testing.T) {
 	now := time.Date(2026, 7, 12, 16, 0, 0, 0, time.UTC)
 	store := &fakeReconciliationStore{
 		staleJobs: []StaleImageJob{{ID: "job-stale", Status: "refund_pending", UpdatedAt: now.Add(-2 * time.Hour)}},
@@ -75,10 +88,10 @@ func TestImageReconcilerAuditsStaleJobsAndDeletesOnlyOldUnreferencedObjects(t *t
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(storage.deleted) != 1 || storage.deleted[0] != "generated/orphan.png" {
-		t.Fatalf("deleted objects = %#v, want only old generated orphan", storage.deleted)
+	if len(storage.deleted) != 0 {
+		t.Fatalf("deleted objects = %#v, want audit-only orphan handling", storage.deleted)
 	}
-	if report.StaleJobs != 1 || report.OrphanObjects != 1 || report.DeletedObjects != 1 {
+	if report.StaleJobs != 1 || report.OrphanObjects != 1 || report.DeletedObjects != 0 {
 		t.Fatalf("report = %#v", report)
 	}
 	if store.completed == nil || store.completed.Status != RunStatusCompleted {
@@ -89,6 +102,32 @@ func TestImageReconcilerAuditsStaleJobsAndDeletesOnlyOldUnreferencedObjects(t *t
 	}
 	if !hasFinding(store.findings, FindingKindOrphanObject, "generated/orphan.png") {
 		t.Fatalf("missing orphan finding: %#v", store.findings)
+	}
+}
+
+func TestImageReconcilerFinalizesWithIndependentContextAndCombinesErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &fakeReconciliationStore{
+		onBegin:     cancel,
+		findErr:     context.Canceled,
+		completeErr: errors.New("database unavailable during finalization"),
+	}
+	reconciler := NewImageReconciler(store, &fakeReconciliationStorage{}, Options{})
+
+	summary, err := reconciler.Run(ctx, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Run() returned nil despite run and finalization failures")
+	}
+	for _, want := range []string{"find stale image jobs", "database unavailable during finalization"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run() error = %v, want %q", err, want)
+		}
+	}
+	if store.completeCtxErr != nil {
+		t.Fatalf("CompleteRun received canceled caller context: %v", store.completeCtxErr)
+	}
+	if summary.Status != RunStatusFailed || !strings.Contains(summary.Error, "find stale image jobs") {
+		t.Fatalf("summary = %#v, want original run failure", summary)
 	}
 }
 

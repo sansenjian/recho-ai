@@ -54,6 +54,9 @@ func (r *IdempotencyRepository) databaseClient() idempotencyDB {
 	if r.db != nil {
 		return r.db
 	}
+	if r.pool == nil {
+		return nil
+	}
 	return r.pool
 }
 
@@ -142,16 +145,24 @@ func (r *IdempotencyRepository) Acquire(
 			}
 		}
 
-		if err := r.reclaim(ctx, existing.ID, requestHash); err != nil {
+		reclaimed, err := r.reclaim(ctx, existing.ID, requestHash, existing.Status, existing.CreatedAt)
+		if err != nil {
 			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
+		}
+		if !reclaimed {
+			return &AcquireResult{Status: "conflict"}, nil
 		}
 		return &AcquireResult{Status: "new"}, nil
 	}
 
 	// Failed records may be retried with the same request body.
 	if existing.Status == "failed" {
-		if err := r.reclaim(ctx, existing.ID, requestHash); err != nil {
+		reclaimed, err := r.reclaim(ctx, existing.ID, requestHash, existing.Status, existing.CreatedAt)
+		if err != nil {
 			return nil, fmt.Errorf("idempotency reclaim failed: %w", err)
+		}
+		if !reclaimed {
+			return &AcquireResult{Status: "conflict"}, nil
 		}
 		return &AcquireResult{Status: "new"}, nil
 	}
@@ -258,7 +269,13 @@ func (r *IdempotencyRepository) findByUserKeyScope(
 }
 
 // reclaim resets an existing record for reuse (expired, stale, or failed)
-func (r *IdempotencyRepository) reclaim(ctx context.Context, recordID, newRequestHash string) error {
+func (r *IdempotencyRepository) reclaim(
+	ctx context.Context,
+	recordID,
+	newRequestHash,
+	observedStatus string,
+	observedCreatedAt time.Time,
+) (bool, error) {
 	query := `
 		UPDATE idempotency_keys
 		SET status = 'processing',
@@ -269,14 +286,20 @@ func (r *IdempotencyRepository) reclaim(ctx context.Context, recordID, newReques
 		    created_at = now(),
 		    expires_at = now() + interval '24 hours'
 		WHERE id = $1
+		  AND status IN ('processing', 'failed')
+		  AND status = $3
+		  AND created_at = $4
 	`
 
 	db := r.databaseClient()
 	if db == nil {
-		return errors.New("idempotency database client is nil")
+		return false, errors.New("idempotency database client is nil")
 	}
-	_, err := db.Exec(ctx, query, recordID, newRequestHash)
-	return err
+	result, err := db.Exec(ctx, query, recordID, newRequestHash, observedStatus, observedCreatedAt)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
 }
 
 // hasActiveImageJob checks whether durable image-generation work still owns

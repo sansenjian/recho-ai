@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,12 @@ type fakeStorageObjectStore struct {
 	deletes      []string
 	deleteErrors map[string]error
 	mutateUpload bool
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func (f *fakeStorageObjectStore) Upload(_ context.Context, storagePath string, data []byte, mime string) (string, error) {
@@ -122,21 +129,79 @@ func TestStageFromBufferRejectsOversizedImage(t *testing.T) {
 }
 
 func TestStageFromURLRejectsBodyLargerThanLimit(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(oversizedImageFixture)
-	}))
-	defer server.Close()
-
 	store := &fakeStorageObjectStore{deleteErrors: map[string]error{}}
-	service := &StorageService{client: server.Client(), objectStore: store}
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader(oversizedImageFixture)),
+		}, nil
+	})}
+	service := &StorageService{client: client, objectStore: store}
 
-	_, err := service.StageFromURL(context.Background(), server.URL, "images/too-large.png")
+	_, err := service.StageFromURL(context.Background(), "https://8.8.8.8/image.png", "images/too-large.png")
 	if err == nil {
 		t.Fatal("StageFromURL accepted a response body larger than maxImageSize")
 	}
 	if len(store.uploads) != 0 {
 		t.Fatalf("oversized response was uploaded: %d uploads", len(store.uploads))
+	}
+}
+
+func TestStageFromURLRejectsLoopbackSource(t *testing.T) {
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requested = true
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("image"))
+	}))
+	defer server.Close()
+
+	store := &fakeStorageObjectStore{deleteErrors: map[string]error{}}
+	service := &StorageService{client: server.Client(), objectStore: store}
+	_, err := service.StageFromURL(context.Background(), server.URL, "images/loopback.png")
+	if err == nil {
+		t.Fatal("StageFromURL accepted a loopback source URL")
+	}
+	if requested {
+		t.Fatal("StageFromURL contacted loopback before rejecting it")
+	}
+	if len(store.uploads) != 0 {
+		t.Fatalf("loopback response was uploaded: %d uploads", len(store.uploads))
+	}
+}
+
+func TestStageFromURLRevalidatesRedirectTargets(t *testing.T) {
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": []string{"http://127.0.0.1/metadata"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(strings.NewReader("image")),
+			Request:    req,
+		}, nil
+	})}
+	store := &fakeStorageObjectStore{deleteErrors: map[string]error{}}
+	service := &StorageService{client: client, objectStore: store}
+
+	_, err := service.StageFromURL(context.Background(), "https://8.8.8.8/source", "images/redirect.png")
+	if err == nil {
+		t.Fatal("StageFromURL followed a redirect to loopback")
+	}
+	if requests != 1 {
+		t.Fatalf("redirect requests = %d, want only the public source request", requests)
+	}
+	if len(store.uploads) != 0 {
+		t.Fatalf("redirect response was uploaded: %d uploads", len(store.uploads))
 	}
 }
 
@@ -307,6 +372,24 @@ func TestDeleteImageHistoryByIDDoesNotCastEmptyUserID(t *testing.T) {
 	}
 	if got, want := strings.Join(store.deletes, ","), "images/original.png,images/preview.webp,images/thumb.webp"; got != want {
 		t.Fatalf("deleted objects = %q, want %q", got, want)
+	}
+}
+
+func TestDeleteImageHistoryByIDKeepsRowWhenObjectDeleteFails(t *testing.T) {
+	db := &fakeStorageDB{
+		queryRow: fakeStorageRow{values: []string{"images/original.png", "images/preview.webp", "images/thumb.webp"}},
+	}
+	store := &fakeStorageObjectStore{deleteErrors: map[string]error{
+		"images/original.png": errors.New("object store unavailable"),
+	}}
+	service := &StorageService{db: db, objectStore: store}
+
+	err := service.DeleteImageHistoryByID(context.Background(), "generation-1")
+	if err == nil {
+		t.Fatal("DeleteImageHistoryByID returned nil after object deletion failed")
+	}
+	if db.execSQL != "" {
+		t.Fatalf("history row was deleted before object cleanup succeeded: %s", db.execSQL)
 	}
 }
 

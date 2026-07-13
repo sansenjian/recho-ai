@@ -75,19 +75,17 @@ func (r *ImageReconciliationRepository) ListReferencedObjectPaths(ctx context.Co
 	if err != nil {
 		return nil, fmt.Errorf("query image history object paths: %w", err)
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var storagePath, previewPath, thumbnailPath *string
 		if err := rows.Scan(&storagePath, &previewPath, &thumbnailPath); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("scan image history object paths: %w", err)
 		}
 		paths = appendNullablePaths(paths, storagePath, previewPath, thumbnailPath)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return nil, fmt.Errorf("read image history object paths: %w", err)
 	}
-	rows.Close()
 
 	jobRows, err := r.db.Query(ctx, `
 		SELECT result_manifest

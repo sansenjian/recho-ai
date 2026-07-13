@@ -189,6 +189,79 @@ func (r *ImageGenerationJobRepository) StartWithCredit(
 	}, nil
 }
 
+// FindStartByIdentity resolves a possibly committed atomic start without
+// reserving credits again. It is used only after StartWithCredit returned an
+// ambiguous transport/database error.
+func (r *ImageGenerationJobRepository) FindStartByIdentity(
+	ctx context.Context,
+	generationBatchID,
+	userID,
+	idempotencyKey,
+	requestHash string,
+) (*ImageGenerationJobStart, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("image generation job database client is nil")
+	}
+	query := fmt.Sprintf(`
+		SELECT %s,
+		       COALESCE((
+		           SELECT balance
+		           FROM public.user_credit_balances
+		           WHERE user_id = j.user_id
+		       ), 0)
+		FROM public.image_generation_jobs AS j
+		WHERE generation_batch_id = $1
+		  AND user_id = $2::uuid
+		  AND idempotency_key = $3
+		  AND request_hash = $4
+		LIMIT 1
+	`, imageGenerationJobColumns)
+
+	var job ImageGenerationJob
+	var balance float64
+	err := r.db.QueryRow(ctx, query, generationBatchID, userID, idempotencyKey, requestHash).Scan(
+		&job.ID,
+		&job.GenerationBatchID,
+		&job.RequestID,
+		&job.Status,
+		&job.UserID,
+		&job.IdempotencyKey,
+		&job.RequestHash,
+		&job.CreditTransactionID,
+		&job.ReservedAmount,
+		&job.RefundedAmount,
+		&job.RequestedCount,
+		&job.ReturnedCount,
+		&job.RetryCount,
+		&job.MaxAttempts,
+		&job.ResultManifest,
+		&job.ResponseBody,
+		&job.NextAttemptAt,
+		&job.LockedBy,
+		&job.LeaseToken,
+		&job.LockedUntil,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+		&job.CompletedAt,
+		&balance,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find atomic image generation job: %w", err)
+	}
+	transactionID := ""
+	if job.CreditTransactionID != nil {
+		transactionID = *job.CreditTransactionID
+	}
+	return &ImageGenerationJobStart{
+		Job:           &job,
+		Balance:       balance,
+		TransactionID: transactionID,
+	}, nil
+}
+
 func optionalRepositoryString(value string) *string {
 	if value == "" {
 		return nil

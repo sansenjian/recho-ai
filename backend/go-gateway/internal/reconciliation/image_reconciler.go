@@ -3,10 +3,13 @@ package reconciliation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+const reconciliationFinalizationTimeout = 5 * time.Second
 
 const (
 	RunStatusCompleted      = "completed"
@@ -105,8 +108,11 @@ func (r *ImageReconciler) Run(ctx context.Context, now time.Time) (RunSummary, e
 		} else {
 			summary.Status = RunStatusCompleted
 		}
-		if err := r.store.CompleteRun(ctx, summary); err != nil && runErr == nil {
-			return summary, fmt.Errorf("complete image reconciliation run: %w", err)
+		finalizeCtx, cancel := context.WithTimeout(context.Background(), reconciliationFinalizationTimeout)
+		completeErr := r.store.CompleteRun(finalizeCtx, summary)
+		cancel()
+		if completeErr != nil {
+			return summary, errors.Join(runErr, fmt.Errorf("complete image reconciliation run: %w", completeErr))
 		}
 		return summary, runErr
 	}
@@ -151,14 +157,10 @@ func (r *ImageReconciler) Run(ctx context.Context, now time.Time) (RunSummary, e
 		if err := r.store.RecordFinding(ctx, Finding{
 			RunID: runID,
 			Kind:  FindingKindOrphanObject, Subject: object.Path,
-			Detail: "object is outside the grace period and has no job/history reference", CreatedAt: now,
+			Detail: "audit only: object is outside the grace period and has no job/history reference; deletion requires a database claim fence", CreatedAt: now,
 		}); err != nil {
 			return finish(fmt.Errorf("record orphan image object %q: %w", object.Path, err))
 		}
-		if err := r.storage.DeleteObjects(ctx, object.Path); err != nil {
-			return finish(fmt.Errorf("delete orphan image object %q: %w", object.Path, err))
-		}
-		summary.DeletedObjects++
 	}
 	return finish(nil)
 }

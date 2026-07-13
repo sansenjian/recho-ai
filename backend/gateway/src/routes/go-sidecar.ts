@@ -151,20 +151,25 @@ router.use(async (req: Request, res: Response, next) => {
 
   const body = requestBody(req)
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), proxyTimeoutMs())
+  let abortReason: 'timeout' | 'client_disconnect' | null = null
+  let timeout: ReturnType<typeof setTimeout>
 
-  const abortUpstream = () => {
+  const abortUpstream = (reason: 'timeout' | 'client_disconnect') => {
+    if (controller.signal.aborted) return
+    abortReason = reason
     clearTimeout(timeout)
     controller.abort()
   }
 
+  timeout = setTimeout(() => abortUpstream('timeout'), proxyTimeoutMs())
+
   // `req.close` also fires after a POST request body is read normally. Only
   // abort uploads that closed before Node marked the body as complete.
   req.once('close', () => {
-    if (req.destroyed && !req.complete) abortUpstream()
+    if (req.destroyed && !req.complete) abortUpstream('client_disconnect')
   })
   res.once('close', () => {
-    if (!res.writableEnded) abortUpstream()
+    if (!res.writableEnded) abortUpstream('client_disconnect')
   })
 
   const startedAt = Date.now()
@@ -232,8 +237,11 @@ router.use(async (req: Request, res: Response, next) => {
     const responseStream = Readable.fromWeb(upstream.body as unknown as NodeReadableStream<Uint8Array>)
     await pipeline(responseStream, res)
   } catch (err: any) {
+    if (abortReason === 'client_disconnect') {
+      return
+    }
     console.error('[go-sidecar] proxy failed:', err?.message || err)
-    const status = err?.name === 'AbortError' ? 504 : 502
+    const status = abortReason === 'timeout' ? 504 : 502
     const code = status === 504 ? 'GO_SIDECAR_TIMEOUT' : 'GO_SIDECAR_UNAVAILABLE'
     if (trackImageAttempt) {
       void recordProxyFailure(req, err, status, startedAt).catch((recordErr) => {

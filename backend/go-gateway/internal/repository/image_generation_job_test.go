@@ -297,6 +297,54 @@ func TestStartWithCreditUsesAtomicImageJobRPC(t *testing.T) {
 	}
 }
 
+func TestFindStartByIdentityLoadsDurableAtomicResult(t *testing.T) {
+	lease := "lease-existing"
+	lockedUntil := time.Now().Add(time.Minute)
+	db := &fakeImageJobDB{queryRow: fakeImageJobRow{scan: func(dest ...any) error {
+		if len(dest) != 24 {
+			return errors.New("unexpected durable start result column count")
+		}
+		values := []any{
+			"job-existing", "batch-existing", "request-existing", "staging",
+			"user-existing", "idem-existing", strings.Repeat("a", 64), "tx-existing",
+			float64(1), float64(0), 1, 0, 0, 5,
+			json.RawMessage(`{"version":1}`), nil,
+			time.Now(), "request-existing", lease, lockedUntil,
+			time.Now(), time.Now(), nil, float64(99),
+		}
+		for i, value := range values {
+			if err := assignScanValue(dest[i], value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}}
+	repo := &ImageGenerationJobRepository{db: db}
+
+	started, err := repo.FindStartByIdentity(
+		context.Background(),
+		"batch-existing",
+		"user-existing",
+		"idem-existing",
+		strings.Repeat("a", 64),
+	)
+	if err != nil {
+		t.Fatalf("FindStartByIdentity() error = %v", err)
+	}
+	if started == nil || started.Job == nil || started.Job.ID != "job-existing" || started.TransactionID != "tx-existing" || started.Balance != 99 {
+		t.Fatalf("FindStartByIdentity() = %#v", started)
+	}
+	if len(db.querySQL) != 1 {
+		t.Fatalf("queries = %#v, want one durable identity lookup", db.querySQL)
+	}
+	query := strings.ToLower(db.querySQL[0])
+	for _, predicate := range []string{"generation_batch_id = $1", "user_id = $2::uuid", "idempotency_key = $3", "request_hash = $4"} {
+		if !strings.Contains(query, predicate) {
+			t.Fatalf("identity lookup missing %q: %s", predicate, db.querySQL[0])
+		}
+	}
+}
+
 func TestMarkCompletedRequiresProcessingStatusAndLeaseToken(t *testing.T) {
 	db := &fakeImageJobDB{execTag: pgconn.NewCommandTag("UPDATE 1")}
 	repo := &ImageGenerationJobRepository{db: db}

@@ -175,8 +175,8 @@ func (p *ImageJobProcessor) Process(
 	if err != nil {
 		return nil, fmt.Errorf("encode permanent image response: %w", err)
 	}
-	if userID, idemKey := jobIdempotencyIdentity(job, manifest); userID != "" || idemKey != "" {
-		if userID == "" || idemKey == "" {
+	if userID, idemKey := jobIdempotencyIdentity(job, manifest); userID != "" {
+		if idemKey == "" {
 			return nil, errors.New("image job idempotency identity is incomplete")
 		}
 		if p.idempotency == nil {

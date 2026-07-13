@@ -13,8 +13,8 @@ type imageLifecycleEvent struct {
 	CreditTransactionID string `json:"credit_transaction_id,omitempty"`
 	Provider            string `json:"provider,omitempty"`
 	ErrorCode           string `json:"error_code,omitempty"`
-	RequestedCount      int    `json:"requested_count,omitempty"`
-	ReturnedCount       int    `json:"returned_count,omitempty"`
+	RequestedCount      int    `json:"requested_count"`
+	ReturnedCount       int    `json:"returned_count"`
 }
 
 func imageLifecycleLog(event imageLifecycleEvent) string {

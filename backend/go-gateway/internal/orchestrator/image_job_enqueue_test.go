@@ -123,6 +123,10 @@ type enqueueJobStore struct {
 	stagingRefunds  []float64
 	createErrs      []error
 	createErr       error
+	startErrs       []error
+	recoveredStart  *repository.ImageGenerationJobStart
+	recoverErr      error
+	recoverCalls    int
 	saveErr         error
 	activateErr     error
 	queueErr        error
@@ -159,6 +163,11 @@ func (s *enqueueJobStore) StartWithCredit(ctx context.Context, input repository.
 	if s.log != nil {
 		s.log.add("start-credit")
 	}
+	if len(s.startErrs) > 0 {
+		err := s.startErrs[0]
+		s.startErrs = s.startErrs[1:]
+		return nil, err
+	}
 	job, err := s.CreateStaging(ctx, repository.CreateImageGenerationJob{
 		GenerationBatchID:   input.GenerationBatchID,
 		RequestID:           input.RequestID,
@@ -182,6 +191,19 @@ func (s *enqueueJobStore) StartWithCredit(ctx context.Context, input repository.
 		Balance:       99,
 		TransactionID: "tx-atomic-start",
 	}, nil
+}
+
+func (s *enqueueJobStore) FindStartByIdentity(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+) (*repository.ImageGenerationJobStart, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recoverCalls++
+	return s.recoveredStart, s.recoverErr
 }
 
 func (s *enqueueJobStore) SaveStagingManifest(ctx context.Context, jobID, ownerID, leaseToken string, manifest json.RawMessage, lease time.Duration) error {
@@ -272,6 +294,77 @@ func newEnqueueOrchestrator(t *testing.T, storage StorageService, jobs ImageJobE
 		}}).
 		WithImageJobStore(jobs)
 	return o, idem, upstream.Close
+}
+
+func TestStartCreditImageJobRecoversCommittedResultAfterAmbiguousErrors(t *testing.T) {
+	lease := "lease-recovered"
+	recovered := &repository.ImageGenerationJobStart{
+		Job: &repository.ImageGenerationJob{
+			ID: "job-recovered", GenerationBatchID: "batch-recovered", LeaseToken: &lease,
+		},
+		Balance:       42,
+		TransactionID: "tx-recovered",
+	}
+	jobs := &enqueueJobStore{
+		startErrs:      []error{errors.New("connection reset"), errors.New("connection reset")},
+		recoveredStart: recovered,
+	}
+	idem := &testIdempotencyService{}
+	o := NewImageOrchestrator(&testCreditService{}, &testStorageService{}, idem).WithImageJobStore(jobs)
+
+	started, statusErr := o.startCreditImageJob(
+		context.Background(),
+		imageGenerationMetadata{BatchID: "batch-recovered"},
+		&middleware.User{ID: "user-recovered"},
+		"idem-recovered",
+		[]byte(`{"prompt":"recover"}`),
+		"request-recovered",
+		1,
+		1,
+		1,
+	)
+	if statusErr != nil {
+		t.Fatalf("startCreditImageJob() status error = %v", statusErr)
+	}
+	if started != recovered {
+		t.Fatalf("startCreditImageJob() = %#v, want recovered durable start", started)
+	}
+	if jobs.recoverCalls != 1 {
+		t.Fatalf("durable recovery calls = %d, want 1", jobs.recoverCalls)
+	}
+	if len(idem.fails) != 0 {
+		t.Fatalf("committed atomic start released idempotency: %#v", idem.fails)
+	}
+}
+
+func TestStartCreditImageJobKeepsIdempotencyProcessingWhenRecoveryIsUncertain(t *testing.T) {
+	jobs := &enqueueJobStore{
+		startErrs:  []error{errors.New("connection reset"), errors.New("connection reset")},
+		recoverErr: errors.New("database lookup unavailable"),
+	}
+	idem := &testIdempotencyService{}
+	o := NewImageOrchestrator(&testCreditService{}, &testStorageService{}, idem).WithImageJobStore(jobs)
+
+	started, statusErr := o.startCreditImageJob(
+		context.Background(),
+		imageGenerationMetadata{BatchID: "batch-uncertain"},
+		&middleware.User{ID: "user-uncertain"},
+		"idem-uncertain",
+		[]byte(`{"prompt":"uncertain"}`),
+		"request-uncertain",
+		1,
+		1,
+		1,
+	)
+	if started != nil || statusErr == nil || statusErr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("startCreditImageJob() = %#v, %#v; want temporary unavailable", started, statusErr)
+	}
+	if jobs.recoverCalls != 1 {
+		t.Fatalf("durable recovery calls = %d, want 1", jobs.recoverCalls)
+	}
+	if len(idem.fails) != 0 {
+		t.Fatalf("uncertain atomic start released idempotency: %#v", idem.fails)
+	}
 }
 
 func enqueueParams(count int) GenerateParams {

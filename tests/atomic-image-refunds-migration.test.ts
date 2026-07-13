@@ -23,6 +23,12 @@ describe('atomic image refund migration', () => {
     expect(sql).toContain("related_transaction_id = p_related_transaction_id")
   })
 
+  it('rejects refunds when the original image transaction is missing', () => {
+    expect(sql).toMatch(
+      /select -amount[\s\S]*?reason = 'image_generation';\s*if not found then\s*raise exception 'credit_transaction_not_found'/,
+    )
+  })
+
   it('keeps the service-role-only execution boundary', () => {
     expect(sql).toContain(
       'revoke all on function public.refund_user_credits(uuid, numeric, uuid, jsonb)',

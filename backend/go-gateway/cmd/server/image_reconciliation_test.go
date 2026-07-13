@@ -21,6 +21,7 @@ func (r *testImageReconcilerRunner) Run(context.Context, time.Time) (reconciliat
 
 func TestRunImageReconciliationLoopRunsImmediatelyAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	runner := &testImageReconcilerRunner{runs: make(chan struct{}, 1)}
 	done := make(chan struct{})
 	go func() {

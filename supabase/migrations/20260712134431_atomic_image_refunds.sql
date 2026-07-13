@@ -46,26 +46,28 @@ begin
        and user_id = p_user_id
        and reason = 'image_generation';
 
-    if found then
-      select coalesce(sum(amount), 0)
-        into v_already_refunded
-        from public.credit_transactions
-       where reason = 'refund'
-         and related_transaction_id = p_related_transaction_id
-         and user_id = p_user_id;
+    if not found then
+      raise exception 'credit_transaction_not_found' using errcode = 'P0001';
+    end if;
 
-      v_refund_amount := least(
-        v_refund_amount,
-        greatest(v_original_amount - v_already_refunded, 0)
-      );
-      if v_refund_amount <= 0 then
-        select user_credit_balances.balance
-          into v_balance
-          from public.user_credit_balances
-         where user_id = p_user_id;
-        return query select coalesce(v_balance, 0);
-        return;
-      end if;
+    select coalesce(sum(amount), 0)
+      into v_already_refunded
+      from public.credit_transactions
+     where reason = 'refund'
+       and related_transaction_id = p_related_transaction_id
+       and user_id = p_user_id;
+
+    v_refund_amount := least(
+      v_refund_amount,
+      greatest(v_original_amount - v_already_refunded, 0)
+    );
+    if v_refund_amount <= 0 then
+      select user_credit_balances.balance
+        into v_balance
+        from public.user_credit_balances
+       where user_id = p_user_id;
+      return query select coalesce(v_balance, 0);
+      return;
     end if;
   end if;
 

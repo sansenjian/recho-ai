@@ -62,6 +62,19 @@ type ImageJobCreditStarter interface {
 	StartWithCredit(ctx context.Context, input repository.StartImageGenerationJobInput) (*repository.ImageGenerationJobStart, error)
 }
 
+// ImageJobCreditRecovery resolves an atomic start whose commit outcome was
+// obscured by a transport failure. A nil result with nil error confirms that
+// no matching durable job exists; a lookup error leaves the outcome unknown.
+type ImageJobCreditRecovery interface {
+	FindStartByIdentity(
+		ctx context.Context,
+		generationBatchID,
+		userID,
+		idempotencyKey,
+		requestHash string,
+	) (*repository.ImageGenerationJobStart, error)
+}
+
 // ImageJobStagingRefundRecorder records a partial provider refund while the
 // request still owns the staging lease.
 type ImageJobStagingRefundRecorder interface {

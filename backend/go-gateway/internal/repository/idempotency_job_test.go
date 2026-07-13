@@ -208,6 +208,57 @@ func TestAcquireStaleImageKeyWithoutActiveJobReclaims(t *testing.T) {
 	}
 }
 
+func TestAcquireReturnsConflictWhenConcurrentReclaimUpdatesNoRows(t *testing.T) {
+	now := time.Now()
+	db := &scriptedDB{
+		queryRows: []pgx.Row{
+			scriptedRow{err: pgx.ErrNoRows},
+			idempotencyRecordRow(IdempotencyRecord{
+				ID: "record-race", UserID: "user-race", Key: "key-race",
+				Scope: "credit_redeem", RequestHash: "request-hash", Status: "failed",
+				CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Minute),
+			}),
+		},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 0")},
+	}
+
+	repo := &IdempotencyRepository{db: db}
+	result, err := repo.Acquire(context.Background(), "user-race", "key-race", "credit_redeem", "request-hash")
+	if err != nil {
+		t.Fatalf("Acquire returned error: %v", err)
+	}
+	if result.Status != "conflict" {
+		t.Fatalf("Acquire status = %q, want conflict after lost reclaim race", result.Status)
+	}
+	if len(db.calls) != 3 {
+		t.Fatalf("Acquire calls = %#v, want insert, lookup, reclaim", db.calls)
+	}
+	normalized := strings.Join(strings.Fields(strings.ToLower(db.calls[2].query)), " ")
+	if !strings.Contains(normalized, "status in ('processing', 'failed')") {
+		t.Fatalf("reclaim query is missing status predicate: %s", db.calls[2].query)
+	}
+	if !strings.Contains(normalized, "status = $3") || !strings.Contains(normalized, "created_at = $4") {
+		t.Fatalf("reclaim query is missing observed-state CAS predicates: %s", db.calls[2].query)
+	}
+	if len(db.calls[2].args) != 4 || db.calls[2].args[2] != "failed" {
+		t.Fatalf("reclaim args = %#v, want observed status and created_at", db.calls[2].args)
+	}
+}
+
+func TestIdempotencyRepositoryNilPoolReturnsConfigurationError(t *testing.T) {
+	repo := NewIdempotencyRepository(nil)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("Acquire panicked with nil pool: %v", recovered)
+		}
+	}()
+
+	_, err := repo.Acquire(context.Background(), "user-1", "key-1", "image_generate", "hash")
+	if err == nil || !strings.Contains(err.Error(), "database client is nil") {
+		t.Fatalf("Acquire error = %v, want nil database client error", err)
+	}
+}
+
 func TestFailReturnsErrorWhenNoProcessingRowWasUpdated(t *testing.T) {
 	repo := &IdempotencyRepository{db: &scriptedDB{
 		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 0")},

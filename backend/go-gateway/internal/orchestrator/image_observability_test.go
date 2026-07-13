@@ -23,3 +23,14 @@ func TestImageLifecycleLogUsesSafeCorrelationFields(t *testing.T) {
 		t.Fatalf("lifecycle log contains unsafe fields: %s", line)
 	}
 }
+
+func TestImageLifecycleLogPreservesZeroCounts(t *testing.T) {
+	line := imageLifecycleLog(imageLifecycleEvent{Event: "provider_failed"})
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+		t.Fatalf("decode lifecycle log: %v", err)
+	}
+	if decoded["requested_count"] != float64(0) || decoded["returned_count"] != float64(0) {
+		t.Fatalf("zero image counts missing from lifecycle log: %#v", decoded)
+	}
+}

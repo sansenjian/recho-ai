@@ -508,7 +508,31 @@ func (o *ImageOrchestrator) startCreditImageJob(
 			return nil, domainStatusError(http.StatusPaymentRequired, ErrorCodeInsufficientCredits, "额度不足。")
 		}
 		o.logger.Printf("[image] failed to atomically start image job: %v", err)
-		o.failIdempotency(user, idempotencyKey)
+		if recovery, ok := o.jobStore.(ImageJobCreditRecovery); ok && !resourceIsNil(recovery) {
+			recoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			recovered, recoveryErr := recovery.FindStartByIdentity(
+				recoveryCtx,
+				input.GenerationBatchID,
+				input.UserID,
+				input.IdempotencyKey,
+				input.RequestHash,
+			)
+			cancel()
+			if recoveryErr == nil {
+				if recovered != nil && recovered.Job != nil && strings.TrimSpace(recovered.Job.ID) != "" && imageJobLeaseToken(recovered.Job) != "" {
+					return recovered, nil
+				}
+				if recovered == nil {
+					// A successful primary-database lookup with no durable job confirms
+					// that neither atomic call committed, so this key may be retried.
+					o.failIdempotency(user, idempotencyKey)
+				} else {
+					o.logger.Printf("[image] recovered atomic image job is not resumable: job=%q status=%q", recovered.Job.ID, recovered.Job.Status)
+				}
+			} else {
+				o.logger.Printf("[image] atomic image job recovery remains uncertain: %v", recoveryErr)
+			}
+		}
 		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeCreditUnavailable, "额度服务暂时不可用，请稍后重试。")
 	}
 	if started == nil || started.Job == nil || strings.TrimSpace(started.Job.ID) == "" || imageJobLeaseToken(started.Job) == "" {

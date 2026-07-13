@@ -1,8 +1,16 @@
 import http from 'node:http'
 import express from 'express'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { requestObservabilityMiddleware } from '../backend/gateway/src/middleware/request-observability'
 import goSidecarRouter from '../backend/gateway/src/routes/go-sidecar'
+
+const { recordImageGenerationAttempt } = vi.hoisted(() => ({
+  recordImageGenerationAttempt: vi.fn(async () => true),
+}))
+
+vi.mock('../backend/gateway/src/services/image-attempts', () => ({
+  recordImageGenerationAttempt,
+}))
 
 type TestServer = {
   server: http.Server
@@ -79,6 +87,7 @@ describe('go sidecar proxy', () => {
   }
 
   afterEach(async () => {
+    vi.clearAllMocks()
     restoreEnv('GO_GATEWAY_BASE_URL', originalGoGatewayBaseUrl)
     restoreEnv('GO_GATEWAY_PROXY_TIMEOUT_MS', originalProxyTimeoutMs)
     await Promise.all(servers.splice(0).map(close))
@@ -168,6 +177,30 @@ describe('go sidecar proxy', () => {
     })
   })
 
+  it('records an image generation timeout as a timeout attempt', async () => {
+    const upstream = await listen(http.createServer((req) => {
+      req.resume()
+    }))
+    servers.push(upstream.server)
+    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = '50'
+    const proxy = await startProxy(upstream.url)
+
+    const response = await fetch(`${proxy.url}/api/image/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+
+    expect(response.status).toBe(504)
+    await within(vi.waitFor(() => {
+      expect(recordImageGenerationAttempt).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        errorType: 'timeout',
+        httpStatus: 504,
+      }))
+    }))
+  })
+
   it('cancels the upstream request when a real client disconnects mid-upload', async () => {
     const upstreamStarted = deferred<void>()
     const upstreamCancelled = deferred<'aborted' | 'close'>()
@@ -203,6 +236,7 @@ describe('go sidecar proxy', () => {
 
     await expect(within(upstreamCancelled.promise)).resolves.toMatch(/^(aborted|close)$/)
     expect(wroteCompleteResponse).toBe(false)
+    expect(recordImageGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('does not abort a POST proxy request when the incoming request body finishes normally', async () => {

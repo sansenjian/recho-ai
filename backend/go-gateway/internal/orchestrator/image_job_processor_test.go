@@ -474,6 +474,33 @@ func TestImageJobProcessorRequiresIdempotencyCompletion(t *testing.T) {
 	}
 }
 
+func TestImageJobProcessorSkipsIdempotencyCompletionForAnonymousKey(t *testing.T) {
+	manifest, data := stagedManifest()
+	manifest.Metadata.UserID = ""
+	jobs := &processorJobStore{}
+	storage := &processorStorage{
+		downloaded: &service.DownloadedImage{Data: data, Mime: "image/png"},
+		stored:     &service.StoredImage{PublicURL: "https://cdn.example/img-1.png", StoragePath: "generated/img-1.png"},
+	}
+	idem := &processorIdempotency{}
+	processor := NewImageJobProcessor(storage, idem, jobs)
+	job := processorJobWithManifest(t, manifest)
+	job.UserID = nil
+	anonymousKey := "anonymous-idempotency-key"
+	job.IdempotencyKey = &anonymousKey
+
+	result, err := processor.Process(context.Background(), job, "worker-1", "lease-1")
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Process() returned nil result")
+	}
+	if idem.complete != 0 {
+		t.Fatalf("anonymous job completed authenticated idempotency %d times", idem.complete)
+	}
+}
+
 func containsErrorText(err error, want string) bool {
 	return err != nil && (fmt.Sprint(err) == want || len(err.Error()) >= len(want) && containsFold(err.Error(), want))
 }

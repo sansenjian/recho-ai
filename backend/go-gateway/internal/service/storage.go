@@ -70,9 +70,7 @@ func NewStorageService(pool *pgxpool.Pool, processor *ImageProcessor, uploader *
 		uploader:    uploader,
 		objectStore: objectStore,
 		db:          db,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		client:      newSafeImageHTTPClient(120 * time.Second),
 	}
 }
 
@@ -180,33 +178,11 @@ func (s *StorageService) databaseClient() storageDB {
 // StageFromURL downloads an image without transforming it and stages the raw
 // bytes at the exact caller-supplied storage path.
 func (s *StorageService) StageFromURL(ctx context.Context, sourceURL, storagePath string) (*StagedImage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	data, mime, err := s.downloadImage(ctx, sourceURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build download request: %w", err)
+		return nil, err
 	}
-	client := s.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to download image: status %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read image data: %w", err)
-	}
-	if len(data) > maxImageSize {
-		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
-	}
-
-	return s.StageFromBuffer(ctx, data, inferImageMime(resp.Header.Get("Content-Type")), storagePath)
+	return s.StageFromBuffer(ctx, data, mime, storagePath)
 }
 
 // StageFromBuffer uploads raw image bytes at an exact storage path and
@@ -294,45 +270,22 @@ func (s *StorageService) DeleteImageHistoryByID(ctx context.Context, id string) 
 		return fmt.Errorf("failed to query image history %q: %w", id, err)
 	}
 
+	if err := s.DeleteObjects(ctx, storagePath, previewPath, thumbnailPath); err != nil {
+		return fmt.Errorf("failed to clean up image history %q objects: %w", id, err)
+	}
 	if _, err := db.Exec(ctx, `DELETE FROM image_generations WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("failed to delete image history %q: %w", id, err)
 	}
-	return s.DeleteObjects(ctx, storagePath, previewPath, thumbnailPath)
+	return nil
 }
 
 // StoreFromURL downloads an image from URL, processes it, and stores it.
 // The pathHint is used to build the storage path; if empty, a random path is generated.
 func (s *StorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*StoredImage, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	data, mime, err := s.downloadImage(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build download request: %w", err)
+		return nil, err
 	}
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to download image: status %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read image data: %w", err)
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	mime := "image/png"
-	if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
-		mime = "image/jpeg"
-	} else if strings.Contains(contentType, "webp") {
-		mime = "image/webp"
-	} else if strings.Contains(contentType, "gif") {
-		mime = "image/gif"
-	}
-
 	return s.StoreFromBuffer(ctx, data, mime, pathHint)
 }
 

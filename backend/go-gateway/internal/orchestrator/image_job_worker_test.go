@@ -351,7 +351,22 @@ func TestImageJobWorkerIgnoresControlledHeartbeatCancellation(t *testing.T) {
 		HeartbeatInterval: time.Millisecond,
 		JobTimeout:        time.Second,
 	})
-	processed, err := worker.RunOnce(context.Background())
+	type runResult struct {
+		processed bool
+		err       error
+	}
+	done := make(chan runResult, 1)
+	go func() {
+		processed, err := worker.RunOnce(context.Background())
+		done <- runResult{processed: processed, err: err}
+	}()
+	select {
+	case <-jobs.renewStarted:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat renewal did not start")
+	}
+	result := <-done
+	processed, err := result.processed, result.err
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
