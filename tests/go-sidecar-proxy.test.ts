@@ -43,6 +43,7 @@ async function getWithNodeHTTP(url: string) {
     const request = http.get(url, (response) => {
       const chunks: Buffer[] = []
       response.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+      response.on('error', reject)
       response.on('end', () => {
         resolve({
           status: response.statusCode || 0,
