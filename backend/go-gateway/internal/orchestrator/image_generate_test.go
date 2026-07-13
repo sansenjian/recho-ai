@@ -219,21 +219,46 @@ func TestCallImageAPILucenUsesMinimalPayloadAndParsesBase64(t *testing.T) {
 	}
 }
 
+func TestIsLucenImageProvider(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		want    bool
+	}{
+		{name: "root host", baseURL: "https://lucen.plus/v1", want: true},
+		{name: "subdomain", baseURL: "https://images.lucen.plus/v1", want: true},
+		{name: "mixed case", baseURL: "https://LUCEN.PLUS/v1", want: true},
+		{name: "lookalike", baseURL: "https://lucen.plus.example/v1", want: false},
+		{name: "other provider", baseURL: "https://provider.example/v1", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLucenImageProvider(tt.baseURL); got != tt.want {
+				t.Fatalf("isLucenImageProvider(%q) = %v, want %v", tt.baseURL, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
 	var payload map[string]any
 	o := NewImageOrchestrator(nil, nil, nil)
 	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://provider.example/v1/images/generations" {
+			t.Fatalf("unexpected request URL: %s", req.URL)
+		}
 		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode provider request: %v", err)
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/image.png"}]}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/one.png"},{"url":"https://provider.example/two.png"}]}`)),
 		}, nil
 	})}
 
-	_, err := o.callImageAPI(
+	images, err := o.callImageAPI(
 		context.Background(),
 		GenRequest{Prompt: "test prompt"},
 		2,
@@ -247,6 +272,9 @@ func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
 	}
 	if payload["n"] != float64(2) || payload["size"] != "2048x1152" || payload["quality"] != "hd" {
 		t.Fatalf("expected non-Lucene controls to be preserved, got %#v", payload)
+	}
+	if len(images) != 2 || images[0].source.URL != "https://provider.example/one.png" || images[1].source.URL != "https://provider.example/two.png" {
+		t.Fatalf("unexpected non-Lucene image results: %#v", images)
 	}
 }
 
