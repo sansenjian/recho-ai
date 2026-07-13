@@ -6,6 +6,10 @@ const migrationPath = resolve(
   process.cwd(),
   'supabase/migrations/20260712135634_start_image_generation_jobs.sql',
 )
+const contractFixMigrationPath = resolve(
+  process.cwd(),
+  'supabase/migrations/20260713111526_fix_image_job_database_contracts.sql',
+)
 
 describe('atomic image job start migration', () => {
   it('defines an atomic idempotency, credit, and staging-job transaction', () => {
@@ -30,5 +34,23 @@ describe('atomic image job start migration', () => {
       'grant execute on function public.start_image_generation_job',
     )
     expect(sql).toContain('to service_role')
+  })
+
+  it('aliases credit reservation outputs independently of their live column names', () => {
+    expect(existsSync(contractFixMigrationPath)).toBe(true)
+    const sql = readFileSync(contractFixMigrationPath, 'utf8')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+
+    expect(sql).toContain('create or replace function public.start_image_generation_job')
+    expect(sql).toContain(
+      'as reservation(reserved_balance, reserved_transaction_id)',
+    )
+    expect(sql).toContain(
+      'select reservation.reserved_balance, reservation.reserved_transaction_id',
+    )
+    expect(sql).not.toContain('reservation.balance')
+    expect(sql).toContain('revoke all on function public.start_image_generation_job')
+    expect(sql).toContain('grant execute on function public.start_image_generation_job')
   })
 })
