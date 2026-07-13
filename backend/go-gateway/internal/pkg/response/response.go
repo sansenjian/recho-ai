@@ -39,6 +39,15 @@ func Error(w http.ResponseWriter, status int, message string) {
 	JSON(w, status, ErrorBody(status, message))
 }
 
+// ErrorWithCode sends a stable domain code while preserving the standard
+// public error envelope.
+func ErrorWithCode(w http.ResponseWriter, status int, code, message string) {
+	if code == "" {
+		code = errorCodeForStatus(status)
+	}
+	JSON(w, status, ErrorResponse{Error: message, Code: code})
+}
+
 // ErrorBody builds the same error envelope for direct and persisted responses.
 func ErrorBody(status int, message string) ErrorResponse {
 	return ErrorResponse{

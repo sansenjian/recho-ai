@@ -61,6 +61,15 @@ IMAGE_GEN_API_KEY=[API_KEY]
 IMAGE_GEN_BASE_URL=https://lucen.plus/v1
 IMAGE_CREDIT_COST_PER_IMAGE=0.5
 
+# Durable image jobs. Keep enabled after image_generation_jobs migrations land.
+IMAGE_JOB_WORKER_ENABLED=true
+
+# Reconciliation is opt-in until the reconciliation audit migration is deployed.
+IMAGE_RECONCILIATION_ENABLED=false
+IMAGE_RECONCILIATION_INTERVAL_SECONDS=900
+IMAGE_RECONCILIATION_STALE_AFTER_SECONDS=1800
+IMAGE_RECONCILIATION_ORPHAN_GRACE_SECONDS=86400
+
 # Required when API keys are configured in Admin Provider settings.
 # Use the same value for Node Gateway and Go Gateway.
 # Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"

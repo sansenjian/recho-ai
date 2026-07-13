@@ -177,7 +177,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.storageService == nil {
 		log.Printf("[image] 503: storageService is nil (DB not configured or connection failed)")
-		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
+		response.ErrorWithCode(w, http.StatusServiceUnavailable, orchestrator.ErrorCodeStorageUnavailable, "图片存储服务暂时不可用。")
 		return
 	}
 
@@ -201,7 +201,7 @@ func (h *ImageHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(statusErr.Body)
 			return
 		}
-		response.Error(w, statusErr.Code, statusErr.Message)
+		response.ErrorWithCode(w, statusErr.Code, statusErr.ErrorCode, statusErr.Message)
 		return
 	}
 

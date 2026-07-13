@@ -19,6 +19,8 @@ export type GoOwnedContractScenario = {
   expectedStatus: number
   requiredJsonKeys: string[]
   expectedCode?: string
+  requestJson?: Record<string, unknown>
+  headers?: Record<string, string>
 }
 
 export type GoOwnedContract = {
@@ -95,6 +97,14 @@ function validateScenario(value: unknown, index: number): GoOwnedContractScenari
   if (expectedCode !== undefined && (typeof expectedCode !== 'string' || !expectedCode)) {
     throw new Error(`liveScenarios[${index}].expectedCode must be a non-empty string`)
   }
+  const requestJson = scenario.requestJson
+  if (requestJson !== undefined && (!requestJson || typeof requestJson !== 'object' || Array.isArray(requestJson))) {
+    throw new Error(`liveScenarios[${index}].requestJson must be an object`)
+  }
+  const headers = scenario.headers
+  if (headers !== undefined && (!headers || typeof headers !== 'object' || Array.isArray(headers) || Object.values(headers).some(item => typeof item !== 'string'))) {
+    throw new Error(`liveScenarios[${index}].headers must be a string record`)
+  }
   return {
     id: stringValue(scenario.id, `liveScenarios[${index}].id`),
     method: stringValue(scenario.method, `liveScenarios[${index}].method`).toUpperCase(),
@@ -102,6 +112,8 @@ function validateScenario(value: unknown, index: number): GoOwnedContractScenari
     expectedStatus: Number(expectedStatus),
     requiredJsonKeys: stringArray(scenario.requiredJsonKeys, `liveScenarios[${index}].requiredJsonKeys`),
     ...(expectedCode === undefined ? {} : { expectedCode }),
+    ...(requestJson === undefined ? {} : { requestJson: requestJson as Record<string, unknown> }),
+    ...(headers === undefined ? {} : { headers: headers as Record<string, string> }),
   }
 }
 

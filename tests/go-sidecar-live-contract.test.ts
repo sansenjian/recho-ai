@@ -192,9 +192,15 @@ describe('live Node to Go contract', () => {
 
     for (const scenario of contract.liveScenarios) {
       const requestId = `req_live_${scenario.id}`
+      const requestHeaders: Record<string, string> = {
+        'X-Request-ID': requestId,
+        ...scenario.headers,
+      }
+      if (scenario.requestJson) requestHeaders['Content-Type'] = 'application/json'
       const response = await fetch(`${stack.nodeUrl}${scenario.path}`, {
         method: scenario.method,
-        headers: { 'X-Request-ID': requestId },
+        headers: requestHeaders,
+        ...(scenario.requestJson ? { body: JSON.stringify(scenario.requestJson) } : {}),
       })
       const body = await response.json() as Record<string, unknown>
 

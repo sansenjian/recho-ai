@@ -55,6 +55,12 @@ type S3Config struct {
 	PublicBase string
 }
 
+// StorageObject identifies an object returned by a reconciliation listing.
+type StorageObject struct {
+	Path         string
+	LastModified time.Time
+}
+
 var (
 	newS3UploaderOnce sync.Once
 	globalUploader    *S3Uploader
@@ -244,6 +250,36 @@ func (u *S3Uploader) Delete(ctx context.Context, key string) error {
 
 	u.urlCache.Remove(key)
 	return nil
+}
+
+// ListObjects lists object keys for reconciliation. Callers should apply a
+// grace period before deleting results because object-store listings can lag.
+func (u *S3Uploader) ListObjects(ctx context.Context, prefix string) ([]StorageObject, error) {
+	if u == nil || u.client == nil {
+		return nil, fmt.Errorf("uploader not initialized")
+	}
+	paginator := s3.NewListObjectsV2Paginator(u.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(u.bucket),
+		Prefix: aws.String(prefix),
+	})
+	objects := make([]StorageObject, 0)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list objects: %w", err)
+		}
+		for _, object := range page.Contents {
+			if object.Key == nil {
+				continue
+			}
+			modified := time.Time{}
+			if object.LastModified != nil {
+				modified = *object.LastModified
+			}
+			objects = append(objects, StorageObject{Path: *object.Key, LastModified: modified})
+		}
+	}
+	return objects, nil
 }
 
 // PublicURL returns the public URL for a key, using a small LRU cache.

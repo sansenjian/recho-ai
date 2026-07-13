@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,12 +21,14 @@ type contractRoute struct {
 }
 
 type contractScenario struct {
-	ID               string   `json:"id"`
-	Method           string   `json:"method"`
-	Path             string   `json:"path"`
-	ExpectedStatus   int      `json:"expectedStatus"`
-	RequiredJSONKeys []string `json:"requiredJsonKeys"`
-	ExpectedCode     string   `json:"expectedCode"`
+	ID               string            `json:"id"`
+	Method           string            `json:"method"`
+	Path             string            `json:"path"`
+	ExpectedStatus   int               `json:"expectedStatus"`
+	RequiredJSONKeys []string          `json:"requiredJsonKeys"`
+	ExpectedCode     string            `json:"expectedCode"`
+	RequestJSON      map[string]any    `json:"requestJson"`
+	Headers          map[string]string `json:"headers"`
 }
 
 type goOwnedContract struct {
@@ -106,8 +109,24 @@ func collectContractRoutes(t *testing.T, router chi.Routes) map[string]bool {
 func assertContractScenario(t *testing.T, router http.Handler, scenario contractScenario) {
 	t.Helper()
 	requestID := "req_go_contract-" + scenario.ID
-	req := httptest.NewRequest(scenario.Method, scenario.Path, nil)
+	var requestBody *bytes.Reader
+	if scenario.RequestJSON != nil {
+		encoded, err := json.Marshal(scenario.RequestJSON)
+		if err != nil {
+			t.Fatalf("encode request JSON: %v", err)
+		}
+		requestBody = bytes.NewReader(encoded)
+	} else {
+		requestBody = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(scenario.Method, scenario.Path, requestBody)
 	req.Header.Set("X-Request-ID", requestID)
+	for key, value := range scenario.Headers {
+		req.Header.Set(key, value)
+	}
+	if scenario.RequestJSON != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)

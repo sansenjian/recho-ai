@@ -156,26 +156,26 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 
 	// 存储服务可用性
 	if o.storage == nil {
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片存储服务暂时不可用。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeStorageUnavailable, "图片存储服务暂时不可用。")
 	}
 
 	// --- 幂等检查 ---
 	// 已登录用户使用额度生成时必须携带幂等键
 	if user != nil && user.ID != "" && o.credit != nil && strings.TrimSpace(idemKey) == "" {
-		return nil, &StatusError{Code: http.StatusBadRequest, Message: "缺少 Idempotency-Key，请刷新后重试。"}
+		return nil, domainStatusError(http.StatusBadRequest, ErrorCodeIdempotencyKeyRequired, "缺少 Idempotency-Key，请刷新后重试。")
 	}
 	if idemKey != "" && user != nil && user.ID != "" {
 		if o.idempotency == nil {
-			return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "幂等服务暂时不可用，请稍后重试。"}
+			return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeIdempotencyUnavailable, "幂等服务暂时不可用，请稍后重试。")
 		}
 		outcome, err := o.idempotency.Acquire(ctx, user.ID, idemKey, "image_generate", params.RawBody)
 		if err != nil {
 			o.logger.Printf("[idempotency] acquire error: %v", err)
-			return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "服务暂时不可用，请稍后重试"}
+			return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeIdempotencyUnavailable, "服务暂时不可用，请稍后重试")
 		}
 		if outcome != nil {
 			if outcome.Conflict {
-				return nil, &StatusError{Code: http.StatusConflict, Message: "请求正在处理中或使用相同的幂等键发送了不同的请求。"}
+				return nil, domainStatusError(http.StatusConflict, ErrorCodeIdempotencyConflict, "请求正在处理中或使用相同的幂等键发送了不同的请求。")
 			}
 			if !outcome.Proceed && outcome.ReplayBody != nil {
 				// 幂等重放：直接返回缓存的响应字节
@@ -209,11 +209,11 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 	if perr != nil {
 		o.logger.Printf("[image] provider config unavailable: %v", perr)
 		o.failIdempotency(user, idemKey)
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片 Provider 配置暂时不可用。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeProviderUnavailable, "图片 Provider 配置暂时不可用。")
 	}
 	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
 		o.failIdempotency(user, idemKey)
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片 Provider 尚未配置，请联系管理员。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeProviderUnavailable, "图片 Provider 尚未配置，请联系管理员。")
 	}
 
 	// --- 构建初始任务 metadata ---
@@ -272,11 +272,11 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		if err != nil {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
 				o.failIdempotency(user, idemKey)
-				return nil, &StatusError{Code: http.StatusPaymentRequired, Message: "额度不足。"}
+				return nil, domainStatusError(http.StatusPaymentRequired, ErrorCodeInsufficientCredits, "额度不足。")
 			}
 			o.logger.Printf("[image] 503: failed to reserve credits: %v", err)
 			o.failIdempotency(user, idemKey)
-			return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "额度服务暂时不可用，请稍后重试。"}
+			return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeCreditUnavailable, "额度服务暂时不可用，请稍后重试。")
 		}
 		reservation = &service.CreditReservation{
 			TransactionID: txID,
@@ -297,19 +297,34 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 			return nil, startErr
 		}
 	}
+	o.logImageLifecycle(imageLifecycleEvent{
+		Event: "provider_started", RequestID: requestID, GenerationID: metadata.BatchID,
+		CreditTransactionID: metadata.CreditTransactionID, Provider: imageProviderName(providerCfg.BaseURL),
+		RequestedCount: count,
+	})
 
 	// --- 调 AI API（不可逆步骤，无补偿）---
 	images, ierr := o.callImageAPI(ctx, req, count, aspectRatio, resolution, quality, providerCfg)
 	if ierr != nil {
 		o.logger.Printf("[image] generation failed: %v", ierr)
+		o.logImageLifecycle(imageLifecycleEvent{
+			Event: "provider_failed", RequestID: requestID, GenerationID: metadata.BatchID,
+			CreditTransactionID: metadata.CreditTransactionID, Provider: imageProviderName(providerCfg.BaseURL),
+			ErrorCode: ErrorCodeProviderBadResponse, RequestedCount: count,
+		})
 		if stagingJob != nil {
 			manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
 			o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "provider_failed", ierr.Error())
 		} else {
 			o.handleImmediateCompensation(reservation, user, idemKey, "image_generation_failed")
 		}
-		return nil, &StatusError{Code: http.StatusInternalServerError, Message: "图片生成失败，请稍后重试。"}
+		return nil, domainStatusError(http.StatusInternalServerError, ErrorCodeProviderBadResponse, "图片生成失败，请稍后重试。")
 	}
+	o.logImageLifecycle(imageLifecycleEvent{
+		Event: "provider_succeeded", RequestID: requestID, GenerationID: metadata.BatchID,
+		CreditTransactionID: metadata.CreditTransactionID, Provider: imageProviderName(providerCfg.BaseURL),
+		RequestedCount: count, ReturnedCount: len(images),
+	})
 
 	// --- 部分退款：返回图少于请求 ---
 	if reservation != nil && len(images) < count && count > 0 {
@@ -380,6 +395,11 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 			if statusErr := o.enqueueImageJob(ctx, stagingJob, preparedImages, metadata, reservation, user, idemKey, params.RawBody, requestID, count); statusErr != nil {
 				return nil, statusErr
 			}
+			o.logImageLifecycle(imageLifecycleEvent{
+				Event: "persistence_queued", RequestID: requestID, GenerationID: metadata.BatchID,
+				CreditTransactionID: metadata.CreditTransactionID, Provider: imageProviderName(providerCfg.BaseURL),
+				RequestedCount: count, ReturnedCount: len(preparedImages),
+			})
 		} else {
 			// Durable worker wiring removes this compatibility path once every
 			// orchestrator instance has the persistence worker configured.
@@ -389,7 +409,7 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		if stagingJob != nil {
 			manifestJSON := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
 			o.handleStagingFailure(stagingJob, false, manifestJSON, requestID, reservation, user, idemKey, "provider_empty_result", "provider returned no usable images")
-			return nil, &StatusError{Code: http.StatusInternalServerError, Message: "图片生成失败，请稍后重试。"}
+			return nil, domainStatusError(http.StatusInternalServerError, ErrorCodeProviderBadResponse, "图片生成失败，请稍后重试。")
 		}
 		o.completeIdempotency(ctx, user, idemKey, resp, txID)
 	}
@@ -456,7 +476,7 @@ func (o *ImageOrchestrator) startCreditImageJob(
 	starter, ok := o.jobStore.(ImageJobCreditStarter)
 	if !ok || resourceIsNil(starter) {
 		o.failIdempotency(user, idempotencyKey)
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务服务暂不支持原子扣费，请稍后重试。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeImageJobUnavailable, "图片任务服务暂不支持原子扣费，请稍后重试。")
 	}
 	manifest := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
 	input := repository.StartImageGenerationJobInput{
@@ -485,15 +505,15 @@ func (o *ImageOrchestrator) startCreditImageJob(
 	if err != nil {
 		if errors.Is(err, repository.ErrInsufficientCredits) {
 			o.failIdempotency(user, idempotencyKey)
-			return nil, &StatusError{Code: http.StatusPaymentRequired, Message: "额度不足。"}
+			return nil, domainStatusError(http.StatusPaymentRequired, ErrorCodeInsufficientCredits, "额度不足。")
 		}
 		o.logger.Printf("[image] failed to atomically start image job: %v", err)
 		o.failIdempotency(user, idempotencyKey)
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "额度服务暂时不可用，请稍后重试。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeCreditUnavailable, "额度服务暂时不可用，请稍后重试。")
 	}
 	if started == nil || started.Job == nil || strings.TrimSpace(started.Job.ID) == "" || imageJobLeaseToken(started.Job) == "" {
 		o.failIdempotency(user, idempotencyKey)
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务初始化失败，请稍后重试。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeImageJobUnavailable, "图片任务初始化失败，请稍后重试。")
 	}
 	return started, nil
 }
@@ -542,11 +562,11 @@ func (o *ImageOrchestrator) createInitialImageJob(
 	if err != nil {
 		o.logger.Printf("[image] failed to create initial staging job: %v", err)
 		o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片持久化任务排队失败，请稍后重试。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodePersistenceQueueFailed, "图片持久化任务排队失败，请稍后重试。")
 	}
 	if job == nil || strings.TrimSpace(job.ID) == "" || imageJobLeaseToken(job) == "" {
 		o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
-		return nil, &StatusError{Code: http.StatusServiceUnavailable, Message: "图片任务初始化失败，请稍后重试。"}
+		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeImageJobUnavailable, "图片任务初始化失败，请稍后重试。")
 	}
 	return job, nil
 }
@@ -724,7 +744,7 @@ func (o *ImageOrchestrator) handleStagingFailure(
 			o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
 		}
 	}
-	return &StatusError{Code: http.StatusServiceUnavailable, Message: "图片持久化任务排队失败，请稍后重试。"}
+	return domainStatusError(http.StatusServiceUnavailable, ErrorCodePersistenceQueueFailed, "图片持久化任务排队失败，请稍后重试。")
 }
 
 func (o *ImageOrchestrator) handleImmediateCompensation(

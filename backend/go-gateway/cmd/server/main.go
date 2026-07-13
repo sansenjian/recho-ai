@@ -19,6 +19,7 @@ import (
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/orchestrator"
 	"go-gateway/internal/pkg/supabase"
+	"go-gateway/internal/reconciliation"
 	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
@@ -50,11 +51,13 @@ func main() {
 	var redeemRepo *repository.RedeemRepository
 	var idempotencyRepo *repository.IdempotencyRepository
 	var imageJobRepo *repository.ImageGenerationJobRepository
+	var imageReconciliationRepo *repository.ImageReconciliationRepository
 	if db != nil {
 		creditRepo = repository.NewCreditRepository(db.Pool())
 		redeemRepo = repository.NewRedeemRepository(db.Pool())
 		idempotencyRepo = repository.NewIdempotencyRepository(db.Pool())
 		imageJobRepo = repository.NewImageGenerationJobRepository(db.Pool())
+		imageReconciliationRepo = repository.NewImageReconciliationRepository(db.Pool())
 	}
 
 	// Initialize services
@@ -121,6 +124,32 @@ func main() {
 			if err := worker.Run(workerCtx); err != nil {
 				log.Printf("Image job worker stopped: %v", err)
 			}
+		}()
+	}
+
+	var imageReconciliationCancel context.CancelFunc
+	var imageReconciliationDone chan struct{}
+	if config.ImageReconciliationEnabled && imageReconciliationRepo != nil && storageService != nil {
+		reconciler := reconciliation.NewImageReconciler(
+			imageReconciliationRepo,
+			imageReconciliationStorageAdapter{storage: storageService},
+			reconciliation.Options{
+				StaleAfter:  time.Duration(config.ImageReconciliationStaleAfterSeconds) * time.Second,
+				OrphanGrace: time.Duration(config.ImageReconciliationOrphanGraceSeconds) * time.Second,
+				JobLimit:    500,
+			},
+		)
+		reconciliationCtx, cancelReconciliation := context.WithCancel(context.Background())
+		imageReconciliationCancel = cancelReconciliation
+		imageReconciliationDone = make(chan struct{})
+		go func() {
+			defer close(imageReconciliationDone)
+			runImageReconciliationLoop(
+				reconciliationCtx,
+				reconciler,
+				time.Duration(config.ImageReconciliationIntervalSeconds)*time.Second,
+				log.Default(),
+			)
 		}()
 	}
 
@@ -195,6 +224,14 @@ func main() {
 		case <-imageWorkerDone:
 		case <-time.After(5 * time.Second):
 			log.Println("Timed out waiting for image job worker shutdown")
+		}
+	}
+	if imageReconciliationCancel != nil {
+		imageReconciliationCancel()
+		select {
+		case <-imageReconciliationDone:
+		case <-time.After(5 * time.Second):
+			log.Println("Timed out waiting for image reconciliation shutdown")
 		}
 	}
 

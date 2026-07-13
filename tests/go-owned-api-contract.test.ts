@@ -46,6 +46,7 @@ describe('go-owned API contract', () => {
       'config-app',
       'config-supabase',
       'credits-unauthorized',
+      'image-generate-storage-unavailable',
     ])
   })
 

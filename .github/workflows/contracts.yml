@@ -48,6 +48,11 @@ jobs:
           go-version-file: backend/go-gateway/go.mod
           cache-dependency-path: backend/go-gateway/go.sum
 
+      - name: Install Go image processing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pkg-config libvips-dev
+
       - name: Install frontend and test dependencies
         run: npm ci
 

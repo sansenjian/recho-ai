@@ -61,3 +61,16 @@ func TestErrorBodyCanBeReusedForPersistedResponses(t *testing.T) {
 		t.Fatalf("unexpected reusable error body: %#v", body)
 	}
 }
+
+func TestErrorWithCodePreservesDomainCode(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ErrorWithCode(rec, http.StatusBadGateway, "PROVIDER_BAD_RESPONSE", "图片 Provider 返回异常。")
+
+	var body ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if rec.Code != http.StatusBadGateway || body.Code != "PROVIDER_BAD_RESPONSE" || body.Error != "图片 Provider 返回异常。" {
+		t.Fatalf("unexpected domain error response: status=%d body=%#v", rec.Code, body)
+	}
+}

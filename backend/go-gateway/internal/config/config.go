@@ -72,6 +72,13 @@ var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gp
 // enabled by default after the image_generation_jobs migration is applied;
 // set IMAGE_JOB_WORKER_ENABLED=false only while rolling out that migration.
 var ImageJobWorkerEnabled = parseEnvBool("IMAGE_JOB_WORKER_ENABLED", true)
+
+// Image reconciliation is opt-in until its audit migration has been deployed.
+// It scans stale jobs and removes only old, unreferenced managed image objects.
+var ImageReconciliationEnabled = parseEnvBool("IMAGE_RECONCILIATION_ENABLED", false)
+var ImageReconciliationIntervalSeconds = parseEnvInt("IMAGE_RECONCILIATION_INTERVAL_SECONDS", 900)
+var ImageReconciliationStaleAfterSeconds = parseEnvInt("IMAGE_RECONCILIATION_STALE_AFTER_SECONDS", 1800)
+var ImageReconciliationOrphanGraceSeconds = parseEnvInt("IMAGE_RECONCILIATION_ORPHAN_GRACE_SECONDS", 86400)
 var ProviderAPIKeyMasterKey = FirstNonEmpty(
 	os.Getenv("PROVIDER_API_KEY_MASTER_KEY"),
 	os.Getenv("API_KEY_MASTER_KEY"),

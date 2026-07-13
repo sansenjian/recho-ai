@@ -450,6 +450,15 @@ func (s *StorageService) CleanupObjects(paths ...string) {
 	s.cleanupStorageObjects(ptrs...)
 }
 
+// ListObjects exposes the narrow object listing needed by reconciliation.
+func (s *StorageService) ListObjects(ctx context.Context, prefix string) ([]StorageObject, error) {
+	uploader := s.uploader
+	if uploader == nil {
+		return nil, fmt.Errorf("storage uploader is not configured")
+	}
+	return uploader.ListObjects(ctx, prefix)
+}
+
 // DownloadImage downloads a stored image from S3-compatible storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
 	if s.uploader != nil && s.uploader.client != nil {

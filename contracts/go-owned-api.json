@@ -136,6 +136,15 @@
       "expectedStatus": 401,
       "requiredJsonKeys": ["error", "code"],
       "expectedCode": "UNAUTHORIZED"
+    },
+    {
+      "id": "image-generate-storage-unavailable",
+      "method": "POST",
+      "path": "/api/image/generate",
+      "requestJson": { "prompt": "contract image" },
+      "expectedStatus": 503,
+      "requiredJsonKeys": ["error", "code"],
+      "expectedCode": "STORAGE_UNAVAILABLE"
     }
   ]
 }

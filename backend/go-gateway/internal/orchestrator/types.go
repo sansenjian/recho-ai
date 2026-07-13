@@ -161,8 +161,9 @@ type ImageResult struct {
 // orchestrator 返回此错误时，handler 直接使用其 Code/Message 写响应，
 // 不再二次推断业务条件。Headers 可选（如幂等重放需要 X-Idempotent-Replay）。
 type StatusError struct {
-	Code    int
-	Message string
+	Code      int
+	ErrorCode string
+	Message   string
 	// Headers 是需要写入 HTTP 响应的额外头（如 X-Idempotent-Replay）。
 	// 为 nil 表示无额外头。
 	Headers map[string]string
@@ -172,6 +173,23 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string { return e.Message }
+
+const (
+	ErrorCodeIdempotencyKeyRequired = "IDEMPOTENCY_KEY_REQUIRED"
+	ErrorCodeIdempotencyConflict    = "IDEMPOTENCY_CONFLICT"
+	ErrorCodeIdempotencyUnavailable = "IDEMPOTENCY_UNAVAILABLE"
+	ErrorCodeInsufficientCredits    = "INSUFFICIENT_CREDITS"
+	ErrorCodeCreditUnavailable      = "CREDIT_SERVICE_UNAVAILABLE"
+	ErrorCodeProviderUnavailable    = "PROVIDER_UNAVAILABLE"
+	ErrorCodeProviderBadResponse    = "PROVIDER_BAD_RESPONSE"
+	ErrorCodeStorageUnavailable     = "STORAGE_UNAVAILABLE"
+	ErrorCodeImageJobUnavailable    = "IMAGE_JOB_UNAVAILABLE"
+	ErrorCodePersistenceQueueFailed = "PERSISTENCE_QUEUE_FAILED"
+)
+
+func domainStatusError(status int, code, message string) *StatusError {
+	return &StatusError{Code: status, ErrorCode: code, Message: message}
+}
 
 // --- 内部辅助类型 ---
 
