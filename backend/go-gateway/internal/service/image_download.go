@@ -12,6 +12,7 @@ import (
 )
 
 var blockedImageSourceNetworks = []*net.IPNet{
+	mustImageSourceCIDR("0.0.0.0/8"),
 	mustImageSourceCIDR("100.64.0.0/10"),
 	mustImageSourceCIDR("192.0.0.0/24"),
 	mustImageSourceCIDR("192.0.2.0/24"),

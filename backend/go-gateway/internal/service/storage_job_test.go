@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -168,6 +169,12 @@ func TestStageFromURLRejectsLoopbackSource(t *testing.T) {
 	}
 	if len(store.uploads) != 0 {
 		t.Fatalf("loopback response was uploaded: %d uploads", len(store.uploads))
+	}
+}
+
+func TestAllowedImageSourceIPRejectsIPv4ThisNetwork(t *testing.T) {
+	if isAllowedImageSourceIP(net.ParseIP("0.1.2.3")) {
+		t.Fatal("isAllowedImageSourceIP accepted an address in 0.0.0.0/8")
 	}
 }
 

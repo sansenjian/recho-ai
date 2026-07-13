@@ -2,14 +2,14 @@
 FROM golang:1.25-alpine AS go-builder
 
 WORKDIR /app/backend/go-gateway
-RUN apk add --no-cache git
+RUN apk add --no-cache git vips-dev vips-heif build-base pkgconf
 COPY backend/go-gateway/go.mod backend/go-gateway/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 COPY backend/go-gateway ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/go-gateway ./cmd/server
+    CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/go-gateway ./cmd/server
 
 # Install Node production deps in a source-independent layer.
 FROM node:22-alpine AS node-prod-deps
@@ -36,7 +36,7 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata tini \
+RUN apk add --no-cache ca-certificates tzdata tini vips vips-heif \
     && addgroup -S app \
     && adduser -S -G app app
 

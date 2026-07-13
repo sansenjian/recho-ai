@@ -154,13 +154,19 @@ func (p *vipsProcessor) exportPreview(img *vips.ImageRef) ([]byte, error) {
 }
 
 func (p *vipsProcessor) exportThumbnail(img *vips.ImageRef) ([]byte, error) {
+	thumbnail, err := img.Copy()
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy image for thumbnail: %w", err)
+	}
+	defer thumbnail.Close()
+
 	// InterestingNone keeps the aspect ratio and fits inside the box without cropping,
 	// matching sharp({ width: 480, height: 480, fit: 'inside' }).
-	if err := img.Thumbnail(thumbnailMaxSize, thumbnailMaxSize, vips.InterestingNone); err != nil {
+	if err := thumbnail.Thumbnail(thumbnailMaxSize, thumbnailMaxSize, vips.InterestingNone); err != nil {
 		return nil, fmt.Errorf("failed to create thumbnail: %w", err)
 	}
 
-	buf, _, err := p.exportWebp(img, thumbnailQuality, false)
+	buf, _, err := p.exportWebp(thumbnail, thumbnailQuality, false)
 	return buf, err
 }
 
