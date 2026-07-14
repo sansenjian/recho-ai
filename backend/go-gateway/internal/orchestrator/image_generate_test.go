@@ -177,7 +177,7 @@ func storedImageForHint(hint string) *service.StoredImage {
 	}
 }
 
-func TestCallImageAPILucenUsesMinimalPayloadAndParsesBase64(t *testing.T) {
+func TestCallImageAPILucenSendsAspectRatioAndParsesBase64(t *testing.T) {
 	var payload map[string]any
 	o := NewImageOrchestrator(nil, nil, nil)
 	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -198,18 +198,21 @@ func TestCallImageAPILucenUsesMinimalPayloadAndParsesBase64(t *testing.T) {
 		context.Background(),
 		GenRequest{Prompt: "test prompt"},
 		1,
-		"1:1",
-		"1K",
+		"16:9",
+		"1k",
 		"standard",
 		service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", APIKey: "provider-key", ImageModel: "gpt-image-2"},
 	)
 	if err != nil {
 		t.Fatalf("callImageAPI returned error: %v", err)
 	}
-	if len(payload) != 2 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
-		t.Fatalf("expected minimal Lucen payload, got %#v", payload)
+	if len(payload) != 4 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
+		t.Fatalf("unexpected Lucen payload: %#v", payload)
 	}
-	for _, field := range []string{"n", "size", "quality", "response_format"} {
+	if payload["size"] != "1024x1024" || payload["aspect_ratio"] != "16:9" {
+		t.Fatalf("expected Lucen size and aspect ratio, got %#v", payload)
+	}
+	for _, field := range []string{"n", "quality", "response_format"} {
 		if _, ok := payload[field]; ok {
 			t.Fatalf("Lucen payload must omit %q: %#v", field, payload)
 		}
@@ -322,7 +325,10 @@ func TestCallImageAPILucenRunsMultipleRequestsConcurrently(t *testing.T) {
 	for index := 0; index < count; index++ {
 		select {
 		case payload := <-started:
-			if len(payload) != 2 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
+			if len(payload) != 4 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
+				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
+			}
+			if payload["size"] != "1024x1024" || payload["aspect_ratio"] != "1:1" {
 				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
 			}
 		case <-time.After(time.Second):
