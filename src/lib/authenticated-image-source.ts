@@ -50,6 +50,23 @@ export function imageStoragePath(
   return firstString(source, storagePathPriority[mode])
 }
 
+export function imageStoragePathCandidates(
+  source: AuthenticatedImageSource | null | undefined,
+  mode: AuthenticatedImageMode = 'thumbnail',
+) {
+  if (!source) return []
+  const candidates: string[] = []
+  for (const key of storagePathPriority[mode]) {
+    const value = source[key]
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed && !candidates.includes(trimmed)) {
+      candidates.push(trimmed)
+    }
+  }
+  return candidates
+}
+
 export function hasImageSource(
   source: AuthenticatedImageSource | null | undefined,
   mode: AuthenticatedImageMode = 'thumbnail',
