@@ -6,7 +6,10 @@ alter table public.provider_settings
 
 alter table public.provider_settings
   add constraint provider_settings_image_compatibility_mode_check
-  check (image_compatibility_mode in ('auto', 'openai', 'lucen'));
+  check (image_compatibility_mode in ('auto', 'openai', 'lucen')) not valid;
+
+alter table public.provider_settings
+  validate constraint provider_settings_image_compatibility_mode_check;
 
 comment on column public.provider_settings.image_compatibility_mode is
   'Image API request compatibility preset: auto detects by Base URL, openai preserves standard controls, lucen uses minimal concurrent requests.';

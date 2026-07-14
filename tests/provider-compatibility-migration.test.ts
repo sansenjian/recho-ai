@@ -14,6 +14,7 @@ describe('image provider compatibility migration', () => {
 
     expect(sql).toMatch(/add column if not exists image_compatibility_mode text not null default 'auto'/)
     expect(sql).toContain('provider_settings_image_compatibility_mode_check')
-    expect(sql).toMatch(/image_compatibility_mode in \('auto', 'openai', 'lucen'\)/)
+    expect(sql).toMatch(/image_compatibility_mode in \('auto', 'openai', 'lucen'\)\) not valid/)
+    expect(sql).toContain('validate constraint provider_settings_image_compatibility_mode_check')
   })
 })
