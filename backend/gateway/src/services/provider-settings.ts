@@ -21,6 +21,7 @@ const PROVIDER_SETTINGS_TABLE = 'provider_settings'
 const PROVIDER_SETTINGS_CACHE_MS = 15_000
 
 export type ProviderKind = 'chat' | 'image'
+export type ImageProviderCompatibilityMode = 'auto' | 'openai' | 'lucen'
 
 export interface ProviderSetting {
   id: string
@@ -32,6 +33,7 @@ export interface ProviderSetting {
   defaultModel: string | null
   imageModel: string | null
   editModel: string | null
+  imageCompatibilityMode: ImageProviderCompatibilityMode
   timeoutMs: number
   retryCount: number
   supportsWebpReferences: boolean
@@ -144,6 +146,14 @@ function normalizeBoolean(value: unknown, fallback = false) {
   return fallback
 }
 
+function normalizeImageCompatibilityMode(value: unknown): ImageProviderCompatibilityMode {
+  if (value === undefined || value === null || value === '') return 'auto'
+  if (value === 'auto' || value === 'openai' || value === 'lucen') return value
+  throw new ProviderSettingsError('invalid_image_compatibility_mode', {
+    publicMessage: '图片兼容预设必须是自动判断、标准 OpenAI 或 Lucen / sub2api OAuth。',
+  })
+}
+
 function maskApiKey(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) return null
   const key = value.trim()
@@ -164,6 +174,7 @@ function envProviderRows(): ProviderSetting[] {
       defaultModel: null,
       imageModel: IMAGE_RESPONSES_IMAGE_MODEL,
       editModel: IMAGE_RESPONSES_IMAGE_MODEL,
+      imageCompatibilityMode: 'auto',
       timeoutMs: 360_000,
       retryCount: 3,
       supportsWebpReferences: true,
@@ -186,6 +197,7 @@ function envProviderRows(): ProviderSetting[] {
       defaultModel: 'gpt-4o-mini',
       imageModel: null,
       editModel: null,
+      imageCompatibilityMode: 'auto',
       timeoutMs: 60_000,
       retryCount: 3,
       supportsWebpReferences: false,
@@ -208,6 +220,7 @@ function envProviderRows(): ProviderSetting[] {
       defaultModel: 'kimi-k2-0711-preview',
       imageModel: null,
       editModel: null,
+      imageCompatibilityMode: 'auto',
       timeoutMs: 60_000,
       retryCount: 3,
       supportsWebpReferences: false,
@@ -237,6 +250,7 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
     defaultModel: typeof row.default_model === 'string' && row.default_model ? row.default_model : null,
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
+    imageCompatibilityMode: normalizeImageCompatibilityMode(row.image_compatibility_mode),
     timeoutMs: normalizeInt(row.timeout_ms, 360_000, 1_000, 1_200_000),
     retryCount: normalizeInt(row.retry_count, 3, 0, 10),
     supportsWebpReferences: row.supports_webp_references !== false,
@@ -301,6 +315,7 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
   if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
+  if ('imageCompatibilityMode' in input) patch.image_compatibility_mode = normalizeImageCompatibilityMode(input.imageCompatibilityMode)
   if ('timeoutMs' in input) patch.timeout_ms = normalizeInt(input.timeoutMs, 360_000, 1_000, 1_200_000)
   if ('retryCount' in input) patch.retry_count = normalizeInt(input.retryCount, 3, 0, 10)
   if ('supportsWebpReferences' in input) patch.supports_webp_references = normalizeBoolean(input.supportsWebpReferences, true)
@@ -336,6 +351,7 @@ function providerSelectColumns(includeSecret = false) {
     'default_model',
     'image_model',
     'edit_model',
+    'image_compatibility_mode',
     'timeout_ms',
     'retry_count',
     'supports_webp_references',

@@ -15,12 +15,21 @@ type ProviderSettingsService struct {
 	pool *pgxpool.Pool
 }
 
+type ImageProviderCompatibilityMode string
+
+const (
+	ImageProviderCompatibilityAuto   ImageProviderCompatibilityMode = "auto"
+	ImageProviderCompatibilityOpenAI ImageProviderCompatibilityMode = "openai"
+	ImageProviderCompatibilityLucen  ImageProviderCompatibilityMode = "lucen"
+)
+
 type ImageProviderConfig struct {
 	Name                   string
 	BaseURL                string
 	APIKey                 string
 	ImageModel             string
 	EditModel              string
+	CompatibilityMode      ImageProviderCompatibilityMode
 	Timeout                time.Duration
 	RetryCount             int
 	SupportsWebpReferences bool
@@ -48,6 +57,7 @@ var imageProviderQuery = fmt.Sprintf(`
 		%s,
 		coalesce(ps.image_model, ''),
 		coalesce(ps.edit_model, ''),
+		coalesce(to_jsonb(ps)->>'image_compatibility_mode', 'auto'),
 		ps.timeout_ms,
 		ps.retry_count,
 		ps.supports_webp_references
@@ -69,6 +79,7 @@ func DefaultImageProviderConfig() ImageProviderConfig {
 		APIKey:                 strings.TrimSpace(config.ImageGenAPIKey),
 		ImageModel:             strings.TrimSpace(config.ImageResponsesImageModel),
 		EditModel:              strings.TrimSpace(config.ImageResponsesImageModel),
+		CompatibilityMode:      ImageProviderCompatibilityAuto,
 		Timeout:                defaultImageProviderTimeout,
 		RetryCount:             3,
 		SupportsWebpReferences: true,
@@ -94,6 +105,7 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 		var timeoutMs int
 		var encryptedAPIKey string
 		var legacyAPIKey string
+		var compatibilityMode string
 		if err := rows.Scan(
 			&cfg.Name,
 			&cfg.BaseURL,
@@ -101,6 +113,7 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 			&legacyAPIKey,
 			&cfg.ImageModel,
 			&cfg.EditModel,
+			&compatibilityMode,
 			&timeoutMs,
 			&cfg.RetryCount,
 			&cfg.SupportsWebpReferences,
@@ -120,6 +133,7 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 		}
 		cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, fallback.ImageModel)
 		cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
+		cfg.CompatibilityMode = normalizeImageProviderCompatibilityMode(compatibilityMode)
 		if timeoutMs < minImageProviderTimeoutMS {
 			timeoutMs = defaultImageProviderTimeoutMS
 		}
@@ -143,6 +157,17 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 		return fallback, candidateErr
 	}
 	return fallback, nil
+}
+
+func normalizeImageProviderCompatibilityMode(value string) ImageProviderCompatibilityMode {
+	switch ImageProviderCompatibilityMode(strings.ToLower(strings.TrimSpace(value))) {
+	case ImageProviderCompatibilityOpenAI:
+		return ImageProviderCompatibilityOpenAI
+	case ImageProviderCompatibilityLucen:
+		return ImageProviderCompatibilityLucen
+	default:
+		return ImageProviderCompatibilityAuto
+	}
 }
 
 func firstNonEmptyProviderSetting(values ...string) string {

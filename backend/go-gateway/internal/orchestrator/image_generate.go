@@ -1018,13 +1018,18 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	imageMime := "image/png"
 	usesEdits := len(req.References) > 0
 	imageModel := imageModelForRequest(provider, usesEdits)
+	if count > 1 && usesLucenImageCompatibility(provider) {
+		return o.callLucenImageAPIConcurrently(ctx, req, count, aspectRatio, resolution, quality, provider)
+	}
 
 	apiReq := map[string]any{
-		"model":   imageModel,
-		"prompt":  req.Prompt,
-		"n":       count,
-		"size":    size,
-		"quality": mapQualityToAPI(quality),
+		"model":  imageModel,
+		"prompt": req.Prompt,
+	}
+	if !usesLucenImageCompatibility(provider) {
+		apiReq["n"] = count
+		apiReq["size"] = size
+		apiReq["quality"] = mapQualityToAPI(quality)
 	}
 
 	client := o.httpClient
@@ -1162,6 +1167,68 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	}
 
 	return results, nil
+}
+
+func (o *ImageOrchestrator) callLucenImageAPIConcurrently(
+	ctx context.Context,
+	req GenRequest,
+	count int,
+	aspectRatio, resolution, quality string,
+	provider service.ImageProviderConfig,
+) ([]generatedImageRecord, error) {
+	type callResult struct {
+		index  int
+		images []generatedImageRecord
+		err    error
+	}
+
+	resultCh := make(chan callResult, count)
+	for index := 0; index < count; index++ {
+		go func(index int) {
+			images, err := o.callImageAPI(ctx, req, 1, aspectRatio, resolution, quality, provider)
+			resultCh <- callResult{index: index, images: images, err: err}
+		}(index)
+	}
+
+	batches := make([][]generatedImageRecord, count)
+	failedCalls := 0
+	var firstErr error
+	for index := 0; index < count; index++ {
+		result := <-resultCh
+		if result.err != nil {
+			failedCalls++
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		if len(result.images) == 0 {
+			failedCalls++
+			if firstErr == nil {
+				firstErr = errors.New("provider returned no usable images")
+			}
+			continue
+		}
+		batches[result.index] = result.images
+	}
+
+	images := make([]generatedImageRecord, 0, count)
+	for _, batch := range batches {
+		images = append(images, batch...)
+	}
+	if len(images) == 0 {
+		if firstErr == nil {
+			firstErr = errors.New("provider returned no usable images")
+		}
+		return nil, fmt.Errorf("all concurrent Lucen image requests failed: %w", firstErr)
+	}
+	if failedCalls > 0 {
+		o.logger.Printf("[image] Lucen concurrent generation partially succeeded: %d/%d request(s)", count-failedCalls, count)
+	}
+	if len(images) > count {
+		images = images[:count]
+	}
+	return images, nil
 }
 
 func (o *ImageOrchestrator) imageEditBody(ctx context.Context, fields map[string]any, references []GenReference) (io.Reader, string, error) {
@@ -1305,6 +1372,22 @@ func determineSize(resolution, aspectRatio string) string {
 		}
 	}
 	return "1024x1024"
+}
+
+func isLucenImageProvider(baseURL string) bool {
+	host := strings.ToLower(imageProviderName(baseURL))
+	return host == "lucen.plus" || strings.HasSuffix(host, ".lucen.plus")
+}
+
+func usesLucenImageCompatibility(provider service.ImageProviderConfig) bool {
+	switch provider.CompatibilityMode {
+	case service.ImageProviderCompatibilityLucen:
+		return true
+	case service.ImageProviderCompatibilityOpenAI:
+		return false
+	default:
+		return isLucenImageProvider(provider.BaseURL)
+	}
 }
 
 func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {

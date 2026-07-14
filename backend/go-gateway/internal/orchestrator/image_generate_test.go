@@ -2,9 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +15,12 @@ import (
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/service"
 )
+
+type imageRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f imageRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 type testCreditService struct {
 	reserveErr error
@@ -165,6 +174,215 @@ func storedImageForHint(hint string) *service.StoredImage {
 		Width:         1024,
 		Height:        1024,
 		Bytes:         1234,
+	}
+}
+
+func TestCallImageAPILucenUsesMinimalPayloadAndParsesBase64(t *testing.T) {
+	var payload map[string]any
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://lucen.plus/v1/images/generations" {
+			t.Fatalf("unexpected request URL: %s", req.URL)
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"created":1783955103,"data":[{"b64_json":"aGVsbG8="}]}`)),
+		}, nil
+	})}
+
+	images, err := o.callImageAPI(
+		context.Background(),
+		GenRequest{Prompt: "test prompt"},
+		1,
+		"1:1",
+		"1K",
+		"standard",
+		service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", APIKey: "provider-key", ImageModel: "gpt-image-2"},
+	)
+	if err != nil {
+		t.Fatalf("callImageAPI returned error: %v", err)
+	}
+	if len(payload) != 2 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
+		t.Fatalf("expected minimal Lucen payload, got %#v", payload)
+	}
+	for _, field := range []string{"n", "size", "quality", "response_format"} {
+		if _, ok := payload[field]; ok {
+			t.Fatalf("Lucen payload must omit %q: %#v", field, payload)
+		}
+	}
+	if len(images) != 1 || images[0].source.Base64 != "aGVsbG8=" || images[0].result.DataURL != "data:image/png;base64,aGVsbG8=" {
+		t.Fatalf("unexpected Base64 image result: %#v", images)
+	}
+}
+
+func TestIsLucenImageProvider(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		want    bool
+	}{
+		{name: "root host", baseURL: "https://lucen.plus/v1", want: true},
+		{name: "subdomain", baseURL: "https://images.lucen.plus/v1", want: true},
+		{name: "mixed case", baseURL: "https://LUCEN.PLUS/v1", want: true},
+		{name: "lookalike", baseURL: "https://lucen.plus.example/v1", want: false},
+		{name: "other provider", baseURL: "https://provider.example/v1", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLucenImageProvider(tt.baseURL); got != tt.want {
+				t.Fatalf("isLucenImageProvider(%q) = %v, want %v", tt.baseURL, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUsesLucenImageCompatibility(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider service.ImageProviderConfig
+		want     bool
+	}{
+		{
+			name:     "auto detects Lucen host",
+			provider: service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", CompatibilityMode: service.ImageProviderCompatibilityAuto},
+			want:     true,
+		},
+		{
+			name:     "auto keeps other hosts standard",
+			provider: service.ImageProviderConfig{BaseURL: "https://provider.example/v1", CompatibilityMode: service.ImageProviderCompatibilityAuto},
+			want:     false,
+		},
+		{
+			name:     "Lucen preset overrides custom host",
+			provider: service.ImageProviderConfig{BaseURL: "https://custom.example/v1", CompatibilityMode: service.ImageProviderCompatibilityLucen},
+			want:     true,
+		},
+		{
+			name:     "OpenAI preset overrides Lucen host",
+			provider: service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", CompatibilityMode: service.ImageProviderCompatibilityOpenAI},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usesLucenImageCompatibility(tt.provider); got != tt.want {
+				t.Fatalf("usesLucenImageCompatibility(%#v) = %v, want %v", tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCallImageAPILucenRunsMultipleRequestsConcurrently(t *testing.T) {
+	const count = 2
+	started := make(chan map[string]any, count)
+	release := make(chan struct{})
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var payload map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		started <- payload
+		select {
+		case <-release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"aGVsbG8="}]}`)),
+		}, nil
+	})}
+
+	type callResult struct {
+		images []generatedImageRecord
+		err    error
+	}
+	done := make(chan callResult, 1)
+	go func() {
+		images, err := o.callImageAPI(
+			context.Background(),
+			GenRequest{Prompt: "two images"},
+			count,
+			"1:1",
+			"1k",
+			"medium",
+			service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", APIKey: "provider-key", ImageModel: "gpt-image-2"},
+		)
+		done <- callResult{images: images, err: err}
+	}()
+
+	for index := 0; index < count; index++ {
+		select {
+		case payload := <-started:
+			if len(payload) != 2 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
+				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected all Lucen requests to start before any response was released")
+		}
+	}
+	close(release)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("callImageAPI returned error: %v", result.err)
+		}
+		if len(result.images) != count {
+			t.Fatalf("expected %d images, got %#v", count, result.images)
+		}
+		for _, image := range result.images {
+			if image.source.Base64 != "aGVsbG8=" {
+				t.Fatalf("unexpected concurrent image source: %#v", image)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent Lucen requests did not complete")
+	}
+}
+
+func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
+	var payload map[string]any
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://provider.example/v1/images/generations" {
+			t.Fatalf("unexpected request URL: %s", req.URL)
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/one.png"},{"url":"https://provider.example/two.png"}]}`)),
+		}, nil
+	})}
+
+	images, err := o.callImageAPI(
+		context.Background(),
+		GenRequest{Prompt: "test prompt"},
+		2,
+		"16:9",
+		"2k",
+		"high",
+		service.ImageProviderConfig{BaseURL: "https://provider.example/v1", APIKey: "provider-key", ImageModel: "image-model"},
+	)
+	if err != nil {
+		t.Fatalf("callImageAPI returned error: %v", err)
+	}
+	if payload["n"] != float64(2) || payload["size"] != "2048x1152" || payload["quality"] != "hd" {
+		t.Fatalf("expected non-Lucene controls to be preserved, got %#v", payload)
+	}
+	if len(images) != 2 || images[0].source.URL != "https://provider.example/one.png" || images[1].source.URL != "https://provider.example/two.png" {
+		t.Fatalf("unexpected non-Lucene image results: %#v", images)
 	}
 }
 
