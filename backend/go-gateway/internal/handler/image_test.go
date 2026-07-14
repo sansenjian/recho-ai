@@ -152,6 +152,21 @@ func (s *stubImageStorageService) CleanupObjects(paths ...string) {
 	}
 }
 
+func performProxyStorageRequest(storageSvc *stubImageStorageService, storagePath string, userID string) *httptest.ResponseRecorder {
+	h := NewImageHandler(nil, storageSvc, nil)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/storage/"+storagePath, nil)
+	if userID != "" {
+		req = req.WithContext(middleware.WithUser(req.Context(), &middleware.User{ID: userID}))
+	}
+	res := httptest.NewRecorder()
+
+	r.ServeHTTP(res, req)
+	return res
+}
+
 func TestProxyStorageFallsBackFromMissingThumbnailToPreview(t *testing.T) {
 	downloadedPaths := make([]string, 0, 2)
 	storageSvc := &stubImageStorageService{
@@ -166,14 +181,7 @@ func TestProxyStorageFallsBackFromMissingThumbnailToPreview(t *testing.T) {
 			}, nil
 		},
 	}
-	h := NewImageHandler(nil, storageSvc, nil)
-	r := chi.NewRouter()
-	h.RegisterRoutes(r)
-
-	req := httptest.NewRequest(http.MethodGet, "/storage/generated/test.thumb.webp", nil)
-	res := httptest.NewRecorder()
-
-	r.ServeHTTP(res, req)
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
@@ -202,17 +210,71 @@ func TestProxyStorageFallbackKeepsPrivateImageAuthorization(t *testing.T) {
 			return nil, errors.New("not found")
 		},
 	}
-	h := NewImageHandler(nil, storageSvc, nil)
-	r := chi.NewRouter()
-	h.RegisterRoutes(r)
-
-	req := httptest.NewRequest(http.MethodGet, "/storage/generated/test.thumb.webp", nil)
-	res := httptest.NewRecorder()
-
-	r.ServeHTTP(res, req)
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
 
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestProxyStorageAllFallbackCandidatesMissingReturns404(t *testing.T) {
+	downloadedPaths := make([]string, 0, 8)
+	storageSvc := &stubImageStorageService{
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			downloadedPaths = append(downloadedPaths, storagePath)
+			return nil, errors.New("not found")
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
+	}
+	if len(downloadedPaths) < 2 {
+		t.Fatalf("expected fallback candidates to be tried, got %#v", downloadedPaths)
+	}
+}
+
+func TestProxyStorageVisibilityErrorReturns500(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			return "", "", errors.New("visibility lookup failed")
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			t.Fatalf("DownloadImage should not be called when visibility lookup fails")
+			return nil, nil
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestProxyStorageServesPrivateImageToOwner(t *testing.T) {
+	const ownerID = "owner_123"
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			return "private", ownerID, nil
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			return &service.DownloadedImage{Data: []byte("owned-private-bytes"), Mime: "image/jpeg"}, nil
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.jpg", ownerID)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if got := res.Body.String(); got != "owned-private-bytes" {
+		t.Fatalf("unexpected body: %q", got)
+	}
+	if got := res.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("unexpected content type: %q", got)
 	}
 }
 

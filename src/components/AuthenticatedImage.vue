@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   fetchAuthenticatedImageObjectUrl,
   imageSourceUrl,
-  imageStoragePath,
   imageStoragePathCandidates,
   type AuthenticatedImageMode,
   type AuthenticatedImageSource,
@@ -20,6 +19,7 @@ const props = withDefaults(defineProps<{
 })
 
 const resolvedSrc = ref(props.src || '')
+const storagePathCandidates = computed(() => imageStoragePathCandidates(props.source, props.mode))
 let objectUrl = ''
 let loadSeq = 0
 let controller: AbortController | null = null
@@ -42,13 +42,12 @@ watch(
   () => [
     props.src || '',
     imageSourceUrl(props.source, props.mode),
-    imageStoragePath(props.source, props.mode),
-    imageStoragePathCandidates(props.source, props.mode).join('\n'),
+    storagePathCandidates.value.join('\n'),
   ],
   async () => {
     const seq = ++loadSeq
     const fallbackSrc = props.src || imageSourceUrl(props.source, props.mode)
-    const paths = imageStoragePathCandidates(props.source, props.mode)
+    const paths = storagePathCandidates.value
     abortPendingFetch()
     revokeObjectUrl()
     resolvedSrc.value = fallbackSrc
