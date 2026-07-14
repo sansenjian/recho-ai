@@ -1018,7 +1018,7 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	imageMime := "image/png"
 	usesEdits := len(req.References) > 0
 	imageModel := imageModelForRequest(provider, usesEdits)
-	if count > 1 && isLucenImageProvider(provider.BaseURL) {
+	if count > 1 && usesLucenImageCompatibility(provider) {
 		return o.callLucenImageAPIConcurrently(ctx, req, count, aspectRatio, resolution, quality, provider)
 	}
 
@@ -1026,7 +1026,7 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 		"model":  imageModel,
 		"prompt": req.Prompt,
 	}
-	if !isLucenImageProvider(provider.BaseURL) {
+	if !usesLucenImageCompatibility(provider) {
 		apiReq["n"] = count
 		apiReq["size"] = size
 		apiReq["quality"] = mapQualityToAPI(quality)
@@ -1377,6 +1377,17 @@ func determineSize(resolution, aspectRatio string) string {
 func isLucenImageProvider(baseURL string) bool {
 	host := strings.ToLower(imageProviderName(baseURL))
 	return host == "lucen.plus" || strings.HasSuffix(host, ".lucen.plus")
+}
+
+func usesLucenImageCompatibility(provider service.ImageProviderConfig) bool {
+	switch provider.CompatibilityMode {
+	case service.ImageProviderCompatibilityLucen:
+		return true
+	case service.ImageProviderCompatibilityOpenAI:
+		return false
+	default:
+		return isLucenImageProvider(provider.BaseURL)
+	}
 }
 
 func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {

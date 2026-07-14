@@ -35,6 +35,7 @@ import type {
   AdminImageItem,
   AdminImageStorageOverview,
   AdminImageStorageStat,
+  ImageProviderCompatibilityMode,
   AdminLedgerEntry,
   AdminOverview,
   AdminProviderSetting,
@@ -176,6 +177,7 @@ const providerForm = ref({
   defaultModel: '',
   imageModel: 'gpt-image-2',
   editModel: 'gpt-image-2',
+  imageCompatibilityMode: 'auto' as ImageProviderCompatibilityMode,
   timeoutMs: 360000,
   retryCount: 3,
   supportsWebpReferences: true,
@@ -347,6 +349,7 @@ function resetProviderForm(kind: 'chat' | 'image' = 'image') {
     defaultModel: kind === 'chat' ? 'gpt-4o-mini' : '',
     imageModel: kind === 'image' ? 'gpt-image-2' : '',
     editModel: kind === 'image' ? 'gpt-image-2' : '',
+    imageCompatibilityMode: 'auto',
     timeoutMs: kind === 'image' ? 360000 : 60000,
     retryCount: 3,
     supportsWebpReferences: kind === 'image',
@@ -367,6 +370,7 @@ function editProvider(provider: AdminProviderSetting) {
     defaultModel: provider.defaultModel || '',
     imageModel: provider.imageModel || '',
     editModel: provider.editModel || '',
+    imageCompatibilityMode: provider.imageCompatibilityMode,
     timeoutMs: provider.timeoutMs,
     retryCount: provider.retryCount,
     supportsWebpReferences: provider.supportsWebpReferences,
@@ -386,6 +390,9 @@ function providerPayload() {
     defaultModel: providerForm.value.defaultModel,
     imageModel: providerForm.value.imageModel,
     editModel: providerForm.value.editModel,
+    ...(providerForm.value.kind === 'image'
+      ? { imageCompatibilityMode: providerForm.value.imageCompatibilityMode }
+      : {}),
     timeoutMs: providerForm.value.timeoutMs,
     retryCount: providerForm.value.retryCount,
     supportsWebpReferences: providerForm.value.supportsWebpReferences,
@@ -397,6 +404,13 @@ function providerStatusLabel(provider: AdminProviderSetting) {
   if (provider.enabled && provider.apiKeyConfigured) return '已启用'
   if (provider.enabled && !provider.apiKeyConfigured) return '缺少 Key'
   return '已停用'
+}
+
+function providerCompatibilityLabel(provider: AdminProviderSetting) {
+  if (provider.kind !== 'image') return '-'
+  if (provider.imageCompatibilityMode === 'openai') return '标准 OpenAI'
+  if (provider.imageCompatibilityMode === 'lucen') return 'Lucen / sub2api'
+  return '自动判断'
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -1844,6 +1858,14 @@ onMounted(async () => {
                     <span class="text-xs font-medium text-[var(--text-muted)]">编辑模型</span>
                     <input v-model.trim="providerForm.editModel" type="text" placeholder="gpt-image-2" class="min-h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
                   </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs font-medium text-[var(--text-muted)]">兼容预设</span>
+                    <select v-model="providerForm.imageCompatibilityMode" class="min-h-8 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] px-2.5 py-1 text-[13px]">
+                      <option value="auto">自动判断</option>
+                      <option value="openai">标准 OpenAI</option>
+                      <option value="lucen">Lucen / sub2api OAuth</option>
+                    </select>
+                  </label>
                   <label class="flex items-center gap-2.5 min-h-9 px-3 rounded-md border border-[var(--border)] bg-[var(--bubble-bg)] cursor-pointer">
                     <input v-model="providerForm.supportsWebpReferences" type="checkbox" class="w-auto min-h-auto">
                     <span class="text-[13px]">支持 WebP 参考图</span>
@@ -1871,6 +1893,7 @@ onMounted(async () => {
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">类型</th>
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">名称</th>
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">模型</th>
+                      <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">兼容</th>
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">Key</th>
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">状态</th>
                       <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap border-b border-[var(--border)]">操作</th>
@@ -1884,6 +1907,7 @@ onMounted(async () => {
                         <div class="text-xs text-[var(--text-muted)]">{{ provider.baseUrl }}</div>
                       </td>
                       <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ provider.kind === 'image' ? (provider.imageModel || '-') : (provider.defaultModel || '-') }}</td>
+                      <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ providerCompatibilityLabel(provider) }}</td>
                       <td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || '已配置' : '未配置' }}</td>
                       <td class="px-3 py-2">
                         <Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge>
@@ -1893,7 +1917,7 @@ onMounted(async () => {
                       </td>
                     </tr>
                     <tr v-if="!providerRows.length">
-                      <td colspan="6" class="text-center text-[var(--text-muted)] py-6 px-3">暂无 Provider 配置</td>
+                      <td colspan="7" class="text-center text-[var(--text-muted)] py-6 px-3">暂无 Provider 配置</td>
                     </tr>
                   </tbody>
                 </table>

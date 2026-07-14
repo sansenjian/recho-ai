@@ -106,6 +106,7 @@ describe('provider settings service', () => {
       priority: 10,
       image_model: 'gpt-image-2',
       edit_model: 'gpt-image-2',
+      image_compatibility_mode: 'lucen',
       timeout_ms: 360000,
       retry_count: 3,
       supports_webp_references: true,
@@ -122,6 +123,7 @@ describe('provider settings service', () => {
     expect(result.tableAvailable).toBe(true)
     expect(result.providers[0]).toMatchObject({
       name: 'Image Provider',
+      imageCompatibilityMode: 'lucen',
       apiKeyConfigured: true,
       apiKeyPreview: 'sk-...alue',
     })
@@ -138,11 +140,13 @@ describe('provider settings service', () => {
       apiKey: 'sk-created-secret',
       imageModel: 'gpt-image-2',
       editModel: 'gpt-image-2',
+      imageCompatibilityMode: 'lucen',
       enabled: true,
     }, { id: 'admin-user', email: 'admin@example.test' })
 
     expect(insertedRow).toMatchObject({
       base_url: 'https://image.example.test/v1',
+      image_compatibility_mode: 'lucen',
       api_key_preview: 'sk-...cret',
       updated_by: 'admin-user',
     })
@@ -151,6 +155,21 @@ describe('provider settings service', () => {
     expect(JSON.stringify(insertedRow)).not.toContain('sk-created-secret')
     expect(provider.apiKeyConfigured).toBe(true)
     expect(JSON.stringify(provider)).not.toContain('sk-created-secret')
+  })
+
+  it('rejects unsupported image compatibility modes', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(createProviderSetting({
+      kind: 'image',
+      name: 'Image Provider',
+      baseUrl: 'https://image.example.test/v1',
+      apiKey: 'sk-created-secret',
+      imageCompatibilityMode: 'unsupported',
+    }, { id: 'admin-user', email: 'admin@example.test' })).rejects.toMatchObject({
+      message: 'invalid_image_compatibility_mode',
+      status: 400,
+    })
   })
 
   it('does not clear an existing api key when update key input is blank', async () => {

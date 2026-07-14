@@ -10,6 +10,25 @@ import (
 	"go-gateway/internal/config"
 )
 
+func TestNormalizeImageProviderCompatibilityMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  ImageProviderCompatibilityMode
+	}{
+		{input: "auto", want: ImageProviderCompatibilityAuto},
+		{input: "openai", want: ImageProviderCompatibilityOpenAI},
+		{input: "lucen", want: ImageProviderCompatibilityLucen},
+		{input: "", want: ImageProviderCompatibilityAuto},
+		{input: "unsupported", want: ImageProviderCompatibilityAuto},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeImageProviderCompatibilityMode(tt.input); got != tt.want {
+			t.Fatalf("normalizeImageProviderCompatibilityMode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestImageProviderQueryAllowsLegacyPlaintextAPIKey(t *testing.T) {
 	filter := imageProviderAPIKeyFilterSQL()
 	encryptedCheck := imageProviderEncryptedAPIKeySQL + " <> ''"

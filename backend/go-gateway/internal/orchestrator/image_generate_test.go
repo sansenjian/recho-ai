@@ -241,6 +241,43 @@ func TestIsLucenImageProvider(t *testing.T) {
 	}
 }
 
+func TestUsesLucenImageCompatibility(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider service.ImageProviderConfig
+		want     bool
+	}{
+		{
+			name:     "auto detects Lucen host",
+			provider: service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", CompatibilityMode: service.ImageProviderCompatibilityAuto},
+			want:     true,
+		},
+		{
+			name:     "auto keeps other hosts standard",
+			provider: service.ImageProviderConfig{BaseURL: "https://provider.example/v1", CompatibilityMode: service.ImageProviderCompatibilityAuto},
+			want:     false,
+		},
+		{
+			name:     "Lucen preset overrides custom host",
+			provider: service.ImageProviderConfig{BaseURL: "https://custom.example/v1", CompatibilityMode: service.ImageProviderCompatibilityLucen},
+			want:     true,
+		},
+		{
+			name:     "OpenAI preset overrides Lucen host",
+			provider: service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", CompatibilityMode: service.ImageProviderCompatibilityOpenAI},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usesLucenImageCompatibility(tt.provider); got != tt.want {
+				t.Fatalf("usesLucenImageCompatibility(%#v) = %v, want %v", tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCallImageAPILucenRunsMultipleRequestsConcurrently(t *testing.T) {
 	const count = 2
 	started := make(chan map[string]any, count)
