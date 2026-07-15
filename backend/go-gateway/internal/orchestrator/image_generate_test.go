@@ -184,7 +184,8 @@ func TestDetermineSizeUsesRatioAwareDefaultsWithinProviderLimits(t *testing.T) {
 		aspectRatio string
 		want        string
 	}{
-		{resolution: "auto", aspectRatio: "16:9", want: "1536x864"},
+		{resolution: "auto", aspectRatio: "auto", want: "auto"},
+		{resolution: "auto", aspectRatio: "16:9", want: "auto"},
 		{resolution: "1k", aspectRatio: "1:1", want: "1024x1024"},
 		{resolution: "2k", aspectRatio: "1:1", want: "2048x2048"},
 		{resolution: "4k", aspectRatio: "1:1", want: "2880x2880"},
@@ -197,7 +198,7 @@ func TestDetermineSizeUsesRatioAwareDefaultsWithinProviderLimits(t *testing.T) {
 		}
 	}
 
-	for _, resolution := range []string{"auto", "1k", "2k", "4k"} {
+	for _, resolution := range []string{"1k", "2k", "4k"} {
 		for _, aspectRatio := range []string{"auto", "1:1", "3:2", "2:3", "16:9", "9:16"} {
 			size := determineSize(resolution, aspectRatio)
 			var width, height int
@@ -216,7 +217,16 @@ func TestDetermineSizeUsesRatioAwareDefaultsWithinProviderLimits(t *testing.T) {
 	}
 }
 
-func TestCallImageAPILucenSendsRatioAwareSizeAndParsesBase64(t *testing.T) {
+func TestNormalizeImageControlsPreservesAutoValues(t *testing.T) {
+	if got := normalizeResolution("auto"); got != "auto" {
+		t.Fatalf("normalizeResolution(auto) = %q, want auto", got)
+	}
+	if got := normalizeAspectRatio("auto"); got != "auto" {
+		t.Fatalf("normalizeAspectRatio(auto) = %q, want auto", got)
+	}
+}
+
+func TestCallImageAPILucenSendsAutoSizeAndParsesBase64(t *testing.T) {
 	var payload map[string]any
 	o := NewImageOrchestrator(nil, nil, nil)
 	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -248,8 +258,8 @@ func TestCallImageAPILucenSendsRatioAwareSizeAndParsesBase64(t *testing.T) {
 	if len(payload) != 3 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
 		t.Fatalf("unexpected Lucen payload: %#v", payload)
 	}
-	if payload["size"] != "1536x864" {
-		t.Fatalf("expected Lucen ratio-aware size, got %#v", payload)
+	if payload["size"] != "auto" {
+		t.Fatalf("expected Lucen automatic size, got %#v", payload)
 	}
 	for _, field := range []string{"n", "quality", "response_format", "aspect_ratio"} {
 		if _, ok := payload[field]; ok {
