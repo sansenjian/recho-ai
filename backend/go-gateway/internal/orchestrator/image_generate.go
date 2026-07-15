@@ -192,6 +192,9 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 	count := normalizeImageCount(req.Count)
 	aspectRatio := normalizeAspectRatio(req.AspectRatio)
 	resolution := normalizeResolution(req.Resolution)
+	if resolution == "auto" {
+		aspectRatio = "auto"
+	}
 	quality := normalizeQuality(req.Quality)
 	size := determineSize(resolution, aspectRatio)
 	displayPrompt := firstNonEmpty(strings.TrimSpace(req.UserPrompt), strings.TrimSpace(req.DisplayPrompt), strings.TrimSpace(req.Prompt))
@@ -1026,7 +1029,9 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 		"model":  imageModel,
 		"prompt": req.Prompt,
 	}
-	if !usesLucenImageCompatibility(provider) {
+	if usesLucenImageCompatibility(provider) {
+		apiReq["size"] = size
+	} else {
 		apiReq["n"] = count
 		apiReq["size"] = size
 		apiReq["quality"] = mapQualityToAPI(quality)
@@ -1302,19 +1307,19 @@ func normalizeImageCount(count int) int {
 
 func normalizeAspectRatio(ratio string) string {
 	switch ratio {
-	case "1:1", "3:2", "2:3", "16:9", "9:16":
+	case "auto", "1:1", "3:2", "2:3", "16:9", "9:16":
 		return ratio
 	default:
-		return "1:1"
+		return "auto"
 	}
 }
 
 func normalizeResolution(res string) string {
 	switch res {
-	case "1k", "2k", "4k":
+	case "auto", "1k", "2k", "4k":
 		return res
 	default:
-		return "1k"
+		return "auto"
 	}
 }
 
@@ -1339,6 +1344,9 @@ func mapQualityToAPI(q string) string {
 }
 
 func determineSize(resolution, aspectRatio string) string {
+	if resolution == "auto" {
+		return "auto"
+	}
 	sizes := map[string]map[string]string{
 		"1k": {
 			"auto": "1024x1024",

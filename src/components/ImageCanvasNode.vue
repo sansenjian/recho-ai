@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { StyleValue } from 'vue'
+import { computed, type StyleValue } from 'vue'
 import {
   createRichContentDirective,
   type MentionTokenResolver,
@@ -81,6 +81,7 @@ const emit = defineEmits<{
 }>()
 
 const vRichContent = createRichContentDirective((id, title) => props.resolveMentionToken(id, title))
+const aspectRatioLocked = computed(() => props.node.resolution === 'auto')
 
 function isHandleConnected(handle: InputHandle) {
   return Boolean(props.connectedHandles[handle])
@@ -100,6 +101,16 @@ function emitTextContent(event: Event) {
   if (event.currentTarget instanceof HTMLTextAreaElement || event.currentTarget instanceof HTMLInputElement) {
     emit('update-content', props.node, event.currentTarget.value)
   }
+}
+
+function updateResolution(value: NodeResolution) {
+  emit('update-resolution', props.node, value)
+  if (value === 'auto') emit('update-aspect-ratio', props.node, 'auto')
+}
+
+function updateAspectRatio(value: NodeAspectRatio) {
+  if (aspectRatioLocked.value && value !== 'auto') return
+  emit('update-aspect-ratio', props.node, value)
 }
 </script>
 
@@ -375,7 +386,7 @@ function emitTextContent(event: Event) {
                 :key="option.value"
                 type="button"
                 :class="{ active: node.resolution === option.value }"
-                @click.stop="emit('update-resolution', node, option.value)"
+                @click.stop="updateResolution(option.value)"
               >
                 {{ option.label }}
               </button>
@@ -390,8 +401,10 @@ function emitTextContent(event: Event) {
                 v-for="option in aspectRatioOptions"
                 :key="option.value"
                 type="button"
+                :disabled="aspectRatioLocked && option.value !== 'auto'"
                 :class="{ active: node.aspectRatio === option.value }"
-                @click.stop="emit('update-aspect-ratio', node, option.value)"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click.stop="updateAspectRatio(option.value)"
               >
                 {{ option.label }}
               </button>

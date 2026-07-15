@@ -42,6 +42,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const pasteMessage = ref<string | null>(null)
 
 const canGenerate = computed(() => Boolean(promptText.value.trim()) && !isGenerating.value)
+const aspectRatioLocked = computed(() => props.resolution === 'auto')
 
 let referenceIdSeed = Date.now()
 
@@ -89,6 +90,16 @@ function handleReferenceInput(event: Event) {
 
 function removeReference(index: number) {
   pendingReferences.value = pendingReferences.value.filter((_, i) => i !== index)
+}
+
+function updateResolution(value: ImageResolution) {
+  emit('update:resolution', value)
+  if (value === 'auto') emit('update:aspect-ratio', 'auto')
+}
+
+function updateAspectRatio(value: ImageAspectRatio) {
+  if (aspectRatioLocked.value && value !== 'auto') return
+  emit('update:aspect-ratio', value)
 }
 
 async function handlePaste(event: ClipboardEvent) {
@@ -194,7 +205,7 @@ async function handleGenerate() {
                 :key="opt.value"
                 type="button"
                 :class="{ active: resolution === opt.value }"
-                @click="emit('update:resolution', opt.value)"
+                @click="updateResolution(opt.value)"
               >
                 {{ opt.label }}
               </button>
@@ -208,8 +219,10 @@ async function handleGenerate() {
                 v-for="opt in aspectRatioOptions"
                 :key="opt.value"
                 type="button"
+                :disabled="aspectRatioLocked && opt.value !== 'auto'"
                 :class="{ active: aspectRatio === opt.value }"
-                @click="emit('update:aspect-ratio', opt.value)"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click="updateAspectRatio(opt.value)"
               >
                 {{ opt.label }}
               </button>
