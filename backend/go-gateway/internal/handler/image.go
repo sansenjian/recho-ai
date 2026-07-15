@@ -294,30 +294,43 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce ownership gate for private images. Look up the DB record, if any,
-	// and deny access when visibility is "private" and the requester isn't the owner.
-	visibility, ownerID, visErr := h.storageService.GetImageVisibilityByPath(r.Context(), storagePath)
-	if visErr != nil {
-		log.Printf("[image] ProxyStorage: visibility lookup failed: %v", visErr)
-		response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
-		return
-	}
-	if visibility == "private" {
-		user := middleware.GetUserFromRequest(r)
-		if user == nil || user.ID != ownerID {
+	user := middleware.GetUserFromRequest(r)
+	servedPath := storagePath
+	var image *service.DownloadedImage
+	servedIsPrivate := false
+	for _, candidatePath := range proxyStorageCandidatePaths(storagePath) {
+		// Enforce ownership for every candidate. A missing thumbnail may fall
+		// back to a private original path, which must still require its owner.
+		visibility, ownerID, visErr := h.storageService.GetImageVisibilityByPath(r.Context(), candidatePath)
+		if visErr != nil {
+			log.Printf("[image] ProxyStorage: visibility lookup failed: %v", visErr)
+			response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
+			return
+		}
+		if visibility == "private" && (user == nil || user.ID != ownerID) {
 			response.Error(w, http.StatusForbidden, "无权访问该图片。")
 			return
 		}
-	}
 
-	image, err := h.storageService.DownloadImage(r.Context(), storagePath)
-	if err != nil || image == nil || len(image.Data) == 0 {
+		downloaded, err := h.storageService.DownloadImage(r.Context(), candidatePath)
+		if err == nil && downloaded != nil && len(downloaded.Data) > 0 {
+			servedPath = candidatePath
+			image = downloaded
+			servedIsPrivate = visibility == "private"
+			break
+		}
+	}
+	if image == nil {
 		response.Error(w, http.StatusNotFound, "image not found")
 		return
 	}
 
-	w.Header().Set("Content-Type", firstNonEmpty(image.Mime, mimeFromPath(storagePath)))
-	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	w.Header().Set("Content-Type", firstNonEmpty(image.Mime, mimeFromPath(servedPath)))
+	if servedIsPrivate {
+		w.Header().Set("Cache-Control", "private, max-age=2592000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(image.Data)
 }
@@ -638,6 +651,43 @@ func safeProxyStoragePath(value string) (string, bool) {
 		return "", false
 	}
 	return decoded, true
+}
+
+func proxyStorageCandidatePaths(storagePath string) []string {
+	var paths []string
+	add := func(candidate string) {
+		if strings.TrimSpace(candidate) == "" {
+			return
+		}
+		for _, existing := range paths {
+			if existing == candidate {
+				return
+			}
+		}
+		paths = append(paths, candidate)
+	}
+	add(storagePath)
+
+	for _, suffix := range []string{".thumb.webp", ".preview.webp", ".thumb.png", ".preview.png", ".thumb.jpg", ".preview.jpg", ".thumb.jpeg", ".preview.jpeg"} {
+		if !strings.HasSuffix(strings.ToLower(storagePath), suffix) {
+			continue
+		}
+		stem := storagePath[:len(storagePath)-len(suffix)]
+		add(stem + ".preview.webp")
+		add(stem + ".webp")
+		add(stem + ".png")
+		add(stem + ".jpg")
+		add(stem + ".jpeg")
+
+		nestedStem := strings.TrimRight(stem, "/") + "/" + path.Base(stem)
+		add(nestedStem + ".preview.webp")
+		add(nestedStem + ".webp")
+		add(nestedStem + ".png")
+		add(nestedStem + ".jpg")
+		add(nestedStem + ".jpeg")
+	}
+
+	return paths
 }
 
 func mimeFromPath(storagePath string) string {

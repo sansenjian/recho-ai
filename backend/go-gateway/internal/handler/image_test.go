@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"go-gateway/internal/config"
 	"go-gateway/internal/middleware"
 	"go-gateway/internal/service"
@@ -53,14 +54,15 @@ func (s *stubImageCreditService) GetCreditCost(ctx context.Context, imageCount i
 }
 
 type stubImageStorageService struct {
-	saveErr      error
-	saveCh       chan service.ImageHistoryItem
-	cleanupCh    chan []string
-	downloadFunc func(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
-	storeFunc    func(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
-	visibility   string
-	owner        string
-	visErr       error
+	saveErr        error
+	saveCh         chan service.ImageHistoryItem
+	cleanupCh      chan []string
+	downloadFunc   func(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
+	storeFunc      func(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
+	visibility     string
+	owner          string
+	visibilityFunc func(ctx context.Context, storagePath string) (string, string, error)
+	visErr         error
 }
 
 func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error) {
@@ -98,6 +100,9 @@ func (s *stubImageStorageService) DeleteImageHistoryByID(ctx context.Context, id
 }
 
 func (s *stubImageStorageService) DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+	if s.downloadFunc != nil {
+		return s.downloadFunc(ctx, storagePath)
+	}
 	return nil, nil
 }
 
@@ -132,6 +137,9 @@ func (s *stubImageStorageService) ClearImageHistory(ctx context.Context, userID 
 }
 
 func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, storagePath string) (string, string, error) {
+	if s.visibilityFunc != nil {
+		return s.visibilityFunc(ctx, storagePath)
+	}
 	if s.visErr != nil {
 		return "", "", s.visErr
 	}
@@ -141,6 +149,144 @@ func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, 
 func (s *stubImageStorageService) CleanupObjects(paths ...string) {
 	if s.cleanupCh != nil {
 		s.cleanupCh <- append([]string(nil), paths...)
+	}
+}
+
+func performProxyStorageRequest(storageSvc *stubImageStorageService, storagePath string, userID string) *httptest.ResponseRecorder {
+	h := NewImageHandler(nil, storageSvc, nil)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/storage/"+storagePath, nil)
+	if userID != "" {
+		req = req.WithContext(middleware.WithUser(req.Context(), &middleware.User{ID: userID}))
+	}
+	res := httptest.NewRecorder()
+
+	r.ServeHTTP(res, req)
+	return res
+}
+
+func TestProxyStorageFallsBackToPublicPreviewBeforePrivateCandidate(t *testing.T) {
+	downloadedPaths := make([]string, 0, 2)
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			if storagePath == "generated/test.webp" {
+				return "private", "other_owner", nil
+			}
+			return "public", "", nil
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			downloadedPaths = append(downloadedPaths, storagePath)
+			if storagePath != "generated/test.preview.webp" {
+				return nil, errors.New("not found")
+			}
+			return &service.DownloadedImage{
+				Data: []byte("preview-bytes"),
+				Mime: "image/webp",
+			}, nil
+		},
+	}
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if got := res.Body.String(); got != "preview-bytes" {
+		t.Fatalf("unexpected body: %q", got)
+	}
+	want := []string{"generated/test.thumb.webp", "generated/test.preview.webp"}
+	if strings.Join(downloadedPaths, ",") != strings.Join(want, ",") {
+		t.Fatalf("downloaded paths = %#v, want %#v", downloadedPaths, want)
+	}
+	if got := res.Header().Get("Cache-Control"); got != "public, max-age=2592000, immutable" {
+		t.Fatalf("public fallback Cache-Control = %q", got)
+	}
+}
+
+func TestProxyStorageFallbackKeepsPrivateImageAuthorization(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			if storagePath == "generated/test.preview.webp" {
+				return "private", "owner_123", nil
+			}
+			return "", "", nil
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			if storagePath == "generated/test.preview.webp" {
+				return &service.DownloadedImage{Data: []byte("private-preview"), Mime: "image/webp"}, nil
+			}
+			return nil, errors.New("not found")
+		},
+	}
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestProxyStorageAllFallbackCandidatesMissingReturns404(t *testing.T) {
+	downloadedPaths := make([]string, 0, 8)
+	storageSvc := &stubImageStorageService{
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			downloadedPaths = append(downloadedPaths, storagePath)
+			return nil, errors.New("not found")
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
+	}
+	if len(downloadedPaths) < 2 {
+		t.Fatalf("expected fallback candidates to be tried, got %#v", downloadedPaths)
+	}
+}
+
+func TestProxyStorageVisibilityErrorReturns500(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			return "", "", errors.New("visibility lookup failed")
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			t.Fatalf("DownloadImage should not be called when visibility lookup fails")
+			return nil, nil
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.thumb.webp", "")
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestProxyStorageServesPrivateImageToOwner(t *testing.T) {
+	const ownerID = "owner_123"
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			return "private", ownerID, nil
+		},
+		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
+			return &service.DownloadedImage{Data: []byte("owned-private-bytes"), Mime: "image/jpeg"}, nil
+		},
+	}
+
+	res := performProxyStorageRequest(storageSvc, "generated/test.jpg", ownerID)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if got := res.Body.String(); got != "owned-private-bytes" {
+		t.Fatalf("unexpected body: %q", got)
+	}
+	if got := res.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("unexpected content type: %q", got)
+	}
+	if got := res.Header().Get("Cache-Control"); got != "private, max-age=2592000, immutable" {
+		t.Fatalf("private image Cache-Control = %q", got)
 	}
 }
 

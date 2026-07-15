@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   fetchAuthenticatedImageObjectUrl,
   imageSourceUrl,
-  imageStoragePath,
+  imageStoragePathCandidates,
   type AuthenticatedImageMode,
   type AuthenticatedImageSource,
 } from '../lib/authenticated-image-source'
@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
 })
 
 const resolvedSrc = ref(props.src || '')
+const storagePathCandidates = computed(() => imageStoragePathCandidates(props.source, props.mode))
 let objectUrl = ''
 let loadSeq = 0
 let controller: AbortController | null = null
@@ -41,22 +42,33 @@ watch(
   () => [
     props.src || '',
     imageSourceUrl(props.source, props.mode),
-    imageStoragePath(props.source, props.mode),
+    storagePathCandidates.value.join('\n'),
   ],
   async () => {
     const seq = ++loadSeq
     const fallbackSrc = props.src || imageSourceUrl(props.source, props.mode)
-    const path = imageStoragePath(props.source, props.mode)
+    const paths = storagePathCandidates.value
     abortPendingFetch()
     revokeObjectUrl()
     resolvedSrc.value = fallbackSrc
 
-    if (!path) return
+    if (!paths.length) return
 
     controller = new AbortController()
     const signal = controller.signal
     try {
-      const nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, signal)
+      let nextObjectUrl = ''
+      for (const path of paths) {
+        try {
+          nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, signal)
+          break
+        } catch (err) {
+          if (signal.aborted) throw err
+        }
+      }
+      if (!nextObjectUrl) {
+        throw new Error('no authenticated image storage path loaded')
+      }
       if (seq !== loadSeq) {
         URL.revokeObjectURL(nextObjectUrl)
         return
