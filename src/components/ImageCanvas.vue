@@ -150,6 +150,10 @@ const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
 
+watch(resolution, (value) => {
+  if (value === 'auto') aspectRatio.value = 'auto'
+})
+
 // Initialize model when config loads; re-validate if config changes
 watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
   const modelIds = models.map((m) => m.id)
@@ -517,10 +521,11 @@ function updateNodeContent(node: CanvasNode, value: string) {
 
 function updateNodeResolution(node: CanvasNode, value: NodeResolution) {
   node.resolution = value
+  if (value === 'auto') node.aspectRatio = 'auto'
 }
 
 function updateNodeAspectRatio(node: CanvasNode, value: NodeAspectRatio) {
-  node.aspectRatio = value
+  node.aspectRatio = node.resolution === 'auto' ? 'auto' : value
 }
 
 function updateNodeQuality(node: CanvasNode, value: NodeQuality) {
@@ -1379,8 +1384,9 @@ onUnmounted(() => {
             v-for="opt in imagioAspectRatioOptions"
             :key="opt.value"
             type="button"
+            :disabled="resolution === 'auto' && opt.value !== 'auto'"
             :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
               aspectRatio === opt.value
                 ? 'bg-foreground text-primary-foreground border-foreground'
                 : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
