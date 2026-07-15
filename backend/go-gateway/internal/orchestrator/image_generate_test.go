@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -177,7 +178,45 @@ func storedImageForHint(hint string) *service.StoredImage {
 	}
 }
 
-func TestCallImageAPILucenSendsAspectRatioAndParsesBase64(t *testing.T) {
+func TestDetermineSizeUsesRatioAwareDefaultsWithinProviderLimits(t *testing.T) {
+	tests := []struct {
+		resolution  string
+		aspectRatio string
+		want        string
+	}{
+		{resolution: "auto", aspectRatio: "16:9", want: "1536x864"},
+		{resolution: "1k", aspectRatio: "1:1", want: "1024x1024"},
+		{resolution: "2k", aspectRatio: "1:1", want: "2048x2048"},
+		{resolution: "4k", aspectRatio: "1:1", want: "2880x2880"},
+	}
+
+	for _, tt := range tests {
+		size := determineSize(tt.resolution, tt.aspectRatio)
+		if size != tt.want {
+			t.Errorf("determineSize(%q, %q) = %q, want %q", tt.resolution, tt.aspectRatio, size, tt.want)
+		}
+	}
+
+	for _, resolution := range []string{"auto", "1k", "2k", "4k"} {
+		for _, aspectRatio := range []string{"auto", "1:1", "3:2", "2:3", "16:9", "9:16"} {
+			size := determineSize(resolution, aspectRatio)
+			var width, height int
+			if _, err := fmt.Sscanf(size, "%dx%d", &width, &height); err != nil {
+				t.Fatalf("parse size %q: %v", size, err)
+			}
+			pixels := width * height
+			longest, shortest := width, height
+			if height > width {
+				longest, shortest = height, width
+			}
+			if pixels < 655360 || pixels > 8294400 || width%16 != 0 || height%16 != 0 || longest > 3840 || float64(longest)/float64(shortest) > 3 {
+				t.Errorf("size %q violates provider limits", size)
+			}
+		}
+	}
+}
+
+func TestCallImageAPILucenSendsRatioAwareSizeAndParsesBase64(t *testing.T) {
 	var payload map[string]any
 	o := NewImageOrchestrator(nil, nil, nil)
 	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -199,20 +238,20 @@ func TestCallImageAPILucenSendsAspectRatioAndParsesBase64(t *testing.T) {
 		GenRequest{Prompt: "test prompt"},
 		1,
 		"16:9",
-		"1k",
+		"auto",
 		"standard",
 		service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1", APIKey: "provider-key", ImageModel: "gpt-image-2"},
 	)
 	if err != nil {
 		t.Fatalf("callImageAPI returned error: %v", err)
 	}
-	if len(payload) != 4 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
+	if len(payload) != 3 || payload["model"] != "gpt-image-2" || payload["prompt"] != "test prompt" {
 		t.Fatalf("unexpected Lucen payload: %#v", payload)
 	}
-	if payload["size"] != "1024x1024" || payload["aspect_ratio"] != "16:9" {
-		t.Fatalf("expected Lucen size and aspect ratio, got %#v", payload)
+	if payload["size"] != "1536x864" {
+		t.Fatalf("expected Lucen ratio-aware size, got %#v", payload)
 	}
-	for _, field := range []string{"n", "quality", "response_format"} {
+	for _, field := range []string{"n", "quality", "response_format", "aspect_ratio"} {
 		if _, ok := payload[field]; ok {
 			t.Fatalf("Lucen payload must omit %q: %#v", field, payload)
 		}
@@ -325,10 +364,10 @@ func TestCallImageAPILucenRunsMultipleRequestsConcurrently(t *testing.T) {
 	for index := 0; index < count; index++ {
 		select {
 		case payload := <-started:
-			if len(payload) != 4 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
+			if len(payload) != 3 || payload["model"] != "gpt-image-2" || payload["prompt"] != "two images" {
 				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
 			}
-			if payload["size"] != "1024x1024" || payload["aspect_ratio"] != "1:1" {
+			if payload["size"] != "1024x1024" {
 				t.Fatalf("unexpected concurrent Lucen payload: %#v", payload)
 			}
 		case <-time.After(time.Second):

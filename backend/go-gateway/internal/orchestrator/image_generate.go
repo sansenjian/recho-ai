@@ -1027,10 +1027,7 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 		"prompt": req.Prompt,
 	}
 	if usesLucenImageCompatibility(provider) {
-		if aspectRatio != "auto" {
-			apiReq["size"] = "1024x1024"
-			apiReq["aspect_ratio"] = aspectRatio
-		}
+		apiReq["size"] = size
 	} else {
 		apiReq["n"] = count
 		apiReq["size"] = size
@@ -1344,6 +1341,9 @@ func mapQualityToAPI(q string) string {
 }
 
 func determineSize(resolution, aspectRatio string) string {
+	if resolution == "auto" {
+		resolution = "1k"
+	}
 	sizes := map[string]map[string]string{
 		"1k": {
 			"auto": "1024x1024",
