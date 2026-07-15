@@ -167,9 +167,15 @@ func performProxyStorageRequest(storageSvc *stubImageStorageService, storagePath
 	return res
 }
 
-func TestProxyStorageFallsBackFromMissingThumbnailToPreview(t *testing.T) {
+func TestProxyStorageFallsBackToPublicPreviewBeforePrivateCandidate(t *testing.T) {
 	downloadedPaths := make([]string, 0, 2)
 	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(ctx context.Context, storagePath string) (string, string, error) {
+			if storagePath == "generated/test.webp" {
+				return "private", "other_owner", nil
+			}
+			return "public", "", nil
+		},
 		downloadFunc: func(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
 			downloadedPaths = append(downloadedPaths, storagePath)
 			if storagePath != "generated/test.preview.webp" {
@@ -192,6 +198,9 @@ func TestProxyStorageFallsBackFromMissingThumbnailToPreview(t *testing.T) {
 	want := []string{"generated/test.thumb.webp", "generated/test.preview.webp"}
 	if strings.Join(downloadedPaths, ",") != strings.Join(want, ",") {
 		t.Fatalf("downloaded paths = %#v, want %#v", downloadedPaths, want)
+	}
+	if got := res.Header().Get("Cache-Control"); got != "public, max-age=2592000, immutable" {
+		t.Fatalf("public fallback Cache-Control = %q", got)
 	}
 }
 
@@ -275,6 +284,9 @@ func TestProxyStorageServesPrivateImageToOwner(t *testing.T) {
 	}
 	if got := res.Header().Get("Content-Type"); got != "image/jpeg" {
 		t.Fatalf("unexpected content type: %q", got)
+	}
+	if got := res.Header().Get("Cache-Control"); got != "private, max-age=2592000, immutable" {
+		t.Fatalf("private image Cache-Control = %q", got)
 	}
 }
 

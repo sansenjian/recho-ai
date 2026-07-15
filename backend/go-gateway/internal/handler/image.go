@@ -297,6 +297,7 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromRequest(r)
 	servedPath := storagePath
 	var image *service.DownloadedImage
+	servedIsPrivate := false
 	for _, candidatePath := range proxyStorageCandidatePaths(storagePath) {
 		// Enforce ownership for every candidate. A missing thumbnail may fall
 		// back to a private original path, which must still require its owner.
@@ -315,6 +316,7 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 		if err == nil && downloaded != nil && len(downloaded.Data) > 0 {
 			servedPath = candidatePath
 			image = downloaded
+			servedIsPrivate = visibility == "private"
 			break
 		}
 	}
@@ -324,7 +326,11 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", firstNonEmpty(image.Mime, mimeFromPath(servedPath)))
-	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	if servedIsPrivate {
+		w.Header().Set("Cache-Control", "private, max-age=2592000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(image.Data)
 }
