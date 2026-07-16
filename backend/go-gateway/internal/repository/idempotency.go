@@ -192,7 +192,7 @@ func (r *IdempotencyRepository) Complete(
 		UPDATE idempotency_keys
 		SET status = 'completed',
 		    response_code = $4,
-		    response_body = $5,
+		    response_body = $5::jsonb,
 		    transaction_id = $6::uuid
 		WHERE user_id = $1::uuid AND idem_key = $2 AND scope = $3
 		  AND status = 'processing'
@@ -202,7 +202,7 @@ func (r *IdempotencyRepository) Complete(
 	if db == nil {
 		return errors.New("idempotency database client is nil")
 	}
-	result, err := db.Exec(ctx, query, userID, idemKey, scope, responseCode, bodyJSON, txID)
+	result, err := db.Exec(ctx, query, userID, idemKey, scope, responseCode, string(bodyJSON), txID)
 	if err != nil {
 		return fmt.Errorf("failed to complete idempotency record: %w", err)
 	}

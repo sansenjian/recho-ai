@@ -245,6 +245,44 @@ func TestAcquireReturnsConflictWhenConcurrentReclaimUpdatesNoRows(t *testing.T) 
 	}
 }
 
+func TestCompletePassesResponseBodyAsJSONText(t *testing.T) {
+	db := &scriptedDB{}
+	repo := &IdempotencyRepository{db: db}
+
+	err := repo.Complete(
+		context.Background(),
+		"00000000-0000-0000-0000-000000000001",
+		"key-1",
+		"image_generate",
+		200,
+		map[string]any{"images": []string{"image-1"}},
+		"",
+	)
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	if len(db.calls) != 1 || db.calls[0].kind != "exec" {
+		t.Fatalf("Complete calls = %#v, want one Exec", db.calls)
+	}
+
+	call := db.calls[0]
+	normalized := strings.Join(strings.Fields(strings.ToLower(call.query)), " ")
+	if !strings.Contains(normalized, "response_body = $5::jsonb") {
+		t.Fatalf("Complete query must explicitly cast response body to jsonb: %s", call.query)
+	}
+	if len(call.args) != 6 {
+		t.Fatalf("Complete args = %#v, want six arguments", call.args)
+	}
+	body, ok := call.args[4].(string)
+	if !ok {
+		t.Fatalf("response body arg type = %T, want string for jsonb cast", call.args[4])
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("response body is not valid JSON: %v", err)
+	}
+}
+
 func TestIdempotencyRepositoryNilPoolReturnsConfigurationError(t *testing.T) {
 	repo := NewIdempotencyRepository(nil)
 	defer func() {
