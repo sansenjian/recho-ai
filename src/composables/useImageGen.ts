@@ -4,7 +4,13 @@ import { useCredits } from './useCredits'
 import { ensureAppConfig } from './useAppConfig'
 import { imageApiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
-import type { GeneratedImage, ImageGenReference, ImageGenRequest, ImageGenResponse, ImageHistoryScope } from '../types/image'
+import type {
+  GeneratedImage,
+  ImageGenOptions,
+  ImageGenReference,
+  ImageGenResponse,
+  ImageHistoryScope,
+} from '../types/image'
 
 const STORAGE_KEY = 'recho-private-image-history'
 const DB_NAME = 'recho-private-image-history-db'
@@ -17,7 +23,6 @@ const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const PRIVATE_HISTORY_REFRESH_DELAY_MS = 5 * 60_000
 const PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS = 5
-type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 export type { ImageHistoryScope }
 
 interface ImageHistoryResponse {

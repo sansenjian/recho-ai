@@ -52,6 +52,9 @@ export interface ImageGenRequest {
   canvasContext?: ImageCanvasContext
 }
 
+export type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
+export type ImageGenerate = (prompt: string, options?: ImageGenOptions) => Promise<GeneratedImage[] | null>
+
 export interface ImageCanvasContext {
   canvasId: string
   nodeCount: number

@@ -4,17 +4,6 @@ import type { CanvasNode } from '../src/lib/image-canvas-model'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
 
-vi.mock('../src/composables/useImageGen', async () => {
-  const { ref } = await import('vue')
-  return {
-    useImageGen: () => ({
-      isGenerating: ref(false),
-      error: ref<string | null>(null),
-      generate: vi.fn(),
-    }),
-  }
-})
-
 const resolutionOptions = [
   { value: 'auto' as const, label: 'Auto' },
   { value: '1k' as const, label: '1K' },
@@ -27,6 +16,14 @@ const aspectRatioOptions = [
   { value: '1:1' as const, label: '1:1' },
   { value: '16:9' as const, label: '16:9' },
 ]
+
+function imagioGenerationProps(generate = vi.fn().mockResolvedValue(null)) {
+  return {
+    generate,
+    isGenerating: false,
+    error: null,
+  }
+}
 
 function generationNode(resolution: CanvasNode['resolution'], aspectRatio: CanvasNode['aspectRatio']): CanvasNode {
   return {
@@ -48,6 +45,7 @@ describe('image generation Auto resolution controls', () => {
   it('resets Imagio aspect ratio when Auto resolution is selected', async () => {
     const wrapper = mount(ImagioView, {
       props: {
+        ...imagioGenerationProps(),
         resolution: '1k',
         aspectRatio: '16:9',
         resolutionOptions,
@@ -68,6 +66,7 @@ describe('image generation Auto resolution controls', () => {
   it('disables concrete Imagio ratios while resolution is Auto', () => {
     const wrapper = mount(ImagioView, {
       props: {
+        ...imagioGenerationProps(),
         resolution: 'auto',
         aspectRatio: 'auto',
         resolutionOptions,
@@ -81,6 +80,31 @@ describe('image generation Auto resolution controls', () => {
     expect(ratioButtons.find(button => button.text() === 'Auto')?.attributes('disabled')).toBeUndefined()
     expect(ratioButtons.find(button => button.text() === '1:1')?.attributes('disabled')).toBeDefined()
     expect(ratioButtons.find(button => button.text() === '16:9')?.attributes('disabled')).toBeDefined()
+  })
+
+  it('uses the parent generation pipeline in Imagio mode', async () => {
+    const generate = vi.fn().mockResolvedValue([])
+    const wrapper = mount(ImagioView, {
+      props: {
+        ...imagioGenerationProps(generate),
+        imageModel: 'gpt-image-2',
+        resolution: 'auto',
+        aspectRatio: 'auto',
+        quality: 'medium',
+      },
+    })
+
+    await wrapper.find('.prompt-input').setValue('生成一张海报')
+    await wrapper.find('.generate-btn').trigger('click')
+
+    expect(generate).toHaveBeenCalledWith('生成一张海报', {
+      count: 1,
+      resolution: 'auto',
+      aspectRatio: 'auto',
+      quality: 'medium',
+      model: 'gpt-image-2',
+      references: [],
+    })
   })
 
   it('resets canvas-node aspect ratio when Auto resolution is selected', async () => {
