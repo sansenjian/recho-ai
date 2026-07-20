@@ -118,7 +118,7 @@ async function handlePaste(event: ClipboardEvent) {
 }
 
 async function handleGenerate() {
-  if (!promptText.value.trim()) return
+  if (!canGenerate.value) return
 
   const results = await props.generate(promptText.value, {
     count: props.canSelectGenerationCount ? generationCount.value : 1,

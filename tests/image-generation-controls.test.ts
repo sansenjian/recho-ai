@@ -107,6 +107,21 @@ describe('image generation Auto resolution controls', () => {
     })
   })
 
+  it('does not invoke the parent pipeline while generation is already active', async () => {
+    const generate = vi.fn().mockResolvedValue([])
+    const wrapper = mount(ImagioView, {
+      props: {
+        ...imagioGenerationProps(generate),
+      },
+    })
+
+    await wrapper.find('.prompt-input').setValue('生成一张海报')
+    await wrapper.setProps({ isGenerating: true })
+    await (wrapper.vm as unknown as { handleGenerate: () => Promise<void> }).handleGenerate()
+
+    expect(generate).not.toHaveBeenCalled()
+  })
+
   it('resets canvas-node aspect ratio when Auto resolution is selected', async () => {
     const node = generationNode('1k', '16:9')
     const wrapper = mount(ImageCanvasNode, {
