@@ -9,13 +9,10 @@ import {
 import { imageDimensionsFromHistory } from '../lib/image-canvas-utils'
 import { previewImageUrl } from '../lib/image-gallery'
 import type {
-  GeneratedImage,
   ImageCanvasContext,
+  ImageGenerate,
   ImageGenReference,
-  ImageGenRequest,
 } from '../types/image'
-
-type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>
 
 interface PromptParts {
   userPrompt: string
@@ -36,7 +33,7 @@ export interface UseImageCanvasGenerationOptions {
   buildReferences: (node: CanvasNode) => Promise<ImageGenReference[]>
   buildPromptParts: (node: CanvasNode) => PromptParts
   buildCanvasContext: (node: CanvasNode, userPrompt: string) => ImageCanvasContext
-  generate: (prompt: string, options?: ImageGenOptions) => Promise<GeneratedImage[] | null>
+  generate: ImageGenerate
 }
 
 export const generationCountOptions: Array<{ value: NodeGenerationCount; label: string }> = [

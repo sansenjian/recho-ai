@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Plus, X, Sparkles } from '@lucide/vue'
-import { useImageGen } from '../composables/useImageGen'
 import {
   clipboardImageFile,
   compressReferenceImageDataUrl,
   fallbackImageFileName,
   readImageFileAsDataUrl,
 } from '../lib/image-canvas-utils'
-import type { ImageGenReference, ImageGenerationCount, ImageQuality, ImageResolution, ImageAspectRatio } from '../types/image'
+import type {
+  ImageAspectRatio,
+  ImageGenerate,
+  ImageGenerationCount,
+  ImageGenReference,
+  ImageQuality,
+  ImageResolution,
+} from '../types/image'
 
 const props = defineProps<{
+  generate: ImageGenerate
+  isGenerating: boolean
+  error: string | null
   canSelectGenerationCount?: boolean
   imageModel?: string
   resolution?: ImageResolution
@@ -29,19 +38,13 @@ const emit = defineEmits<{
   'update:quality': [value: ImageQuality]
 }>()
 
-const {
-  isGenerating,
-  error,
-  generate,
-} = useImageGen()
-
 const promptText = ref('')
 const generationCount = ref<ImageGenerationCount>(1)
 const pendingReferences = ref<ImageGenReference[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const pasteMessage = ref<string | null>(null)
 
-const canGenerate = computed(() => Boolean(promptText.value.trim()) && !isGenerating.value)
+const canGenerate = computed(() => Boolean(promptText.value.trim()) && !props.isGenerating)
 const aspectRatioLocked = computed(() => props.resolution === 'auto')
 
 let referenceIdSeed = Date.now()
@@ -74,7 +77,7 @@ async function addReferenceFiles(files: File[] | FileList) {
 }
 
 function openReferencePicker() {
-  if (isGenerating.value) return
+  if (props.isGenerating) return
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
     fileInputRef.value.click()
@@ -115,9 +118,9 @@ async function handlePaste(event: ClipboardEvent) {
 }
 
 async function handleGenerate() {
-  if (!promptText.value.trim()) return
+  if (!canGenerate.value) return
 
-  const results = await generate(promptText.value, {
+  const results = await props.generate(promptText.value, {
     count: props.canSelectGenerationCount ? generationCount.value : 1,
     resolution: props.resolution,
     aspectRatio: props.aspectRatio,

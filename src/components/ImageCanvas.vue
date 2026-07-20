@@ -1169,6 +1169,9 @@ onUnmounted(() => {
         <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden">
           <template v-if="currentImageMode === 'imagio'">
             <ImagioView
+              :generate="generate"
+              :is-generating="isGenerating"
+              :error="error"
               :can-select-generation-count="props.canSelectGenerationCount"
               v-model:image-model="imageModel"
               v-model:resolution="resolution"
