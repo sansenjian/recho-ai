@@ -17,7 +17,8 @@ cleanup() {
     return
   fi
   CLEANING_UP=1
-  trap - INT TERM EXIT
+  trap '' INT TERM
+  trap - EXIT
 
   for pid in "$NODE_PID" "$GO_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
