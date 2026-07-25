@@ -31,11 +31,14 @@ export async function getGoSidecarHealth(now = Date.now()): Promise<GoSidecarHea
       const response = await fetch(`${baseUrl}/ready`, {
         signal: AbortSignal.timeout(GO_SIDECAR_HEALTH_TIMEOUT_MS),
       })
+      const ready = response.ok
+      const status = response.status
+      if (response.body) await response.body.cancel().catch(() => undefined)
       const health: GoSidecarHealth = {
         configured: true,
-        ready: response.ok,
+        ready,
         checkedAt,
-        ...(response.ok ? {} : { error: `Go gateway returned ${response.status}` }),
+        ...(ready ? {} : { error: `Go gateway returned ${status}` }),
       }
       cachedHealth = health
       cachedAt = Date.now()

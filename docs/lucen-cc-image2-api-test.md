@@ -209,7 +209,7 @@ OpenAI 计费按 token,图片 token 主要由 `size` × `quality` 决定:
 
 测试生成的临时文件(可删除):
 
-```
+```text
 test_img1.png / test_img1.b64
 test_auto.png
 test_q_low.png / test_q_med.png / test_q_auto.png

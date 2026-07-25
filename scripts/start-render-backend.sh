@@ -4,6 +4,7 @@ set -eu
 GO_GATEWAY_PORT="${GO_GATEWAY_PORT:-3001}"
 export GO_GATEWAY_PORT
 NODE_PID=""
+CLEANING_UP=0
 
 (
   cd /app/backend/go-gateway
@@ -12,12 +13,45 @@ NODE_PID=""
 GO_PID="$!"
 
 cleanup() {
-  if [ -n "$NODE_PID" ]; then
-    kill "$NODE_PID" 2>/dev/null || true
+  if [ "$CLEANING_UP" -eq 1 ]; then
+    return
   fi
-  kill "$GO_PID" 2>/dev/null || true
+  CLEANING_UP=1
+  trap - INT TERM EXIT
+
+  for pid in "$NODE_PID" "$GO_PID"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+
+  for pid in "$NODE_PID" "$GO_PID"; do
+    if [ -z "$pid" ]; then
+      continue
+    fi
+
+    attempts=0
+    while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 10 ]; do
+      sleep 1
+      attempts=$((attempts + 1))
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+  done
 }
-trap cleanup INT TERM EXIT
+
+handle_signal() {
+  exit_code="$1"
+  cleanup
+  exit "$exit_code"
+}
+
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+trap cleanup EXIT
 
 MAX_ATTEMPTS=60
 
@@ -53,7 +87,10 @@ done
 
 if ! kill -0 "$GO_PID" 2>/dev/null; then
   echo "go-gateway exited after startup" >&2
+  wait "$GO_PID" 2>/dev/null || true
   exit 1
 fi
 
-wait "$NODE_PID"
+echo "node gateway exited after startup" >&2
+wait "$NODE_PID" 2>/dev/null || true
+exit 1

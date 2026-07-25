@@ -66,21 +66,23 @@ function ledgerDetails(tx: AdminLedgerEntry) {
 }
 
 async function refreshOverview() {
-  if (overviewLoading.value) return
+  if (overviewLoading.value) return false
   overviewLoading.value = true
   errorMessage.value = ''
   try {
     const data = await adminApiJson<{ overview: AdminOverview }>('/api/admin/credits/overview')
     overview.value = data.overview
+    return true
   } catch (error) {
     setError(error)
+    return false
   } finally {
     overviewLoading.value = false
   }
 }
 
 async function refreshLedger() {
-  if (ledgerLoading.value) return
+  if (ledgerLoading.value) return false
   ledgerLoading.value = true
   errorMessage.value = ''
   try {
@@ -90,8 +92,10 @@ async function refreshLedger() {
     if (ledgerUserId.value.trim()) query.set('userId', ledgerUserId.value.trim())
     const data = await adminApiJson<{ transactions: AdminLedgerEntry[] }>(`/api/admin/credits/transactions?${query}`)
     ledgerTransactions.value = data.transactions
+    return true
   } catch (error) {
     setError(error)
+    return false
   } finally {
     ledgerLoading.value = false
   }
@@ -99,8 +103,8 @@ async function refreshLedger() {
 
 async function refreshPanel() {
   if (overviewLoading.value || ledgerLoading.value) return
-  await Promise.all([refreshOverview(), refreshLedger()])
-  loadedVersion.value = props.refreshVersion ?? 0
+  const results = await Promise.all([refreshOverview(), refreshLedger()])
+  if (results.every(Boolean)) loadedVersion.value = props.refreshVersion ?? 0
 }
 
 onMounted(refreshPanel)
@@ -118,7 +122,7 @@ onActivated(() => {
         <div><h2 class="text-sm font-semibold tracking-tight">{{ t('overview.title') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ overviewGeneratedAt }}</span></div>
         <Button variant="outline" size="sm" :disabled="overviewLoading" @click="refreshOverview">{{ t('common.refresh') }}</Button>
       </div>
-      <div class="grid gap-px overflow-hidden rounded-md border border-border bg-border" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-px overflow-hidden rounded-md border border-border bg-border">
         <div v-for="item in [
           { label: t('overview.totalBalance'), value: creditAmount(overview?.users.totalBalance) },
           { label: t('overview.totalRedeemed'), value: creditAmount(overview?.users.totalRedeemed) },
@@ -144,7 +148,7 @@ onActivated(() => {
         <div><h2 class="text-sm font-semibold">{{ t('overview.imageCost') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ t('overview.payAsYouGo') }} · {{ t('overview.confidence') }} {{ imageCostConfidenceLabel }}</span></div>
         <span class="whitespace-nowrap text-2xl font-semibold">¥{{ overview?.imageCost?.totalCostPerImage?.toFixed(4) ?? '0.0000' }}<small class="text-[13px] font-normal text-[var(--text-muted)]">{{ t('overview.imageCostUnit') }}</small></span>
       </div>
-      <div class="grid gap-px overflow-hidden rounded-md border border-border bg-border" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px overflow-hidden rounded-md border border-border bg-border">
         <div v-for="item in [
           { label: t('overview.cosStoragePerImage'), value: `¥${overview?.imageCost?.cosStorageCostPerImage?.toFixed(4) ?? '0.0000'}` },
           { label: t('overview.cosTrafficPerImage'), value: `¥${overview?.imageCost?.cosTrafficCostPerImage?.toFixed(4) ?? '0.0000'}` },
