@@ -37,7 +37,8 @@ const (
 )
 
 const jwksCacheTTL = 10 * time.Minute
-const authHTTPTimeout = 5 * time.Second
+const jwksHTTPTimeout = 12 * time.Second
+const authFallbackTimeout = 5 * time.Second
 
 var errAuthVerificationNotConfigured = errors.New("Supabase auth verification is not configured")
 
@@ -67,7 +68,7 @@ var (
 	jwksURL       string
 	authUserURL   string
 	authAPIKey    string
-	authHTTP      = &http.Client{Timeout: authHTTPTimeout}
+	authHTTP      = &http.Client{Timeout: jwksHTTPTimeout}
 	jwksMu        sync.Mutex
 	jwksExpiresAt time.Time
 	jwksKeys      map[string]any
@@ -100,6 +101,17 @@ func Init() {
 			log.Printf("Supabase Auth user verification fallback configured: %s", authUserURL)
 		}
 	}
+}
+
+// WarmJWKS fills the local verification cache before user requests arrive.
+// A slow but reachable network should delay startup once, rather than make
+// every concurrent page request retry Supabase token verification.
+func WarmJWKS(ctx context.Context) error {
+	if jwksURL == "" {
+		return nil
+	}
+	_, err := cachedJWKSKeys(ctx)
+	return err
 }
 
 // isProduction returns true when the configured app environment is production.
@@ -231,7 +243,7 @@ func verifyTokenWithJWKS(ctx context.Context, tokenString string) (*User, error)
 }
 
 func verifyTokenWithAuthServer(ctx context.Context, tokenString string) (*User, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, authFallbackTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, authUserURL, nil)
@@ -301,7 +313,7 @@ func fetchJWKSKeys(ctx context.Context, force bool) (map[string]any, error) {
 		return jwksKeys, nil
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, jwksHTTPTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, jwksURL, nil)

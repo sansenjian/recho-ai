@@ -3,6 +3,7 @@ set -eu
 
 GO_GATEWAY_PORT="${GO_GATEWAY_PORT:-3001}"
 export GO_GATEWAY_PORT
+NODE_PID=""
 
 (
   cd /app/backend/go-gateway
@@ -11,6 +12,9 @@ export GO_GATEWAY_PORT
 GO_PID="$!"
 
 cleanup() {
+  if [ -n "$NODE_PID" ]; then
+    kill "$NODE_PID" 2>/dev/null || true
+  fi
   kill "$GO_PID" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -38,4 +42,18 @@ for attempt in $(seq 1 $MAX_ATTEMPTS); do
 done
 
 cd /app/backend/gateway
-node dist/index.js
+node dist/index.js &
+NODE_PID="$!"
+
+# The public Node gateway and Go sidecar form one service. Exit the container
+# when either process dies so Render restarts the complete pair.
+while kill -0 "$GO_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
+  sleep 2
+done
+
+if ! kill -0 "$GO_PID" 2>/dev/null; then
+  echo "go-gateway exited after startup" >&2
+  exit 1
+fi
+
+wait "$NODE_PID"

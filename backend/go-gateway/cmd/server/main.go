@@ -31,6 +31,16 @@ func main() {
 
 	// Initialize middleware (JWT secret, production safety checks)
 	middleware.Init()
+	// Cache public signing keys before accepting user traffic. Supabase JWKS is
+	// normally fast, but a transient proxy/network delay should not fan out to
+	// every initial authenticated request.
+	warmJWKSContext, cancelWarmJWKS := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := middleware.WarmJWKS(warmJWKSContext); err != nil {
+		log.Printf("Warning: failed to warm Supabase JWKS cache: %v", err)
+	} else {
+		log.Println("Supabase JWKS cache warmed successfully")
+	}
+	cancelWarmJWKS()
 
 	// Initialize Supabase client. NewClient() is the single source of truth for
 	// env/config validation — main() only inspects the returned client/error.
