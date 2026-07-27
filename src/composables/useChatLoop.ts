@@ -7,7 +7,6 @@ import {
   activeConversationId,
   getActiveConversation,
   updateConversationTitle,
-  setConversationTitle,
   touchConversation,
 } from '../stores/chat'
 import { useStream } from './useStream'
@@ -56,8 +55,6 @@ function isAbortError(err: unknown): boolean {
 export function useChatLoop() {
   const isLoading = ref(false)
   const abortController = ref<AbortController | null>(null)
-  // 标题生成是后台异步任务，单独维护控制器以便在提交新消息时中断
-  const titleAbortController = ref<AbortController | null>(null)
   const runState = ref<RunState>('idle')
   const runStatusLabel = ref('')
 
@@ -224,9 +221,6 @@ export function useChatLoop() {
   ): Promise<void> {
     if (isLoading.value) return
 
-    // 提交新消息时，中断仍在进行的后台标题生成
-    titleAbortController.value?.abort()
-
     const { convId, conv } = getActiveOrThrow()
     const isFirstExchange = conv.messages.length === 0
 
@@ -328,43 +322,6 @@ export function useChatLoop() {
 
       if (isFirstExchange && userMsg.content) {
         updateConversationTitle(convId, conv.messages)
-        if (assistantMsg.content && !assistantMsg.content.startsWith('Error')) {
-          autoGenerateTitle(convId, userMsg.content, assistantMsg.content, model)
-        }
-      }
-    }
-  }
-
-  async function autoGenerateTitle(convId: string, userContent: string, assistantContent: string, model: string) {
-    // 中断上一次尚未完成的标题生成，避免并发写入标题
-    titleAbortController.value?.abort()
-    const controller = new AbortController()
-    titleAbortController.value = controller
-    try {
-      const summaryPrompt = `请基于以下对话内容，用5-10个字简洁总结对话主题。只输出主题文字，不要引号、标点或任何额外解释。
-
-用户：${userContent.slice(0, 200)}
-AI：${assistantContent.slice(0, 500)}`
-
-      let title = ''
-      await streamChat(
-        [
-          { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
-          { role: 'user', content: summaryPrompt },
-        ],
-        { onDelta: (c) => { title += c }, onThinkingDelta: () => {}, onToolCall: () => {}, onToolResult: () => {}, onToolEnd: () => {} },
-        controller.signal,
-        null,
-        model,
-      )
-      title = title.replace(/^["'「」『』【】《》\s]+|["'「」『』【】《》\s]+$/g, '').trim()
-      if (title) {
-        const final = title.length > 20 ? title.slice(0, 18) + '…' : title
-        setConversationTitle(convId, final)
-      }
-    } catch { /* ignore */ } finally {
-      if (titleAbortController.value === controller) {
-        titleAbortController.value = null
       }
     }
   }

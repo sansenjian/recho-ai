@@ -40,6 +40,18 @@ describe('useChatLoop', () => {
     expect(messages.at(-1)).toEqual({ role: 'user', content: 'hello' })
   })
 
+  it('updates the first conversation title without creating a second model request', async () => {
+    streamChatMock.mockImplementationOnce(async (_messages, callbacks: any) => {
+      callbacks.onDelta('Here is the answer.')
+    })
+    const { submitMessage } = useChatLoop()
+
+    await submitMessage('hello', 'test-model')
+
+    expect(streamChatMock).toHaveBeenCalledOnce()
+    expect(conversations.value[0].title).toBe('hello')
+  })
+
   it('converts user images into vision content without duplicating the message', async () => {
     const { submitMessage } = useChatLoop()
     const image = 'data:image/jpeg;base64,abc'

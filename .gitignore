@@ -18,6 +18,17 @@ dist-ssr
 skills-lock.json
 output/
 
+# Local browser/design exports and generated API test media
+.playwright-mcp/
+.trae/
+recho-login-redesign/
+recho-image-sidebar-after-authenticated-image.png
+test_*.png
+test_*.jpeg
+test_*.webp
+test_*.b64
+supabase/.temp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

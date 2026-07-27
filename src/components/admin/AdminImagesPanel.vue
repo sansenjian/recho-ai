@@ -89,7 +89,7 @@ function toggleImage(id: string, event: Event) {
 </script>
 
 <template>
-  <section class="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] p-4 max-w-[1360px] mx-auto mb-3.5" aria-label="作品管理">
+  <section class="mx-auto mb-3.5 w-full min-w-0 max-w-[1360px] rounded-lg border border-border bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]" aria-label="作品管理">
     <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
         <span class="block text-sm">作品管理</span>
@@ -99,7 +99,7 @@ function toggleImage(id: string, event: Event) {
         <select
           :value="visibilityFilter"
           :disabled="loading"
-          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateVisibilityFilter"
         >
           <option value="">全部状态</option>
@@ -109,7 +109,7 @@ function toggleImage(id: string, event: Event) {
         <select
           :value="fundingFilter"
           :disabled="loading"
-          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateFundingFilter"
         >
           <option value="">全部来源</option>
@@ -121,7 +121,7 @@ function toggleImage(id: string, event: Event) {
           type="search"
           placeholder="用户 ID"
           :disabled="loading"
-          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateUserFilter"
         >
         <input
@@ -129,7 +129,7 @@ function toggleImage(id: string, event: Event) {
           type="search"
           placeholder="提示词"
           :disabled="loading"
-          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
+          class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateQuery"
         >
         <Button type="submit" variant="outline" size="sm" :disabled="loading">筛选</Button>
@@ -143,11 +143,11 @@ function toggleImage(id: string, event: Event) {
       <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">批量删除</Button>
     </div>
 
-    <div class="w-full overflow-auto rounded-lg border border-[var(--border)] max-h-[560px]">
+    <div class="w-full overflow-auto rounded-lg border border-border max-h-[560px]">
       <table class="w-full border-collapse text-[13px] min-w-[1360px]">
         <thead>
           <tr>
-            <th class="w-[42px] text-center px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">
+            <th class="w-[42px] text-center px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">
               <input
                 type="checkbox"
                 :checked="allVisibleSelected"
@@ -157,20 +157,20 @@ function toggleImage(id: string, event: Event) {
                 @change="toggleAll"
               >
             </th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">预览</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">时间</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">用户</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">状态</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">来源</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">存储</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">模型</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">参数</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">提示词</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-[var(--border)]">操作</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">预览</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">时间</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">用户</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">状态</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">来源</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">存储</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">模型</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">参数</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">提示词</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="image in images" :key="image.id" class="border-b border-[var(--border)]">
+          <tr v-for="image in images" :key="image.id" class="border-b border-border">
             <td class="w-[42px] text-center px-2.5 py-2 align-middle">
               <input
                 type="checkbox"
@@ -182,8 +182,8 @@ function toggleImage(id: string, event: Event) {
               >
             </td>
             <td class="px-2.5 py-2 align-middle">
-              <img v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-[var(--border)] bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="">
-              <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-[var(--border)] bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">无图</span>
+              <img v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-border bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="">
+              <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-border bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">无图</span>
             </td>
             <td class="px-2.5 py-2 align-middle">{{ dateTime(image.generatedAt) }}</td>
             <td class="px-2.5 py-2 align-middle">{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
