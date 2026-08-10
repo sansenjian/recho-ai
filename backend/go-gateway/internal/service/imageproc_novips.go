@@ -3,10 +3,38 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"path"
 	"strings"
+
+	_ "golang.org/x/image/webp"
 )
+
+func (p *noopProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image for cropping: %w", err)
+	}
+	bounds := img.Bounds()
+	left, top, width, height, err := centeredCropDimensions(bounds.Dx(), bounds.Dy(), ratioWidth, ratioHeight)
+	if err != nil {
+		return nil, err
+	}
+	cropped := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(cropped, cropped.Bounds(), img, image.Pt(bounds.Min.X+left, bounds.Min.Y+top), draw.Src)
+
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, cropped); err != nil {
+		return nil, fmt.Errorf("failed to encode cropped image: %w", err)
+	}
+	return &CroppedImage{Data: encoded.Bytes(), Mime: "image/png", Width: width, Height: height}, nil
+}
 
 type noopProcessor struct{}
 

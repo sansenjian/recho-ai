@@ -67,6 +67,7 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
+import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 import type { GeneratedImage, ImageAspectRatio, ImageGenerationCount, ImageQuality, ImageResolution } from '../types/image'
 import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
 import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
@@ -149,10 +150,25 @@ const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
+const customAspectRatioOpen = ref(false)
+const customAspectRatioWidth = ref('4')
+const customAspectRatioHeight = ref('5')
+const customAspectRatioError = ref<string | null>(null)
+const customAspectRatioActive = computed(() => isCustomImageAspectRatio(aspectRatio.value))
 
 watch(resolution, (value) => {
   if (value === 'auto') aspectRatio.value = 'auto'
 })
+
+watch(aspectRatio, (value) => {
+  if (!isCustomImageAspectRatio(value)) return
+  const parts = parseImageAspectRatio(value)
+  if (parts) {
+    customAspectRatioWidth.value = String(parts.width)
+    customAspectRatioHeight.value = String(parts.height)
+    customAspectRatioOpen.value = true
+  }
+}, { immediate: true })
 
 // Initialize model when config loads; re-validate if config changes
 watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
@@ -180,6 +196,25 @@ const imagioAspectRatioOptions: Array<{ value: ImageAspectRatio; label: string }
   { value: '16:9', label: '16:9' },
   { value: '9:16', label: '9:16' },
 ]
+
+function openCustomAspectRatio() {
+  if (resolution.value === 'auto') return
+  customAspectRatioOpen.value = true
+  customAspectRatioError.value = null
+}
+
+function applyCustomAspectRatio() {
+  if (resolution.value === 'auto') return
+  const parts = parseImageAspectRatio(`${customAspectRatioWidth.value}:${customAspectRatioHeight.value}`)
+  if (!parts) {
+    customAspectRatioError.value = '请输入 1:3 到 3:1 范围内的正整数比例。'
+    return
+  }
+  customAspectRatioError.value = null
+  customAspectRatioWidth.value = String(parts.width)
+  customAspectRatioHeight.value = String(parts.height)
+  aspectRatio.value = parts.value
+}
 
 const imagioQualityOptions: Array<{ value: ImageQuality; label: string }> = [
   { value: 'auto', label: 'Auto' },
@@ -1195,7 +1230,7 @@ onUnmounted(() => {
 
             <div
               ref="viewportRef"
-              class="absolute inset-0 overflow-hidden cursor-default touch-none"
+              class="absolute inset-0 overflow-clip cursor-default touch-none"
               :style="{
                 background: 'linear-gradient(hsl(var(--border) / 0.68) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.68) 1px, transparent 1px), linear-gradient(hsl(var(--border) / 0.38) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.38) 1px, transparent 1px), hsl(var(--background))',
                 backgroundSize: '28px 28px, 28px 28px, 140px 140px, 140px 140px',
@@ -1398,6 +1433,43 @@ onUnmounted(() => {
           >
             {{ opt.label }}
           </button>
+          <button
+            type="button"
+            :disabled="resolution === 'auto'"
+            :class="[
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
+              customAspectRatioActive
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
+            ]"
+            @click="openCustomAspectRatio"
+          >
+            自定义
+          </button>
+        </div>
+        <div v-if="customAspectRatioOpen && resolution !== 'auto'" class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span class="font-medium">比例</span>
+          <input
+            v-model="customAspectRatioWidth"
+            type="number"
+            min="1"
+            max="1000"
+            inputmode="numeric"
+            aria-label="自定义比例宽度"
+            class="h-8 w-16 rounded-md border border-border bg-background px-2 text-center text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+          >
+          <span aria-hidden="true">:</span>
+          <input
+            v-model="customAspectRatioHeight"
+            type="number"
+            min="1"
+            max="1000"
+            inputmode="numeric"
+            aria-label="自定义比例高度"
+            class="h-8 w-16 rounded-md border border-border bg-background px-2 text-center text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+          >
+          <Button type="button" variant="outline" size="sm" class="h-8" @click="applyCustomAspectRatio">应用</Button>
+          <p v-if="customAspectRatioError" class="basis-full text-[11px] text-destructive">{{ customAspectRatioError }}</p>
         </div>
       </div>
 

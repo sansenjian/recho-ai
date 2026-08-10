@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Plus, X, Sparkles } from '@lucide/vue'
 import {
   clipboardImageFile,
@@ -15,6 +15,7 @@ import type {
   ImageQuality,
   ImageResolution,
 } from '../types/image'
+import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -43,9 +44,24 @@ const generationCount = ref<ImageGenerationCount>(1)
 const pendingReferences = ref<ImageGenReference[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const pasteMessage = ref<string | null>(null)
+const customAspectRatioOpen = ref(false)
+const customAspectRatioWidth = ref('4')
+const customAspectRatioHeight = ref('5')
+const customAspectRatioError = ref<string | null>(null)
 
 const canGenerate = computed(() => Boolean(promptText.value.trim()) && !props.isGenerating)
 const aspectRatioLocked = computed(() => props.resolution === 'auto')
+const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.aspectRatio))
+
+watch(() => props.aspectRatio, (value) => {
+  if (!value || !isCustomImageAspectRatio(value)) return
+  const parts = parseImageAspectRatio(value)
+  if (parts) {
+    customAspectRatioWidth.value = String(parts.width)
+    customAspectRatioHeight.value = String(parts.height)
+    customAspectRatioOpen.value = true
+  }
+}, { immediate: true })
 
 let referenceIdSeed = Date.now()
 
@@ -103,6 +119,25 @@ function updateResolution(value: ImageResolution) {
 function updateAspectRatio(value: ImageAspectRatio) {
   if (aspectRatioLocked.value && value !== 'auto') return
   emit('update:aspect-ratio', value)
+}
+
+function openCustomAspectRatio() {
+  if (aspectRatioLocked.value) return
+  customAspectRatioOpen.value = true
+  customAspectRatioError.value = null
+}
+
+function applyCustomAspectRatio() {
+  if (aspectRatioLocked.value) return
+  const parts = parseImageAspectRatio(`${customAspectRatioWidth.value}:${customAspectRatioHeight.value}`)
+  if (!parts) {
+    customAspectRatioError.value = '请输入 1:3 到 3:1 范围内的正整数比例。'
+    return
+  }
+  customAspectRatioError.value = null
+  customAspectRatioWidth.value = String(parts.width)
+  customAspectRatioHeight.value = String(parts.height)
+  emit('update:aspect-ratio', parts.value)
 }
 
 async function handlePaste(event: ClipboardEvent) {
@@ -229,6 +264,23 @@ async function handleGenerate() {
               >
                 {{ opt.label }}
               </button>
+              <button
+                type="button"
+                :disabled="aspectRatioLocked"
+                :class="{ active: customAspectRatioActive }"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click="openCustomAspectRatio"
+              >
+                自定义
+              </button>
+            </div>
+            <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
+              <span class="text-xs font-medium text-muted-foreground">比例</span>
+              <input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+              <span aria-hidden="true">:</span>
+              <input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+              <button type="button" class="h-8 rounded-md border border-border bg-accent px-3 text-xs font-semibold text-accent-foreground hover:bg-accent/80" @click="applyCustomAspectRatio">应用</button>
+              <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
             </div>
           </div>
 

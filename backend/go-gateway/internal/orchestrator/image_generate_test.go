@@ -72,6 +72,14 @@ func (s *testStorageService) StoreFromBufferAtPath(ctx context.Context, data []b
 	return storedImageForHint(storagePath), nil
 }
 
+func (s *testStorageService) CropGeneratedImageFromURL(ctx context.Context, sourceURL string, ratioWidth, ratioHeight int) (*service.CroppedImage, error) {
+	return &service.CroppedImage{Data: []byte("cropped"), Mime: "image/png", Width: ratioWidth * 100, Height: ratioHeight * 100}, nil
+}
+
+func (s *testStorageService) CropGeneratedImageFromBuffer(data []byte, ratioWidth, ratioHeight int) (*service.CroppedImage, error) {
+	return &service.CroppedImage{Data: []byte("cropped"), Mime: "image/png", Width: ratioWidth * 100, Height: ratioHeight * 100}, nil
+}
+
 func (s *testStorageService) DownloadImage(ctx context.Context, storagePath string) (*service.DownloadedImage, error) {
 	return nil, nil
 }
@@ -223,6 +231,92 @@ func TestNormalizeImageControlsPreservesAutoValues(t *testing.T) {
 	}
 	if got := normalizeAspectRatio("auto"); got != "auto" {
 		t.Fatalf("normalizeAspectRatio(auto) = %q, want auto", got)
+	}
+}
+
+func TestNormalizeAspectRatioAcceptsAndReducesCustomValues(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "4:5", want: "4:5"},
+		{input: " 8 : 10 ", want: "4:5"},
+		{input: "3:1", want: "3:1"},
+		{input: "1:3", want: "1:3"},
+		{input: "4:1", want: "auto"},
+		{input: "0:1", want: "auto"},
+		{input: "1001:1000", want: "auto"},
+		{input: "invalid", want: "auto"},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeAspectRatio(tt.input); got != tt.want {
+			t.Errorf("normalizeAspectRatio(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestDetermineProviderSizeUsesSupportedLucenEnumForCustomRatio(t *testing.T) {
+	provider := service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1"}
+	tests := []struct {
+		ratio string
+		want  string
+	}{
+		{ratio: "auto", want: "1024x1024"},
+		{ratio: "1:1", want: "1024x1024"},
+		{ratio: "4:5", want: "1024x1536"},
+		{ratio: "16:9", want: "1536x1024"},
+	}
+
+	for _, tt := range tests {
+		if got := determineProviderSize("1k", tt.ratio, provider); got != tt.want {
+			t.Errorf("determineProviderSize(1k, %q) = %q, want %q", tt.ratio, got, tt.want)
+		}
+	}
+}
+
+func TestDetermineProviderSizePreservesResolutionForCustomRatio(t *testing.T) {
+	provider := service.ImageProviderConfig{BaseURL: "https://provider.example/v1"}
+	if got := determineProviderSize("2k", "4:5", provider); got != "1440x2160" {
+		t.Fatalf("determineProviderSize(2k, 4:5) = %q, want 1440x2160", got)
+	}
+}
+
+func TestLucenWideRatiosRequirePostProcessing(t *testing.T) {
+	provider := service.ImageProviderConfig{BaseURL: "https://lucen.plus/v1"}
+	for _, ratio := range []string{"16:9", "9:16", "4:5"} {
+		if !needsAspectRatioCrop(ratio, provider) {
+			t.Errorf("needsAspectRatioCrop(%q, Lucen) = false, want true", ratio)
+		}
+	}
+	for _, ratio := range []string{"auto", "1:1", "3:2", "2:3"} {
+		if needsAspectRatioCrop(ratio, provider) {
+			t.Errorf("needsAspectRatioCrop(%q, Lucen) = true, want false", ratio)
+		}
+	}
+}
+
+func TestCropGeneratedImagesReturnsImmediateCroppedData(t *testing.T) {
+	o := NewImageOrchestrator(nil, &testStorageService{}, nil)
+	images, err := o.cropGeneratedImages(context.Background(), []generatedImageRecord{{
+		result: ImageResult{ID: "image-1", URL: "https://provider.example/source.png", TemporaryURL: "https://provider.example/source.png"},
+		source: imageSource{URL: "https://provider.example/source.png", Mime: "image/png"},
+	}}, "4:5")
+	if err != nil {
+		t.Fatalf("cropGeneratedImages returned error: %v", err)
+	}
+	if len(images) != 1 {
+		t.Fatalf("cropGeneratedImages returned %d images, want 1", len(images))
+	}
+	image := images[0]
+	if image.result.URL != "data:image/png;base64,Y3JvcHBlZA==" || image.result.DataURL != image.result.URL {
+		t.Fatalf("cropped result did not use immediate data URL: %#v", image.result)
+	}
+	if image.result.TemporaryURL != "" || image.result.Width != 400 || image.result.Height != 500 || image.result.Size != "400x500" {
+		t.Fatalf("cropped result metadata is incorrect: %#v", image.result)
+	}
+	if image.source.URL != "" || image.source.Base64 != "Y3JvcHBlZA==" {
+		t.Fatalf("cropped source retained provider data: %#v", image.source)
 	}
 }
 

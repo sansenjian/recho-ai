@@ -1,4 +1,4 @@
-export type ImageAspectRatio = 'auto' | '1:1' | '3:2' | '2:3' | '16:9' | '9:16'
+export type ImageAspectRatio = 'auto' | '1:1' | '3:2' | '2:3' | '16:9' | '9:16' | `${number}:${number}`
 export type ImageResolution = 'auto' | '1k' | '2k' | '4k'
 export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 export type ImageHistoryScope = 'mine' | 'public'

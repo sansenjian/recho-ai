@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -308,6 +309,12 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 
 	// --- 调 AI API（不可逆步骤，无补偿）---
 	images, ierr := o.callImageAPI(ctx, req, count, aspectRatio, resolution, quality, providerCfg)
+	if ierr == nil && needsAspectRatioCrop(aspectRatio, providerCfg) {
+		images, ierr = o.cropGeneratedImages(ctx, images, aspectRatio)
+		if ierr == nil && len(images) > 0 && images[0].result.Size != "" {
+			metadata.Size = images[0].result.Size
+		}
+	}
 	if ierr != nil {
 		o.logger.Printf("[image] generation failed: %v", ierr)
 		o.logImageLifecycle(imageLifecycleEvent{
@@ -1002,7 +1009,9 @@ func (o *ImageOrchestrator) prepareGeneratedImages(images []generatedImageRecord
 		image.result.Visibility = metadata.Visibility
 		image.result.FundingSource = metadata.FundingSource
 		image.result.CreditCost = metadata.CreditCost
-		image.result.Size = metadata.Size
+		if image.result.Size == "" {
+			image.result.Size = metadata.Size
+		}
 		image.result.AspectRatio = metadata.AspectRatio
 		image.result.Resolution = metadata.Resolution
 		image.result.Quality = metadata.Quality
@@ -1017,7 +1026,7 @@ func (o *ImageOrchestrator) prepareGeneratedImages(images []generatedImageRecord
 
 // callImageAPI 调用上游图片生成 API，带重试。
 func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, count int, aspectRatio, resolution, quality string, provider service.ImageProviderConfig) ([]generatedImageRecord, error) {
-	size := determineSize(resolution, aspectRatio)
+	size := determineProviderSize(resolution, aspectRatio, provider)
 	imageMime := "image/png"
 	usesEdits := len(req.References) > 0
 	imageModel := imageModelForRequest(provider, usesEdits)
@@ -1306,11 +1315,54 @@ func normalizeImageCount(count int) int {
 }
 
 func normalizeAspectRatio(ratio string) string {
+	ratio = strings.TrimSpace(ratio)
+	if ratio == "auto" {
+		return ratio
+	}
+	width, height, ok := parseAspectRatio(ratio)
+	if !ok {
+		return "auto"
+	}
+	divisor := greatestCommonDivisor(width, height)
+	return fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+}
+
+func parseAspectRatio(ratio string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(ratio), ":")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width < 1 || height < 1 || width > 1000 || height > 1000 {
+		return 0, 0, false
+	}
+	if int64(width) > int64(height)*3 || int64(height) > int64(width)*3 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+func greatestCommonDivisor(left, right int) int {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	if left < 0 {
+		return -left
+	}
+	if left == 0 {
+		return 1
+	}
+	return left
+}
+
+func isCustomAspectRatio(ratio string) bool {
 	switch ratio {
 	case "auto", "1:1", "3:2", "2:3", "16:9", "9:16":
-		return ratio
+		return false
 	default:
-		return "auto"
+		_, _, ok := parseAspectRatio(ratio)
+		return ok
 	}
 }
 
@@ -1380,6 +1432,93 @@ func determineSize(resolution, aspectRatio string) string {
 		}
 	}
 	return "1024x1024"
+}
+
+func determineProviderSize(resolution, aspectRatio string, provider service.ImageProviderConfig) string {
+	if !usesLucenImageCompatibility(provider) {
+		if width, height, ok := parseAspectRatio(aspectRatio); ok && isCustomAspectRatio(aspectRatio) {
+			sourceRatio := "1:1"
+			if int64(width)*5 >= int64(height)*6 {
+				sourceRatio = "3:2"
+			} else if int64(height)*5 >= int64(width)*6 {
+				sourceRatio = "2:3"
+			}
+			return determineSize(resolution, sourceRatio)
+		}
+		return determineSize(resolution, aspectRatio)
+	}
+	if resolution == "auto" {
+		return "auto"
+	}
+	width, height, ok := parseAspectRatio(aspectRatio)
+	if !ok {
+		return "1024x1024"
+	}
+	if int64(width)*5 >= int64(height)*6 {
+		return "1536x1024"
+	}
+	if int64(height)*5 >= int64(width)*6 {
+		return "1024x1536"
+	}
+	return "1024x1024"
+}
+
+func needsAspectRatioCrop(aspectRatio string, provider service.ImageProviderConfig) bool {
+	if isCustomAspectRatio(aspectRatio) {
+		return true
+	}
+	if !usesLucenImageCompatibility(provider) {
+		return false
+	}
+	return aspectRatio == "16:9" || aspectRatio == "9:16"
+}
+
+func (o *ImageOrchestrator) cropGeneratedImages(ctx context.Context, images []generatedImageRecord, aspectRatio string) ([]generatedImageRecord, error) {
+	ratioWidth, ratioHeight, ok := parseAspectRatio(aspectRatio)
+	if !ok {
+		return nil, fmt.Errorf("invalid custom aspect ratio %q", aspectRatio)
+	}
+	cropper, ok := o.storage.(GeneratedImageCropper)
+	if !ok || resourceIsNil(cropper) {
+		return nil, errors.New("image cropper is unavailable")
+	}
+
+	croppedImages := make([]generatedImageRecord, 0, len(images))
+	for _, image := range images {
+		var cropped *service.CroppedImage
+		var err error
+		if image.source.URL != "" {
+			cropped, err = cropper.CropGeneratedImageFromURL(ctx, image.source.URL, ratioWidth, ratioHeight)
+		} else if image.source.Base64 != "" {
+			decoded, decodeErr := base64.StdEncoding.DecodeString(image.source.Base64)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("base64 decode failed before cropping: %w", decodeErr)
+			}
+			cropped, err = cropper.CropGeneratedImageFromBuffer(decoded, ratioWidth, ratioHeight)
+		} else {
+			return nil, errors.New("missing provider image source before cropping")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("crop generated image: %w", err)
+		}
+		if cropped == nil || len(cropped.Data) == 0 || cropped.Width < 1 || cropped.Height < 1 {
+			return nil, errors.New("image cropper returned an empty image")
+		}
+
+		mime := firstNonEmpty(cropped.Mime, "image/png")
+		encoded := base64.StdEncoding.EncodeToString(cropped.Data)
+		dataURL := "data:" + mime + ";base64," + encoded
+		image.source = imageSource{Base64: encoded, Mime: mime}
+		image.result.URL = dataURL
+		image.result.DataURL = dataURL
+		image.result.PreviewURL = dataURL
+		image.result.TemporaryURL = ""
+		image.result.Width = cropped.Width
+		image.result.Height = cropped.Height
+		image.result.Size = fmt.Sprintf("%dx%d", cropped.Width, cropped.Height)
+		croppedImages = append(croppedImages, image)
+	}
+	return croppedImages, nil
 }
 
 func isLucenImageProvider(baseURL string) bool {
