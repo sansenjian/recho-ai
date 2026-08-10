@@ -13,11 +13,12 @@ import (
 	"path"
 	"strings"
 
+	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp"
 )
 
 func (p *noopProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image for cropping: %w", err)
 	}

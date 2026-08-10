@@ -1437,13 +1437,7 @@ func determineSize(resolution, aspectRatio string) string {
 func determineProviderSize(resolution, aspectRatio string, provider service.ImageProviderConfig) string {
 	if !usesLucenImageCompatibility(provider) {
 		if width, height, ok := parseAspectRatio(aspectRatio); ok && isCustomAspectRatio(aspectRatio) {
-			sourceRatio := "1:1"
-			if int64(width)*5 >= int64(height)*6 {
-				sourceRatio = "3:2"
-			} else if int64(height)*5 >= int64(width)*6 {
-				sourceRatio = "2:3"
-			}
-			return determineSize(resolution, sourceRatio)
+			return determineSize(resolution, bestProviderSourceRatio(width, height))
 		}
 		return determineSize(resolution, aspectRatio)
 	}
@@ -1454,13 +1448,26 @@ func determineProviderSize(resolution, aspectRatio string, provider service.Imag
 	if !ok {
 		return "1024x1024"
 	}
-	if int64(width)*5 >= int64(height)*6 {
+	switch bestProviderSourceRatio(width, height) {
+	case "3:2":
 		return "1536x1024"
-	}
-	if int64(height)*5 >= int64(width)*6 {
+	case "2:3":
 		return "1024x1536"
+	default:
+		return "1024x1024"
 	}
-	return "1024x1024"
+}
+
+func bestProviderSourceRatio(width, height int) string {
+	widthSquared := int64(width) * int64(width)
+	heightSquared := int64(height) * int64(height)
+	if 2*widthSquared >= 3*heightSquared {
+		return "3:2"
+	}
+	if 3*widthSquared <= 2*heightSquared {
+		return "2:3"
+	}
+	return "1:1"
 }
 
 func needsAspectRatioCrop(aspectRatio string, provider service.ImageProviderConfig) bool {

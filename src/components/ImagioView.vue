@@ -16,6 +16,8 @@ import type {
   ImageResolution,
 } from '../types/image'
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -276,10 +278,10 @@ async function handleGenerate() {
             </div>
             <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
               <span class="text-xs font-medium text-muted-foreground">比例</span>
-              <input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
+              <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
               <span aria-hidden="true">:</span>
-              <input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20">
-              <button type="button" class="h-8 rounded-md border border-border bg-accent px-3 text-xs font-semibold text-accent-foreground hover:bg-accent/80" @click="applyCustomAspectRatio">应用</button>
+              <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+              <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
               <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
             </div>
           </div>

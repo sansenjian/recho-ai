@@ -19,6 +19,8 @@ import type {
 import { hasImageSource } from '../lib/authenticated-image-source'
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 type NodeOption<T extends string | number> = {
   value: T
@@ -454,28 +456,28 @@ function applyCustomAspectRatio() {
               </button>
             </div>
             <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5">
-              <input
+              <Input
                 v-model="customAspectRatioWidth"
                 type="number"
                 min="1"
                 max="1000"
                 inputmode="numeric"
                 aria-label="自定义比例宽度"
-                class="h-[34px] min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                class="h-[34px] min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground"
                 @pointerdown.stop
-              >
+              />
               <span aria-hidden="true">:</span>
-              <input
+              <Input
                 v-model="customAspectRatioHeight"
                 type="number"
                 min="1"
                 max="1000"
                 inputmode="numeric"
                 aria-label="自定义比例高度"
-                class="h-[34px] min-w-0 rounded-md border border-border bg-background px-2 text-center text-xs font-semibold text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                class="h-[34px] min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground"
                 @pointerdown.stop
-              >
-              <button type="button" class="h-[34px] rounded-md border border-border bg-accent px-2.5 text-[11px] font-semibold text-accent-foreground hover:bg-accent/80" @pointerdown.stop @click.stop="applyCustomAspectRatio">应用</button>
+              />
+              <Button type="button" variant="outline" size="sm" class="h-[34px] px-2.5 text-[11px] font-semibold" @pointerdown.stop @click.stop="applyCustomAspectRatio">应用</Button>
               <span v-if="customAspectRatioError" class="col-span-full text-[10px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
             </div>
           </div>

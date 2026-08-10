@@ -81,6 +81,7 @@ import ImagioView from './ImagioView.vue'
 import ImagioSidebar from './ImagioSidebar.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -1449,25 +1450,25 @@ onUnmounted(() => {
         </div>
         <div v-if="customAspectRatioOpen && resolution !== 'auto'" class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span class="font-medium">比例</span>
-          <input
+          <Input
             v-model="customAspectRatioWidth"
             type="number"
             min="1"
             max="1000"
             inputmode="numeric"
             aria-label="自定义比例宽度"
-            class="h-8 w-16 rounded-md border border-border bg-background px-2 text-center text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
-          >
+            class="h-8 w-16 bg-background px-2 text-center text-foreground"
+          />
           <span aria-hidden="true">:</span>
-          <input
+          <Input
             v-model="customAspectRatioHeight"
             type="number"
             min="1"
             max="1000"
             inputmode="numeric"
             aria-label="自定义比例高度"
-            class="h-8 w-16 rounded-md border border-border bg-background px-2 text-center text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
-          >
+            class="h-8 w-16 bg-background px-2 text-center text-foreground"
+          />
           <Button type="button" variant="outline" size="sm" class="h-8" @click="applyCustomAspectRatio">应用</Button>
           <p v-if="customAspectRatioError" class="basis-full text-[11px] text-destructive">{{ customAspectRatioError }}</p>
         </div>
