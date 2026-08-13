@@ -23,6 +23,7 @@ const LOCAL_STORAGE_FALLBACK_LIMIT = 2
 const IMAGE_REQUEST_TIMEOUT_MS = 360_000
 const PRIVATE_HISTORY_REFRESH_DELAY_MS = 5 * 60_000
 const PRIVATE_HISTORY_REFRESH_MAX_ATTEMPTS = 5
+const PUBLIC_HISTORY_RETRY_DELAY_MS = 200
 export type { ImageHistoryScope }
 
 interface ImageHistoryResponse {
@@ -372,41 +373,74 @@ async function loadPersistedHistory() {
 
 type AuthIdentity = Awaited<ReturnType<typeof getAuthIdentity>>
 
-const emptyRemoteHistory = { images: [], hasMore: false, nextOffset: null }
+interface RemoteHistoryResult {
+  images: GeneratedImage[]
+  hasMore: boolean
+  nextOffset: number | null
+  error: string | null
+}
+
+function emptyRemoteHistory(error: string | null = null): RemoteHistoryResult {
+  return { images: [], hasMore: false, nextOffset: null, error }
+}
+
+function shouldRetryHistoryRequest(status: number) {
+  return status === 502 || status === 503 || status === 504
+}
+
+function wait(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 async function loadRemoteHistory(
   offset = 0,
   scope: ImageHistoryScope = 'public',
   identity?: AuthIdentity,
 ) {
-  try {
-    const auth = scope === 'mine'
-      ? identity ?? await getAuthIdentity()
-      : { accessToken: null, userId: null }
-    if (scope === 'mine' && !auth.accessToken) return emptyRemoteHistory
+  const maxAttempts = scope === 'public' ? 2 : 1
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const auth = scope === 'mine'
+        ? identity ?? await getAuthIdentity()
+        : { accessToken: null, userId: null }
+      if (scope === 'mine' && !auth.accessToken) return emptyRemoteHistory()
 
-    const query = new URLSearchParams({
-      limit: String(HISTORY_PAGE_SIZE),
-      offset: String(offset),
-      scope,
-    })
-    const res = await fetch(imageApiUrl(`/api/image/history?${query.toString()}`), {
-      cache: 'no-store',
-      headers: scope === 'mine' && auth.accessToken
-        ? { Authorization: `Bearer ${auth.accessToken}` }
-        : undefined,
-    })
-    if (!res.ok) return emptyRemoteHistory
-    const data = await res.json() as ImageHistoryResponse
-    return {
-      images: uniqueHistory(data.images || [], scope === 'public' ? MAX_GALLERY_HISTORY : MAX_HISTORY),
-      hasMore: Boolean(data.hasMore),
-      nextOffset: typeof data.nextOffset === 'number' ? data.nextOffset : null,
+      const query = new URLSearchParams({
+        limit: String(HISTORY_PAGE_SIZE),
+        offset: String(offset),
+        scope,
+      })
+      const res = await fetch(imageApiUrl(`/api/image/history?${query.toString()}`), {
+        cache: 'no-store',
+        headers: scope === 'mine' && auth.accessToken
+          ? { Authorization: `Bearer ${auth.accessToken}` }
+          : undefined,
+      })
+      if (!res.ok) {
+        if (attempt + 1 < maxAttempts && shouldRetryHistoryRequest(res.status)) {
+          await wait(PUBLIC_HISTORY_RETRY_DELAY_MS)
+          continue
+        }
+        return emptyRemoteHistory('作品广场加载失败，请稍后重试。')
+      }
+      const data = await res.json() as ImageHistoryResponse
+      return {
+        images: uniqueHistory(data.images || [], scope === 'public' ? MAX_GALLERY_HISTORY : MAX_HISTORY),
+        hasMore: Boolean(data.hasMore),
+        nextOffset: typeof data.nextOffset === 'number' ? data.nextOffset : null,
+        error: null,
+      }
+    } catch (err) {
+      console.warn('[image-history] Supabase history load failed', err)
+      if (attempt + 1 < maxAttempts) {
+        await wait(PUBLIC_HISTORY_RETRY_DELAY_MS)
+        continue
+      }
+      return emptyRemoteHistory('作品广场加载失败，请检查网络后重试。')
     }
-  } catch (err) {
-    console.warn('[image-history] Supabase history load failed', err)
-    return emptyRemoteHistory
   }
+
+  return emptyRemoteHistory('作品广场加载失败，请稍后重试。')
 }
 
 async function loadRemoteImageDetail(
@@ -485,6 +519,7 @@ export function useImageGen() {
   const hasMoreGallery = ref(false)
   const nextGalleryOffset = ref<number | null>(null)
   const galleryLoaded = ref(false)
+  const galleryError = ref<string | null>(null)
   const error = ref<string | null>(null)
   const generatedImages = ref<GeneratedImage[]>(loadLegacyHistory())
   const galleryImages = ref<GeneratedImage[]>([])
@@ -750,8 +785,13 @@ export function useImageGen() {
   async function ensureGalleryLoaded() {
     if (galleryLoaded.value || isLoadingGallery.value) return
     isLoadingGallery.value = true
+    galleryError.value = null
     try {
       const remoteHistory = await loadRemoteHistory(0, 'public')
+      if (remoteHistory.error) {
+        galleryError.value = remoteHistory.error
+        return
+      }
       galleryImages.value = uniqueHistory(remoteHistory.images, MAX_GALLERY_HISTORY)
       hasMoreGallery.value = remoteHistory.hasMore
       nextGalleryOffset.value = remoteHistory.nextOffset
@@ -764,8 +804,13 @@ export function useImageGen() {
   async function loadMoreGalleryHistory() {
     if (isLoadingGallery.value || !hasMoreGallery.value || nextGalleryOffset.value === null) return
     isLoadingGallery.value = true
+    galleryError.value = null
     try {
       const remoteHistory = await loadRemoteHistory(nextGalleryOffset.value, 'public')
+      if (remoteHistory.error) {
+        galleryError.value = remoteHistory.error
+        return
+      }
       galleryImages.value = uniqueHistory([...galleryImages.value, ...remoteHistory.images], MAX_GALLERY_HISTORY)
       hasMoreGallery.value = remoteHistory.hasMore
       nextGalleryOffset.value = remoteHistory.nextOffset
@@ -773,6 +818,14 @@ export function useImageGen() {
     } finally {
       isLoadingGallery.value = false
     }
+  }
+
+  async function retryGalleryHistory() {
+    if (galleryLoaded.value) {
+      await loadMoreGalleryHistory()
+      return
+    }
+    await ensureGalleryLoaded()
   }
 
   function cancelGeneration() {
@@ -787,6 +840,7 @@ export function useImageGen() {
     isLoadingGallery,
     hasMoreGallery,
     galleryLoaded,
+    galleryError,
     error,
     generatedImages,
     galleryImages,
@@ -797,6 +851,7 @@ export function useImageGen() {
     loadMoreHistory,
     ensureGalleryLoaded,
     loadMoreGalleryHistory,
+    retryGalleryHistory,
     resolveImageDetail,
   }
 }

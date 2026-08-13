@@ -20,6 +20,7 @@ output/
 
 # Local browser/design exports and generated API test media
 .playwright-mcp/
+.playwright-cli/
 .trae/
 recho-login-redesign/
 recho-image-sidebar-after-authenticated-image.png

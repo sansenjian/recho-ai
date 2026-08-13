@@ -109,6 +109,7 @@ const {
   isLoadingGallery,
   hasMoreGallery,
   galleryLoaded,
+  galleryError,
   error,
   generatedImages,
   galleryImages: publicGalleryImages,
@@ -116,6 +117,7 @@ const {
   loadMoreHistory,
   ensureGalleryLoaded,
   loadMoreGalleryHistory,
+  retryGalleryHistory,
   resolveImageDetail,
   generate,
 } = useImageGen()
@@ -1349,11 +1351,12 @@ onUnmounted(() => {
             :gallery-loaded="galleryLoaded"
             :is-loading="isGalleryLoading"
             :is-loading-more="isGalleryLoadingMore"
-            :error="error"
+            :error="galleryError"
             :resolution-options="resolutionOptions"
             :quality-options="qualityOptions"
             :is-image-downloading="isGalleryImageDownloading"
             @load-more="handleLoadMoreGallery"
+            @retry="retryGalleryHistory"
             @view="openGalleryDetail"
             @use-image="handleGalleryUseImage"
             @preload-download="handleGalleryPreloadDownload"

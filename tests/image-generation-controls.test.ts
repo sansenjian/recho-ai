@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CanvasNode } from '../src/lib/image-canvas-model'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
+import ImageCanvasGalleryStage from '../src/components/ImageCanvasGalleryStage.vue'
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../src/lib/image-aspect-ratio'
 
 const resolutionOptions = [
@@ -287,5 +288,58 @@ describe('image generation Auto resolution controls', () => {
     await editor.find('button').trigger('click')
 
     expect(wrapper.emitted('update-aspect-ratio')).toEqual([[node, '4:5']])
+  })
+})
+
+describe('image gallery failure recovery', () => {
+  it('offers a retry action when the gallery request fails', async () => {
+    const wrapper = mount(ImageCanvasGalleryStage, {
+      props: {
+        images: [],
+        filteredCount: 0,
+        sourceCount: 0,
+        query: '',
+        filter: 'latest',
+        filterOptions: [{ value: 'latest', label: '最新' }],
+        hasFilter: true,
+        isPublicFilter: true,
+        galleryLoaded: false,
+        isLoading: false,
+        isLoadingMore: false,
+        error: '作品广场加载失败，请稍后重试。',
+        resolutionOptions: [],
+        qualityOptions: [],
+        isImageDownloading: () => false,
+      },
+    })
+
+    expect(wrapper.text()).toContain('作品广场加载失败，请稍后重试。')
+    await wrapper.get('[data-gallery-retry]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+  })
+
+  it('hides a stale public-gallery error after switching to a private filter', () => {
+    const wrapper = mount(ImageCanvasGalleryStage, {
+      props: {
+        images: [],
+        filteredCount: 0,
+        sourceCount: 0,
+        query: '',
+        filter: 'mine',
+        filterOptions: [{ value: 'mine', label: '我的' }],
+        hasFilter: false,
+        isPublicFilter: false,
+        galleryLoaded: true,
+        isLoading: false,
+        isLoadingMore: false,
+        error: '作品广场加载失败，请稍后重试。',
+        resolutionOptions: [],
+        qualityOptions: [],
+        isImageDownloading: () => false,
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('作品广场加载失败，请稍后重试。')
+    expect(wrapper.find('[data-gallery-retry]').exists()).toBe(false)
   })
 })
