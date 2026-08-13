@@ -47,6 +47,11 @@ type StorageService interface {
 	CleanupObjects(paths ...string)
 }
 
+type GeneratedImageCropper interface {
+	CropGeneratedImageFromURL(ctx context.Context, sourceURL string, ratioWidth, ratioHeight int) (*service.CroppedImage, error)
+	CropGeneratedImageFromBuffer(data []byte, ratioWidth, ratioHeight int) (*service.CroppedImage, error)
+}
+
 // ImageJobEnqueuer is the request-path subset of the durable image job
 // repository. The worker owns processing and completion after activation.
 type ImageJobEnqueuer interface {

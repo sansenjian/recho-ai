@@ -185,6 +185,21 @@ func (s *StorageService) StageFromURL(ctx context.Context, sourceURL, storagePat
 	return s.StageFromBuffer(ctx, data, mime, storagePath)
 }
 
+func (s *StorageService) CropGeneratedImageFromURL(ctx context.Context, sourceURL string, ratioWidth, ratioHeight int) (*CroppedImage, error) {
+	data, _, err := s.downloadImage(ctx, sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	return s.CropGeneratedImageFromBuffer(data, ratioWidth, ratioHeight)
+}
+
+func (s *StorageService) CropGeneratedImageFromBuffer(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
+	if s.processor == nil {
+		return nil, fmt.Errorf("image processor not configured")
+	}
+	return s.processor.CropToAspectRatio(data, ratioWidth, ratioHeight)
+}
+
 // StageFromBuffer uploads raw image bytes at an exact storage path and
 // returns a checksum of the bytes that were handed to the object store.
 func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*StagedImage, error) {

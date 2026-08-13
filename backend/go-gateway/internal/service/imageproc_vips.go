@@ -25,6 +25,29 @@ func newProcessorImpl() processorImpl {
 	return &vipsProcessor{}
 }
 
+func (p *vipsProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
+	img, err := vips.NewImageFromBuffer(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load image for cropping: %w", err)
+	}
+	defer img.Close()
+	if err := img.AutoRotate(); err != nil {
+		return nil, fmt.Errorf("failed to auto-rotate image for cropping: %w", err)
+	}
+	left, top, width, height, err := centeredCropDimensions(img.Width(), img.Height(), ratioWidth, ratioHeight)
+	if err != nil {
+		return nil, err
+	}
+	if err := img.ExtractArea(left, top, width, height); err != nil {
+		return nil, fmt.Errorf("failed to crop image: %w", err)
+	}
+	encoded, _, err := img.ExportPng(vips.NewPngExportParams())
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode cropped image: %w", err)
+	}
+	return &CroppedImage{Data: encoded, Mime: "image/png", Width: width, Height: height}, nil
+}
+
 // ProcessImage takes raw image bytes, converts to WebP, and generates preview and thumbnail.
 func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedImage, error) {
 	if len(data) == 0 {

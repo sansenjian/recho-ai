@@ -7,17 +7,22 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
 	"testing"
 
 	"github.com/davidbyttow/govips/v2/vips"
 )
 
-func TestExportThumbnailDoesNotMutateSourceImage(t *testing.T) {
+func TestMain(m *testing.M) {
 	if err := vips.Startup(&vips.Config{ConcurrencyLevel: 1}); err != nil {
-		t.Fatalf("start libvips: %v", err)
+		panic(err)
 	}
-	defer vips.Shutdown()
+	code := m.Run()
+	vips.Shutdown()
+	os.Exit(code)
+}
 
+func TestExportThumbnailDoesNotMutateSourceImage(t *testing.T) {
 	fixture := image.NewRGBA(image.Rect(0, 0, 800, 600))
 	for y := 0; y < fixture.Bounds().Dy(); y++ {
 		for x := 0; x < fixture.Bounds().Dx(); x++ {
@@ -42,5 +47,33 @@ func TestExportThumbnailDoesNotMutateSourceImage(t *testing.T) {
 	}
 	if img.Width() != wantWidth || img.Height() != wantHeight {
 		t.Fatalf("exportThumbnail mutated source dimensions to %dx%d, want %dx%d", img.Width(), img.Height(), wantWidth, wantHeight)
+	}
+}
+
+func TestVipsCropToAspectRatio(t *testing.T) {
+	fixture := image.NewRGBA(image.Rect(0, 0, 12, 8))
+	for y := 0; y < fixture.Bounds().Dy(); y++ {
+		for x := 0; x < fixture.Bounds().Dx(); x++ {
+			fixture.Set(x, y, color.RGBA{R: uint8(x * 10), G: uint8(y * 10), B: 100, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, fixture); err != nil {
+		t.Fatalf("encode fixture: %v", err)
+	}
+	processed, err := NewImageProcessor().CropToAspectRatio(encoded.Bytes(), 4, 5)
+	if err != nil {
+		t.Fatalf("CropToAspectRatio returned error: %v", err)
+	}
+	if processed.Width != 4 || processed.Height != 5 {
+		t.Fatalf("cropped dimensions = %dx%d, want 4x5", processed.Width, processed.Height)
+	}
+	cropped, _, err := image.Decode(bytes.NewReader(processed.Data))
+	if err != nil {
+		t.Fatalf("decode cropped image: %v", err)
+	}
+	leftPixel := color.RGBAModel.Convert(cropped.At(0, 0)).(color.RGBA)
+	if leftPixel.R != 40 || leftPixel.G != 10 {
+		t.Fatalf("crop origin = (%d,%d), want source pixel (40,10)", leftPixel.R, leftPixel.G)
 	}
 }
