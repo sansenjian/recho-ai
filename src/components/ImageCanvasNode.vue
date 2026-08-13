@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type StyleValue } from 'vue'
+import { computed, ref, type StyleValue, watch } from 'vue'
 import {
   createRichContentDirective,
   type MentionTokenResolver,
@@ -17,7 +17,10 @@ import type {
   ResizeCorner,
 } from '../lib/image-canvas-model'
 import { hasImageSource } from '../lib/authenticated-image-source'
+import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 type NodeOption<T extends string | number> = {
   value: T
@@ -82,6 +85,21 @@ const emit = defineEmits<{
 
 const vRichContent = createRichContentDirective((id, title) => props.resolveMentionToken(id, title))
 const aspectRatioLocked = computed(() => props.node.resolution === 'auto')
+const customAspectRatioOpen = ref(false)
+const customAspectRatioWidth = ref('4')
+const customAspectRatioHeight = ref('5')
+const customAspectRatioError = ref<string | null>(null)
+const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.node.aspectRatio))
+
+watch(() => props.node.aspectRatio, (value) => {
+  if (!isCustomImageAspectRatio(value)) return
+  const parts = parseImageAspectRatio(value)
+  if (parts) {
+    customAspectRatioWidth.value = String(parts.width)
+    customAspectRatioHeight.value = String(parts.height)
+    customAspectRatioOpen.value = true
+  }
+}, { immediate: true })
 
 function isHandleConnected(handle: InputHandle) {
   return Boolean(props.connectedHandles[handle])
@@ -111,6 +129,25 @@ function updateResolution(value: NodeResolution) {
 function updateAspectRatio(value: NodeAspectRatio) {
   if (aspectRatioLocked.value && value !== 'auto') return
   emit('update-aspect-ratio', props.node, value)
+}
+
+function openCustomAspectRatio() {
+  if (aspectRatioLocked.value) return
+  customAspectRatioOpen.value = true
+  customAspectRatioError.value = null
+}
+
+function applyCustomAspectRatio() {
+  if (aspectRatioLocked.value) return
+  const parts = parseImageAspectRatio(`${customAspectRatioWidth.value}:${customAspectRatioHeight.value}`)
+  if (!parts) {
+    customAspectRatioError.value = '请输入 1:3 到 3:1 范围内的正整数比例。'
+    return
+  }
+  customAspectRatioError.value = null
+  customAspectRatioWidth.value = String(parts.width)
+  customAspectRatioHeight.value = String(parts.height)
+  emit('update-aspect-ratio', props.node, parts.value as NodeAspectRatio)
 }
 </script>
 
@@ -408,6 +445,40 @@ function updateAspectRatio(value: NodeAspectRatio) {
               >
                 {{ option.label }}
               </button>
+              <button
+                type="button"
+                :disabled="aspectRatioLocked"
+                :class="{ active: customAspectRatioActive }"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click.stop="openCustomAspectRatio"
+              >
+                自定义
+              </button>
+            </div>
+            <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5">
+              <Input
+                v-model="customAspectRatioWidth"
+                type="number"
+                min="1"
+                max="1000"
+                inputmode="numeric"
+                aria-label="自定义比例宽度"
+                class="h-[34px] min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground"
+                @pointerdown.stop
+              />
+              <span aria-hidden="true">:</span>
+              <Input
+                v-model="customAspectRatioHeight"
+                type="number"
+                min="1"
+                max="1000"
+                inputmode="numeric"
+                aria-label="自定义比例高度"
+                class="h-[34px] min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground"
+                @pointerdown.stop
+              />
+              <Button type="button" variant="outline" size="sm" class="h-[34px] px-2.5 text-[11px] font-semibold" @pointerdown.stop @click.stop="applyCustomAspectRatio">应用</Button>
+              <span v-if="customAspectRatioError" class="col-span-full text-[10px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
             </div>
           </div>
 

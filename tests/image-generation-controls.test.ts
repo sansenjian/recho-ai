@@ -4,6 +4,7 @@ import type { CanvasNode } from '../src/lib/image-canvas-model'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
 import ImageCanvasGalleryStage from '../src/components/ImageCanvasGalleryStage.vue'
+import { isCustomImageAspectRatio, parseImageAspectRatio } from '../src/lib/image-aspect-ratio'
 
 const resolutionOptions = [
   { value: 'auto' as const, label: 'Auto' },
@@ -43,6 +44,17 @@ function generationNode(resolution: CanvasNode['resolution'], aspectRatio: Canva
 }
 
 describe('image generation Auto resolution controls', () => {
+  it('normalizes and validates custom image aspect ratios', () => {
+    expect(parseImageAspectRatio('8:10')?.value).toBe('4:5')
+    expect(parseImageAspectRatio('3:1')?.value).toBe('3:1')
+    expect(parseImageAspectRatio('4:1')).toBeNull()
+    expect(parseImageAspectRatio('0:1')).toBeNull()
+    expect(parseImageAspectRatio('1001:1000')).toBeNull()
+    expect(isCustomImageAspectRatio('4:5')).toBe(true)
+    expect(isCustomImageAspectRatio('3:2')).toBe(false)
+    expect(isCustomImageAspectRatio('invalid')).toBe(false)
+  })
+
   it('resets Imagio aspect ratio when Auto resolution is selected', async () => {
     const wrapper = mount(ImagioView, {
       props: {
@@ -106,6 +118,33 @@ describe('image generation Auto resolution controls', () => {
       model: 'gpt-image-2',
       references: [],
     })
+  })
+
+  it('applies a custom Imagio aspect ratio', async () => {
+    const wrapper = mount(ImagioView, {
+      props: {
+        ...imagioGenerationProps(),
+        resolution: '1k',
+        aspectRatio: 'auto',
+        resolutionOptions,
+        aspectRatioOptions,
+      },
+    })
+
+    const ratioGroup = wrapper.findAll('.param-group')
+      .find(group => group.find('label').text() === '尺寸 / 比例')
+    const customButton = ratioGroup?.findAll('button').find(button => button.text() === '自定义')
+    expect(customButton).toBeDefined()
+    await customButton!.trigger('click')
+
+    const editor = ratioGroup?.find('.custom-ratio-editor')
+    expect(editor).toBeDefined()
+    const inputs = editor!.findAll('input')
+    await inputs[0].setValue('4')
+    await inputs[1].setValue('5')
+    await editor!.find('button').trigger('click')
+
+    expect(wrapper.emitted('update:aspect-ratio')).toEqual([['4:5']])
   })
 
   it('does not invoke the parent pipeline while generation is already active', async () => {
@@ -205,6 +244,51 @@ describe('image generation Auto resolution controls', () => {
     expect(ratioButtons.find(button => button.text() === '1:1')?.attributes('disabled')).toBeDefined()
     expect(ratioButtons.find(button => button.text() === '16:9')?.attributes('disabled')).toBeDefined()
   })
+
+  it('applies a custom canvas-node aspect ratio', async () => {
+    const node = generationNode('1k', 'auto')
+    const wrapper = mount(ImageCanvasNode, {
+      props: {
+        node,
+        selected: true,
+        nodeStyle: {},
+        mentionState: null,
+        mentionOptions: [],
+        textMentionOpen: false,
+        generationMentionOpen: false,
+        connectedHandles: {},
+        isGeneratedImageNode: false,
+        imageAlt: '',
+        imageOutputMeta: '',
+        isDownloading: false,
+        hasPromptLink: false,
+        generationPromptValue: '',
+        referencedImageNodes: [],
+        canSelectGenerationCount: true,
+        generationCount: 1,
+        generationCountOptions: [{ value: 1, label: '1' }],
+        resolutionOptions,
+        aspectRatioOptions,
+        qualityOptions: [{ value: 'auto', label: 'Auto' }],
+        isGenerating: false,
+        resolveMentionToken: () => null,
+      },
+      global: {
+        stubs: { AuthenticatedImage: true },
+      },
+    })
+
+    const ratioGroup = wrapper.findAll('.control-group')
+      .find(group => group.find('.control-label').text() === '尺寸 / 比例')
+    await ratioGroup!.findAll('button').find(button => button.text() === '自定义')!.trigger('click')
+    const editor = ratioGroup!.find('.custom-ratio-editor')
+    const inputs = editor.findAll('input')
+    await inputs[0].setValue('4')
+    await inputs[1].setValue('5')
+    await editor.find('button').trigger('click')
+
+    expect(wrapper.emitted('update-aspect-ratio')).toEqual([[node, '4:5']])
+  })
 })
 
 describe('image gallery failure recovery', () => {
@@ -232,5 +316,30 @@ describe('image gallery failure recovery', () => {
     expect(wrapper.text()).toContain('作品广场加载失败，请稍后重试。')
     await wrapper.get('[data-gallery-retry]').trigger('click')
     expect(wrapper.emitted('retry')).toHaveLength(1)
+  })
+
+  it('hides a stale public-gallery error after switching to a private filter', () => {
+    const wrapper = mount(ImageCanvasGalleryStage, {
+      props: {
+        images: [],
+        filteredCount: 0,
+        sourceCount: 0,
+        query: '',
+        filter: 'mine',
+        filterOptions: [{ value: 'mine', label: '我的' }],
+        hasFilter: false,
+        isPublicFilter: false,
+        galleryLoaded: true,
+        isLoading: false,
+        isLoadingMore: false,
+        error: '作品广场加载失败，请稍后重试。',
+        resolutionOptions: [],
+        qualityOptions: [],
+        isImageDownloading: () => false,
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('作品广场加载失败，请稍后重试。')
+    expect(wrapper.find('[data-gallery-retry]').exists()).toBe(false)
   })
 })

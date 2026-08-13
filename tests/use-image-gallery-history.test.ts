@@ -48,6 +48,12 @@ function galleryPage(id: string, hasMore = false, nextOffset: number | null = nu
 describe('public image gallery history', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
+      queueMicrotask(() => {
+        if (typeof callback === 'function') callback()
+      })
+      return 0 as ReturnType<typeof setTimeout>
+    })
   })
 
   afterEach(() => {

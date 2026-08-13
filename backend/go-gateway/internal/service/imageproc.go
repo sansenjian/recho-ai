@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"path"
 	"strings"
 )
@@ -23,6 +24,13 @@ type ProcessedImage struct {
 	Height    int
 }
 
+type CroppedImage struct {
+	Data   []byte
+	Mime   string
+	Width  int
+	Height int
+}
+
 // ImageProcessor processes images.
 type ImageProcessor struct {
 	impl processorImpl
@@ -39,8 +47,27 @@ func (p *ImageProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedI
 	return p.impl.ProcessImage(data, pathHint)
 }
 
+func (p *ImageProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
+	return p.impl.CropToAspectRatio(data, ratioWidth, ratioHeight)
+}
+
 type processorImpl interface {
 	ProcessImage(data []byte, pathHint string) (*ProcessedImage, error)
+	CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error)
+}
+
+func centeredCropDimensions(width, height, ratioWidth, ratioHeight int) (left, top, cropWidth, cropHeight int, err error) {
+	if width < 1 || height < 1 || ratioWidth < 1 || ratioHeight < 1 {
+		return 0, 0, 0, 0, fmt.Errorf("image and ratio dimensions must be positive")
+	}
+
+	scale := min(width/ratioWidth, height/ratioHeight)
+	if scale < 1 {
+		return 0, 0, 0, 0, fmt.Errorf("aspect ratio produces an empty crop")
+	}
+	cropWidth = scale * ratioWidth
+	cropHeight = scale * ratioHeight
+	return (width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight, nil
 }
 
 // detectFormat identifies the image format from its magic bytes.

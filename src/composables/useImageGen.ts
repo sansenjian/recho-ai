@@ -389,7 +389,7 @@ function shouldRetryHistoryRequest(status: number) {
 }
 
 function wait(ms: number) {
-  return new Promise(resolve => window.setTimeout(resolve, ms))
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 async function loadRemoteHistory(
