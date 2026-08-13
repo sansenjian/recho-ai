@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CanvasNode } from '../src/lib/image-canvas-model'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
+import ImageCanvasGalleryStage from '../src/components/ImageCanvasGalleryStage.vue'
 
 const resolutionOptions = [
   { value: 'auto' as const, label: 'Auto' },
@@ -203,5 +204,33 @@ describe('image generation Auto resolution controls', () => {
     expect(ratioButtons.find(button => button.text() === 'Auto')?.attributes('disabled')).toBeUndefined()
     expect(ratioButtons.find(button => button.text() === '1:1')?.attributes('disabled')).toBeDefined()
     expect(ratioButtons.find(button => button.text() === '16:9')?.attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('image gallery failure recovery', () => {
+  it('offers a retry action when the gallery request fails', async () => {
+    const wrapper = mount(ImageCanvasGalleryStage, {
+      props: {
+        images: [],
+        filteredCount: 0,
+        sourceCount: 0,
+        query: '',
+        filter: 'latest',
+        filterOptions: [{ value: 'latest', label: '最新' }],
+        hasFilter: true,
+        isPublicFilter: true,
+        galleryLoaded: false,
+        isLoading: false,
+        isLoadingMore: false,
+        error: '作品广场加载失败，请稍后重试。',
+        resolutionOptions: [],
+        qualityOptions: [],
+        isImageDownloading: () => false,
+      },
+    })
+
+    expect(wrapper.text()).toContain('作品广场加载失败，请稍后重试。')
+    await wrapper.get('[data-gallery-retry]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
   })
 })

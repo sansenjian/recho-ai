@@ -9,7 +9,8 @@ import {
 import type { GalleryOption } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 import ImageGalleryCard from './ImageGalleryCard.vue'
-import { Search } from '@lucide/vue'
+import { RefreshCw, Search } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   images: GeneratedImage[]
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   'update:query': [value: string]
   'update:filter': [value: GalleryFilter]
   'load-more': []
+  retry: []
   view: [image: GeneratedImage]
   'use-image': [image: GeneratedImage]
   'preload-download': [image: GeneratedImage]
@@ -53,6 +55,7 @@ const emptyTitle = computed(() => {
 
 const showEmptyHint = computed(() => props.hasFilter && (!props.isPublicFilter || props.galleryLoaded))
 const showScrollStatus = computed(() => props.images.length > 0 && props.isLoadingMore)
+const showInlineError = computed(() => Boolean(props.error && props.images.length))
 
 watch(
   () => [props.query, props.filter],
@@ -172,9 +175,21 @@ function handleScroll(event: Event) {
 
     <!-- Empty State -->
     <div v-else class="mx-auto max-w-[1440px] pb-8">
-      <div class="grid w-full min-h-[320px] place-items-center gap-2 rounded-lg border border-dashed border-foreground/8 bg-card text-center text-muted-foreground max-md:min-h-[240px] max-[460px]:p-[18px]">
-        <strong class="text-lg font-semibold text-foreground">{{ emptyTitle }}</strong>
+      <div class="flex w-full min-h-[320px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-foreground/8 bg-card text-center text-muted-foreground max-md:min-h-[240px] max-[460px]:p-[18px]">
+        <strong class="text-lg font-semibold text-foreground">{{ error || emptyTitle }}</strong>
         <span v-if="showEmptyHint" class="text-sm">换一个筛选或搜索词</span>
+        <Button
+          v-if="error"
+          data-gallery-retry
+          type="button"
+          variant="outline"
+          size="sm"
+          :disabled="isLoading"
+          @click="emit('retry')"
+        >
+          <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoading }" />
+          重试
+        </Button>
       </div>
     </div>
 
@@ -184,8 +199,20 @@ function handleScroll(event: Event) {
     </div>
 
     <!-- Error -->
-    <div v-if="error" class="absolute bottom-[22px] left-1/2 z-24 max-w-[min(560px,calc(100%-64px))] -translate-x-1/2 rounded-lg border border-destructive/20 bg-card px-3.5 py-2.5 text-xs font-medium text-destructive shadow-md">
-      {{ error }}
+    <div v-if="showInlineError" class="sticky bottom-4 z-20 mx-auto flex w-fit max-w-[min(560px,calc(100%-32px))] items-center gap-3 rounded-lg border border-destructive/20 bg-card px-3.5 py-2.5 text-xs font-medium text-destructive shadow-md">
+      <span>{{ error }}</span>
+      <Button
+        data-gallery-retry
+        type="button"
+        variant="outline"
+        size="sm"
+        class="h-7 shrink-0 px-2 text-xs"
+        :disabled="isLoading"
+        @click="emit('retry')"
+      >
+        <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoading }" />
+        重试
+      </Button>
     </div>
   </section>
 </template>
