@@ -5,7 +5,11 @@ import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
 import { useGalleryDetailPreview } from '../composables/useGalleryDetailPreview'
-import { useImageCanvasDocument } from '../composables/useImageCanvasDocument'
+import {
+  createInitialCanvasDocumentState,
+  useImageCanvasDocument,
+  type CanvasDocumentState,
+} from '../composables/useImageCanvasDocument'
 import { useImageCanvasGeneration } from '../composables/useImageCanvasGeneration'
 import { useImageCanvasGraph } from '../composables/useImageCanvasGraph'
 import { useImageCanvasImages } from '../composables/useImageCanvasImages'
@@ -95,6 +99,58 @@ const emit = defineEmits<{
   imageModeChange: [mode: 'imagio' | 'canvas']
 }>()
 
+interface CanvasWorkspace {
+  id: string
+  name: string
+}
+
+interface CanvasWorkspaceSnapshot {
+  document: CanvasDocumentState
+  viewport: {
+    x: number
+    y: number
+    zoom: number
+  }
+}
+
+const CANVAS_WORKSPACES_KEY = 'canvas-workspaces'
+const CANVAS_ACTIVE_WORKSPACE_KEY = 'canvas-active-workspace'
+
+function createCanvasWorkspaceId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `canvas-workspace_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function loadCanvasWorkspaces(): CanvasWorkspace[] {
+  try {
+    const raw = localStorage.getItem(CANVAS_WORKSPACES_KEY)
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const workspaces = parsed.filter((item): item is CanvasWorkspace => (
+          typeof item?.id === 'string' && typeof item?.name === 'string'
+        ))
+        if (workspaces.length) return workspaces
+      }
+    }
+  } catch (err) {
+    console.warn('[image-canvas] failed to load workspaces from localStorage', err)
+  }
+  return [{ id: createCanvasWorkspaceId(), name: '画布 1' }]
+}
+
+function loadActiveCanvasWorkspaceId(workspaces: CanvasWorkspace[]) {
+  try {
+    const stored = localStorage.getItem(CANVAS_ACTIVE_WORKSPACE_KEY)
+    if (stored && workspaces.some(workspace => workspace.id === stored)) return stored
+  } catch (err) {
+    console.warn('[image-canvas] failed to load the active workspace from localStorage', err)
+  }
+  return workspaces[0]?.id ?? ''
+}
+
 const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
 
 // Model options for Imagio prompt generation panel
@@ -137,12 +193,21 @@ const {
   pasteNodeFromClipboard: pasteDocumentNodeFromClipboard,
   removeNode: removeDocumentNode,
   clearCanvas: clearCanvasDocument,
+  snapshotDocument,
+  replaceDocument,
   importDocument: importCanvasDocumentState,
 } = useImageCanvasDocument()
 const dragState = ref<DragState | null>(null)
 const panState = ref<PanState | null>(null)
 const resizeState = ref<ResizeState | null>(null)
 const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
+const canvasWorkspaces = ref<CanvasWorkspace[]>(loadCanvasWorkspaces())
+const activeCanvasWorkspaceId = ref(loadActiveCanvasWorkspaceId(canvasWorkspaces.value))
+const canvasWorkspaceSnapshots = new Map<string, CanvasWorkspaceSnapshot>()
+canvasWorkspaceSnapshots.set(activeCanvasWorkspaceId.value, {
+  document: snapshotDocument(),
+  viewport: { ...viewport.value },
+})
 const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const currentImageMode = ref<'imagio' | 'canvas'>('imagio')
@@ -985,6 +1050,68 @@ async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistory
   emit('sendToChat', imageUrl)
 }
 
+function persistCanvasWorkspaces() {
+  try {
+    localStorage.setItem(CANVAS_WORKSPACES_KEY, JSON.stringify(canvasWorkspaces.value))
+    localStorage.setItem(CANVAS_ACTIVE_WORKSPACE_KEY, activeCanvasWorkspaceId.value)
+  } catch (err) {
+    console.warn('[image-canvas] failed to persist workspaces to localStorage', err)
+  }
+}
+
+function saveActiveCanvasWorkspace() {
+  canvasWorkspaceSnapshots.set(activeCanvasWorkspaceId.value, {
+    document: snapshotDocument(),
+    viewport: { ...viewport.value },
+  })
+}
+
+function activateCanvasWorkspace(id: string) {
+  if (id === activeCanvasWorkspaceId.value || !canvasWorkspaces.value.some(workspace => workspace.id === id)) {
+    return
+  }
+
+  saveActiveCanvasWorkspace()
+  const next = canvasWorkspaceSnapshots.get(id) ?? {
+    document: createInitialCanvasDocumentState(),
+    viewport: { ...DEFAULT_CANVAS_VIEWPORT },
+  }
+
+  activeCanvasWorkspaceId.value = id
+  replaceDocument(next.document)
+  viewport.value = { ...next.viewport }
+  dragState.value = null
+  panState.value = null
+  resizeState.value = null
+  closeContextMenu()
+  clearMeasuredNodes()
+  persistCanvasWorkspaces()
+}
+
+function createCanvasWorkspace() {
+  saveActiveCanvasWorkspace()
+  const workspace: CanvasWorkspace = {
+    id: createCanvasWorkspaceId(),
+    name: `画布 ${canvasWorkspaces.value.length + 1}`,
+  }
+  const snapshot: CanvasWorkspaceSnapshot = {
+    document: createInitialCanvasDocumentState(),
+    viewport: { ...DEFAULT_CANVAS_VIEWPORT },
+  }
+
+  canvasWorkspaces.value = [...canvasWorkspaces.value, workspace]
+  canvasWorkspaceSnapshots.set(workspace.id, snapshot)
+  activeCanvasWorkspaceId.value = workspace.id
+  replaceDocument(snapshot.document)
+  viewport.value = { ...snapshot.viewport }
+  dragState.value = null
+  panState.value = null
+  resizeState.value = null
+  closeContextMenu()
+  clearMeasuredNodes()
+  persistCanvasWorkspaces()
+}
+
 function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
   activeWorkspace.value = mode
   closeContextMenu()
@@ -1192,10 +1319,14 @@ onUnmounted(() => {
             <ImageCanvasSidebar
               :active-workspace="activeWorkspace"
               :image-mode="currentImageMode"
+              :workspaces="canvasWorkspaces"
+              :active-workspace-id="activeCanvasWorkspaceId"
               :mini-map-layout="miniMapLayout"
               :history-images="historyImages"
               :has-generated-images="Boolean(generatedImages.length)"
               @select-workspace="selectWorkspace"
+              @select-canvas-workspace="activateCanvasWorkspace"
+              @create-canvas-workspace="createCanvasWorkspace"
               @select-image-mode="handleImageModeChange"
               @create-node="createNodeNearCenter"
               @use-history-image="useHistoryImage"

@@ -22,6 +22,12 @@ export interface ImportedCanvasDocument {
   viewport: CanvasViewportState
 }
 
+export interface CanvasDocumentState {
+  nodes: CanvasNode[]
+  connections: Connection[]
+  selectedNodeId: string | null
+}
+
 const INITIAL_NODES: CanvasNode[] = [
   {
     id: 'node_text_seed',
@@ -67,6 +73,18 @@ function cloneNode(node: CanvasNode): CanvasNode {
   }
 }
 
+function cloneConnection(connection: Connection): Connection {
+  return { ...connection }
+}
+
+export function createInitialCanvasDocumentState(): CanvasDocumentState {
+  return {
+    nodes: INITIAL_NODES.map(cloneNode),
+    connections: INITIAL_CONNECTIONS.map(cloneConnection),
+    selectedNodeId: 'node_generation_seed',
+  }
+}
+
 function cleanNodeCopy(node: CanvasNode): CanvasNode {
   return {
     ...cloneNode(node),
@@ -88,9 +106,10 @@ function defaultNodeTitle(type: CanvasNodeType) {
 export function useImageCanvasDocument() {
   let idSeed = Date.now()
   const canvasId = `canvas_${idSeed}`
-  const nodes = ref<CanvasNode[]>(INITIAL_NODES.map(cloneNode))
-  const connections = ref<Connection[]>(INITIAL_CONNECTIONS.map(connection => ({ ...connection })))
-  const selectedNodeId = ref<string | null>('node_generation_seed')
+  const initialState = createInitialCanvasDocumentState()
+  const nodes = ref<CanvasNode[]>(initialState.nodes)
+  const connections = ref<Connection[]>(initialState.connections)
+  const selectedNodeId = ref<string | null>(initialState.selectedNodeId)
   const nodeClipboard = ref<CanvasNode | null>(null)
 
   function createId(prefix: string) {
@@ -185,6 +204,20 @@ export function useImageCanvasDocument() {
     selectedNodeId.value = null
   }
 
+  function snapshotDocument(): CanvasDocumentState {
+    return {
+      nodes: nodes.value.map(cloneNode),
+      connections: connections.value.map(cloneConnection),
+      selectedNodeId: selectedNodeId.value,
+    }
+  }
+
+  function replaceDocument(state: CanvasDocumentState) {
+    nodes.value = state.nodes.map(cloneNode)
+    connections.value = state.connections.map(cloneConnection)
+    selectedNodeId.value = state.selectedNodeId
+  }
+
   function importDocument(
     document: CanvasExportDocument,
     mode: 'append' | 'replace' = 'append',
@@ -235,6 +268,8 @@ export function useImageCanvasDocument() {
     pasteNodeFromClipboard,
     removeNode,
     clearCanvas,
+    snapshotDocument,
+    replaceDocument,
     importDocument,
   }
 }

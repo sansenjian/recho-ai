@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { MINI_MAP_VIEW, type CanvasNodeType, type WorkspaceMode } from '../lib/image-canvas-model'
 import { hasDisplayImage } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Plus, GripVertical, Type, Image, Sparkles } from '@lucide/vue'
 
-interface Workspace {
+export interface CanvasWorkspace {
   id: string
   name: string
 }
@@ -35,12 +35,11 @@ type MiniMapLayout = {
   } | null
 }
 
-const CANVAS_WORKSPACES_KEY = 'canvas-workspaces'
-const CANVAS_ACTIVE_WORKSPACE_KEY = 'canvas-active-workspace'
-
 const props = defineProps<{
   activeWorkspace: WorkspaceMode
   imageMode?: 'imagio' | 'canvas'
+  workspaces: CanvasWorkspace[]
+  activeWorkspaceId: string
   miniMapLayout: MiniMapLayout
   historyImages: GeneratedImage[]
   hasGeneratedImages: boolean
@@ -48,52 +47,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'select-workspace': [mode: WorkspaceMode]
+  'select-canvas-workspace': [id: string]
+  'create-canvas-workspace': []
   'select-image-mode': [mode: 'imagio' | 'canvas']
   'create-node': [type: CanvasNodeType]
   'use-history-image': [image: GeneratedImage]
   'clear-history': []
 }>()
-
-// --- Mini workspace list (matches Imagio sidebar UX) ---
-function loadWorkspaces(): Workspace[] {
-  try {
-    const raw = localStorage.getItem(CANVAS_WORKSPACES_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) return parsed
-    }
-  } catch (err) {
-    console.warn('[canvas-sidebar] failed to load workspaces from localStorage', err)
-  }
-  return [{ id: crypto.randomUUID(), name: '画布 1' }]
-}
-
-function loadActiveId(workspaces: Workspace[]): string {
-  const stored = localStorage.getItem(CANVAS_ACTIVE_WORKSPACE_KEY)
-  if (stored && workspaces.some(w => w.id === stored)) return stored
-  return workspaces[0]?.id || ''
-}
-
-const workspaces = ref<Workspace[]>(loadWorkspaces())
-const activeWorkspaceId = ref(loadActiveId(workspaces.value))
-
-function persistWorkspaces() {
-  localStorage.setItem(CANVAS_WORKSPACES_KEY, JSON.stringify(workspaces.value))
-  localStorage.setItem(CANVAS_ACTIVE_WORKSPACE_KEY, activeWorkspaceId.value)
-}
-
-function addWorkspace() {
-  const index = workspaces.value.length + 1
-  const ws: Workspace = { id: crypto.randomUUID(), name: `画布 ${index}` }
-  workspaces.value.push(ws)
-  activeWorkspaceId.value = ws.id
-  persistWorkspaces()
-}
-
-function selectWorkspace(id: string) {
-  activeWorkspaceId.value = id
-  persistWorkspaces()
-}
 
 const historyCountText = computed(() => `${props.historyImages.length} 个任务`)
 </script>
@@ -128,7 +88,7 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
     <div class="px-3.5 pb-[18px] mb-1 border-b border-border">
       <div class="flex items-center justify-between mb-2 text-foreground text-xs font-extrabold">
         <span>工作区</span>
-        <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground" title="新建工作区" @click="addWorkspace">
+        <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground" title="新建画布" @click="emit('create-canvas-workspace')">
           <Plus :size="14" />
         </Button>
       </div>
@@ -141,7 +101,7 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
             'flex items-center gap-2 w-full min-h-[38px] px-2.5 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer text-left transition-colors duration-150',
             ws.id === activeWorkspaceId ? 'bg-accent text-foreground' : 'hover:bg-accent hover:text-foreground',
           ]"
-          @click="selectWorkspace(ws.id)"
+          @click="emit('select-canvas-workspace', ws.id)"
         >
           <GripVertical :size="14" class="shrink-0 text-muted-foreground opacity-[0.55]" />
           <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{{ ws.name }}</span>
