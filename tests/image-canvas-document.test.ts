@@ -16,8 +16,12 @@ describe('image canvas document', () => {
 
     expect(document.nodes.value[0]?.content).toBe('')
     expect(document.nodes.value[0]?.id).toBe(originalFirstNodeId)
+    expect(document.selectedNodeId.value).toBe('node_generation_seed')
 
     freshCanvas.nodes[0]!.content = '不应影响当前画布'
+    freshCanvas.connections[0]!.toNodeId = 'changed_elsewhere'
     expect(document.nodes.value[0]?.content).toBe('')
+    expect(document.connections.value[0]?.toNodeId).toBe('node_generation_seed')
+    expect(document.selectedNodeId.value).toBe('node_generation_seed')
   })
 })

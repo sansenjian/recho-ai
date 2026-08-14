@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { MINI_MAP_VIEW, type CanvasNodeType, type WorkspaceMode } from '../lib/image-canvas-model'
+import type { CanvasWorkspace } from '../lib/canvas-workspace-cache'
 import { hasDisplayImage } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Plus, GripVertical, Type, Image, Sparkles } from '@lucide/vue'
-
-export interface CanvasWorkspace {
-  id: string
-  name: string
-}
 
 type MiniMapLayout = {
   connections: Array<{
