@@ -41,11 +41,39 @@ function cloneViewport(viewport: CanvasViewportState): CanvasViewportState {
   return { ...viewport }
 }
 
+function normalizeCachedViewport(viewport: CanvasViewportState | undefined): CanvasViewportState {
+  const x = viewport?.x
+  const y = viewport?.y
+  const zoom = viewport?.zoom
+  return {
+    x: typeof x === 'number' && Number.isFinite(x) ? x : -120,
+    y: typeof y === 'number' && Number.isFinite(y) ? y : -40,
+    zoom: Math.min(
+      MAX_VIEWPORT_ZOOM,
+      Math.max(
+        MIN_VIEWPORT_ZOOM,
+        typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : 1,
+      ),
+    ),
+  }
+}
+
 function normalizeSnapshot(
   snapshot: SerializedCanvasWorkspaceSnapshot,
 ): CanvasWorkspaceSnapshot | null {
   try {
     const parsed = parseCanvasExportDocument(snapshot.document)
+    if (parsed.canvas.nodes.length === 0) {
+      return {
+        document: {
+          nodes: [],
+          connections: [],
+          selectedNodeId: null,
+        },
+        viewport: normalizeCachedViewport(parsed.canvas.viewport),
+      }
+    }
+
     let connectionIndex = 0
     const normalized = normalizeCanvasImport(parsed, {
       mode: 'replace',

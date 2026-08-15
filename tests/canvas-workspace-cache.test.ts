@@ -89,4 +89,20 @@ describe('canvas workspace cache', () => {
     const restored = parseCanvasWorkspaceSnapshots('{"version":1,"snapshots":{"broken":{}}}')
     expect(restored.size).toBe(0)
   })
+
+  it('preserves an intentionally empty canvas across cache restoration', () => {
+    const snapshot: CanvasWorkspaceSnapshot = {
+      document: {
+        nodes: [],
+        connections: [],
+        selectedNodeId: null,
+      },
+      viewport: { x: -80, y: 40, zoom: 1.1 },
+    }
+
+    const raw = serializeCanvasWorkspaceSnapshots(new Map([['empty_workspace', snapshot]]))
+    const restored = parseCanvasWorkspaceSnapshots(raw).get('empty_workspace')
+
+    expect(restored).toEqual(snapshot)
+  })
 })
