@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -276,7 +277,7 @@ func (s *StorageService) writeLocator(storagePath string) (StorageLocator, error
 	if err != nil {
 		return StorageLocator{}, err
 	}
-	if !strings.Contains(storagePath, "://") {
+	if !hasExplicitStorageProvider(storagePath) {
 		provider := s.defaultStorageProvider()
 		if provider != StorageProviderUnknown {
 			locator.Provider = provider
@@ -332,6 +333,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	if strings.TrimSpace(storagePath) == "" {
 		return nil, fmt.Errorf("storage path is required")
 	}
+	explicitProvider := hasExplicitStorageProvider(storagePath)
 	locator, err := s.writeLocator(storagePath)
 	if err != nil {
 		return nil, err
@@ -346,12 +348,28 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	// the checksum and reported size are being derived.
 	payload := append([]byte(nil), data...)
 	sum := sha256.Sum256(payload)
-	if legacyStore != nil && uploader == nil {
+	if legacyStore != nil && uploader == nil && !explicitProvider {
 		if _, err := legacyStore.Upload(ctx, locator.Key, payload, mime); err != nil {
 			return nil, fmt.Errorf("failed to stage image: %w", err)
 		}
-	} else if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
-		return nil, fmt.Errorf("failed to stage image: %w", err)
+	} else if uploader != nil {
+		if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
+			if !explicitProvider {
+				if fallbackProvider, fallbackErr := s.uploadWithFallback(ctx, locator.Provider, locator.Key, payload, mime); fallbackErr == nil {
+					return &StagedImage{
+						StoragePath: EncodeStorageLocator(fallbackProvider, locator.Key),
+						Mime:        mime,
+						Bytes:       len(payload),
+						SHA256:      hex.EncodeToString(sum[:]),
+					}, nil
+				} else {
+					return nil, fmt.Errorf("failed to stage image with provider %q: %w", locator.Provider, errors.Join(err, fallbackErr))
+				}
+			}
+			return nil, fmt.Errorf("failed to stage image with provider %q: %w", locator.Provider, err)
+		}
+	} else {
+		return nil, fmt.Errorf("storage object store is not configured")
 	}
 
 	return &StagedImage{
@@ -360,6 +378,61 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 		Bytes:       len(payload),
 		SHA256:      hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// uploadWithFallback retries a legacy/unschemed write with another configured
+// provider. Explicit provider locators are intentionally handled by the caller
+// without fallback so a persisted path never points at an unexpected backend.
+func (s *StorageService) uploadWithFallback(ctx context.Context, primary StorageProvider, key string, data []byte, mime string) (StorageProvider, error) {
+	if s == nil || len(s.uploaders) == 0 {
+		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
+	}
+	var errs []error
+	for _, provider := range s.fallbackProviders(primary) {
+		uploader := s.uploaders[provider]
+		if _, err := uploader.Upload(ctx, key, data, mime); err != nil {
+			log.Printf("[storage] fallback upload failed provider=%q key=%q: %v", provider, key, err)
+			errs = append(errs, fmt.Errorf("provider %q: %w", provider, err))
+			continue
+		}
+		log.Printf("[storage] fallback upload succeeded provider=%q primary=%q key=%q", provider, primary, key)
+		return provider, nil
+	}
+	if len(errs) == 0 {
+		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
+	}
+	return StorageProviderUnknown, errors.Join(errs...)
+}
+
+// fallbackProviders returns every configured provider other than the primary
+// uploader. Map iteration is intentionally normalized for deterministic logs,
+// tests, and behavior when multiple secondary providers are configured.
+func (s *StorageService) fallbackProviders(primary StorageProvider) []StorageProvider {
+	if s == nil || len(s.uploaders) == 0 {
+		return nil
+	}
+	providers := make([]StorageProvider, 0, len(s.uploaders))
+	for provider, uploader := range s.uploaders {
+		if provider == primary || uploader == nil {
+			continue
+		}
+		providers = append(providers, provider)
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
+	return providers
+}
+
+func hasExplicitStorageProvider(storagePath string) bool {
+	separator := strings.Index(storagePath, "://")
+	if separator <= 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(storagePath[:separator])) {
+	case "cos", "tencent-cos", "supabase":
+		return true
+	default:
+		return false
+	}
 }
 
 // DeleteObjects strictly removes every non-empty path. All paths are

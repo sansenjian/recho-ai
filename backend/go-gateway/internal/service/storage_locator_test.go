@@ -45,6 +45,24 @@ func TestStorageLocatorRejectsUnknownProvider(t *testing.T) {
 	}
 }
 
+func TestHasExplicitStorageProviderOnlyRecognizesKnownSchemes(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "cos://generated/image.webp", want: true},
+		{value: "tencent-cos://generated/image.webp", want: true},
+		{value: "supabase://generated/image.webp", want: true},
+		{value: "generated/image.webp", want: false},
+		{value: "folder://generated/image.webp", want: false},
+	}
+	for _, tt := range tests {
+		if got := hasExplicitStorageProvider(tt.value); got != tt.want {
+			t.Errorf("hasExplicitStorageProvider(%q) = %v, want %v", tt.value, got, tt.want)
+		}
+	}
+}
+
 func TestEncodeStorageLocator(t *testing.T) {
 	tests := []struct {
 		provider StorageProvider

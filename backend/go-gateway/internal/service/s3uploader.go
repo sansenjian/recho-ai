@@ -5,11 +5,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -18,12 +21,21 @@ import (
 )
 
 const (
-	cacheTTLSeconds      = 600
-	cacheMaxEntries      = 10000
-	defaultCacheControl  = "max-age=31536000"
-	multipartThreshold   = 10 * 1024 * 1024 // use multipart above 10 MB
-	multipartPartSize    = 5 * 1024 * 1024  // 5 MB per part
-	multipartConcurrency = 4
+	cacheTTLSeconds         = 600
+	cacheMaxEntries         = 10000
+	defaultCacheControl     = "max-age=31536000"
+	multipartThreshold      = 10 * 1024 * 1024 // use multipart above 10 MB
+	multipartPartSize       = 5 * 1024 * 1024  // 5 MB per part
+	multipartConcurrency    = 4
+	s3DialTimeout           = 10 * time.Second
+	s3TLSHandshakeTimeout   = 10 * time.Second
+	s3ResponseHeaderTimeout = 30 * time.Second
+	s3IdleConnTimeout       = 90 * time.Second
+	// Keep each SDK attempt bounded so retries cannot hold an image job for
+	// several minutes when a provider is unreachable.
+	s3RequestTimeout = 30 * time.Second
+	s3MaxAttempts    = 2
+	s3MaxBackoff     = 2 * time.Second
 )
 
 // StorageProvider identifies the configured storage backend.
@@ -69,10 +81,28 @@ var (
 
 // NewS3Uploader creates a new S3 uploader from config.
 func NewS3Uploader(cfg S3Config) *S3Uploader {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   s3DialTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       s3IdleConnTimeout,
+		TLSHandshakeTimeout:   s3TLSHandshakeTimeout,
+		ResponseHeaderTimeout: s3ResponseHeaderTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 	client := s3.New(s3.Options{
 		BaseEndpoint: aws.String(strings.TrimRight(cfg.Endpoint, "/")),
 		Region:       cfg.Region,
 		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
+		HTTPClient:   &http.Client{Transport: transport, Timeout: s3RequestTimeout},
+		Retryer: awsretry.NewStandard(func(options *awsretry.StandardOptions) {
+			options.MaxAttempts = s3MaxAttempts
+			options.MaxBackoff = s3MaxBackoff
+		}),
 	})
 
 	return &S3Uploader{
