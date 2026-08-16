@@ -90,12 +90,12 @@ func main() {
 
 	// Initialize image processor and S3 uploader
 	imageProcessor := service.NewImageProcessor()
-	s3Uploader := service.S3UploaderFromEnv()
+	storageUploaders := service.S3UploadersFromEnv()
 
 	// Initialize storage service
 	var storageService *service.StorageService
 	if db != nil {
-		storageService = service.NewStorageService(db.Pool(), imageProcessor, s3Uploader)
+		storageService = service.NewStorageServiceWithUploaders(db.Pool(), imageProcessor, storageUploaders)
 	}
 
 	// Initialize handlers

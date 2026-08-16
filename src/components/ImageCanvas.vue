@@ -19,8 +19,8 @@ import { useImageNodeReferences } from '../composables/useImageNodeReferences'
 import { useAppConfig } from '../composables/useAppConfig'
 import { type CanvasExportDocument } from '../lib/canvas-document'
 import {
-  parseCanvasWorkspaceSnapshots,
-  serializeCanvasWorkspaceSnapshots,
+  loadCanvasWorkspaceState,
+  persistCanvasWorkspaceState,
   type CanvasWorkspace,
   type CanvasWorkspaceSnapshot,
 } from '../lib/canvas-workspace-cache'
@@ -104,52 +104,11 @@ const emit = defineEmits<{
   imageModeChange: [mode: 'imagio' | 'canvas']
 }>()
 
-const CANVAS_WORKSPACES_KEY = 'canvas-workspaces'
-const CANVAS_ACTIVE_WORKSPACE_KEY = 'canvas-active-workspace'
-const CANVAS_WORKSPACE_CACHE_KEY = 'canvas-workspace-snapshots'
-
 function createCanvasWorkspaceId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
   return `canvas-workspace_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
-}
-
-function loadCanvasWorkspaces(): CanvasWorkspace[] {
-  try {
-    const raw = localStorage.getItem(CANVAS_WORKSPACES_KEY)
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        const workspaces = parsed.filter((item): item is CanvasWorkspace => (
-          typeof item?.id === 'string' && typeof item?.name === 'string'
-        ))
-        if (workspaces.length) return workspaces
-      }
-    }
-  } catch (err) {
-    console.warn('[image-canvas] failed to load workspaces from localStorage', err)
-  }
-  return [{ id: createCanvasWorkspaceId(), name: '画布 1' }]
-}
-
-function loadActiveCanvasWorkspaceId(workspaces: CanvasWorkspace[]) {
-  try {
-    const stored = localStorage.getItem(CANVAS_ACTIVE_WORKSPACE_KEY)
-    if (stored && workspaces.some(workspace => workspace.id === stored)) return stored
-  } catch (err) {
-    console.warn('[image-canvas] failed to load the active workspace from localStorage', err)
-  }
-  return workspaces[0]?.id ?? ''
-}
-
-function loadCanvasWorkspaceSnapshots(): Map<string, CanvasWorkspaceSnapshot> {
-  try {
-    return parseCanvasWorkspaceSnapshots(localStorage.getItem(CANVAS_WORKSPACE_CACHE_KEY))
-  } catch (err) {
-    console.warn('[image-canvas] failed to load cached workspace snapshots', err)
-    return new Map()
-  }
 }
 
 const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
@@ -202,10 +161,25 @@ const dragState = ref<DragState | null>(null)
 const panState = ref<PanState | null>(null)
 const resizeState = ref<ResizeState | null>(null)
 const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
-const canvasWorkspaces = ref<CanvasWorkspace[]>(loadCanvasWorkspaces())
-const activeCanvasWorkspaceId = ref(loadActiveCanvasWorkspaceId(canvasWorkspaces.value))
-const canvasWorkspaceSnapshots = loadCanvasWorkspaceSnapshots()
-if (!canvasWorkspaceSnapshots.has(activeCanvasWorkspaceId.value)) {
+let persistedCanvasWorkspaceState: ReturnType<typeof loadCanvasWorkspaceState> = null
+try {
+  persistedCanvasWorkspaceState = loadCanvasWorkspaceState(localStorage)
+} catch (err) {
+  console.warn('[image-canvas] failed to load workspace state from localStorage', err)
+}
+const initialCanvasWorkspaces: CanvasWorkspace[] = persistedCanvasWorkspaceState?.workspaces ?? [
+  { id: createCanvasWorkspaceId(), name: '画布 1' },
+]
+const canvasWorkspaces = ref<CanvasWorkspace[]>(initialCanvasWorkspaces)
+const activeCanvasWorkspaceId = ref(
+  persistedCanvasWorkspaceState?.activeWorkspaceId ?? initialCanvasWorkspaces[0]?.id ?? '',
+)
+const canvasWorkspaceSnapshots = persistedCanvasWorkspaceState?.snapshots ?? new Map<string, CanvasWorkspaceSnapshot>()
+const activeCanvasWorkspaceSnapshot = canvasWorkspaceSnapshots.get(activeCanvasWorkspaceId.value)
+if (activeCanvasWorkspaceSnapshot) {
+  replaceDocument(activeCanvasWorkspaceSnapshot.document)
+  viewport.value = { ...activeCanvasWorkspaceSnapshot.viewport }
+} else {
   canvasWorkspaceSnapshots.set(activeCanvasWorkspaceId.value, {
     document: snapshotDocument(),
     viewport: { ...viewport.value },
@@ -1056,12 +1030,11 @@ async function sendHistoryImageToChat(image: GeneratedImage, scope: ImageHistory
 
 function persistCanvasWorkspaces() {
   try {
-    localStorage.setItem(CANVAS_WORKSPACES_KEY, JSON.stringify(canvasWorkspaces.value))
-    localStorage.setItem(CANVAS_ACTIVE_WORKSPACE_KEY, activeCanvasWorkspaceId.value)
-    localStorage.setItem(
-      CANVAS_WORKSPACE_CACHE_KEY,
-      serializeCanvasWorkspaceSnapshots(canvasWorkspaceSnapshots),
-    )
+    persistCanvasWorkspaceState(localStorage, {
+      workspaces: canvasWorkspaces.value,
+      activeWorkspaceId: activeCanvasWorkspaceId.value,
+      snapshots: canvasWorkspaceSnapshots,
+    })
   } catch (err) {
     console.warn('[image-canvas] failed to persist workspaces to localStorage', err)
   }
@@ -1072,6 +1045,15 @@ function saveActiveCanvasWorkspace() {
     document: snapshotDocument(),
     viewport: { ...viewport.value },
   })
+}
+
+function flushCanvasWorkspacePersist() {
+  if (canvasWorkspacePersistTimer !== null) {
+    window.clearTimeout(canvasWorkspacePersistTimer)
+    canvasWorkspacePersistTimer = null
+  }
+  saveActiveCanvasWorkspace()
+  persistCanvasWorkspaces()
 }
 
 function scheduleCanvasWorkspacePersist() {
@@ -1272,6 +1254,7 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('paste', handleWindowPaste)
+  window.addEventListener('pagehide', flushCanvasWorkspacePersist)
 
   requestAnimationFrame(() => {
     if ((viewportRef.value?.getBoundingClientRect().width ?? window.innerWidth) <= 760) {
@@ -1281,12 +1264,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (canvasWorkspacePersistTimer !== null) {
-    window.clearTimeout(canvasWorkspacePersistTimer)
-    canvasWorkspacePersistTimer = null
-  }
-  saveActiveCanvasWorkspace()
-  persistCanvasWorkspaces()
+  window.removeEventListener('pagehide', flushCanvasWorkspacePersist)
+  flushCanvasWorkspacePersist()
   window.removeEventListener('pointermove', handleWindowPointerMove)
   window.removeEventListener('pointerup', handleWindowPointerUp)
   window.removeEventListener('pointercancel', handleWindowPointerCancel)

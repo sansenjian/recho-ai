@@ -17,6 +17,13 @@ describe('image storage url helpers', () => {
     )).toBe('https://project.supabase.co/storage/v1/object/public/recho-images/users/u1/original%20file.webp')
   })
 
+  it('strips the Supabase provider scheme when inferring the original public url', () => {
+    expect(originalStorageImageUrl(
+      'supabase://users/u1/original file.webp',
+      'https://project.supabase.co/storage/v1/object/public/recho-images/thumbs/u1/thumb.webp?width=320',
+    )).toBe('https://project.supabase.co/storage/v1/object/public/recho-images/users/u1/original%20file.webp')
+  })
+
   it('infers the original COS url from a thumbnail url and COS storage path', () => {
     expect(originalStorageImageUrl(
       'cos://generated/img_1.webp',
