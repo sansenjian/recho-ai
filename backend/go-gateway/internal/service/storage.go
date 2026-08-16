@@ -347,10 +347,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	payload := append([]byte(nil), data...)
 	sum := sha256.Sum256(payload)
 	if legacyStore != nil && uploader == nil {
-		if err := func() error {
-			_, err := legacyStore.Upload(ctx, locator.Key, payload, mime)
-			return err
-		}(); err != nil {
+		if _, err := legacyStore.Upload(ctx, locator.Key, payload, mime); err != nil {
 			return nil, fmt.Errorf("failed to stage image: %w", err)
 		}
 	} else if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
@@ -388,22 +385,60 @@ func (s *StorageService) DeleteObjects(ctx context.Context, paths ...string) err
 			errs = append(errs, err)
 			continue
 		}
+		if !strings.Contains(storagePath, "://") {
+			deleteErrs := s.deleteLegacyObject(ctx, locator.Key)
+			for _, deleteErr := range deleteErrs {
+				errs = append(errs, fmt.Errorf("failed to delete legacy object %q: %w", storagePath, deleteErr))
+			}
+			continue
+		}
+
 		uploader := s.uploaderFor(locator)
-		if uploader == nil && s.objectStore == nil {
+		if uploader == nil {
 			errs = append(errs, fmt.Errorf("storage provider %q is not configured", locator.Provider))
 			continue
 		}
-		var deleteErr error
-		if uploader != nil {
-			deleteErr = uploader.Delete(ctx, locator.Key)
-		} else {
-			deleteErr = s.objectStore.Delete(ctx, locator.Key)
-		}
-		if deleteErr != nil {
+		if deleteErr := uploader.Delete(ctx, locator.Key); deleteErr != nil {
 			errs = append(errs, fmt.Errorf("failed to delete object %q: %w", storagePath, deleteErr))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (s *StorageService) deleteLegacyObject(ctx context.Context, key string) []error {
+	var errs []error
+	attempted := make(map[*S3Uploader]bool)
+	attemptedAny := false
+	for _, uploader := range s.uploaders {
+		if uploader == nil || attempted[uploader] {
+			continue
+		}
+		attempted[uploader] = true
+		attemptedAny = true
+		if err := uploader.Delete(ctx, key); err != nil {
+			errs = append(errs, fmt.Errorf("provider %q: %w", uploader.Provider(), err))
+		}
+	}
+	if s.uploader != nil && !attempted[s.uploader] {
+		attempted[s.uploader] = true
+		attemptedAny = true
+		if err := s.uploader.Delete(ctx, key); err != nil {
+			errs = append(errs, fmt.Errorf("provider %q: %w", s.uploader.Provider(), err))
+		}
+	}
+	if s.objectStore != nil {
+		legacyUploader, isUploader := s.objectStore.(*S3Uploader)
+		if !isUploader || !attempted[legacyUploader] {
+			attemptedAny = true
+			if err := s.objectStore.Delete(ctx, key); err != nil {
+				errs = append(errs, fmt.Errorf("legacy object store: %w", err))
+			}
+		}
+	}
+	if !attemptedAny {
+		return []error{fmt.Errorf("storage providers are not configured")}
+	}
+	return errs
 }
 
 // DeleteImageHistoryByID removes one history row and then strictly cleans up
@@ -540,7 +575,11 @@ func (s *StorageService) cleanupStorageObjects(paths ...*string) {
 	defer cancel()
 	for _, p := range orphans {
 		if err := s.DeleteObjects(ctx, p); err != nil {
-			log.Printf("[image-storage] failed to delete orphaned S3 object %s: %v", p, err)
+			locatorLabel := p
+			if locator, parseErr := ParseStorageLocator(p); parseErr == nil {
+				locatorLabel = fmt.Sprintf("provider=%s key=%s", locator.Provider, locator.Key)
+			}
+			log.Printf("[image-storage] failed to delete orphaned storage object %s: %v", locatorLabel, err)
 		}
 	}
 }
@@ -602,9 +641,6 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 	}
 
 	// Fallback: try public URL
-	if uploader == nil {
-		return nil, fmt.Errorf("storage is not configured")
-	}
 	publicURL := s.getPublicURL(storagePath)
 	if publicURL == "" {
 		return nil, fmt.Errorf("storage is not configured")
@@ -626,9 +662,12 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 		return nil, fmt.Errorf("storage download returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read storage response: %w", err)
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
 	}
 
 	mime := resp.Header.Get("Content-Type")
@@ -643,9 +682,12 @@ func readDownloadedImage(resp *s3.GetObjectOutput, storagePath string) (*Downloa
 		return nil, fmt.Errorf("storage returned an empty response")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read storage response: %w", err)
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
 	}
 	mime := ""
 	if resp.ContentType != nil {
@@ -1048,6 +1090,11 @@ func (s *StorageService) getPublicURL(storagePath string) string {
 	if locator, err := ParseStorageLocator(storagePath); err == nil {
 		if uploader := s.uploaderFor(locator); uploader != nil {
 			return uploader.PublicURL(locator.Key)
+		}
+		if !strings.Contains(storagePath, "://") {
+			if store := s.objectStoreClient(); store != nil {
+				return store.PublicURL(locator.Key)
+			}
 		}
 	}
 	// Fallback to proxy URL

@@ -300,20 +300,20 @@ export function imageThumbnailPath(storagePath?: string | null) {
   if (!storagePath) return undefined
   const key = cosKey(storagePath)
   if (key) return cosPath(key.replace(/\.[a-z0-9]+$/i, '.thumb.webp'))
-  const supabaseObjectKey = supabaseKey(storagePath) || storagePath
-  return supabaseKey(storagePath)
-    ? supabasePath(supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp'))
-    : supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+  return supabaseVariantPath(storagePath, '.thumb.webp')
 }
 
 export function imagePreviewPath(storagePath?: string | null) {
   if (!storagePath) return undefined
   const key = cosKey(storagePath)
   if (key) return cosPath(key.replace(/\.[a-z0-9]+$/i, '.preview.webp'))
-  const supabaseObjectKey = supabaseKey(storagePath) || storagePath
-  return supabaseKey(storagePath)
-    ? supabasePath(supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.preview.webp'))
-    : supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+  return supabaseVariantPath(storagePath, '.preview.webp')
+}
+
+function supabaseVariantPath(storagePath: string, suffix: string) {
+  const key = supabaseKey(storagePath)
+  const target = (key ?? storagePath).replace(/\.[a-z0-9]+$/i, suffix)
+  return key ? supabasePath(target) : target
 }
 
 async function uploadSupabaseBuffer(buffer: Buffer, mime: string, storagePath: string) {

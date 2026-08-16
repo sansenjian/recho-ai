@@ -72,6 +72,9 @@ describe('image storage Tencent COS support', () => {
     expect(imagePublicUrl('cos://generated/a b.webp')).toBe('/api/image/storage/cos%3A%2F%2Fgenerated%2Fa%20b.webp')
     expect(imagePreviewPath('cos://generated/a b/a b.webp')).toBe('cos://generated/a b/a b.preview.webp')
     expect(imageThumbnailPath('cos://generated/a b/a b.webp')).toBe('cos://generated/a b/a b.thumb.webp')
+    expect(imagePreviewPath('supabase://generated/a b.webp')).toBe('supabase://generated/a b.preview.webp')
+    expect(imageThumbnailPath('supabase://generated/a b.webp')).toBe('supabase://generated/a b.thumb.webp')
+    expect(imagePreviewPath('generated/legacy.webp')).toBe('generated/legacy.preview.webp')
   })
 
   it('downloads and deletes COS objects through the COS client wrapper', async () => {

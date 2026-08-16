@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -270,6 +273,104 @@ func TestDeleteObjectsReturnsUploaderError(t *testing.T) {
 	}
 	if got, want := strings.Join(store.deletes, ","), "bad/object.png,good/object.png"; got != want {
 		t.Fatalf("delete calls = %q, want %q", got, want)
+	}
+}
+
+func TestDeleteObjectsRemovesLegacyPathsFromEveryConfiguredProvider(t *testing.T) {
+	requests := map[StorageProvider][]string{}
+	newUploader := func(provider StorageProvider) *S3Uploader {
+		uploader := NewS3Uploader(S3Config{
+			Provider:  provider,
+			Endpoint:  "https://storage.example.test",
+			Region:    "auto",
+			Bucket:    "images",
+			AccessKey: "test",
+			SecretKey: "test",
+		})
+		uploader.client = s3.New(s3.Options{
+			BaseEndpoint: aws.String("https://storage.example.test"),
+			Region:       "auto",
+			Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+			UsePathStyle: true,
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests[provider] = append(requests[provider], req.URL.Path)
+				return &http.Response{
+					StatusCode: http.StatusNoContent,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			})},
+		})
+		return uploader
+	}
+
+	service := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      newUploader(StorageProviderCos),
+		StorageProviderSupabase: newUploader(StorageProviderSupabase),
+	})
+
+	if err := service.DeleteObjects(context.Background(), "generated/legacy.webp"); err != nil {
+		t.Fatalf("DeleteObjects returned error: %v", err)
+	}
+	for _, provider := range []StorageProvider{StorageProviderCos, StorageProviderSupabase} {
+		if len(requests[provider]) != 1 || !strings.HasSuffix(requests[provider][0], "/generated/legacy.webp") {
+			t.Fatalf("%s delete requests = %#v, want the legacy object once", provider, requests[provider])
+		}
+	}
+}
+
+func TestDownloadImageFallsBackToLegacyPublicURLWithoutUploader(t *testing.T) {
+	store := &fakeStorageObjectStore{deleteErrors: map[string]error{}}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://storage.example.test/generated/legacy.webp" {
+			t.Fatalf("download URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/webp"}},
+			Body:       io.NopCloser(strings.NewReader("image")),
+			Request:    req,
+		}, nil
+	})}
+	service := &StorageService{client: client, objectStore: store}
+
+	downloaded, err := service.DownloadImage(context.Background(), "generated/legacy.webp")
+	if err != nil {
+		t.Fatalf("DownloadImage returned error: %v", err)
+	}
+	if string(downloaded.Data) != "image" || downloaded.Mime != "image/webp" {
+		t.Fatalf("downloaded image = %#v", downloaded)
+	}
+}
+
+func TestReadDownloadedImageRejectsOversizedResponse(t *testing.T) {
+	_, err := readDownloadedImage(&s3.GetObjectOutput{
+		Body:        io.NopCloser(bytes.NewReader(oversizedImageFixture)),
+		ContentType: aws.String("image/png"),
+	}, "generated/too-large.png")
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("readDownloadedImage error = %v, want size limit error", err)
+	}
+}
+
+func TestDownloadImagePublicURLRejectsOversizedResponse(t *testing.T) {
+	store := &fakeStorageObjectStore{deleteErrors: map[string]error{}}
+	service := &StorageService{
+		objectStore: store,
+		client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"image/png"}},
+				Body:       io.NopCloser(bytes.NewReader(oversizedImageFixture)),
+				Request:    req,
+			}, nil
+		})},
+	}
+
+	_, err := service.DownloadImage(context.Background(), "generated/too-large.png")
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("DownloadImage error = %v, want size limit error", err)
 	}
 }
 
