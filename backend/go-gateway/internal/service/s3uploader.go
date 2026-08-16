@@ -3,10 +3,13 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -47,10 +50,14 @@ const (
 	StorageProviderUnknown  StorageProvider = "unknown"
 )
 
-// S3Uploader uploads objects to S3-compatible storage.
+// S3Uploader provides object operations through S3 or the Supabase REST
+// fallback. The name is kept for compatibility with existing callers.
 type S3Uploader struct {
 	provider   StorageProvider
 	client     *s3.Client
+	restClient *http.Client
+	restBase   string
+	restToken  string
 	bucket     string
 	publicBase string
 	urlCache   *expirable.LRU[string, string]
@@ -68,6 +75,16 @@ type S3Config struct {
 	UsePathStyle bool
 }
 
+// SupabaseRESTConfig configures the Supabase Storage REST API fallback.
+// The service-role key is only used server-side and is never exposed through
+// the public URL returned by the uploader.
+type SupabaseRESTConfig struct {
+	SupabaseURL    string
+	Bucket         string
+	ServiceRoleKey string
+	PublicBase     string
+}
+
 // StorageObject identifies an object returned by a reconciliation listing.
 type StorageObject struct {
 	Path         string
@@ -82,24 +99,11 @@ var (
 
 // NewS3Uploader creates a new S3 uploader from config.
 func NewS3Uploader(cfg S3Config) *S3Uploader {
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   s3DialTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       s3IdleConnTimeout,
-		TLSHandshakeTimeout:   s3TLSHandshakeTimeout,
-		ResponseHeaderTimeout: s3ResponseHeaderTimeout,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
 	client := s3.New(s3.Options{
 		BaseEndpoint: aws.String(strings.TrimRight(cfg.Endpoint, "/")),
 		Region:       cfg.Region,
 		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
-		HTTPClient:   &http.Client{Transport: transport, Timeout: s3RequestTimeout},
+		HTTPClient:   newStorageHTTPClient(),
 		UsePathStyle: cfg.UsePathStyle,
 		Retryer: awsretry.NewStandard(func(options *awsretry.StandardOptions) {
 			options.MaxAttempts = s3MaxAttempts
@@ -116,10 +120,48 @@ func NewS3Uploader(cfg S3Config) *S3Uploader {
 	}
 }
 
+// NewSupabaseRESTUploader creates a Supabase Storage REST uploader for
+// deployments that do not have S3 credentials configured.
+func NewSupabaseRESTUploader(cfg SupabaseRESTConfig) *S3Uploader {
+	baseURL := strings.TrimRight(cfg.SupabaseURL, "/")
+	return &S3Uploader{
+		provider:   StorageProviderSupabase,
+		restClient: newStorageHTTPClient(),
+		restBase:   baseURL + "/storage/v1/object",
+		restToken:  cfg.ServiceRoleKey,
+		bucket:     cfg.Bucket,
+		publicBase: strings.TrimRight(cfg.PublicBase, "/"),
+		urlCache:   expirable.NewLRU[string, string](cacheMaxEntries, nil, cacheTTLSeconds*time.Second),
+	}
+}
+
+func newStorageHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   s3DialTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       s3IdleConnTimeout,
+		TLSHandshakeTimeout:   s3TLSHandshakeTimeout,
+		ResponseHeaderTimeout: s3ResponseHeaderTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{Transport: transport, Timeout: s3RequestTimeout}
+}
+
 // Upload stores data at the given key and returns the public URL.
 // Files larger than multipartThreshold are uploaded via S3 multipart upload.
 func (u *S3Uploader) Upload(ctx context.Context, key string, data []byte, contentType string) (string, error) {
-	if u == nil || u.client == nil {
+	if u == nil {
+		return "", fmt.Errorf("uploader not initialized")
+	}
+	if u.restClient != nil {
+		return u.uploadREST(ctx, key, data, contentType)
+	}
+	if u.client == nil {
 		return "", fmt.Errorf("uploader not initialized")
 	}
 
@@ -127,6 +169,28 @@ func (u *S3Uploader) Upload(ctx context.Context, key string, data []byte, conten
 		return u.uploadMultipart(ctx, key, data, contentType)
 	}
 	return u.uploadSingle(ctx, key, data, contentType)
+}
+
+func (u *S3Uploader) uploadREST(ctx context.Context, key string, data []byte, contentType string) (string, error) {
+	req, err := u.newRESTRequest(ctx, http.MethodPost, u.objectRESTURL(key), bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Cache-Control", defaultCacheControl)
+	req.Header.Set("x-upsert", "true")
+	resp, err := u.restClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload %s via Supabase REST: %w", key, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("failed to upload %s via Supabase REST: %s", key, readRESTError(resp))
+	}
+
+	publicURL := u.publicURL(key)
+	u.urlCache.Add(key, publicURL)
+	return publicURL, nil
 }
 
 func (u *S3Uploader) uploadSingle(ctx context.Context, key string, data []byte, contentType string) (string, error) {
@@ -269,7 +333,13 @@ func (u *S3Uploader) abortMultipart(ctx context.Context, key, uploadID string) e
 
 // Delete removes an object from storage.
 func (u *S3Uploader) Delete(ctx context.Context, key string) error {
-	if u == nil || u.client == nil {
+	if u == nil {
+		return fmt.Errorf("uploader not initialized")
+	}
+	if u.restClient != nil {
+		return u.deleteREST(ctx, key)
+	}
+	if u.client == nil {
 		return fmt.Errorf("uploader not initialized")
 	}
 
@@ -285,10 +355,38 @@ func (u *S3Uploader) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (u *S3Uploader) deleteREST(ctx context.Context, key string) error {
+	body, err := json.Marshal(map[string][]string{"prefixes": {key}})
+	if err != nil {
+		return fmt.Errorf("failed to encode delete request for %s: %w", key, err)
+	}
+	req, err := u.newRESTRequest(ctx, http.MethodDelete, u.restBase+"/"+escapeStoragePath(u.bucket), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := u.restClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to delete %s via Supabase REST: %w", key, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("failed to delete %s via Supabase REST: %s", key, readRESTError(resp))
+	}
+	u.urlCache.Remove(key)
+	return nil
+}
+
 // ListObjects lists object keys for reconciliation. Callers should apply a
 // grace period before deleting results because object-store listings can lag.
 func (u *S3Uploader) ListObjects(ctx context.Context, prefix string) ([]StorageObject, error) {
-	if u == nil || u.client == nil {
+	if u == nil {
+		return nil, fmt.Errorf("uploader not initialized")
+	}
+	if u.restClient != nil {
+		return u.listREST(ctx, prefix)
+	}
+	if u.client == nil {
 		return nil, fmt.Errorf("uploader not initialized")
 	}
 	paginator := s3.NewListObjectsV2Paginator(u.client, &s3.ListObjectsV2Input{
@@ -313,6 +411,165 @@ func (u *S3Uploader) ListObjects(ctx context.Context, prefix string) ([]StorageO
 		}
 	}
 	return objects, nil
+}
+
+type supabaseRESTListRequest struct {
+	Prefix        string `json:"prefix"`
+	Limit         int    `json:"limit"`
+	Cursor        string `json:"cursor,omitempty"`
+	WithDelimiter bool   `json:"with_delimiter"`
+	SortBy        struct {
+		Column string `json:"column"`
+		Order  string `json:"order"`
+	} `json:"sortBy"`
+}
+
+type supabaseRESTObject struct {
+	Name      string `json:"name"`
+	Key       string `json:"key"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type supabaseRESTListResponse struct {
+	HasNext    bool                 `json:"hasNext"`
+	NextCursor string               `json:"nextCursor"`
+	Objects    []supabaseRESTObject `json:"objects"`
+}
+
+func (u *S3Uploader) listREST(ctx context.Context, prefix string) ([]StorageObject, error) {
+	const pageSize = 1000
+	objects := make([]StorageObject, 0)
+	cursor := ""
+	for {
+		payload := supabaseRESTListRequest{
+			Prefix:        strings.Trim(prefix, "/"),
+			Limit:         pageSize,
+			Cursor:        cursor,
+			WithDelimiter: false,
+		}
+		payload.SortBy.Column = "name"
+		payload.SortBy.Order = "asc"
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode Supabase list request: %w", err)
+		}
+		req, err := u.newRESTRequest(ctx, http.MethodPost, u.restBase+"/list-v2/"+escapeStoragePath(u.bucket), bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := u.restClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list Supabase objects: %w", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			errText := readRESTError(resp)
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to list Supabase objects: %s", errText)
+		}
+		var page supabaseRESTListResponse
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 2*1024*1024)).Decode(&page)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode Supabase object list: %w", decodeErr)
+		}
+		for _, entry := range page.Objects {
+			name := strings.TrimPrefix(entry.Key, "/")
+			if name == "" {
+				name = strings.TrimPrefix(entry.Name, "/")
+			}
+			if prefix != "" && !strings.HasPrefix(name, strings.Trim(prefix, "/")+"/") {
+				name = strings.Trim(strings.Trim(prefix, "/")+"/"+name, "/")
+			}
+			modified, _ := time.Parse(time.RFC3339Nano, entry.UpdatedAt)
+			objects = append(objects, StorageObject{Path: name, LastModified: modified})
+		}
+		if !page.HasNext || page.NextCursor == "" {
+			return objects, nil
+		}
+		if page.NextCursor == cursor {
+			return nil, fmt.Errorf("Supabase object listing returned a repeated cursor")
+		}
+		cursor = page.NextCursor
+	}
+}
+
+// Download retrieves an object using either S3 or the Supabase REST API.
+func (u *S3Uploader) Download(ctx context.Context, key string) (*DownloadedImage, error) {
+	if u == nil {
+		return nil, fmt.Errorf("uploader not initialized")
+	}
+	if u.restClient != nil {
+		return u.downloadREST(ctx, key)
+	}
+	if u.client == nil {
+		return nil, fmt.Errorf("uploader not initialized")
+	}
+	resp, err := u.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(u.bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	return readDownloadedImage(resp, key)
+}
+
+func (u *S3Uploader) downloadREST(ctx context.Context, key string) (*DownloadedImage, error) {
+	req, err := u.newRESTRequest(ctx, http.MethodGet, u.objectRESTURL(key), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := u.restClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download %s via Supabase REST: %w", key, err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		message := readRESTError(resp)
+		resp.Body.Close()
+		return nil, fmt.Errorf("failed to download %s via Supabase REST: %s", key, message)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
+	mime := resp.Header.Get("Content-Type")
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read Supabase REST response: %w", readErr)
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
+	}
+	if mime == "" {
+		mime = mimeFromStoragePath(key)
+	}
+	return &DownloadedImage{Data: data, Mime: mime}, nil
+}
+
+func (u *S3Uploader) newRESTRequest(ctx context.Context, method, endpoint string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Supabase REST request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+u.restToken)
+	req.Header.Set("apikey", u.restToken)
+	return req, nil
+}
+
+func (u *S3Uploader) objectRESTURL(key string) string {
+	return u.restBase + "/" + escapeStoragePath(u.bucket) + "/" + escapeStoragePath(key)
+}
+
+func escapeStoragePath(value string) string {
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func readRESTError(resp *http.Response) string {
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
+	message := strings.TrimSpace(string(data))
+	if message == "" {
+		return resp.Status
+	}
+	return resp.Status + ": " + message
 }
 
 // PublicURL returns the public URL for a key, using a small LRU cache.
@@ -352,9 +609,9 @@ func S3UploaderFromEnv() *S3Uploader {
 	return globalUploader
 }
 
-// S3UploadersFromEnv initializes every configured storage provider. The
-// preferred uploader remains Tencent COS for new writes, while the complete
-// map allows legacy Supabase objects to remain readable after a migration.
+// S3UploadersFromEnv initializes every configured storage provider. Supabase
+// uses dedicated S3 credentials when available and otherwise falls back to
+// its REST API. The name is kept for compatibility with existing callers.
 func S3UploadersFromEnv() map[StorageProvider]*S3Uploader {
 	newS3UploaderOnce.Do(func() {
 		globalUploaders = make(map[StorageProvider]*S3Uploader)
@@ -365,8 +622,15 @@ func S3UploadersFromEnv() map[StorageProvider]*S3Uploader {
 		if cfg, ok := supabaseConfigFromEnv(); ok {
 			globalUploaders[StorageProviderSupabase] = NewS3Uploader(cfg)
 			log.Printf("[s3uploader] configured for Supabase Storage: %s", cfg.Bucket)
+		} else if cfg, ok := supabaseRESTConfigFromEnv(); ok {
+			globalUploaders[StorageProviderSupabase] = NewSupabaseRESTUploader(cfg)
+			if enabled, missing := supabaseS3ConfigStatus(); enabled && len(missing) > 0 {
+				log.Printf("[s3uploader] Supabase S3 incomplete; using Storage REST fallback (missing: %s)", strings.Join(missing, ", "))
+			} else {
+				log.Printf("[s3uploader] configured for Supabase Storage REST fallback: %s", cfg.Bucket)
+			}
 		} else if enabled, missing := supabaseS3ConfigStatus(); enabled && len(missing) > 0 {
-			log.Printf("[s3uploader] Supabase Storage S3 fallback disabled; missing configuration: %s", strings.Join(missing, ", "))
+			log.Printf("[s3uploader] Supabase Storage disabled; missing S3 and REST configuration: %s, SUPABASE_SERVICE_ROLE_KEY", strings.Join(missing, ", "))
 		}
 		if uploader := globalUploaders[StorageProviderCos]; uploader != nil {
 			globalUploader = uploader
@@ -412,6 +676,18 @@ func supabaseConfigFromEnv() (S3Config, bool) {
 		SecretKey:    config.SupabaseS3SecretAccessKey,
 		PublicBase:   publicBase,
 		UsePathStyle: true,
+	}, true
+}
+
+func supabaseRESTConfigFromEnv() (SupabaseRESTConfig, bool) {
+	if config.SupabaseURL == "" || config.SupabaseImageBucket == "" || config.SupabaseServiceRoleKey == "" {
+		return SupabaseRESTConfig{}, false
+	}
+	return SupabaseRESTConfig{
+		SupabaseURL:    config.SupabaseURL,
+		Bucket:         config.SupabaseImageBucket,
+		ServiceRoleKey: config.SupabaseServiceRoleKey,
+		PublicBase:     fmt.Sprintf("%s/storage/v1/object/public/%s", strings.TrimRight(config.SupabaseURL, "/"), config.SupabaseImageBucket),
 	}, true
 }
 

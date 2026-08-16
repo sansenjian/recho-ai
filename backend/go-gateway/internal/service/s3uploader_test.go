@@ -2,12 +2,117 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"go-gateway/internal/config"
 )
+
+func TestSupabaseRESTUploaderObjectLifecycle(t *testing.T) {
+	const token = "service-role-key"
+	const objectKey = "references/folder image.webp"
+	var uploadedBody string
+	var deletedPrefixes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("apikey") != token {
+			t.Errorf("missing Supabase REST authentication headers")
+		}
+		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/object/recho-images/references/"):
+			if r.Header.Get("x-upsert") != "true" {
+				t.Errorf("x-upsert = %q, want true", r.Header.Get("x-upsert"))
+			}
+			data, _ := io.ReadAll(r.Body)
+			uploadedBody = string(data)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/object/recho-images/references/"):
+			w.Header().Set("Content-Type", "image/webp")
+			_, _ = w.Write([]byte("downloaded-image"))
+		case r.Method == http.MethodDelete && r.URL.Path == "/storage/v1/object/recho-images":
+			var payload map[string][]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode delete payload: %v", err)
+			}
+			deletedPrefixes = payload["prefixes"]
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/storage/v1/object/list-v2/recho-images":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"hasNext":false,"objects":[{"name":"generated/image.webp","updated_at":"2026-08-16T10:00:00Z"}]}`))
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	uploader := NewSupabaseRESTUploader(SupabaseRESTConfig{
+		SupabaseURL:    server.URL,
+		Bucket:         "recho-images",
+		ServiceRoleKey: token,
+		PublicBase:     server.URL + "/public/recho-images",
+	})
+	uploader.restClient = server.Client()
+
+	publicURL, err := uploader.Upload(context.Background(), objectKey, []byte("uploaded-image"), "image/webp")
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if uploadedBody != "uploaded-image" {
+		t.Fatalf("uploaded body = %q", uploadedBody)
+	}
+	if publicURL != server.URL+"/public/recho-images/"+objectKey {
+		t.Fatalf("public URL = %q", publicURL)
+	}
+
+	downloaded, err := uploader.Download(context.Background(), objectKey)
+	if err != nil {
+		t.Fatalf("Download() error = %v", err)
+	}
+	if string(downloaded.Data) != "downloaded-image" || downloaded.Mime != "image/webp" {
+		t.Fatalf("downloaded = %#v", downloaded)
+	}
+
+	if err := uploader.Delete(context.Background(), objectKey); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if !reflect.DeepEqual(deletedPrefixes, []string{objectKey}) {
+		t.Fatalf("deleted prefixes = %v", deletedPrefixes)
+	}
+
+	objects, err := uploader.ListObjects(context.Background(), "generated")
+	if err != nil {
+		t.Fatalf("ListObjects() error = %v", err)
+	}
+	if len(objects) != 1 || objects[0].Path != "generated/image.webp" || objects[0].LastModified.IsZero() {
+		t.Fatalf("objects = %#v", objects)
+	}
+}
+
+func TestSupabaseRESTConfigUsesExistingServiceRoleSettings(t *testing.T) {
+	originalURL := config.SupabaseURL
+	originalServiceRoleKey := config.SupabaseServiceRoleKey
+	originalBucket := config.SupabaseImageBucket
+	t.Cleanup(func() {
+		config.SupabaseURL = originalURL
+		config.SupabaseServiceRoleKey = originalServiceRoleKey
+		config.SupabaseImageBucket = originalBucket
+	})
+
+	config.SupabaseURL = "https://project.supabase.co/"
+	config.SupabaseServiceRoleKey = "service-role-key"
+	config.SupabaseImageBucket = "recho-images"
+	cfg, ok := supabaseRESTConfigFromEnv()
+	if !ok {
+		t.Fatal("supabaseRESTConfigFromEnv() did not return a configured fallback")
+	}
+	if cfg.SupabaseURL != config.SupabaseURL || cfg.ServiceRoleKey != config.SupabaseServiceRoleKey || cfg.Bucket != config.SupabaseImageBucket {
+		t.Fatalf("REST config = %#v", cfg)
+	}
+}
 
 func TestNewS3UploaderUsesConfiguredAddressingStyle(t *testing.T) {
 	tests := []struct {

@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -717,39 +716,33 @@ func (s *StorageService) ListObjects(ctx context.Context, prefix string) ([]Stor
 	return uploader.ListObjects(ctx, prefix)
 }
 
-// DownloadImage downloads a stored image from S3-compatible storage.
+// DownloadImage downloads a stored image from the configured object storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
 	locator, err := ParseStorageLocator(storagePath)
 	if err != nil {
 		return nil, err
 	}
 	uploader := s.uploaderFor(locator)
-	if uploader != nil && uploader.client != nil {
-		resp, err := uploader.client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(uploader.bucket),
-			Key:    aws.String(locator.Key),
-		})
+	if uploader != nil {
+		image, err := uploader.Download(ctx, locator.Key)
 		if err != nil {
 			// Legacy paths are unprefixed and historically lived in Supabase.
 			// If the preferred provider cannot serve one, try every other
 			// configured provider before returning the original error.
 			if !strings.Contains(storagePath, "://") && s.uploaders != nil {
 				for provider, fallback := range s.uploaders {
-					if provider == locator.Provider || fallback == nil || fallback.client == nil {
+					if provider == locator.Provider || fallback == nil {
 						continue
 					}
-					fallbackResp, fallbackErr := fallback.client.GetObject(ctx, &s3.GetObjectInput{
-						Bucket: aws.String(fallback.bucket),
-						Key:    aws.String(locator.Key),
-					})
+					fallbackImage, fallbackErr := fallback.Download(ctx, locator.Key)
 					if fallbackErr == nil {
-						return readDownloadedImage(fallbackResp, locator.Key)
+						return fallbackImage, nil
 					}
 				}
 			}
 			return nil, fmt.Errorf("failed to download from %s: %w", locator.Provider, err)
 		}
-		return readDownloadedImage(resp, locator.Key)
+		return image, nil
 	}
 
 	// Fallback: try public URL

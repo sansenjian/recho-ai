@@ -59,9 +59,14 @@ SUPABASE_SERVICE_ROLE_KEY=[SERVICE_ROLE_KEY]
 # Optional: defaults to SUPABASE_URL/auth/v1/.well-known/jwks.json
 SUPABASE_JWKS_URL=
 
-# Supabase Storage S3 fallback (server-side only).
-# Generate these credentials in Storage > S3 Connection. Do not reuse the service role key.
+# Supabase Storage fallback.
+# Without the optional S3 settings below, the gateway automatically uses
+# SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY through the Storage REST API.
 SUPABASE_IMAGE_BUCKET=recho-images
+
+# Optional direct S3 path (server-side only). When all four values are set,
+# S3 is preferred over REST. Generate them in Storage > S3 Connection and do
+# not reuse the service role key as an S3 credential.
 SUPABASE_S3_ENDPOINT=https://[PROJECT].storage.supabase.co/storage/v1/s3
 SUPABASE_S3_REGION=[PROJECT_REGION]
 SUPABASE_S3_ACCESS_KEY_ID=[S3_ACCESS_KEY_ID]
