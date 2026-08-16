@@ -778,6 +778,9 @@ func (o *ImageOrchestrator) handleStagingFailure(
 			o.handleImmediateCompensation(reservation, user, idempotencyKey, "staging_job_failed")
 		}
 	}
+	if code == "staging_failed" {
+		return domainStatusError(http.StatusServiceUnavailable, ErrorCodeStorageUploadFailed, "图片暂存失败，请稍后重试。")
+	}
 	return domainStatusError(http.StatusServiceUnavailable, ErrorCodePersistenceQueueFailed, "图片持久化任务排队失败，请稍后重试。")
 }
 

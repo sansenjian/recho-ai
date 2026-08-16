@@ -201,6 +201,7 @@ const (
 	ErrorCodeProviderUnavailable    = "PROVIDER_UNAVAILABLE"
 	ErrorCodeProviderBadResponse    = "PROVIDER_BAD_RESPONSE"
 	ErrorCodeStorageUnavailable     = "STORAGE_UNAVAILABLE"
+	ErrorCodeStorageUploadFailed    = "STORAGE_UPLOAD_FAILED"
 	ErrorCodeImageJobUnavailable    = "IMAGE_JOB_UNAVAILABLE"
 	ErrorCodePersistenceQueueFailed = "PERSISTENCE_QUEUE_FAILED"
 )

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,40 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func newTestS3Uploader(provider StorageProvider, statusCode int, calls *int) *S3Uploader {
+	uploader := NewS3Uploader(S3Config{
+		Provider:  provider,
+		Endpoint:  "https://storage.example.test",
+		Region:    "auto",
+		Bucket:    "images",
+		AccessKey: "test",
+		SecretKey: "test",
+	})
+	uploader.client = s3.New(s3.Options{
+		BaseEndpoint: aws.String("https://storage.example.test"),
+		Region:       "auto",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
+		Retryer: awsretry.NewStandard(func(options *awsretry.StandardOptions) {
+			options.MaxAttempts = 1
+		}),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			*calls++
+			body := ""
+			if statusCode >= http.StatusBadRequest {
+				body = "<Error><Code>ServiceUnavailable</Code></Error>"
+			}
+			return &http.Response{
+				StatusCode: statusCode,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		})},
+	})
+	return uploader
 }
 
 func (f *fakeStorageObjectStore) Upload(_ context.Context, storagePath string, data []byte, mime string) (string, error) {
@@ -254,6 +289,60 @@ func TestStageFromBufferReturnsChecksumAndExactPath(t *testing.T) {
 	}
 	if !bytes.Equal(store.uploads[0].data, data) {
 		t.Fatal("uploaded bytes were transformed")
+	}
+}
+
+func TestStageFromBufferFallsBackToSecondaryProviderForLegacyPath(t *testing.T) {
+	primaryCalls := 0
+	fallbackCalls := 0
+	service := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      newTestS3Uploader(StorageProviderCos, http.StatusServiceUnavailable, &primaryCalls),
+		StorageProviderSupabase: newTestS3Uploader(StorageProviderSupabase, http.StatusOK, &fallbackCalls),
+	})
+
+	staged, err := service.StageFromBuffer(context.Background(), []byte("image"), "image/png", "staging/image.source")
+	if err != nil {
+		t.Fatalf("StageFromBuffer returned error: %v", err)
+	}
+	if staged.StoragePath != "supabase://staging/image.source" {
+		t.Fatalf("storage path = %q, want fallback provider path", staged.StoragePath)
+	}
+	if primaryCalls != 1 || fallbackCalls != 1 {
+		t.Fatalf("upload calls = primary %d, fallback %d; want one call to each", primaryCalls, fallbackCalls)
+	}
+}
+
+func TestStageFromBufferDoesNotCrossProviderForExplicitPath(t *testing.T) {
+	primaryCalls := 0
+	fallbackCalls := 0
+	service := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      newTestS3Uploader(StorageProviderCos, http.StatusServiceUnavailable, &primaryCalls),
+		StorageProviderSupabase: newTestS3Uploader(StorageProviderSupabase, http.StatusOK, &fallbackCalls),
+	})
+
+	_, err := service.StageFromBuffer(context.Background(), []byte("image"), "image/png", "cos://staging/image.source")
+	if err == nil {
+		t.Fatal("StageFromBuffer unexpectedly succeeded after explicit provider failure")
+	}
+	if primaryCalls != 1 || fallbackCalls != 0 {
+		t.Fatalf("upload calls = primary %d, fallback %d; explicit provider should not fall back", primaryCalls, fallbackCalls)
+	}
+}
+
+func TestStageFromBufferReportsBothProviderFailures(t *testing.T) {
+	primaryCalls := 0
+	fallbackCalls := 0
+	service := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      newTestS3Uploader(StorageProviderCos, http.StatusServiceUnavailable, &primaryCalls),
+		StorageProviderSupabase: newTestS3Uploader(StorageProviderSupabase, http.StatusBadGateway, &fallbackCalls),
+	})
+
+	_, err := service.StageFromBuffer(context.Background(), []byte("image"), "image/png", "staging/image.source")
+	if err == nil {
+		t.Fatal("StageFromBuffer unexpectedly succeeded when all providers failed")
+	}
+	if !strings.Contains(err.Error(), string(StorageProviderCos)) || !strings.Contains(err.Error(), string(StorageProviderSupabase)) {
+		t.Fatalf("error = %v, want both provider failures", err)
 	}
 }
 

@@ -332,6 +332,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	if strings.TrimSpace(storagePath) == "" {
 		return nil, fmt.Errorf("storage path is required")
 	}
+	explicitProvider := strings.Contains(storagePath, "://")
 	locator, err := s.writeLocator(storagePath)
 	if err != nil {
 		return nil, err
@@ -346,12 +347,28 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	// the checksum and reported size are being derived.
 	payload := append([]byte(nil), data...)
 	sum := sha256.Sum256(payload)
-	if legacyStore != nil && uploader == nil {
+	if legacyStore != nil && uploader == nil && !explicitProvider {
 		if _, err := legacyStore.Upload(ctx, locator.Key, payload, mime); err != nil {
 			return nil, fmt.Errorf("failed to stage image: %w", err)
 		}
-	} else if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
-		return nil, fmt.Errorf("failed to stage image: %w", err)
+	} else if uploader != nil {
+		if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
+			if !explicitProvider {
+				if fallbackProvider, fallbackErr := s.uploadWithFallback(ctx, locator.Provider, locator.Key, payload, mime); fallbackErr == nil {
+					return &StagedImage{
+						StoragePath: EncodeStorageLocator(fallbackProvider, locator.Key),
+						Mime:        mime,
+						Bytes:       len(payload),
+						SHA256:      hex.EncodeToString(sum[:]),
+					}, nil
+				} else {
+					return nil, fmt.Errorf("failed to stage image with provider %q: %w", locator.Provider, errors.Join(err, fallbackErr))
+				}
+			}
+			return nil, fmt.Errorf("failed to stage image with provider %q: %w", locator.Provider, err)
+		}
+	} else {
+		return nil, fmt.Errorf("storage object store is not configured")
 	}
 
 	return &StagedImage{
@@ -360,6 +377,36 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 		Bytes:       len(payload),
 		SHA256:      hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// uploadWithFallback retries a legacy/unschemed write with another configured
+// provider. Explicit provider locators are intentionally handled by the caller
+// without fallback so a persisted path never points at an unexpected backend.
+func (s *StorageService) uploadWithFallback(ctx context.Context, primary StorageProvider, key string, data []byte, mime string) (StorageProvider, error) {
+	if s == nil || len(s.uploaders) == 0 {
+		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
+	}
+	var errs []error
+	for _, provider := range []StorageProvider{StorageProviderCos, StorageProviderSupabase} {
+		if provider == primary {
+			continue
+		}
+		uploader := s.uploaders[provider]
+		if uploader == nil {
+			continue
+		}
+		if _, err := uploader.Upload(ctx, key, data, mime); err != nil {
+			log.Printf("[storage] fallback upload failed provider=%q key=%q: %v", provider, key, err)
+			errs = append(errs, fmt.Errorf("provider %q: %w", provider, err))
+			continue
+		}
+		log.Printf("[storage] fallback upload succeeded provider=%q primary=%q key=%q", provider, primary, key)
+		return provider, nil
+	}
+	if len(errs) == 0 {
+		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
+	}
+	return StorageProviderUnknown, errors.Join(errs...)
 }
 
 // DeleteObjects strictly removes every non-empty path. All paths are
