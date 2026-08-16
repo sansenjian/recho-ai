@@ -67,6 +67,7 @@ func TestS3UploaderPathStyleKeepsBucketOutOfEndpointHost(t *testing.T) {
 
 func TestSupabaseConfigUsesDedicatedS3Credentials(t *testing.T) {
 	originalURL := config.SupabaseURL
+	originalServiceRoleKey := config.SupabaseServiceRoleKey
 	originalBucket := config.SupabaseImageBucket
 	originalEndpoint := config.SupabaseS3Endpoint
 	originalRegion := config.SupabaseS3Region
@@ -74,6 +75,7 @@ func TestSupabaseConfigUsesDedicatedS3Credentials(t *testing.T) {
 	originalSecretAccessKey := config.SupabaseS3SecretAccessKey
 	t.Cleanup(func() {
 		config.SupabaseURL = originalURL
+		config.SupabaseServiceRoleKey = originalServiceRoleKey
 		config.SupabaseImageBucket = originalBucket
 		config.SupabaseS3Endpoint = originalEndpoint
 		config.SupabaseS3Region = originalRegion
@@ -82,6 +84,7 @@ func TestSupabaseConfigUsesDedicatedS3Credentials(t *testing.T) {
 	})
 
 	config.SupabaseURL = "https://project.supabase.co/"
+	config.SupabaseServiceRoleKey = "service-role-key"
 	config.SupabaseImageBucket = "recho-images"
 	config.SupabaseS3Endpoint = "https://project.storage.supabase.co/storage/v1/s3/"
 	config.SupabaseS3Region = "ap-southeast-1"
@@ -103,6 +106,9 @@ func TestSupabaseConfigUsesDedicatedS3Credentials(t *testing.T) {
 	}
 	if cfg.SecretKey != "s3-secret-access-key" {
 		t.Fatal("secret key does not use the dedicated S3 secret access key")
+	}
+	if cfg.AccessKey == config.SupabaseServiceRoleKey || cfg.SecretKey == config.SupabaseServiceRoleKey {
+		t.Fatal("service-role key must not be used for S3 credentials")
 	}
 	if !cfg.UsePathStyle {
 		t.Fatal("Supabase S3 uploader must use path-style addressing")
@@ -140,6 +146,15 @@ func TestSupabaseConfigRequiresAllDedicatedS3Settings(t *testing.T) {
 		accessKey: "s3-access-key-id",
 		secretKey: "s3-secret-access-key",
 	}
+	setBaseConfig := func(t *testing.T) {
+		t.Helper()
+		config.SupabaseURL = base.url
+		config.SupabaseImageBucket = base.bucket
+		config.SupabaseS3Endpoint = base.endpoint
+		config.SupabaseS3Region = base.region
+		config.SupabaseS3AccessKeyID = base.accessKey
+		config.SupabaseS3SecretAccessKey = base.secretKey
+	}
 
 	tests := []struct {
 		name  string
@@ -152,18 +167,60 @@ func TestSupabaseConfigRequiresAllDedicatedS3Settings(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			config.SupabaseURL = base.url
-			config.SupabaseImageBucket = base.bucket
-			config.SupabaseS3Endpoint = base.endpoint
-			config.SupabaseS3Region = base.region
-			config.SupabaseS3AccessKeyID = base.accessKey
-			config.SupabaseS3SecretAccessKey = base.secretKey
+			setBaseConfig(t)
 			tt.clear()
 
 			if _, ok := supabaseConfigFromEnv(); ok {
 				t.Fatalf("supabaseConfigFromEnv() configured uploader without %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestSupabaseS3ConfigStatusDistinguishesDisabledFromIncomplete(t *testing.T) {
+	originalURL := config.SupabaseURL
+	originalBucket := config.SupabaseImageBucket
+	originalEndpoint := config.SupabaseS3Endpoint
+	originalRegion := config.SupabaseS3Region
+	originalAccessKeyID := config.SupabaseS3AccessKeyID
+	originalSecretAccessKey := config.SupabaseS3SecretAccessKey
+	t.Cleanup(func() {
+		config.SupabaseURL = originalURL
+		config.SupabaseImageBucket = originalBucket
+		config.SupabaseS3Endpoint = originalEndpoint
+		config.SupabaseS3Region = originalRegion
+		config.SupabaseS3AccessKeyID = originalAccessKeyID
+		config.SupabaseS3SecretAccessKey = originalSecretAccessKey
+	})
+
+	config.SupabaseS3Endpoint = ""
+	config.SupabaseS3Region = ""
+	config.SupabaseS3AccessKeyID = ""
+	config.SupabaseS3SecretAccessKey = ""
+	if enabled, missing := supabaseS3ConfigStatus(); enabled || len(missing) != 0 {
+		t.Fatalf("empty S3 settings should be intentionally disabled, got enabled=%v missing=%v", enabled, missing)
+	}
+
+	config.SupabaseURL = "https://project.supabase.co"
+	config.SupabaseImageBucket = "recho-images"
+	config.SupabaseS3Endpoint = "https://project.storage.supabase.co/storage/v1/s3"
+	enabled, missing := supabaseS3ConfigStatus()
+	if !enabled {
+		t.Fatal("partial S3 settings should be reported as enabled but incomplete")
+	}
+	want := []string{
+		"SUPABASE_S3_REGION",
+		"SUPABASE_S3_ACCESS_KEY_ID",
+		"SUPABASE_S3_SECRET_ACCESS_KEY",
+	}
+	if len(missing) != len(want) {
+		t.Fatalf("missing settings = %v, want %v", missing, want)
+	}
+	for i := range want {
+		if missing[i] != want[i] {
+			t.Fatalf("missing settings = %v, want %v", missing, want)
+		}
 	}
 }

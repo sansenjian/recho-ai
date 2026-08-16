@@ -365,6 +365,8 @@ func S3UploadersFromEnv() map[StorageProvider]*S3Uploader {
 		if cfg, ok := supabaseConfigFromEnv(); ok {
 			globalUploaders[StorageProviderSupabase] = NewS3Uploader(cfg)
 			log.Printf("[s3uploader] configured for Supabase Storage: %s", cfg.Bucket)
+		} else if enabled, missing := supabaseS3ConfigStatus(); enabled && len(missing) > 0 {
+			log.Printf("[s3uploader] Supabase Storage S3 fallback disabled; missing configuration: %s", strings.Join(missing, ", "))
 		}
 		if uploader := globalUploaders[StorageProviderCos]; uploader != nil {
 			globalUploader = uploader
@@ -395,12 +397,8 @@ func cosConfigFromEnv() (S3Config, bool) {
 }
 
 func supabaseConfigFromEnv() (S3Config, bool) {
-	if config.SupabaseURL == "" ||
-		config.SupabaseImageBucket == "" ||
-		config.SupabaseS3Endpoint == "" ||
-		config.SupabaseS3Region == "" ||
-		config.SupabaseS3AccessKeyID == "" ||
-		config.SupabaseS3SecretAccessKey == "" {
+	enabled, missing := supabaseS3ConfigStatus()
+	if !enabled || len(missing) > 0 {
 		return S3Config{}, false
 	}
 
@@ -415,4 +413,42 @@ func supabaseConfigFromEnv() (S3Config, bool) {
 		PublicBase:   publicBase,
 		UsePathStyle: true,
 	}, true
+}
+
+func supabaseS3ConfigStatus() (bool, []string) {
+	s3Settings := []string{
+		config.SupabaseS3Endpoint,
+		config.SupabaseS3Region,
+		config.SupabaseS3AccessKeyID,
+		config.SupabaseS3SecretAccessKey,
+	}
+	enabled := false
+	for _, value := range s3Settings {
+		if value != "" {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
+		return false, nil
+	}
+
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "SUPABASE_URL", value: config.SupabaseURL},
+		{name: "SUPABASE_IMAGE_BUCKET", value: config.SupabaseImageBucket},
+		{name: "SUPABASE_S3_ENDPOINT", value: config.SupabaseS3Endpoint},
+		{name: "SUPABASE_S3_REGION", value: config.SupabaseS3Region},
+		{name: "SUPABASE_S3_ACCESS_KEY_ID", value: config.SupabaseS3AccessKeyID},
+		{name: "SUPABASE_S3_SECRET_ACCESS_KEY", value: config.SupabaseS3SecretAccessKey},
+	}
+	missing := make([]string, 0, len(required))
+	for _, setting := range required {
+		if setting.value == "" {
+			missing = append(missing, setting.name)
+		}
+	}
+	return true, missing
 }
