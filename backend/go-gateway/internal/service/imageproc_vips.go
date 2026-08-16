@@ -49,7 +49,7 @@ func (p *vipsProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight i
 }
 
 // ProcessImage takes raw image bytes, converts to WebP, and generates preview and thumbnail.
-func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedImage, error) {
+func (p *vipsProcessor) ProcessImage(data []byte, pathHint string, options ...ImageProcessOptions) (*ProcessedImage, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty image data")
 	}
@@ -78,16 +78,6 @@ func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 		return nil, fmt.Errorf("failed to export original: %w", err)
 	}
 
-	previewBytes, err := p.exportPreview(img)
-	if err != nil {
-		return nil, fmt.Errorf("failed to export preview: %w", err)
-	}
-
-	thumbnailBytes, err := p.exportThumbnail(img)
-	if err != nil {
-		return nil, fmt.Errorf("failed to export thumbnail: %w", err)
-	}
-
 	safe := safePathPart(pathHint, "image")
 	fileName := path.Base(safe)
 	ext := path.Ext(fileName)
@@ -103,8 +93,26 @@ func (p *vipsProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 	if dir != "" {
 		basePath = dir + "/" + name + "/" + name
 	}
-
 	originalPath := basePath + "." + originalExt
+
+	if len(options) > 0 && options[0].OnlyOriginal {
+		return &ProcessedImage{
+			Original: ProcessedVariant{Data: originalBytes, Path: originalPath, Bytes: len(originalBytes), Mime: originalMime},
+			Width:    width,
+			Height:   height,
+		}, nil
+	}
+
+	previewBytes, err := p.exportPreview(img)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export preview: %w", err)
+	}
+
+	thumbnailBytes, err := p.exportThumbnail(img)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export thumbnail: %w", err)
+	}
+
 	previewPath := basePath + ".preview.webp"
 	thumbnailPath := basePath + ".thumb.webp"
 

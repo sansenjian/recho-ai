@@ -24,6 +24,13 @@ type ProcessedImage struct {
 	Height    int
 }
 
+// ImageProcessOptions controls which processed variants are generated.
+// OnlyOriginal keeps validation/normalization of the source image while
+// skipping gallery preview and thumbnail work for reference uploads.
+type ImageProcessOptions struct {
+	OnlyOriginal bool
+}
+
 type CroppedImage struct {
 	Data   []byte
 	Mime   string
@@ -43,8 +50,8 @@ func NewImageProcessor() *ImageProcessor {
 
 // ProcessImage takes raw image bytes, converts to WebP, and generates preview and thumbnail.
 // The pathHint is used to build stable file paths for the variants.
-func (p *ImageProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedImage, error) {
-	return p.impl.ProcessImage(data, pathHint)
+func (p *ImageProcessor) ProcessImage(data []byte, pathHint string, options ...ImageProcessOptions) (*ProcessedImage, error) {
+	return p.impl.ProcessImage(data, pathHint, options...)
 }
 
 func (p *ImageProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error) {
@@ -52,7 +59,7 @@ func (p *ImageProcessor) CropToAspectRatio(data []byte, ratioWidth, ratioHeight 
 }
 
 type processorImpl interface {
-	ProcessImage(data []byte, pathHint string) (*ProcessedImage, error)
+	ProcessImage(data []byte, pathHint string, options ...ImageProcessOptions) (*ProcessedImage, error)
 	CropToAspectRatio(data []byte, ratioWidth, ratioHeight int) (*CroppedImage, error)
 }
 

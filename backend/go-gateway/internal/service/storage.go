@@ -636,7 +636,7 @@ func (s *StorageService) StoreReferenceFromBufferAtPath(ctx context.Context, dat
 		return nil, fmt.Errorf("image processor not configured")
 	}
 
-	processed, err := s.processor.ProcessImage(data, locator.Key)
+	processed, err := s.processor.ProcessImage(data, locator.Key, ImageProcessOptions{OnlyOriginal: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to process reference image: %w", err)
 	}
