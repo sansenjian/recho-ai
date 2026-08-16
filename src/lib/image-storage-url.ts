@@ -19,6 +19,12 @@ function cosStorageKey(storagePath: string) {
     : ''
 }
 
+function supabaseStorageKey(storagePath: string) {
+  return storagePath.startsWith('supabase://')
+    ? storagePath.slice('supabase://'.length).replace(/^\/+/, '')
+    : storagePath
+}
+
 function originalCosStoragePath(storagePath: string, cosKey: string) {
   const previewKey = cosKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
   const thumbnailKey = cosKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
@@ -31,6 +37,7 @@ function originalCosStoragePath(storagePath: string, cosKey: string) {
 export function originalStorageImageUrl(storagePath?: string, ...sourceUrls: Array<string | undefined>) {
   if (!storagePath) return ''
   const cosKey = cosStorageKey(storagePath)
+  const supabaseKey = supabaseStorageKey(storagePath)
   for (const sourceUrl of sourceUrls) {
     if (!sourceUrl || /^data:/i.test(sourceUrl)) continue
     try {
@@ -64,7 +71,7 @@ export function originalStorageImageUrl(storagePath?: string, ...sourceUrls: Arr
       const bucket = url.pathname.slice(pathStart).split('/')[0]
       if (!bucket) continue
 
-      url.pathname = `${url.pathname.slice(0, pathStart)}${bucket}/${encodedStoragePath(storagePath)}`
+      url.pathname = `${url.pathname.slice(0, pathStart)}${bucket}/${encodedStoragePath(supabaseKey)}`
       url.search = ''
       return url.toString()
     } catch {

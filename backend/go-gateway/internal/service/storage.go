@@ -75,6 +75,18 @@ func NewStorageServiceWithUploaders(pool *pgxpool.Pool, processor *ImageProcesso
 		if uploader == nil {
 			uploader = uploaders[StorageProviderSupabase]
 		}
+		if uploader == nil {
+			for _, candidate := range uploaders {
+				if candidate == nil {
+					continue
+				}
+				if uploader != nil {
+					uploader = nil
+					break
+				}
+				uploader = candidate
+			}
+		}
 	}
 	var objectStore storageObjectStore
 	if uploader != nil {
@@ -607,7 +619,7 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 	if err != nil {
 		return nil, fmt.Errorf("download request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -630,7 +642,7 @@ func readDownloadedImage(resp *s3.GetObjectOutput, storagePath string) (*Downloa
 	if resp == nil || resp.Body == nil {
 		return nil, fmt.Errorf("storage returned an empty response")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read storage response: %w", err)

@@ -205,7 +205,11 @@ const viewport = ref({ ...DEFAULT_CANVAS_VIEWPORT })
 const canvasWorkspaces = ref<CanvasWorkspace[]>(loadCanvasWorkspaces())
 const activeCanvasWorkspaceId = ref(loadActiveCanvasWorkspaceId(canvasWorkspaces.value))
 const canvasWorkspaceSnapshots = loadCanvasWorkspaceSnapshots()
-if (!canvasWorkspaceSnapshots.has(activeCanvasWorkspaceId.value)) {
+const activeCanvasWorkspaceSnapshot = canvasWorkspaceSnapshots.get(activeCanvasWorkspaceId.value)
+if (activeCanvasWorkspaceSnapshot) {
+  replaceDocument(activeCanvasWorkspaceSnapshot.document)
+  viewport.value = { ...activeCanvasWorkspaceSnapshot.viewport }
+} else {
   canvasWorkspaceSnapshots.set(activeCanvasWorkspaceId.value, {
     document: snapshotDocument(),
     viewport: { ...viewport.value },
@@ -1074,6 +1078,15 @@ function saveActiveCanvasWorkspace() {
   })
 }
 
+function flushCanvasWorkspacePersist() {
+  if (canvasWorkspacePersistTimer !== null) {
+    window.clearTimeout(canvasWorkspacePersistTimer)
+    canvasWorkspacePersistTimer = null
+  }
+  saveActiveCanvasWorkspace()
+  persistCanvasWorkspaces()
+}
+
 function scheduleCanvasWorkspacePersist() {
   if (canvasWorkspacePersistTimer !== null) {
     window.clearTimeout(canvasWorkspacePersistTimer)
@@ -1272,6 +1285,7 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('paste', handleWindowPaste)
+  window.addEventListener('pagehide', flushCanvasWorkspacePersist)
 
   requestAnimationFrame(() => {
     if ((viewportRef.value?.getBoundingClientRect().width ?? window.innerWidth) <= 760) {
@@ -1281,12 +1295,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (canvasWorkspacePersistTimer !== null) {
-    window.clearTimeout(canvasWorkspacePersistTimer)
-    canvasWorkspacePersistTimer = null
-  }
-  saveActiveCanvasWorkspace()
-  persistCanvasWorkspaces()
+  window.removeEventListener('pagehide', flushCanvasWorkspacePersist)
+  flushCanvasWorkspacePersist()
   window.removeEventListener('pointermove', handleWindowPointerMove)
   window.removeEventListener('pointerup', handleWindowPointerUp)
   window.removeEventListener('pointercancel', handleWindowPointerCancel)

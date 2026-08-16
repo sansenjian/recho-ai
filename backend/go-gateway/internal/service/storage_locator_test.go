@@ -2,6 +2,17 @@ package service
 
 import "testing"
 
+func TestNewStorageServiceRetainsSingleUnknownUploader(t *testing.T) {
+	unknown := NewS3Uploader(S3Config{})
+	storage := NewStorageService(nil, nil, unknown)
+	if storage.uploader != unknown {
+		t.Fatal("NewStorageService() discarded the sole uploader with an unknown provider")
+	}
+	if storage.objectStore != unknown {
+		t.Fatal("NewStorageService() did not retain the uploader as its object store")
+	}
+}
+
 func TestStorageLocatorParsesProviderAwareAndLegacyPaths(t *testing.T) {
 	tests := []struct {
 		name     string
