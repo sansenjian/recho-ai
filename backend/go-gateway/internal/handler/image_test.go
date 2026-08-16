@@ -59,6 +59,7 @@ type stubImageStorageService struct {
 	cleanupCh      chan []string
 	downloadFunc   func(ctx context.Context, storagePath string) (*service.DownloadedImage, error)
 	storeFunc      func(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
+	referenceFunc  func(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
 	visibility     string
 	owner          string
 	visibilityFunc func(ctx context.Context, storagePath string) (string, string, error)
@@ -80,6 +81,13 @@ func (s *stubImageStorageService) StoreFromBuffer(ctx context.Context, data []by
 }
 
 func (s *stubImageStorageService) StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error) {
+	return nil, nil
+}
+
+func (s *stubImageStorageService) StoreReferenceFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error) {
+	if s.referenceFunc != nil {
+		return s.referenceFunc(ctx, data, mime, storagePath)
+	}
 	return nil, nil
 }
 
@@ -149,6 +157,55 @@ func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, 
 func (s *stubImageStorageService) CleanupObjects(paths ...string) {
 	if s.cleanupCh != nil {
 		s.cleanupCh <- append([]string(nil), paths...)
+	}
+}
+
+func TestUploadReferenceStoresOnlyReferenceOriginal(t *testing.T) {
+	storeCalls := 0
+	storage := &stubImageStorageService{
+		referenceFunc: func(_ context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error) {
+			storeCalls++
+			if string(data) != "reference-bytes" {
+				t.Fatalf("reference data = %q", data)
+			}
+			if mime != "image/png" {
+				t.Fatalf("reference mime = %q", mime)
+			}
+			if !strings.HasPrefix(storagePath, "references/uploads/anon/") {
+				t.Fatalf("reference storage path = %q", storagePath)
+			}
+			return &service.StoredImage{
+				PublicURL:   "https://images.example.test/references/reference.webp",
+				StoragePath: "cos://references/reference.webp",
+			}, nil
+		},
+	}
+	handler := NewImageHandler(nil, storage, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/image/references", strings.NewReader("reference-bytes"))
+	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("x-reference-filename", "reference.png")
+	res := httptest.NewRecorder()
+
+	handler.UploadReference(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if storeCalls != 1 {
+		t.Fatalf("reference store calls = %d, want 1", storeCalls)
+	}
+	var payload referenceUploadResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Reference.StoragePath != "cos://references/reference.webp" {
+		t.Fatalf("storage path = %q", payload.Reference.StoragePath)
+	}
+	if payload.Reference.PreviewURL != "https://images.example.test/references/reference.webp" {
+		t.Fatalf("preview URL = %q", payload.Reference.PreviewURL)
+	}
+	if payload.Reference.PreviewPath != "" || payload.Reference.ThumbnailPath != "" {
+		t.Fatalf("reference response includes generated variants: %#v", payload.Reference)
 	}
 }
 

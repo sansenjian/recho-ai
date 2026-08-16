@@ -33,6 +33,7 @@ type StorageService interface {
 	StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error)
 	StoreFromBuffer(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error)
 	StoreFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
+	StoreReferenceFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error)
 	StageFromURL(ctx context.Context, sourceURL, storagePath string) (*service.StagedImage, error)
 	StageFromBuffer(ctx context.Context, data []byte, mime, storagePath string) (*service.StagedImage, error)
 	DeleteObjects(ctx context.Context, paths ...string) error

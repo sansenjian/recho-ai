@@ -620,6 +620,45 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 	}, nil
 }
 
+// StoreReferenceFromBufferAtPath validates and normalizes a reference image,
+// but stores only the original variant. Reference images are model inputs and
+// do not need the gallery preview and thumbnail variants generated for output
+// images.
+func (s *StorageService) StoreReferenceFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*StoredImage, error) {
+	if storagePath == "" {
+		storagePath = imageStoragePath(mime, "reference")
+	}
+	locator, err := s.writeLocator(storagePath)
+	if err != nil {
+		return nil, err
+	}
+	if s.processor == nil {
+		return nil, fmt.Errorf("image processor not configured")
+	}
+
+	processed, err := s.processor.ProcessImage(data, locator.Key, ImageProcessOptions{OnlyOriginal: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to process reference image: %w", err)
+	}
+	uploader := s.uploaderFor(locator)
+	if uploader == nil {
+		return nil, fmt.Errorf("storage uploader is not configured")
+	}
+
+	publicURL, err := uploader.Upload(ctx, processed.Original.Path, processed.Original.Data, processed.Original.Mime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload reference image: %w", err)
+	}
+	return &StoredImage{
+		PublicURL:   publicURL,
+		StoragePath: EncodeStorageLocator(locator.Provider, processed.Original.Path),
+		Width:       processed.Width,
+		Height:      processed.Height,
+		Bytes:       processed.Original.Bytes,
+		Mime:        processed.Original.Mime,
+	}, nil
+}
+
 func (s *StorageService) cleanupUploaded(keys []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

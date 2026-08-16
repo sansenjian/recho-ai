@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -344,6 +347,38 @@ func TestStageFromBufferReportsBothProviderFailures(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), string(StorageProviderCos)) || !strings.Contains(err.Error(), string(StorageProviderSupabase)) {
 		t.Fatalf("error = %v, want both provider failures", err)
+	}
+}
+
+func TestStoreReferenceFromBufferAtPathUploadsOnlyOriginal(t *testing.T) {
+	fixture := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	fixture.Set(1, 1, color.RGBA{R: 120, G: 80, B: 40, A: 255})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, fixture); err != nil {
+		t.Fatalf("encode reference fixture: %v", err)
+	}
+
+	uploadCalls := 0
+	storage := NewStorageServiceWithUploaders(nil, NewImageProcessor(), map[StorageProvider]*S3Uploader{
+		StorageProviderCos: newTestS3Uploader(StorageProviderCos, http.StatusOK, &uploadCalls),
+	})
+	stored, err := storage.StoreReferenceFromBufferAtPath(
+		context.Background(),
+		encoded.Bytes(),
+		"image/png",
+		"references/uploads/user/reference.png",
+	)
+	if err != nil {
+		t.Fatalf("StoreReferenceFromBufferAtPath returned error: %v", err)
+	}
+	if uploadCalls != 1 {
+		t.Fatalf("upload calls = %d, want only the original reference", uploadCalls)
+	}
+	if stored == nil || stored.StoragePath == "" || stored.PublicURL == "" {
+		t.Fatalf("stored reference = %#v, want original storage metadata", stored)
+	}
+	if stored.PreviewPath != "" || stored.ThumbnailPath != "" {
+		t.Fatalf("stored reference contains variants: preview=%q thumbnail=%q", stored.PreviewPath, stored.ThumbnailPath)
 	}
 }
 

@@ -258,7 +258,7 @@ func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
 		safePathPart(userID, "anon"),
 		fmt.Sprintf("%d_%s_%s", time.Now().UnixMilli(), randomID(), uploadName),
 	}, "/")
-	stored, err := h.storageService.StoreFromBufferAtPath(r.Context(), data, mime, storagePath)
+	stored, err := h.storageService.StoreReferenceFromBufferAtPath(r.Context(), data, mime, storagePath)
 	if err != nil || stored == nil || stored.StoragePath == "" {
 		log.Printf("[image] reference upload failed: %v", err)
 		response.Error(w, http.StatusServiceUnavailable, "参考图上传失败，请稍后重试。")
@@ -270,7 +270,7 @@ func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
 			ID:          referenceID,
 			Title:       title,
 			StoragePath: stored.StoragePath,
-			PreviewURL:  firstNonEmpty(stored.PreviewURL, stored.PublicURL),
+			PreviewURL:  stored.PublicURL,
 			FileName:    fileName,
 		},
 	})

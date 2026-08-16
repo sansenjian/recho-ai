@@ -45,7 +45,7 @@ func newProcessorImpl() processorImpl {
 
 // ProcessImage returns the original data unmodified and generates placeholder paths.
 // This fallback is used when CGO/libvips is not available (e.g. local Windows development).
-func (p *noopProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedImage, error) {
+func (p *noopProcessor) ProcessImage(data []byte, pathHint string, options ...ImageProcessOptions) (*ProcessedImage, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty image data")
 	}
@@ -67,7 +67,7 @@ func (p *noopProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 	}
 
 	mime, ext := detectFormat(data)
-	return &ProcessedImage{
+	processed := &ProcessedImage{
 		Original: ProcessedVariant{
 			Data:  data,
 			Path:  basePath + "." + ext,
@@ -86,5 +86,10 @@ func (p *noopProcessor) ProcessImage(data []byte, pathHint string) (*ProcessedIm
 			Bytes: len(data),
 			Mime:  mime,
 		},
-	}, nil
+	}
+	if len(options) > 0 && options[0].OnlyOriginal {
+		processed.Preview = ProcessedVariant{}
+		processed.Thumbnail = ProcessedVariant{}
+	}
+	return processed, nil
 }
