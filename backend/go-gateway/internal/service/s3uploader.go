@@ -28,12 +28,14 @@ const (
 	multipartPartSize       = 5 * 1024 * 1024  // 5 MB per part
 	multipartConcurrency    = 4
 	s3DialTimeout           = 10 * time.Second
-	s3TLSHandshakeTimeout   = 15 * time.Second
-	s3ResponseHeaderTimeout = 60 * time.Second
+	s3TLSHandshakeTimeout   = 10 * time.Second
+	s3ResponseHeaderTimeout = 30 * time.Second
 	s3IdleConnTimeout       = 90 * time.Second
-	s3RequestTimeout        = 90 * time.Second
-	s3MaxAttempts           = 4
-	s3MaxBackoff            = 3 * time.Second
+	// Keep each SDK attempt bounded so retries cannot hold an image job for
+	// several minutes when a provider is unreachable.
+	s3RequestTimeout = 30 * time.Second
+	s3MaxAttempts    = 2
+	s3MaxBackoff     = 2 * time.Second
 )
 
 // StorageProvider identifies the configured storage backend.

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -276,7 +277,7 @@ func (s *StorageService) writeLocator(storagePath string) (StorageLocator, error
 	if err != nil {
 		return StorageLocator{}, err
 	}
-	if !strings.Contains(storagePath, "://") {
+	if !hasExplicitStorageProvider(storagePath) {
 		provider := s.defaultStorageProvider()
 		if provider != StorageProviderUnknown {
 			locator.Provider = provider
@@ -332,7 +333,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	if strings.TrimSpace(storagePath) == "" {
 		return nil, fmt.Errorf("storage path is required")
 	}
-	explicitProvider := strings.Contains(storagePath, "://")
+	explicitProvider := hasExplicitStorageProvider(storagePath)
 	locator, err := s.writeLocator(storagePath)
 	if err != nil {
 		return nil, err
@@ -387,14 +388,8 @@ func (s *StorageService) uploadWithFallback(ctx context.Context, primary Storage
 		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
 	}
 	var errs []error
-	for _, provider := range []StorageProvider{StorageProviderCos, StorageProviderSupabase} {
-		if provider == primary {
-			continue
-		}
+	for _, provider := range s.fallbackProviders(primary) {
 		uploader := s.uploaders[provider]
-		if uploader == nil {
-			continue
-		}
 		if _, err := uploader.Upload(ctx, key, data, mime); err != nil {
 			log.Printf("[storage] fallback upload failed provider=%q key=%q: %v", provider, key, err)
 			errs = append(errs, fmt.Errorf("provider %q: %w", provider, err))
@@ -407,6 +402,37 @@ func (s *StorageService) uploadWithFallback(ctx context.Context, primary Storage
 		return StorageProviderUnknown, fmt.Errorf("no fallback storage provider is configured")
 	}
 	return StorageProviderUnknown, errors.Join(errs...)
+}
+
+// fallbackProviders returns every configured provider other than the primary
+// uploader. Map iteration is intentionally normalized for deterministic logs,
+// tests, and behavior when multiple secondary providers are configured.
+func (s *StorageService) fallbackProviders(primary StorageProvider) []StorageProvider {
+	if s == nil || len(s.uploaders) == 0 {
+		return nil
+	}
+	providers := make([]StorageProvider, 0, len(s.uploaders))
+	for provider, uploader := range s.uploaders {
+		if provider == primary || uploader == nil {
+			continue
+		}
+		providers = append(providers, provider)
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
+	return providers
+}
+
+func hasExplicitStorageProvider(storagePath string) bool {
+	separator := strings.Index(storagePath, "://")
+	if separator <= 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(storagePath[:separator])) {
+	case "cos", "tencent-cos", "supabase":
+		return true
+	default:
+		return false
+	}
 }
 
 // DeleteObjects strictly removes every non-empty path. All paths are

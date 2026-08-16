@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +344,21 @@ func TestStageFromBufferReportsBothProviderFailures(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), string(StorageProviderCos)) || !strings.Contains(err.Error(), string(StorageProviderSupabase)) {
 		t.Fatalf("error = %v, want both provider failures", err)
+	}
+}
+
+func TestFallbackProvidersUsesConfiguredUploaders(t *testing.T) {
+	archive := StorageProvider("archive")
+	service := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      newTestS3Uploader(StorageProviderCos, http.StatusOK, nil),
+		StorageProviderSupabase: newTestS3Uploader(StorageProviderSupabase, http.StatusOK, nil),
+		archive:                 newTestS3Uploader(archive, http.StatusOK, nil),
+	})
+
+	providers := service.fallbackProviders(StorageProviderCos)
+	want := []StorageProvider{archive, StorageProviderSupabase}
+	if !reflect.DeepEqual(providers, want) {
+		t.Fatalf("fallback providers = %#v, want %#v", providers, want)
 	}
 }
 
