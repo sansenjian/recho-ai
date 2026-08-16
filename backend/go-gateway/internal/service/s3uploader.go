@@ -58,13 +58,14 @@ type S3Uploader struct {
 
 // S3Config holds configuration for an S3-compatible uploader.
 type S3Config struct {
-	Provider   StorageProvider
-	Endpoint   string
-	Region     string
-	Bucket     string
-	AccessKey  string
-	SecretKey  string
-	PublicBase string
+	Provider     StorageProvider
+	Endpoint     string
+	Region       string
+	Bucket       string
+	AccessKey    string
+	SecretKey    string
+	PublicBase   string
+	UsePathStyle bool
 }
 
 // StorageObject identifies an object returned by a reconciliation listing.
@@ -99,6 +100,7 @@ func NewS3Uploader(cfg S3Config) *S3Uploader {
 		Region:       cfg.Region,
 		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
 		HTTPClient:   &http.Client{Transport: transport, Timeout: s3RequestTimeout},
+		UsePathStyle: cfg.UsePathStyle,
 		Retryer: awsretry.NewStandard(func(options *awsretry.StandardOptions) {
 			options.MaxAttempts = s3MaxAttempts
 			options.MaxBackoff = s3MaxBackoff
@@ -399,12 +401,13 @@ func supabaseConfigFromEnv() (S3Config, bool) {
 
 	publicBase := fmt.Sprintf("%s/storage/v1/object/public/%s", strings.TrimRight(config.SupabaseURL, "/"), config.SupabaseImageBucket)
 	return S3Config{
-		Provider:   StorageProviderSupabase,
-		Endpoint:   fmt.Sprintf("%s/storage/v1/s3", strings.TrimRight(config.SupabaseURL, "/")),
-		Region:     "auto",
-		Bucket:     config.SupabaseImageBucket,
-		AccessKey:  config.SupabaseServiceRoleKey,
-		SecretKey:  config.SupabaseServiceRoleKey,
-		PublicBase: publicBase,
+		Provider:     StorageProviderSupabase,
+		Endpoint:     fmt.Sprintf("%s/storage/v1/s3", strings.TrimRight(config.SupabaseURL, "/")),
+		Region:       "auto",
+		Bucket:       config.SupabaseImageBucket,
+		AccessKey:    config.SupabaseServiceRoleKey,
+		SecretKey:    config.SupabaseServiceRoleKey,
+		PublicBase:   publicBase,
+		UsePathStyle: true,
 	}, true
 }
