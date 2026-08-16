@@ -12,6 +12,10 @@
 - 本地默认路径是前端请求 `/api` 到 Node，再由 Node 代理图片、额度和配置路由到 Go；`VITE_IMAGE_API_BASE_URL` 只保留给独立图片服务或专项验证使用。
 - Node 旧生图实现已下线；没有 Go sidecar 或 `GO_GATEWAY_BASE_URL` 时，Node `/api/image/generate` 只返回迁移提示。
 
+## 存储路径
+
+图片对象路径使用 provider scheme 标识来源：`cos://...` 表示 Tencent COS，`supabase://...` 表示 Supabase Storage。历史无前缀路径按 Supabase 兼容读取，并在找不到对象时尝试其他已配置 provider。新增存储后端只需扩展 `StorageProvider`、locator 解析和 uploader 注册，不需要修改前端路径格式。
+
 ## 快速开始
 
 ### 前置要求

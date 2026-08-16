@@ -19,6 +19,7 @@ const LOSSLESS_WEBP_EXTENSION = 'webp'
 const PUBLIC_URL_CACHE_MS = 10 * 60 * 1000
 const PUBLIC_URL_CACHE_MAX = 10_000
 const TENCENT_COS_PATH_PREFIX = 'cos://'
+const SUPABASE_PATH_PREFIX = 'supabase://'
 const IMAGE_PROXY_PATH_PREFIX = '/api/image/storage/'
 
 export type ImageStorageProvider = 'supabase' | 'tencent-cos'
@@ -119,15 +120,29 @@ function cosPath(key: string) {
   return `${TENCENT_COS_PATH_PREFIX}${key}`
 }
 
+function supabasePath(key: string) {
+  return `${SUPABASE_PATH_PREFIX}${key}`
+}
+
 function cosKey(storagePath?: string | null) {
   if (!storagePath?.startsWith(TENCENT_COS_PATH_PREFIX)) return null
   const key = storagePath.slice(TENCENT_COS_PATH_PREFIX.length).replace(/^\/+/, '')
   return key || null
 }
 
+function supabaseKey(storagePath?: string | null) {
+  if (!storagePath?.startsWith(SUPABASE_PATH_PREFIX)) return null
+  const key = storagePath.slice(SUPABASE_PATH_PREFIX.length).replace(/^\/+/, '')
+  return key || null
+}
+
+function storageKey(storagePath: string) {
+  return cosKey(storagePath) || supabaseKey(storagePath) || storagePath
+}
+
 function isSafeProxyStoragePath(storagePath: string) {
   if (/^https?:\/\//i.test(storagePath) || /^data:/i.test(storagePath)) return false
-  const path = cosKey(storagePath) || storagePath
+  const path = storageKey(storagePath)
   return Boolean(path && !path.includes('..') && !path.startsWith('/') && !path.startsWith('\\'))
 }
 
@@ -189,6 +204,8 @@ export function imagePublicUrl(storagePath?: string | null) {
   const key = cosKey(storagePath)
   if (key) return tencentCosObjectUrl(key) || proxiedImageStorageUrl(storagePath)
 
+  const supabaseObjectKey = supabaseKey(storagePath) || storagePath
+
   const now = Date.now()
   const cached = publicUrlCache.get(storagePath)
   if (cached && cached.expiresAt > now) return cached.publicUrl
@@ -198,7 +215,7 @@ export function imagePublicUrl(storagePath?: string | null) {
 
   const publicUrl = client.storage
     .from(SUPABASE_IMAGE_BUCKET)
-    .getPublicUrl(storagePath).data.publicUrl
+    .getPublicUrl(supabaseObjectKey).data.publicUrl
   publicUrlCache.set(storagePath, { publicUrl, expiresAt: now + PUBLIC_URL_CACHE_MS })
   prunePublicUrlCache(now)
   return publicUrl
@@ -250,7 +267,7 @@ export async function removeImageStoragePaths(paths: Array<string | null | undef
 
   const { error } = await client.storage
     .from(SUPABASE_IMAGE_BUCKET)
-    .remove(supabasePaths)
+    .remove(supabasePaths.map(path => supabaseKey(path) || path))
   if (error) throw error
 
   removed = true
@@ -269,7 +286,7 @@ export async function downloadImageBuffer(storagePath: string) {
 
   const { data, error } = await client.storage
     .from(SUPABASE_IMAGE_BUCKET)
-    .download(storagePath)
+    .download(supabaseKey(storagePath) || storagePath)
   if (error) throw error
   if (!data) return null
 
@@ -283,14 +300,20 @@ export function imageThumbnailPath(storagePath?: string | null) {
   if (!storagePath) return undefined
   const key = cosKey(storagePath)
   if (key) return cosPath(key.replace(/\.[a-z0-9]+$/i, '.thumb.webp'))
-  return storagePath.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
+  const supabaseObjectKey = supabaseKey(storagePath) || storagePath
+  return supabaseKey(storagePath)
+    ? supabasePath(supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp'))
+    : supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.thumb.webp')
 }
 
 export function imagePreviewPath(storagePath?: string | null) {
   if (!storagePath) return undefined
   const key = cosKey(storagePath)
   if (key) return cosPath(key.replace(/\.[a-z0-9]+$/i, '.preview.webp'))
-  return storagePath.replace(/\.[a-z0-9]+$/i, '.preview.webp')
+  const supabaseObjectKey = supabaseKey(storagePath) || storagePath
+  return supabaseKey(storagePath)
+    ? supabasePath(supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.preview.webp'))
+    : supabaseObjectKey.replace(/\.[a-z0-9]+$/i, '.preview.webp')
 }
 
 async function uploadSupabaseBuffer(buffer: Buffer, mime: string, storagePath: string) {
@@ -309,7 +332,7 @@ async function uploadSupabaseBuffer(buffer: Buffer, mime: string, storagePath: s
     .getPublicUrl(storagePath)
   return {
     publicUrl: data.publicUrl,
-    storagePath,
+    storagePath: supabasePath(storagePath),
   }
 }
 

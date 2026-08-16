@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type StorageService struct {
 	client      *http.Client // reused HTTP client for downloading upstream images
 	processor   *ImageProcessor
 	uploader    *S3Uploader
+	uploaders   map[StorageProvider]*S3Uploader
 	objectStore storageObjectStore
 	db          storageDB
 }
@@ -56,6 +58,24 @@ type storageDB interface {
 
 // NewStorageService creates a new storage service
 func NewStorageService(pool *pgxpool.Pool, processor *ImageProcessor, uploader *S3Uploader) *StorageService {
+	uploaders := make(map[StorageProvider]*S3Uploader)
+	if uploader != nil {
+		uploaders[uploader.Provider()] = uploader
+	}
+	return NewStorageServiceWithUploaders(pool, processor, uploaders)
+}
+
+// NewStorageServiceWithUploaders wires all configured storage providers. The
+// legacy constructor above remains available for focused tests and callers
+// that only configure one provider.
+func NewStorageServiceWithUploaders(pool *pgxpool.Pool, processor *ImageProcessor, uploaders map[StorageProvider]*S3Uploader) *StorageService {
+	var uploader *S3Uploader
+	if uploaders != nil {
+		uploader = uploaders[StorageProviderCos]
+		if uploader == nil {
+			uploader = uploaders[StorageProviderSupabase]
+		}
+	}
 	var objectStore storageObjectStore
 	if uploader != nil {
 		objectStore = uploader
@@ -68,9 +88,55 @@ func NewStorageService(pool *pgxpool.Pool, processor *ImageProcessor, uploader *
 		pool:        pool,
 		processor:   processor,
 		uploader:    uploader,
+		uploaders:   uploaders,
 		objectStore: objectStore,
 		db:          db,
 		client:      newSafeImageHTTPClient(120 * time.Second),
+	}
+}
+
+// StorageLocator is the provider-aware representation of an object path.
+// Paths without a scheme are legacy Supabase paths kept for compatibility.
+type StorageLocator struct {
+	Provider StorageProvider
+	Key      string
+}
+
+func ParseStorageLocator(value string) (StorageLocator, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return StorageLocator{}, fmt.Errorf("storage path is empty")
+	}
+	if separator := strings.Index(value, "://"); separator > 0 {
+		scheme := strings.ToLower(strings.TrimSpace(value[:separator]))
+		key := strings.TrimPrefix(value[separator+3:], "/")
+		if key == "" {
+			return StorageLocator{}, fmt.Errorf("storage key is empty")
+		}
+		switch scheme {
+		case "supabase":
+			return StorageLocator{Provider: StorageProviderSupabase, Key: key}, nil
+		case "cos", "tencent-cos":
+			return StorageLocator{Provider: StorageProviderCos, Key: key}, nil
+		default:
+			return StorageLocator{}, fmt.Errorf("unsupported storage provider %q", scheme)
+		}
+	}
+	return StorageLocator{Provider: StorageProviderSupabase, Key: value}, nil
+}
+
+func EncodeStorageLocator(provider StorageProvider, key string) string {
+	key = strings.TrimPrefix(strings.TrimSpace(key), "/")
+	if key == "" {
+		return ""
+	}
+	switch provider {
+	case StorageProviderCos:
+		return "cos://" + key
+	case StorageProviderSupabase:
+		return "supabase://" + key
+	default:
+		return key
 	}
 }
 
@@ -165,6 +231,48 @@ func (s *StorageService) objectStoreClient() storageObjectStore {
 	return nil
 }
 
+func (s *StorageService) uploaderFor(locator StorageLocator) *S3Uploader {
+	if s == nil {
+		return nil
+	}
+	if s.uploaders != nil {
+		if uploader := s.uploaders[locator.Provider]; uploader != nil {
+			return uploader
+		}
+	}
+	if s.uploader != nil && (locator.Provider == StorageProviderUnknown || locator.Provider == s.uploader.Provider()) {
+		return s.uploader
+	}
+	return nil
+}
+
+func (s *StorageService) defaultStorageProvider() StorageProvider {
+	if s == nil {
+		return StorageProviderUnknown
+	}
+	if s.uploader != nil {
+		return s.uploader.Provider()
+	}
+	for provider := range s.uploaders {
+		return provider
+	}
+	return StorageProviderUnknown
+}
+
+func (s *StorageService) writeLocator(storagePath string) (StorageLocator, error) {
+	locator, err := ParseStorageLocator(storagePath)
+	if err != nil {
+		return StorageLocator{}, err
+	}
+	if !strings.Contains(storagePath, "://") {
+		provider := s.defaultStorageProvider()
+		if provider != StorageProviderUnknown {
+			locator.Provider = provider
+		}
+	}
+	return locator, nil
+}
+
 func (s *StorageService) databaseClient() storageDB {
 	if s.db != nil {
 		return s.db
@@ -212,8 +320,13 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	if strings.TrimSpace(storagePath) == "" {
 		return nil, fmt.Errorf("storage path is required")
 	}
-	store := s.objectStoreClient()
-	if store == nil {
+	locator, err := s.writeLocator(storagePath)
+	if err != nil {
+		return nil, err
+	}
+	uploader := s.uploaderFor(locator)
+	legacyStore := s.objectStore
+	if uploader == nil && legacyStore == nil {
 		return nil, fmt.Errorf("storage object store is not configured")
 	}
 
@@ -221,12 +334,19 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 	// the checksum and reported size are being derived.
 	payload := append([]byte(nil), data...)
 	sum := sha256.Sum256(payload)
-	if _, err := store.Upload(ctx, storagePath, payload, mime); err != nil {
+	if legacyStore != nil && uploader == nil {
+		if err := func() error {
+			_, err := legacyStore.Upload(ctx, locator.Key, payload, mime)
+			return err
+		}(); err != nil {
+			return nil, fmt.Errorf("failed to stage image: %w", err)
+		}
+	} else if _, err := uploader.Upload(ctx, locator.Key, payload, mime); err != nil {
 		return nil, fmt.Errorf("failed to stage image: %w", err)
 	}
 
 	return &StagedImage{
-		StoragePath: storagePath,
+		StoragePath: EncodeStorageLocator(locator.Provider, locator.Key),
 		Mime:        mime,
 		Bytes:       len(payload),
 		SHA256:      hex.EncodeToString(sum[:]),
@@ -236,7 +356,6 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 // DeleteObjects strictly removes every non-empty path. All paths are
 // attempted even when one deletion fails; errors are returned to the caller.
 func (s *StorageService) DeleteObjects(ctx context.Context, paths ...string) error {
-	store := s.objectStoreClient()
 	needsDeletion := false
 	for _, storagePath := range paths {
 		if strings.TrimSpace(storagePath) != "" {
@@ -247,17 +366,29 @@ func (s *StorageService) DeleteObjects(ctx context.Context, paths ...string) err
 	if !needsDeletion {
 		return nil
 	}
-	if store == nil {
-		return fmt.Errorf("storage object store is not configured")
-	}
-
 	var errs []error
 	for _, storagePath := range paths {
 		if strings.TrimSpace(storagePath) == "" {
 			continue
 		}
-		if err := store.Delete(ctx, storagePath); err != nil {
-			errs = append(errs, fmt.Errorf("failed to delete object %q: %w", storagePath, err))
+		locator, err := ParseStorageLocator(storagePath)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		uploader := s.uploaderFor(locator)
+		if uploader == nil && s.objectStore == nil {
+			errs = append(errs, fmt.Errorf("storage provider %q is not configured", locator.Provider))
+			continue
+		}
+		var deleteErr error
+		if uploader != nil {
+			deleteErr = uploader.Delete(ctx, locator.Key)
+		} else {
+			deleteErr = s.objectStore.Delete(ctx, locator.Key)
+		}
+		if deleteErr != nil {
+			errs = append(errs, fmt.Errorf("failed to delete object %q: %w", storagePath, deleteErr))
 		}
 	}
 	return errors.Join(errs...)
@@ -315,36 +446,41 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 	if storagePath == "" {
 		storagePath = imageStoragePath(mime, "")
 	}
+	locator, err := s.writeLocator(storagePath)
+	if err != nil {
+		return nil, err
+	}
 
 	if s.processor == nil {
 		return nil, fmt.Errorf("image processor not configured")
 	}
 
-	processed, err := s.processor.ProcessImage(data, storagePath)
+	processed, err := s.processor.ProcessImage(data, locator.Key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process image: %w", err)
 	}
 
-	if s.uploader == nil {
+	uploader := s.uploaderFor(locator)
+	if uploader == nil {
 		return nil, fmt.Errorf("storage uploader is not configured")
 	}
 
 	uploadedKeys := make([]string, 0, 3)
 
-	originalURL, err := s.uploader.Upload(ctx, processed.Original.Path, processed.Original.Data, processed.Original.Mime)
+	originalURL, err := uploader.Upload(ctx, processed.Original.Path, processed.Original.Data, processed.Original.Mime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload original: %w", err)
 	}
-	uploadedKeys = append(uploadedKeys, processed.Original.Path)
+	uploadedKeys = append(uploadedKeys, EncodeStorageLocator(locator.Provider, processed.Original.Path))
 
-	previewURL, err := s.uploader.Upload(ctx, processed.Preview.Path, processed.Preview.Data, processed.Preview.Mime)
+	previewURL, err := uploader.Upload(ctx, processed.Preview.Path, processed.Preview.Data, processed.Preview.Mime)
 	if err != nil {
 		s.cleanupUploaded(uploadedKeys)
 		return nil, fmt.Errorf("failed to upload preview: %w", err)
 	}
-	uploadedKeys = append(uploadedKeys, processed.Preview.Path)
+	uploadedKeys = append(uploadedKeys, EncodeStorageLocator(locator.Provider, processed.Preview.Path))
 
-	thumbnailURL, err := s.uploader.Upload(ctx, processed.Thumbnail.Path, processed.Thumbnail.Data, processed.Thumbnail.Mime)
+	thumbnailURL, err := uploader.Upload(ctx, processed.Thumbnail.Path, processed.Thumbnail.Data, processed.Thumbnail.Mime)
 	if err != nil {
 		s.cleanupUploaded(uploadedKeys)
 		return nil, fmt.Errorf("failed to upload thumbnail: %w", err)
@@ -352,11 +488,11 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 
 	return &StoredImage{
 		PublicURL:     originalURL,
-		StoragePath:   processed.Original.Path,
+		StoragePath:   EncodeStorageLocator(locator.Provider, processed.Original.Path),
 		PreviewURL:    previewURL,
-		PreviewPath:   processed.Preview.Path,
+		PreviewPath:   EncodeStorageLocator(locator.Provider, processed.Preview.Path),
 		ThumbnailURL:  thumbnailURL,
-		ThumbnailPath: processed.Thumbnail.Path,
+		ThumbnailPath: EncodeStorageLocator(locator.Provider, processed.Thumbnail.Path),
 		Width:         processed.Width,
 		Height:        processed.Height,
 		Bytes:         processed.Original.Bytes,
@@ -365,13 +501,10 @@ func (s *StorageService) StoreFromBufferAtPath(ctx context.Context, data []byte,
 }
 
 func (s *StorageService) cleanupUploaded(keys []string) {
-	if s.uploader == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for _, key := range keys {
-		if err := s.uploader.Delete(ctx, key); err != nil {
+		if err := s.DeleteObjects(ctx, key); err != nil {
 			log.Printf("[image-storage] failed to clean up uploaded object %s: %v", key, err)
 		}
 	}
@@ -391,16 +524,10 @@ func (s *StorageService) cleanupStorageObjects(paths ...*string) {
 	if len(orphans) == 0 {
 		return
 	}
-	if s.uploader == nil {
-		for _, p := range orphans {
-			log.Printf("[image-storage] S3 uploader not configured; orphaned object: %s", p)
-		}
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for _, p := range orphans {
-		if err := s.uploader.Delete(ctx, p); err != nil {
+		if err := s.DeleteObjects(ctx, p); err != nil {
 			log.Printf("[image-storage] failed to delete orphaned S3 object %s: %v", p, err)
 		}
 	}
@@ -429,33 +556,41 @@ func (s *StorageService) ListObjects(ctx context.Context, prefix string) ([]Stor
 
 // DownloadImage downloads a stored image from S3-compatible storage.
 func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) (*DownloadedImage, error) {
-	if s.uploader != nil && s.uploader.client != nil {
-		resp, err := s.uploader.client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(s.uploader.bucket),
-			Key:    aws.String(storagePath),
+	locator, err := ParseStorageLocator(storagePath)
+	if err != nil {
+		return nil, err
+	}
+	uploader := s.uploaderFor(locator)
+	if uploader != nil && uploader.client != nil {
+		resp, err := uploader.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(uploader.bucket),
+			Key:    aws.String(locator.Key),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to download from storage: %w", err)
+			// Legacy paths are unprefixed and historically lived in Supabase.
+			// If the preferred provider cannot serve one, try every other
+			// configured provider before returning the original error.
+			if !strings.Contains(storagePath, "://") && s.uploaders != nil {
+				for provider, fallback := range s.uploaders {
+					if provider == locator.Provider || fallback == nil || fallback.client == nil {
+						continue
+					}
+					fallbackResp, fallbackErr := fallback.client.GetObject(ctx, &s3.GetObjectInput{
+						Bucket: aws.String(fallback.bucket),
+						Key:    aws.String(locator.Key),
+					})
+					if fallbackErr == nil {
+						return readDownloadedImage(fallbackResp, locator.Key)
+					}
+				}
+			}
+			return nil, fmt.Errorf("failed to download from %s: %w", locator.Provider, err)
 		}
-		defer resp.Body.Close()
-
-		data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
-		if err != nil {
-			return nil, fmt.Errorf("failed to read storage response: %w", err)
-		}
-
-		mime := ""
-		if resp.ContentType != nil {
-			mime = *resp.ContentType
-		}
-		if mime == "" {
-			mime = mimeFromStoragePath(storagePath)
-		}
-		return &DownloadedImage{Data: data, Mime: mime}, nil
+		return readDownloadedImage(resp, locator.Key)
 	}
 
 	// Fallback: try public URL
-	if s.uploader == nil {
+	if uploader == nil {
 		return nil, fmt.Errorf("storage is not configured")
 	}
 	publicURL := s.getPublicURL(storagePath)
@@ -485,6 +620,25 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 	}
 
 	mime := resp.Header.Get("Content-Type")
+	if mime == "" {
+		mime = mimeFromStoragePath(storagePath)
+	}
+	return &DownloadedImage{Data: data, Mime: mime}, nil
+}
+
+func readDownloadedImage(resp *s3.GetObjectOutput, storagePath string) (*DownloadedImage, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("storage returned an empty response")
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage response: %w", err)
+	}
+	mime := ""
+	if resp.ContentType != nil {
+		mime = *resp.ContentType
+	}
 	if mime == "" {
 		mime = mimeFromStoragePath(storagePath)
 	}
@@ -879,11 +1033,13 @@ func (s *StorageService) getPublicURL(storagePath string) string {
 	if storagePath == "" {
 		return ""
 	}
-	if s.uploader != nil {
-		return s.uploader.PublicURL(storagePath)
+	if locator, err := ParseStorageLocator(storagePath); err == nil {
+		if uploader := s.uploaderFor(locator); uploader != nil {
+			return uploader.PublicURL(locator.Key)
+		}
 	}
 	// Fallback to proxy URL
-	return "/api/image/storage/" + storagePath
+	return "/api/image/storage/" + url.PathEscape(storagePath)
 }
 
 func getExtension(mime string) string {

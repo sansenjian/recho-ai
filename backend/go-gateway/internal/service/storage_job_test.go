@@ -231,8 +231,8 @@ func TestStageFromBufferReturnsChecksumAndExactPath(t *testing.T) {
 	if got.SHA256 != hex.EncodeToString(wantSum[:]) {
 		t.Fatalf("checksum = %q, want %q", got.SHA256, hex.EncodeToString(wantSum[:]))
 	}
-	if got.StoragePath != "exact/path/output.webp" {
-		t.Fatalf("storage path = %q, want exact supplied path", got.StoragePath)
+	if got.StoragePath != "supabase://exact/path/output.webp" {
+		t.Fatalf("storage path = %q, want provider-aware path", got.StoragePath)
 	}
 	if got.Mime != "image/webp" {
 		t.Fatalf("mime = %q, want image/webp", got.Mime)

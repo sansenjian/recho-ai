@@ -64,6 +64,7 @@ type StorageObject struct {
 var (
 	newS3UploaderOnce sync.Once
 	globalUploader    *S3Uploader
+	globalUploaders   map[StorageProvider]*S3Uploader
 )
 
 // NewS3Uploader creates a new S3 uploader from config.
@@ -315,20 +316,34 @@ func (u *S3Uploader) Provider() StorageProvider {
 // S3UploaderFromEnv creates an S3Uploader from environment variables.
 // It prefers Tencent COS when configured, otherwise falls back to Supabase Storage.
 func S3UploaderFromEnv() *S3Uploader {
+	S3UploadersFromEnv()
+	return globalUploader
+}
+
+// S3UploadersFromEnv initializes every configured storage provider. The
+// preferred uploader remains Tencent COS for new writes, while the complete
+// map allows legacy Supabase objects to remain readable after a migration.
+func S3UploadersFromEnv() map[StorageProvider]*S3Uploader {
 	newS3UploaderOnce.Do(func() {
+		globalUploaders = make(map[StorageProvider]*S3Uploader)
 		if cfg, ok := cosConfigFromEnv(); ok {
-			globalUploader = NewS3Uploader(cfg)
+			globalUploaders[StorageProviderCos] = NewS3Uploader(cfg)
 			log.Printf("[s3uploader] configured for Tencent COS: %s", cfg.Bucket)
-			return
 		}
 		if cfg, ok := supabaseConfigFromEnv(); ok {
-			globalUploader = NewS3Uploader(cfg)
+			globalUploaders[StorageProviderSupabase] = NewS3Uploader(cfg)
 			log.Printf("[s3uploader] configured for Supabase Storage: %s", cfg.Bucket)
-			return
 		}
-		log.Println("[s3uploader] no storage provider configured")
+		if uploader := globalUploaders[StorageProviderCos]; uploader != nil {
+			globalUploader = uploader
+		} else {
+			globalUploader = globalUploaders[StorageProviderSupabase]
+		}
+		if globalUploader == nil {
+			log.Println("[s3uploader] no storage provider configured")
+		}
 	})
-	return globalUploader
+	return globalUploaders
 }
 
 func cosConfigFromEnv() (S3Config, bool) {
