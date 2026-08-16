@@ -183,7 +183,7 @@ func (u *S3Uploader) uploadREST(ctx context.Context, key string, data []byte, co
 	if err != nil {
 		return "", fmt.Errorf("failed to upload %s via Supabase REST: %w", key, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("failed to upload %s via Supabase REST: %s", key, readRESTError(resp))
 	}
@@ -369,7 +369,7 @@ func (u *S3Uploader) deleteREST(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete %s via Supabase REST: %w", key, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("failed to delete %s via Supabase REST: %s", key, readRESTError(resp))
 	}
@@ -426,7 +426,6 @@ type supabaseRESTListRequest struct {
 
 type supabaseRESTObject struct {
 	Name      string `json:"name"`
-	Key       string `json:"key"`
 	UpdatedAt string `json:"updated_at"`
 }
 
@@ -474,10 +473,9 @@ func (u *S3Uploader) listREST(ctx context.Context, prefix string) ([]StorageObje
 			return nil, fmt.Errorf("failed to decode Supabase object list: %w", decodeErr)
 		}
 		for _, entry := range page.Objects {
-			name := strings.TrimPrefix(entry.Key, "/")
-			if name == "" {
-				name = strings.TrimPrefix(entry.Name, "/")
-			}
+			// list-v2's `key` field is a split_part-derived path segment, not
+			// the full object path; only `name` carries the complete key.
+			name := strings.TrimPrefix(entry.Name, "/")
 			if prefix != "" && !strings.HasPrefix(name, strings.Trim(prefix, "/")+"/") {
 				name = strings.Trim(strings.Trim(prefix, "/")+"/"+name, "/")
 			}
@@ -488,7 +486,7 @@ func (u *S3Uploader) listREST(ctx context.Context, prefix string) ([]StorageObje
 			return objects, nil
 		}
 		if page.NextCursor == cursor {
-			return nil, fmt.Errorf("Supabase object listing returned a repeated cursor")
+			return nil, fmt.Errorf("supabase object listing returned a repeated cursor")
 		}
 		cursor = page.NextCursor
 	}
@@ -510,6 +508,28 @@ func (u *S3Uploader) Download(ctx context.Context, key string) (*DownloadedImage
 		return nil, err
 	}
 	return readDownloadedImage(resp, key)
+}
+
+func readDownloadedImage(resp *s3.GetObjectOutput, storagePath string) (*DownloadedImage, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("storage returned an empty response")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage response: %w", err)
+	}
+	if len(data) > maxImageSize {
+		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
+	}
+	mime := ""
+	if resp.ContentType != nil {
+		mime = *resp.ContentType
+	}
+	if mime == "" {
+		mime = mimeFromStoragePath(storagePath)
+	}
+	return &DownloadedImage{Data: data, Mime: mime}, nil
 }
 
 func (u *S3Uploader) downloadREST(ctx context.Context, key string) (*DownloadedImage, error) {
@@ -588,10 +608,11 @@ func (u *S3Uploader) PublicURL(key string) string {
 }
 
 func (u *S3Uploader) publicURL(key string) string {
+	escaped := escapeStoragePath(key)
 	if u.publicBase == "" {
-		return fmt.Sprintf("/api/image/storage/%s", key)
+		return fmt.Sprintf("/api/image/storage/%s", escaped)
 	}
-	return fmt.Sprintf("%s/%s", u.publicBase, key)
+	return fmt.Sprintf("%s/%s", u.publicBase, escaped)
 }
 
 // Provider returns the configured storage provider.
@@ -625,12 +646,14 @@ func S3UploadersFromEnv() map[StorageProvider]*S3Uploader {
 		} else if cfg, ok := supabaseRESTConfigFromEnv(); ok {
 			globalUploaders[StorageProviderSupabase] = NewSupabaseRESTUploader(cfg)
 			if enabled, missing := supabaseS3ConfigStatus(); enabled && len(missing) > 0 {
-				log.Printf("[s3uploader] Supabase S3 incomplete; using Storage REST fallback (missing: %s)", strings.Join(missing, ", "))
+				log.Printf("[s3uploader] WARNING: Supabase S3 settings incomplete, falling back to the Storage REST API which uses the higher-privilege service-role key (missing: %s)", strings.Join(missing, ", "))
 			} else {
 				log.Printf("[s3uploader] configured for Supabase Storage REST fallback: %s", cfg.Bucket)
 			}
 		} else if enabled, missing := supabaseS3ConfigStatus(); enabled && len(missing) > 0 {
 			log.Printf("[s3uploader] Supabase Storage disabled; missing S3 and REST configuration: %s, SUPABASE_SERVICE_ROLE_KEY", strings.Join(missing, ", "))
+		} else {
+			log.Println("[s3uploader] Supabase Storage disabled; no S3 or REST configuration found")
 		}
 		if uploader := globalUploaders[StorageProviderCos]; uploader != nil {
 			globalUploader = uploader

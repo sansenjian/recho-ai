@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -738,6 +737,7 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 					if fallbackErr == nil {
 						return fallbackImage, nil
 					}
+					log.Printf("[storage] fallback download from %s failed for %s: %v", provider, locator.Key, fallbackErr)
 				}
 			}
 			return nil, fmt.Errorf("failed to download from %s: %w", locator.Provider, err)
@@ -776,28 +776,6 @@ func (s *StorageService) DownloadImage(ctx context.Context, storagePath string) 
 	}
 
 	mime := resp.Header.Get("Content-Type")
-	if mime == "" {
-		mime = mimeFromStoragePath(storagePath)
-	}
-	return &DownloadedImage{Data: data, Mime: mime}, nil
-}
-
-func readDownloadedImage(resp *s3.GetObjectOutput, storagePath string) (*DownloadedImage, error) {
-	if resp == nil || resp.Body == nil {
-		return nil, fmt.Errorf("storage returned an empty response")
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read storage response: %w", err)
-	}
-	if len(data) > maxImageSize {
-		return nil, fmt.Errorf("image exceeds maximum size of %d bytes", maxImageSize)
-	}
-	mime := ""
-	if resp.ContentType != nil {
-		mime = *resp.ContentType
-	}
 	if mime == "" {
 		mime = mimeFromStoragePath(storagePath)
 	}

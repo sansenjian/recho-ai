@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestSupabaseRESTUploaderObjectLifecycle(t *testing.T) {
 	if uploadedBody != "uploaded-image" {
 		t.Fatalf("uploaded body = %q", uploadedBody)
 	}
-	if publicURL != server.URL+"/public/recho-images/"+objectKey {
+	if publicURL != server.URL+"/public/recho-images/references/folder%20image.webp" {
 		t.Fatalf("public URL = %q", publicURL)
 	}
 
@@ -92,6 +93,72 @@ func TestSupabaseRESTUploaderObjectLifecycle(t *testing.T) {
 	}
 }
 
+func TestSupabaseRESTListObjectsPaginatesAndPreservesFullPaths(t *testing.T) {
+	const token = "service-role-key"
+	var listRequests []supabaseRESTListRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/storage/v1/object/list-v2/recho-images" {
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		var payload supabaseRESTListRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode list payload: %v", err)
+		}
+		listRequests = append(listRequests, payload)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case payload.Prefix == "":
+			_, _ = w.Write([]byte(`{"hasNext":false,"objects":[{"name":"generated/generated/nested.webp","updated_at":"2026-08-16T10:00:00Z"},{"name":"root.webp","updated_at":"2026-08-16T10:01:00Z"}]}`))
+		case payload.Prefix == "generated" && payload.Cursor == "":
+			_, _ = w.Write([]byte(`{"hasNext":true,"nextCursor":"cursor-1","objects":[{"name":"generated/generated/nested.webp","updated_at":"2026-08-16T10:00:00Z"}]}`))
+		case payload.Prefix == "generated" && payload.Cursor == "cursor-1":
+			_, _ = w.Write([]byte(`{"hasNext":false,"objects":[{"name":"generated/image.webp","updated_at":"2026-08-16T10:02:00Z"}]}`))
+		default:
+			http.Error(w, "unexpected cursor", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	uploader := NewSupabaseRESTUploader(SupabaseRESTConfig{
+		SupabaseURL:    server.URL,
+		Bucket:         "recho-images",
+		ServiceRoleKey: token,
+		PublicBase:     server.URL + "/public/recho-images",
+	})
+	uploader.restClient = server.Client()
+
+	objects, err := uploader.ListObjects(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListObjects(\"\") error = %v", err)
+	}
+	wantRoot := []string{"generated/generated/nested.webp", "root.webp"}
+	gotRoot := make([]string, 0, len(objects))
+	for _, object := range objects {
+		gotRoot = append(gotRoot, object.Path)
+	}
+	if !reflect.DeepEqual(gotRoot, wantRoot) {
+		t.Fatalf("root listing = %v, want %v", gotRoot, wantRoot)
+	}
+
+	listRequests = nil
+	objects, err = uploader.ListObjects(context.Background(), "generated")
+	if err != nil {
+		t.Fatalf("ListObjects(\"generated\") error = %v", err)
+	}
+	wantGenerated := []string{"generated/generated/nested.webp", "generated/image.webp"}
+	gotGenerated := make([]string, 0, len(objects))
+	for _, object := range objects {
+		gotGenerated = append(gotGenerated, object.Path)
+	}
+	if !reflect.DeepEqual(gotGenerated, wantGenerated) {
+		t.Fatalf("prefixed listing = %v, want %v", gotGenerated, wantGenerated)
+	}
+	if len(listRequests) != 2 || listRequests[0].Cursor != "" || listRequests[1].Cursor != "cursor-1" {
+		t.Fatalf("list requests = %#v, want cursor pagination over two pages", listRequests)
+	}
+}
+
 func TestSupabaseRESTConfigUsesExistingServiceRoleSettings(t *testing.T) {
 	originalURL := config.SupabaseURL
 	originalServiceRoleKey := config.SupabaseServiceRoleKey
@@ -111,6 +178,9 @@ func TestSupabaseRESTConfigUsesExistingServiceRoleSettings(t *testing.T) {
 	}
 	if cfg.SupabaseURL != config.SupabaseURL || cfg.ServiceRoleKey != config.SupabaseServiceRoleKey || cfg.Bucket != config.SupabaseImageBucket {
 		t.Fatalf("REST config = %#v", cfg)
+	}
+	if cfg.PublicBase != "https://project.supabase.co/storage/v1/object/public/recho-images" {
+		t.Fatalf("public base = %q, want trailing slash trimmed", cfg.PublicBase)
 	}
 }
 
@@ -265,6 +335,7 @@ func TestSupabaseConfigRequiresAllDedicatedS3Settings(t *testing.T) {
 		name  string
 		clear func()
 	}{
+		{name: "supabase URL", clear: func() { config.SupabaseURL = "" }},
 		{name: "endpoint", clear: func() { config.SupabaseS3Endpoint = "" }},
 		{name: "region", clear: func() { config.SupabaseS3Region = "" }},
 		{name: "access key ID", clear: func() { config.SupabaseS3AccessKeyID = "" }},
@@ -323,8 +394,8 @@ func TestSupabaseS3ConfigStatusDistinguishesDisabledFromIncomplete(t *testing.T)
 	if len(missing) != len(want) {
 		t.Fatalf("missing settings = %v, want %v", missing, want)
 	}
-	for i := range want {
-		if missing[i] != want[i] {
+	for _, setting := range want {
+		if !slices.Contains(missing, setting) {
 			t.Fatalf("missing settings = %v, want %v", missing, want)
 		}
 	}
