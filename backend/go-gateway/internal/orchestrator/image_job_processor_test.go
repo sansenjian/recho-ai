@@ -215,6 +215,10 @@ func (s *processorStorage) StoreFromBufferAtPath(_ context.Context, _ []byte, _ 
 	}
 	return s.stored, nil
 }
+
+func (s *processorStorage) StoreReferenceFromBufferAtPath(_ context.Context, _ []byte, _ string, _ string) (*service.StoredImage, error) {
+	return nil, nil
+}
 func (s *processorStorage) StageFromURL(context.Context, string, string) (*service.StagedImage, error) {
 	return nil, errors.New("unexpected URL stage")
 }

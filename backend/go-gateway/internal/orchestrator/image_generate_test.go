@@ -78,6 +78,10 @@ func (s *testStorageService) StoreFromBufferAtPath(ctx context.Context, data []b
 	return storedImageForHint(storagePath), nil
 }
 
+func (s *testStorageService) StoreReferenceFromBufferAtPath(ctx context.Context, data []byte, mime, storagePath string) (*service.StoredImage, error) {
+	return s.StoreFromBufferAtPath(ctx, data, mime, storagePath)
+}
+
 func (s *testStorageService) CropGeneratedImageFromURL(ctx context.Context, sourceURL string, ratioWidth, ratioHeight int) (*service.CroppedImage, error) {
 	if s.cropURL != nil {
 		return s.cropURL(ctx, sourceURL, ratioWidth, ratioHeight)
