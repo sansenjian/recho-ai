@@ -39,6 +39,10 @@ var SupabaseJWTIssuer = FirstNonEmpty(
 	os.Getenv("SUPABASE_URL"),
 )
 var SupabaseImageBucket = parseEnvString("SUPABASE_IMAGE_BUCKET", "recho-images")
+var SupabaseS3Endpoint = os.Getenv("SUPABASE_S3_ENDPOINT")
+var SupabaseS3Region = os.Getenv("SUPABASE_S3_REGION")
+var SupabaseS3AccessKeyID = os.Getenv("SUPABASE_S3_ACCESS_KEY_ID")
+var SupabaseS3SecretAccessKey = os.Getenv("SUPABASE_S3_SECRET_ACCESS_KEY")
 
 // Tencent COS config
 var TencentCosSecretID = os.Getenv("TENCENT_COS_SECRET_ID")
