@@ -395,18 +395,23 @@ func cosConfigFromEnv() (S3Config, bool) {
 }
 
 func supabaseConfigFromEnv() (S3Config, bool) {
-	if config.SupabaseURL == "" || config.SupabaseServiceRoleKey == "" {
+	if config.SupabaseURL == "" ||
+		config.SupabaseImageBucket == "" ||
+		config.SupabaseS3Endpoint == "" ||
+		config.SupabaseS3Region == "" ||
+		config.SupabaseS3AccessKeyID == "" ||
+		config.SupabaseS3SecretAccessKey == "" {
 		return S3Config{}, false
 	}
 
 	publicBase := fmt.Sprintf("%s/storage/v1/object/public/%s", strings.TrimRight(config.SupabaseURL, "/"), config.SupabaseImageBucket)
 	return S3Config{
 		Provider:     StorageProviderSupabase,
-		Endpoint:     fmt.Sprintf("%s/storage/v1/s3", strings.TrimRight(config.SupabaseURL, "/")),
-		Region:       "auto",
+		Endpoint:     strings.TrimRight(config.SupabaseS3Endpoint, "/"),
+		Region:       config.SupabaseS3Region,
 		Bucket:       config.SupabaseImageBucket,
-		AccessKey:    config.SupabaseServiceRoleKey,
-		SecretKey:    config.SupabaseServiceRoleKey,
+		AccessKey:    config.SupabaseS3AccessKeyID,
+		SecretKey:    config.SupabaseS3SecretAccessKey,
 		PublicBase:   publicBase,
 		UsePathStyle: true,
 	}, true

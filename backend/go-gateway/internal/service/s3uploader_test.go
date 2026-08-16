@@ -65,28 +65,105 @@ func TestS3UploaderPathStyleKeepsBucketOutOfEndpointHost(t *testing.T) {
 	}
 }
 
-func TestSupabaseConfigKeepsOriginalEndpointAndUsesPathStyle(t *testing.T) {
+func TestSupabaseConfigUsesDedicatedS3Credentials(t *testing.T) {
 	originalURL := config.SupabaseURL
-	originalKey := config.SupabaseServiceRoleKey
 	originalBucket := config.SupabaseImageBucket
+	originalEndpoint := config.SupabaseS3Endpoint
+	originalRegion := config.SupabaseS3Region
+	originalAccessKeyID := config.SupabaseS3AccessKeyID
+	originalSecretAccessKey := config.SupabaseS3SecretAccessKey
 	t.Cleanup(func() {
 		config.SupabaseURL = originalURL
-		config.SupabaseServiceRoleKey = originalKey
 		config.SupabaseImageBucket = originalBucket
+		config.SupabaseS3Endpoint = originalEndpoint
+		config.SupabaseS3Region = originalRegion
+		config.SupabaseS3AccessKeyID = originalAccessKeyID
+		config.SupabaseS3SecretAccessKey = originalSecretAccessKey
 	})
 
 	config.SupabaseURL = "https://project.supabase.co/"
-	config.SupabaseServiceRoleKey = "service-role-key"
 	config.SupabaseImageBucket = "recho-images"
+	config.SupabaseS3Endpoint = "https://project.storage.supabase.co/storage/v1/s3/"
+	config.SupabaseS3Region = "ap-southeast-1"
+	config.SupabaseS3AccessKeyID = "s3-access-key-id"
+	config.SupabaseS3SecretAccessKey = "s3-secret-access-key"
 
 	cfg, ok := supabaseConfigFromEnv()
 	if !ok {
 		t.Fatal("supabaseConfigFromEnv() did not return a configured uploader")
 	}
-	if cfg.Endpoint != "https://project.supabase.co/storage/v1/s3" {
-		t.Fatalf("endpoint = %q, want original project endpoint", cfg.Endpoint)
+	if cfg.Endpoint != "https://project.storage.supabase.co/storage/v1/s3" {
+		t.Fatalf("endpoint = %q, want configured direct storage endpoint", cfg.Endpoint)
+	}
+	if cfg.Region != "ap-southeast-1" {
+		t.Fatalf("region = %q, want configured S3 region", cfg.Region)
+	}
+	if cfg.AccessKey != "s3-access-key-id" {
+		t.Fatalf("access key = %q, want dedicated S3 access key ID", cfg.AccessKey)
+	}
+	if cfg.SecretKey != "s3-secret-access-key" {
+		t.Fatal("secret key does not use the dedicated S3 secret access key")
 	}
 	if !cfg.UsePathStyle {
 		t.Fatal("Supabase S3 uploader must use path-style addressing")
+	}
+}
+
+func TestSupabaseConfigRequiresAllDedicatedS3Settings(t *testing.T) {
+	originalURL := config.SupabaseURL
+	originalBucket := config.SupabaseImageBucket
+	originalEndpoint := config.SupabaseS3Endpoint
+	originalRegion := config.SupabaseS3Region
+	originalAccessKeyID := config.SupabaseS3AccessKeyID
+	originalSecretAccessKey := config.SupabaseS3SecretAccessKey
+	t.Cleanup(func() {
+		config.SupabaseURL = originalURL
+		config.SupabaseImageBucket = originalBucket
+		config.SupabaseS3Endpoint = originalEndpoint
+		config.SupabaseS3Region = originalRegion
+		config.SupabaseS3AccessKeyID = originalAccessKeyID
+		config.SupabaseS3SecretAccessKey = originalSecretAccessKey
+	})
+
+	base := struct {
+		url       string
+		bucket    string
+		endpoint  string
+		region    string
+		accessKey string
+		secretKey string
+	}{
+		url:       "https://project.supabase.co",
+		bucket:    "recho-images",
+		endpoint:  "https://project.storage.supabase.co/storage/v1/s3",
+		region:    "ap-southeast-1",
+		accessKey: "s3-access-key-id",
+		secretKey: "s3-secret-access-key",
+	}
+
+	tests := []struct {
+		name  string
+		clear func()
+	}{
+		{name: "endpoint", clear: func() { config.SupabaseS3Endpoint = "" }},
+		{name: "region", clear: func() { config.SupabaseS3Region = "" }},
+		{name: "access key ID", clear: func() { config.SupabaseS3AccessKeyID = "" }},
+		{name: "secret access key", clear: func() { config.SupabaseS3SecretAccessKey = "" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config.SupabaseURL = base.url
+			config.SupabaseImageBucket = base.bucket
+			config.SupabaseS3Endpoint = base.endpoint
+			config.SupabaseS3Region = base.region
+			config.SupabaseS3AccessKeyID = base.accessKey
+			config.SupabaseS3SecretAccessKey = base.secretKey
+			tt.clear()
+
+			if _, ok := supabaseConfigFromEnv(); ok {
+				t.Fatalf("supabaseConfigFromEnv() configured uploader without %s", tt.name)
+			}
+		})
 	}
 }

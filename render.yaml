@@ -50,6 +50,14 @@ services:
         sync: false
       - key: SUPABASE_IMAGE_BUCKET
         value: recho-images
+      - key: SUPABASE_S3_ENDPOINT
+        sync: false
+      - key: SUPABASE_S3_REGION
+        sync: false
+      - key: SUPABASE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: SUPABASE_S3_SECRET_ACCESS_KEY
+        sync: false
       - key: ADMIN_USER_IDS
         sync: false
       - key: ADMIN_USER_EMAILS
