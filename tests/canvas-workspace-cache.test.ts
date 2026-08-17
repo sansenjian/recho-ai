@@ -229,6 +229,36 @@ describe('canvas workspace cache', () => {
     expect(next.snapshots.has('workspace_3')).toBe(true)
   })
 
+  it('removes the last active workspace and selects the previous cached workspace', () => {
+    const emptySnapshot: CanvasWorkspaceSnapshot = {
+      document: { nodes: [], connections: [], selectedNodeId: null },
+      viewport: { x: 0, y: 0, zoom: 1 },
+    }
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_2', name: '画布 2' },
+        { id: 'workspace_3', name: '画布 3' },
+      ],
+      activeWorkspaceId: 'workspace_3',
+      snapshots: new Map([
+        ['workspace_1', emptySnapshot],
+        ['workspace_2', emptySnapshot],
+        ['workspace_3', emptySnapshot],
+      ]),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_3')
+
+    expect(next.workspaces).toEqual([
+      { id: 'workspace_1', name: '画布 1' },
+      { id: 'workspace_2', name: '画布 2' },
+    ])
+    expect(next.activeWorkspaceId).toBe('workspace_2')
+    expect(next.snapshots.has('workspace_3')).toBe(false)
+    expect(next.snapshots.get('workspace_2')).toEqual(emptySnapshot)
+  })
+
   it('keeps the active workspace when deleting a different workspace', () => {
     const state = {
       workspaces: [
