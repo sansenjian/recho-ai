@@ -7,6 +7,7 @@ import {
   loadCanvasWorkspaceState,
   parseCanvasWorkspaceSnapshots,
   persistCanvasWorkspaceState,
+  removeCanvasWorkspace,
   serializeCanvasWorkspaceSnapshots,
   type CanvasWorkspaceSnapshot,
 } from '../src/lib/canvas-workspace-cache'
@@ -198,5 +199,59 @@ describe('canvas workspace cache', () => {
       activeWorkspaceId: 'workspace_1',
       snapshots: new Map([['workspace_1', previous]]),
     })
+  })
+
+  it('removes the active workspace and selects the adjacent cached workspace', () => {
+    const emptySnapshot: CanvasWorkspaceSnapshot = {
+      document: { nodes: [], connections: [], selectedNodeId: null },
+      viewport: { x: 0, y: 0, zoom: 1 },
+    }
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_2', name: '画布 2' },
+        { id: 'workspace_3', name: '画布 3' },
+      ],
+      activeWorkspaceId: 'workspace_2',
+      snapshots: new Map([
+        ['workspace_1', emptySnapshot],
+        ['workspace_2', emptySnapshot],
+        ['workspace_3', emptySnapshot],
+      ]),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_2')
+
+    expect(next.workspaces.map(workspace => workspace.id)).toEqual(['workspace_1', 'workspace_3'])
+    expect(next.activeWorkspaceId).toBe('workspace_3')
+    expect(next.snapshots.has('workspace_2')).toBe(false)
+    expect(next.snapshots.has('workspace_1')).toBe(true)
+    expect(next.snapshots.has('workspace_3')).toBe(true)
+  })
+
+  it('keeps the active workspace when deleting a different workspace', () => {
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_2', name: '画布 2' },
+      ],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map<string, CanvasWorkspaceSnapshot>(),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_2')
+
+    expect(next.activeWorkspaceId).toBe('workspace_1')
+    expect(next.workspaces).toEqual([{ id: 'workspace_1', name: '画布 1' }])
+  })
+
+  it('keeps the last workspace so the canvas always has an active target', () => {
+    const state = {
+      workspaces: [{ id: 'workspace_1', name: '画布 1' }],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map<string, CanvasWorkspaceSnapshot>(),
+    }
+
+    expect(removeCanvasWorkspace(state, 'workspace_1')).toBe(state)
   })
 })

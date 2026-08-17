@@ -21,6 +21,7 @@ import { type CanvasExportDocument } from '../lib/canvas-document'
 import {
   loadCanvasWorkspaceState,
   persistCanvasWorkspaceState,
+  removeCanvasWorkspace,
   type CanvasWorkspace,
   type CanvasWorkspaceSnapshot,
 } from '../lib/canvas-workspace-cache'
@@ -91,6 +92,7 @@ import ImagioSidebar from './ImagioSidebar.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const props = defineProps<{
   workspaceMode?: WorkspaceMode
@@ -175,6 +177,16 @@ const activeCanvasWorkspaceId = ref(
   persistedCanvasWorkspaceState?.activeWorkspaceId ?? initialCanvasWorkspaces[0]?.id ?? '',
 )
 const canvasWorkspaceSnapshots = persistedCanvasWorkspaceState?.snapshots ?? new Map<string, CanvasWorkspaceSnapshot>()
+const pendingDeleteWorkspaceId = ref<string | null>(null)
+const pendingDeleteWorkspace = computed(() =>
+  canvasWorkspaces.value.find(workspace => workspace.id === pendingDeleteWorkspaceId.value) ?? null,
+)
+const deleteWorkspaceDialogOpen = computed({
+  get: () => pendingDeleteWorkspaceId.value !== null,
+  set: (open: boolean) => {
+    if (!open) pendingDeleteWorkspaceId.value = null
+  },
+})
 const activeCanvasWorkspaceSnapshot = canvasWorkspaceSnapshots.get(activeCanvasWorkspaceId.value)
 if (activeCanvasWorkspaceSnapshot) {
   replaceDocument(activeCanvasWorkspaceSnapshot.document)
@@ -1119,6 +1131,54 @@ function createCanvasWorkspace() {
   persistCanvasWorkspaces()
 }
 
+function requestDeleteCanvasWorkspace(id: string) {
+  if (canvasWorkspaces.value.length <= 1 || !canvasWorkspaces.value.some(workspace => workspace.id === id)) {
+    return
+  }
+  pendingDeleteWorkspaceId.value = id
+}
+
+function deleteCanvasWorkspace(id: string) {
+  if (canvasWorkspaces.value.length <= 1 || !canvasWorkspaces.value.some(workspace => workspace.id === id)) return
+
+  const deletingActiveWorkspace = id === activeCanvasWorkspaceId.value
+  flushCanvasWorkspacePersist()
+
+  const nextState = removeCanvasWorkspace({
+    workspaces: canvasWorkspaces.value,
+    activeWorkspaceId: activeCanvasWorkspaceId.value,
+    snapshots: canvasWorkspaceSnapshots,
+  }, id)
+  canvasWorkspaces.value = nextState.workspaces
+  canvasWorkspaceSnapshots.clear()
+  nextState.snapshots.forEach((snapshot, workspaceId) => {
+    canvasWorkspaceSnapshots.set(workspaceId, snapshot)
+  })
+
+  if (deletingActiveWorkspace) {
+    const nextWorkspace = nextState.workspaces.find(workspace => workspace.id === nextState.activeWorkspaceId)
+    if (!nextWorkspace) return
+    const nextSnapshot = canvasWorkspaceSnapshots.get(nextWorkspace.id) ?? {
+      document: createInitialCanvasDocumentState(),
+      viewport: { ...DEFAULT_CANVAS_VIEWPORT },
+    }
+    if (!canvasWorkspaceSnapshots.has(nextWorkspace.id)) {
+      canvasWorkspaceSnapshots.set(nextWorkspace.id, nextSnapshot)
+    }
+    activeCanvasWorkspaceId.value = nextState.activeWorkspaceId
+    replaceDocument(nextSnapshot.document)
+    viewport.value = { ...nextSnapshot.viewport }
+    dragState.value = null
+    panState.value = null
+    resizeState.value = null
+    closeContextMenu()
+    clearMeasuredNodes()
+  }
+
+  pendingDeleteWorkspaceId.value = null
+  persistCanvasWorkspaces()
+}
+
 function selectWorkspace(mode: WorkspaceMode, options: { emitChange?: boolean } = {}) {
   activeWorkspace.value = mode
   closeContextMenu()
@@ -1337,6 +1397,7 @@ onUnmounted(() => {
               @select-workspace="selectWorkspace"
               @select-canvas-workspace="activateCanvasWorkspace"
               @create-canvas-workspace="createCanvasWorkspace"
+              @delete-canvas-workspace="requestDeleteCanvasWorkspace"
               @select-image-mode="handleImageModeChange"
               @create-node="createNodeNearCenter"
               @use-history-image="useHistoryImage"
@@ -1671,5 +1732,18 @@ onUnmounted(() => {
       @preload-download="preloadViewerImageDownload"
       @download="downloadImageViewerImage"
     />
+
+    <Dialog v-model:open="deleteWorkspaceDialogOpen">
+      <DialogHeader>
+        <DialogTitle>删除画布？</DialogTitle>
+        <DialogDescription>
+          “{{ pendingDeleteWorkspace?.name }}”中的节点和本地缓存会一起删除，且无法恢复。
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="mt-6 gap-2">
+        <Button type="button" variant="outline" @click="deleteWorkspaceDialogOpen = false">取消</Button>
+        <Button type="button" variant="destructive" @click="pendingDeleteWorkspaceId && deleteCanvasWorkspace(pendingDeleteWorkspaceId)">删除</Button>
+      </DialogFooter>
+    </Dialog>
   </div>
 </template>

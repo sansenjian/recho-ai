@@ -47,6 +47,26 @@ export interface CanvasWorkspaceState {
   snapshots: Map<string, CanvasWorkspaceSnapshot>
 }
 
+export function removeCanvasWorkspace(
+  state: CanvasWorkspaceState,
+  workspaceId: string,
+): CanvasWorkspaceState {
+  if (state.workspaces.length <= 1) return state
+
+  const index = state.workspaces.findIndex(workspace => workspace.id === workspaceId)
+  if (index < 0) return state
+
+  const workspaces = state.workspaces.filter(workspace => workspace.id !== workspaceId)
+  const snapshots = new Map(state.snapshots)
+  snapshots.delete(workspaceId)
+
+  const activeWorkspaceId = state.activeWorkspaceId === workspaceId
+    ? workspaces[Math.min(index, workspaces.length - 1)]?.id ?? workspaces[0].id
+    : state.activeWorkspaceId
+
+  return { workspaces, activeWorkspaceId, snapshots }
+}
+
 interface CanvasWorkspaceStateEnvelope extends CanvasWorkspaceCacheEnvelope {
   workspaces: CanvasWorkspace[]
   activeWorkspaceId: string
