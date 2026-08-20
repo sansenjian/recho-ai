@@ -178,6 +178,7 @@ async function handleGenerate() {
       <div class="prompt-area">
         <textarea
           v-model="promptText"
+          aria-label="描述你想生成的图片"
           class="prompt-input"
           placeholder="描述你想生成的图片，或附加图片进行编辑......"
           rows="4"
@@ -198,6 +199,7 @@ async function handleGenerate() {
           <input
             ref="fileInputRef"
             class="reference-file-input"
+            aria-label="添加参考图"
             type="file"
             accept="image/*"
             multiple

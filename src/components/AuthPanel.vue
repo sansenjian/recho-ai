@@ -244,9 +244,11 @@ function onKeydown(e: KeyboardEvent) {
             </label>
 
             <label class="field-group">
-              <span class="field-label">密码</span>
+              <span id="auth-password-label" class="field-label">密码</span>
               <div class="pw-wrapper">
                 <input
+                  id="auth-password"
+                  aria-labelledby="auth-password-label"
                   v-model="passwordDraft"
                   :type="showPassword ? 'text' : 'password'"
                   :autocomplete="authMode === 'signIn' ? 'current-password' : 'new-password'"
@@ -316,9 +318,10 @@ function onKeydown(e: KeyboardEvent) {
             </div>
 
             <div class="redeem-group">
-              <span class="field-label">兑换码</span>
+              <label class="field-label" for="redeem-code">兑换码</label>
               <div class="redeem-row">
                 <input
+                  id="redeem-code"
                   v-model="redeemCodeDraft"
                   type="text"
                   autocomplete="off"

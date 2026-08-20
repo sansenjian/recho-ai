@@ -196,6 +196,7 @@ function onContextMenuBackdrop() {
       <Search class="h-[13px] w-[13px] shrink-0 text-muted-foreground" />
       <Input
         v-model="searchQuery"
+        aria-label="搜索会话"
         class="h-auto border-0 bg-transparent p-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:ring-offset-0"
         placeholder="搜索会话..."
         @keydown.escape="searchQuery = ''"
@@ -245,6 +246,7 @@ function onContextMenuBackdrop() {
           <span v-if="renamingGroup === section.groupId" class="min-w-0 flex-1" @click.stop>
             <Input
               v-model="renameValue"
+              aria-label="重命名分组"
               class="h-auto rounded bg-card px-1.5 py-0.5 text-[10px] font-semibold shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
               @keydown.enter.stop="confirmRename()"
               @keydown.escape.stop="renamingGroup = null"
