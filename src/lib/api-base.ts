@@ -36,30 +36,54 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function isIdempotentMethod(method?: string): boolean {
+  const m = (method || 'GET').toUpperCase()
+  return m === 'GET' || m === 'HEAD' || m === 'OPTIONS'
+}
+
+// 退避等待期间监听 signal：请求被取消时立即以 AbortError 中止，而不是干等完整休眠时长。
+function sleep(ms: number, signal: AbortSignal | null | undefined) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // 仅对幂等且不带请求体的方法（GET/HEAD/OPTIONS）自动重试：非幂等请求（如 POST 上传）
+  // 重试可能产生重复副作用，且这类方法复用同一 RequestInit 才会安全。
+  const canRetry = isIdempotentMethod(init.method)
   let lastResponse: Response | undefined
   let lastError: unknown
 
   for (let attempt = 0; attempt <= HIBERNATE_RETRY_ATTEMPTS; attempt += 1) {
     if (attempt > 0) {
       if (init.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
-      await sleep(HIBERNATE_RETRY_DELAYS_MS[attempt - 1] ?? HIBERNATE_RETRY_DELAYS_MS[0])
+      await sleep(HIBERNATE_RETRY_DELAYS_MS[attempt - 1] ?? HIBERNATE_RETRY_DELAYS_MS[0], init.signal)
     }
     try {
-      lastResponse = await fetch(url, init)
-      if (attempt < HIBERNATE_RETRY_ATTEMPTS && lastResponse.status === 503) {
+      const response = await fetch(url, init)
+      if (canRetry && attempt < HIBERNATE_RETRY_ATTEMPTS && response.status === 503) {
+        lastResponse = response
         continue
       }
-      return lastResponse
+      return response
     } catch (error) {
       if (isAbortError(error)) throw error
       // 真实网络类失败（如跨域打到休眠实例）以 TypeError 形式出现，
       // 普通业务错误不应触发重试。
-      if (!(error instanceof TypeError)) throw error
+      if (!canRetry || !(error instanceof TypeError)) throw error
       lastError = error
       if (attempt >= HIBERNATE_RETRY_ATTEMPTS) throw error
     }
