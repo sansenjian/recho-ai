@@ -244,10 +244,11 @@ function onKeydown(e: KeyboardEvent) {
             </label>
 
             <label class="field-group">
-              <span class="field-label">密码</span>
+              <span id="auth-password-label" class="field-label">密码</span>
               <div class="pw-wrapper">
                 <input
                   id="auth-password"
+                  aria-labelledby="auth-password-label"
                   v-model="passwordDraft"
                   :type="showPassword ? 'text' : 'password'"
                   :autocomplete="authMode === 'signIn' ? 'current-password' : 'new-password'"

@@ -121,6 +121,7 @@ function toggleImage(id: string, event: Event) {
         <input
           :value="userFilter"
           type="search"
+          aria-label="按用户 ID 筛选"
           placeholder="用户 ID"
           :disabled="loading"
           class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
