@@ -1,5 +1,5 @@
 import { computed, readonly, ref } from 'vue'
-import { apiUrl } from '../lib/api-base'
+import { apiFetch, apiUrl } from '../lib/api-base'
 
 export interface ImageModelOption {
   id: string
@@ -59,7 +59,7 @@ function normalizeConfig(value: unknown): PublicAppConfig {
 }
 
 async function fetchAppConfig() {
-  const response = await fetch(apiUrl('/api/config/app'))
+  const response = await apiFetch(apiUrl('/api/config/app'))
   if (!response.ok) {
     throw new Error('无法读取应用配置')
   }
