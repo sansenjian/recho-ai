@@ -133,6 +133,7 @@ function handleScroll(event: Event) {
           <input
             :value="query"
             type="search"
+            aria-label="搜索提示词、尺寸、参考图"
             placeholder="搜索提示词、尺寸、参考图"
             class="h-[34px] w-full rounded-lg border border-border bg-background pl-8 pr-3 text-[13px] font-medium text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring max-md:h-[38px]"
             @input="updateQuery"

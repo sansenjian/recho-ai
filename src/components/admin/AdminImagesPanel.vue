@@ -98,6 +98,7 @@ function toggleImage(id: string, event: Event) {
       <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
         <select
           :value="visibilityFilter"
+          aria-label="筛选作品状态"
           :disabled="loading"
           class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateVisibilityFilter"
@@ -108,6 +109,7 @@ function toggleImage(id: string, event: Event) {
         </select>
         <select
           :value="fundingFilter"
+          aria-label="筛选作品来源"
           :disabled="loading"
           class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateFundingFilter"
@@ -127,6 +129,7 @@ function toggleImage(id: string, event: Event) {
         <input
           :value="query"
           type="search"
+          aria-label="按提示词搜索"
           placeholder="提示词"
           :disabled="loading"
           class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
