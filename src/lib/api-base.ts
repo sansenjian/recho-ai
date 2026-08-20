@@ -61,9 +61,11 @@ function sleep(ms: number, signal: AbortSignal | null | undefined) {
 }
 
 export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  // 仅对幂等且不带请求体的方法（GET/HEAD/OPTIONS）自动重试：非幂等请求（如 POST 上传）
-  // 重试可能产生重复副作用，且这类方法复用同一 RequestInit 才会安全。
-  const canRetry = isIdempotentMethod(init.method)
+  // 仅对幂等且不带请求体的请求（GET/HEAD/OPTIONS）自动重试：
+  // - 非幂等请求（如 POST 上传）重试可能产生重复副作用；
+  // - 带请求体的请求可能是流式/一次性 body，重试时请求体已被消费，无法安全复用同一 RequestInit。
+  // 因此带 body 的请求一律不重试。
+  const canRetry = isIdempotentMethod(init.method) && !init.body
   let lastResponse: Response | undefined
   let lastError: unknown
 
