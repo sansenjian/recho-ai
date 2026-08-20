@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { apiUrl } from '../lib/api-base'
+import { apiFetch, apiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import { getAuthAccessToken } from './useAuthSession'
 
@@ -20,7 +20,7 @@ async function checkAdminAccess() {
 
   isCheckingAdmin.value = true
   try {
-    const response = await fetch(apiUrl('/api/admin/credits/me'), {
+    const response = await apiFetch(apiUrl('/api/admin/credits/me'), {
       headers: { Authorization: `Bearer ${token}` },
     })
     const data = await response.json().catch(() => ({}))

@@ -2,7 +2,7 @@ import { onScopeDispose, ref, toRaw, watch } from 'vue'
 import { getAuthAccessToken, getAuthIdentity, useAuthSession } from './useAuthSession'
 import { useCredits } from './useCredits'
 import { ensureAppConfig } from './useAppConfig'
-import { imageApiUrl } from '../lib/api-base'
+import { apiFetch, imageApiUrl } from '../lib/api-base'
 import { publicClientErrorMessage } from '../lib/safe-error'
 import type {
   GeneratedImage,
@@ -201,7 +201,7 @@ async function uploadReference(
   if (title) headers['x-reference-title'] = title
   if (fileName) headers['x-reference-filename'] = fileName
 
-  const response = await fetch(imageApiUrl('/api/image/references'), {
+  const response = await apiFetch(imageApiUrl('/api/image/references'), {
     method: 'POST',
     headers,
     body: blob,
