@@ -204,6 +204,7 @@ function skillIcon(name: string) {
 
         <Textarea
           v-model="inputValue"
+          aria-label="消息输入框"
           class="chat-input min-h-[76px] w-full resize-none border-0 bg-transparent px-5 pb-2 pt-[22px] text-lg leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-[54px] max-sm:px-3 max-sm:pb-2 max-sm:pt-3.5 max-sm:text-[15px]"
           :placeholder="activeSkill ? '输入消息...' : '要求后续变更'"
           rows="1"
