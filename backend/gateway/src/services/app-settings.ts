@@ -564,13 +564,20 @@ export async function publicAppConfig() {
       return models.map(id => ({ id, name: id, provider: provider.name }))
     })
     .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)
+  const providerImageModels = providerSettings.providers
+    .filter(provider => provider.kind === 'image' && provider.enabled && provider.apiKeyConfigured)
+    .map(provider => normalizeModelName(provider.imageModel, ''))
+    .filter((model): model is string => Boolean(model))
+    .map(id => ({ id, name: id }))
+  const availableImageModels = [...providerImageModels, ...settings.availableImageModels]
+    .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)
   return {
     chatModels,
     imageEventsEnabled: settings.imageEventsEnabled,
     canvasContextEnabled: settings.canvasContextEnabled,
     guestGenerationEnabled: settings.guestGenerationEnabled,
     imageCreditCostPerImage: settings.imageCreditCostPerImage,
-    availableImageModels: settings.availableImageModels,
-    defaultImageModel: settings.imageResponsesImageModel,
+    availableImageModels,
+    defaultImageModel: providerImageModels[0]?.id || settings.imageResponsesImageModel,
   }
 }
