@@ -35,6 +35,11 @@ func (l *stubLogger) Printf(format string, v ...interface{}) {
 func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 	h := NewConfigHandler(&stubAppConfigProvider{
 		config: service.PublicAppConfig{
+			ChatModels: []service.ChatModelOption{{
+				ID:       "gpt-5.6-sol",
+				Name:     "gpt-5.6-sol",
+				Provider: "Custom Chat",
+			}},
 			ImageEventsEnabled:     true,
 			CanvasContextEnabled:   true,
 			GuestGenerationEnabled: false,
@@ -62,6 +67,9 @@ func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 	if len(body.AvailableImageModels) != 1 {
 		t.Fatalf("expected 1 image model from provider, got %#v", body.AvailableImageModels)
 	}
+	if len(body.ChatModels) != 1 || body.ChatModels[0].ID != "gpt-5.6-sol" {
+		t.Fatalf("unexpected chat models: %#v", body.ChatModels)
+	}
 	if body.AvailableImageModels[0].ID != "gpt-image-2" || body.AvailableImageModels[0].Name != "GPT Image 2" {
 		t.Fatalf("unexpected model option: %#v", body.AvailableImageModels[0])
 	}
@@ -85,6 +93,9 @@ func TestConfigAppFallsBackWithoutHardcodedModels(t *testing.T) {
 	}
 	if len(body.AvailableImageModels) != 0 {
 		t.Fatalf("expected no fallback image models, got %#v", body.AvailableImageModels)
+	}
+	if len(body.ChatModels) != 0 {
+		t.Fatalf("expected no fallback chat models, got %#v", body.ChatModels)
 	}
 }
 
@@ -120,6 +131,9 @@ func TestConfigAppDefaultsWhenAppSettingsNil(t *testing.T) {
 	}
 	if len(got.AvailableImageModels) != len(want.AvailableImageModels) {
 		t.Errorf("AvailableImageModels length: got %d, want %d", len(got.AvailableImageModels), len(want.AvailableImageModels))
+	}
+	if len(got.ChatModels) != len(want.ChatModels) {
+		t.Errorf("ChatModels length: got %d, want %d", len(got.ChatModels), len(want.ChatModels))
 	}
 }
 

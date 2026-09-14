@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
+)
 
 func TestParseImageModelOptionsKeepsDatabaseValues(t *testing.T) {
 	tests := [][]byte{
@@ -31,6 +35,22 @@ func TestParseImageModelOptionsDoesNotAddFallbackModels(t *testing.T) {
 		models := parseImageModelOptions(raw)
 		if len(models) != 0 {
 			t.Fatalf("expected no models for %s, got %#v", string(raw), models)
+		}
+	}
+}
+
+func TestNormalizeModelNameAcceptsChatModelIdentifiers(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "moonshotai/kimi-k2.6", "vendor:model_v1"} {
+		if got := normalizeModelName(model, ""); got != model {
+			t.Fatalf("expected %q, got %q", model, got)
+		}
+	}
+}
+
+func TestMissingChatModelsSchemaIsBackwardCompatible(t *testing.T) {
+	for _, code := range []string{"42703", "42P01"} {
+		if !isMissingChatModelsSchema(&pgconn.PgError{Code: code}) {
+			t.Fatalf("expected PostgreSQL error %s to be treated as a missing schema", code)
 		}
 	}
 }

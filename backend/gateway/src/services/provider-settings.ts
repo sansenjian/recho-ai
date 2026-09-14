@@ -31,6 +31,7 @@ export interface ProviderSetting {
   enabled: boolean
   priority: number
   defaultModel: string | null
+  models: string[]
   imageModel: string | null
   editModel: string | null
   imageCompatibilityMode: ImageProviderCompatibilityMode
@@ -51,6 +52,7 @@ export interface RuntimeChatProvider {
   baseUrl: string
   apiKey: string
   defaultModel: string | null
+  models: string[]
   timeoutMs: number
   retryCount: number
   source: 'database'
@@ -96,6 +98,11 @@ function cleanText(value: unknown, maxLength: number) {
 function nullableText(value: unknown, maxLength: number) {
   const text = cleanText(value, maxLength)
   return text || null
+}
+
+function normalizeModelList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,]+/) : []
+  return [...new Set(values.map(item => cleanText(item, 120)).filter(Boolean))].slice(0, 100)
 }
 
 function normalizeName(value: unknown) {
@@ -172,6 +179,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_000,
       defaultModel: null,
+      models: [],
       imageModel: IMAGE_RESPONSES_IMAGE_MODEL,
       editModel: IMAGE_RESPONSES_IMAGE_MODEL,
       imageCompatibilityMode: 'auto',
@@ -195,6 +203,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_000,
       defaultModel: 'gpt-4o-mini',
+      models: ['gpt-4o-mini'],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -218,6 +227,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_001,
       defaultModel: 'kimi-k2-0711-preview',
+      models: ['kimi-k2-0711-preview'],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -248,6 +258,7 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
     enabled: row.enabled === true,
     priority: normalizeInt(row.priority, 100, 0, 10_000),
     defaultModel: typeof row.default_model === 'string' && row.default_model ? row.default_model : null,
+    models: normalizeModelList(row.models),
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
     imageCompatibilityMode: normalizeImageCompatibilityMode(row.image_compatibility_mode),
@@ -279,6 +290,7 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatPr
     defaultModel: typeof row.default_model === 'string' && row.default_model.trim()
       ? row.default_model.trim()
       : null,
+    models: normalizeModelList(row.models),
     timeoutMs: normalizeInt(row.timeout_ms, 60_000, 1_000, 1_200_000),
     retryCount: normalizeInt(row.retry_count, 3, 0, 10),
     source: 'database',
@@ -313,6 +325,16 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   if ('enabled' in input) patch.enabled = normalizeBoolean(input.enabled)
   if ('priority' in input) patch.priority = normalizeInt(input.priority, 100, 0, 10_000)
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
+  if ('models' in input) {
+    const models = normalizeModelList(input.models)
+    if (input.kind === 'chat' && models.length === 0) {
+      throw new ProviderSettingsError('chat_provider_models_required', {
+        publicMessage: 'Chat Provider 至少需要配置一个模型。',
+      })
+    }
+    patch.models = models
+    if (input.kind === 'chat') patch.default_model = models[0] || null
+  }
   if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
   if ('imageCompatibilityMode' in input) patch.image_compatibility_mode = normalizeImageCompatibilityMode(input.imageCompatibilityMode)
@@ -349,6 +371,7 @@ function providerSelectColumns(includeSecret = false) {
     'enabled',
     'priority',
     'default_model',
+    'models',
     'image_model',
     'edit_model',
     'image_compatibility_mode',
@@ -495,6 +518,7 @@ export async function getRuntimeChatProvider(
         'base_url',
         'api_key_encrypted',
         'default_model',
+        'models',
         'timeout_ms',
         'retry_count',
       ].join(','))
@@ -507,12 +531,13 @@ export async function getRuntimeChatProvider(
     if (error) throw error
 
     const rows = ((data || []) as unknown as Array<Record<string, unknown>>)
-    const exactRows = rows.filter(row => rowDefaultModel(row) === model)
+    const exactRows = rows.filter(row => normalizeModelList(row.models).includes(model) || rowDefaultModel(row) === model)
     const familyRows = rows.filter((row) => {
+      const configured = normalizeModelList(row.models)
       const defaultModel = rowDefaultModel(row)
-      return defaultModel !== model && chatProviderMatchesModelName(defaultModel, model)
+      return configured.length === 0 && defaultModel !== model && chatProviderMatchesModelName(defaultModel, model)
     })
-    const fallbackRows = rows.filter(row => !rowDefaultModel(row))
+    const fallbackRows = rows.filter(row => normalizeModelList(row.models).length === 0 && !rowDefaultModel(row))
     const seen = new Set<Record<string, unknown>>()
     const candidates = [...exactRows, ...familyRows, ...fallbackRows].filter((row) => {
       if (seen.has(row)) return false

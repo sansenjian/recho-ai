@@ -22,6 +22,7 @@ import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useAdminAccess } from '../composables/useAdminAccess'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
+import { useAppConfig } from '../composables/useAppConfig'
 import { apiUrl } from '../lib/api-base'
 import { hasFileTransfer } from '../lib/image-canvas-utils'
 import type { RouteWorkspace } from '../router'
@@ -67,7 +68,14 @@ const route = useRoute()
 const router = useRouter()
 
 // --- Model ---
+const { chatModels, ensureAppConfig } = useAppConfig()
 const currentModel = ref(AVAILABLE_MODELS[0])
+const modelOptions = computed(() => chatModels.value.length
+  ? chatModels.value.map(model => ({ id: model.id, provider: model.provider, label: model.name, level: '可用', status: 'available' as const }))
+  : AVAILABLE_MODELS)
+watch(modelOptions, (models) => {
+  if (models.length && !models.some(model => model.id === currentModel.value.id)) currentModel.value = models[0]
+}, { immediate: true })
 const currentAgentMode = ref(AGENT_MODES[1])
 
 // --- Messages ---
@@ -441,6 +449,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('paste', onPaste)
   fetchSkills()
+  void ensureAppConfig()
   void fetchLatestAnnouncement()
   void initAuth()
 })
@@ -593,7 +602,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         <ChatInput
           :is-loading="isLoading"
           :current-model="currentModel"
-          :models="AVAILABLE_MODELS"
+          :models="modelOptions"
           :pending-images="pendingImages"
           :skills="skills"
           :active-skill="activeSkill"

@@ -221,6 +221,43 @@ describe('provider settings service', () => {
     })
   })
 
+  it('routes each configured model to the provider that explicitly lists it', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'chat',
+        name: 'First OpenAI Compatible',
+        base_url: 'https://first.example.test/v1',
+        models: ['gpt-4o-mini', 'gpt-4o'],
+        enabled: true,
+        priority: 10,
+        timeout_ms: 60000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-first-secret'),
+      },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'chat',
+        name: 'Second OpenAI Compatible',
+        base_url: 'https://second.example.test/v1',
+        models: ['gpt-5.5'],
+        enabled: true,
+        priority: 20,
+        timeout_ms: 60000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-second-secret'),
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('gpt-5.5', { strict: true })).resolves.toMatchObject({
+      name: 'Second OpenAI Compatible',
+      baseUrl: 'https://second.example.test/v1',
+      models: ['gpt-5.5'],
+    })
+  })
+
   it('skips malformed encrypted chat rows and uses the next matching provider', async () => {
     const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
     providerRows = [

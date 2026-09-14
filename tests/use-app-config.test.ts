@@ -17,6 +17,7 @@ describe('useAppConfig', () => {
     fetchMock
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        chatModels: [{ id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', provider: 'Custom Chat' }],
         imageEventsEnabled: true,
         canvasContextEnabled: true,
         imageCreditCostPerImage: 0.75,
@@ -26,6 +27,7 @@ describe('useAppConfig', () => {
       }))
 
     await expect(ensureAppConfig()).resolves.toEqual({
+      chatModels: [],
       imageEventsEnabled: false,
       canvasContextEnabled: false,
       guestGenerationEnabled: true,
@@ -34,6 +36,7 @@ describe('useAppConfig', () => {
       defaultImageModel: '',
     })
     await expect(ensureAppConfig()).resolves.toEqual({
+      chatModels: [{ id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', provider: 'Custom Chat' }],
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
