@@ -78,6 +78,46 @@ func TestEnvironmentChatModelsIncludesConfiguredProviders(t *testing.T) {
 	}
 }
 
+func TestEnvironmentImageModelsIncludesConfiguredProvider(t *testing.T) {
+	original := struct {
+		apiKey, baseURL, model string
+	}{config.ImageGenAPIKey, config.ImageGenBaseURL, config.ImageResponsesImageModel}
+	t.Cleanup(func() {
+		config.ImageGenAPIKey = original.apiKey
+		config.ImageGenBaseURL = original.baseURL
+		config.ImageResponsesImageModel = original.model
+	})
+
+	config.ImageGenAPIKey = "sk-image"
+	config.ImageGenBaseURL = "https://image.example.test/v1"
+	config.ImageResponsesImageModel = "gpt-image-2.5"
+
+	models := environmentImageModels()
+	if len(models) != 1 || models[0].ID != "gpt-image-2.5" {
+		t.Fatalf("unexpected environment image models: %#v", models)
+	}
+}
+
+func TestMergeImageModelsPrefersProviderOrderAndDeduplicates(t *testing.T) {
+	got := mergeImageModels(
+		[]ImageModelOption{{ID: "gpt-image-2.5", Name: "GPT Image 2.5"}, {ID: "gpt-image-2", Name: ""}},
+		[]ImageModelOption{{ID: "gpt-image-2", Name: "GPT Image 2"}, {ID: "gpt-image-1", Name: "GPT Image 1"}},
+	)
+	want := []ImageModelOption{
+		{ID: "gpt-image-2.5", Name: "GPT Image 2.5"},
+		{ID: "gpt-image-2", Name: "gpt-image-2"},
+		{ID: "gpt-image-1", Name: "GPT Image 1"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("model %d: got %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestMissingChatModelsSchemaIsBackwardCompatible(t *testing.T) {
 	for _, code := range []string{"42703", "42P01"} {
 		if !isMissingChatModelsSchema(&pgconn.PgError{Code: code}) {

@@ -106,6 +106,15 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 	}
 	rows.Close()
 
+	providerImageModels, imageErr := s.loadImageModels(ctx)
+	if imageErr != nil {
+		providerImageModels = environmentImageModels()
+	}
+	cfg.AvailableImageModels = mergeImageModels(providerImageModels, cfg.AvailableImageModels)
+	if len(providerImageModels) > 0 {
+		cfg.DefaultImageModel = providerImageModels[0].ID
+	}
+
 	chatModels, err := s.loadChatModels(ctx)
 	if err != nil {
 		envModels := environmentChatModels()
@@ -198,6 +207,73 @@ func environmentChatModels() []ChatModelOption {
 		}
 	}
 	return result
+}
+
+func environmentImageModels() []ImageModelOption {
+	model := normalizeModelName(config.ImageResponsesImageModel, "")
+	if strings.TrimSpace(config.ImageGenAPIKey) == "" || strings.TrimSpace(config.ImageGenBaseURL) == "" || model == "" {
+		return nil
+	}
+	return []ImageModelOption{{ID: model, Name: model}}
+}
+
+func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {
+	result := make([]ImageModelOption, 0, len(primary)+len(fallback))
+	seen := make(map[string]struct{}, len(primary)+len(fallback))
+	for _, model := range append(primary, fallback...) {
+		id := normalizeModelName(model.ID, "")
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		name := strings.TrimSpace(model.Name)
+		if name == "" {
+			name = id
+		}
+		result = append(result, ImageModelOption{ID: id, Name: name})
+	}
+	return result
+}
+
+func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelOption, error) {
+	envModels := environmentImageModels()
+	rows, err := s.pool.Query(ctx, `
+		select name, image_model
+		from public.provider_settings ps
+		where ps.kind = 'image'
+			and ps.enabled = true
+			and (
+				coalesce(ps.api_key_encrypted, '') <> ''
+				or coalesce(to_jsonb(ps)->>'api_key', '') <> ''
+			)
+			and coalesce(trim(ps.image_model), '') <> ''
+		order by ps.priority asc, ps.updated_at desc
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	models := make([]ImageModelOption, 0, len(envModels))
+	for rows.Next() {
+		var providerName string
+		var model string
+		if err := rows.Scan(&providerName, &model); err != nil {
+			return nil, err
+		}
+		id := normalizeModelName(model, "")
+		if id == "" {
+			continue
+		}
+		models = append(models, ImageModelOption{ID: id, Name: id})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return mergeImageModels(models, envModels), nil
 }
 
 func (s *AppSettingsService) ImageCreditCostPerImage(ctx context.Context) (float64, error) {
