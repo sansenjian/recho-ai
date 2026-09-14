@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { Message } from '../types'
+import type { Message, ModelOption } from '../types'
 import { AGENT_MODES, AVAILABLE_MODELS } from '../types'
 import {
   activeConversationId,
@@ -68,13 +68,13 @@ const route = useRoute()
 const router = useRouter()
 
 // --- Model ---
-const { chatModels, ensureAppConfig } = useAppConfig()
-const currentModel = ref(AVAILABLE_MODELS[0])
-const modelOptions = computed(() => chatModels.value.length
-  ? chatModels.value.map(model => ({ id: model.id, provider: model.provider, label: model.name, level: '可用', status: 'available' as const }))
-  : AVAILABLE_MODELS)
+const { chatModels, isLoaded: isAppConfigLoaded, ensureAppConfig } = useAppConfig()
+const currentModel = ref<ModelOption | undefined>(AVAILABLE_MODELS[0])
+const modelOptions = computed<ModelOption[]>(() => !isAppConfigLoaded.value
+  ? AVAILABLE_MODELS
+  : chatModels.value.map(model => ({ id: model.id, provider: model.provider, label: model.name, level: '可用', status: 'available' as const })))
 watch(modelOptions, (models) => {
-  if (models.length && !models.some(model => model.id === currentModel.value.id)) currentModel.value = models[0]
+  currentModel.value = models.find(model => model.id === currentModel.value?.id) ?? models[0]
 }, { immediate: true })
 const currentAgentMode = ref(AGENT_MODES[1])
 
@@ -384,10 +384,12 @@ function onPaste(e: ClipboardEvent) {
 
 // --- Submit ---
 async function handleSubmit(value: string) {
+  const model = currentModel.value
+  if (!model) return
   if (!await requireChatAccess('/chat')) return
   await submitMessage(
     value,
-    currentModel.value.id,
+    model.id,
     pendingImages.value.length > 0 ? [...pendingImages.value] : undefined,
     activeSkill.value,
     currentAgentMode.value,
@@ -460,7 +462,7 @@ onUnmounted(() => {
   stopGeneration()
 })
 
-function handleChangeModel(m: typeof AVAILABLE_MODELS[number]) { currentModel.value = m }
+function handleChangeModel(m: ModelOption) { currentModel.value = m }
 function handleNewChat() { createConversation(); showSidebar.value = false }
 function handleImageToChat(dataUrl: string) {
   void (async () => {

@@ -13,7 +13,7 @@ import {
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { normalizeImageCreditCostPerImage } from './image-credit-cost.js'
 import { safeErrorDetail } from './safe-error.js'
-import { listProviderSettings } from './provider-settings.js'
+import { isValidChatModel, listProviderSettings } from './provider-settings.js'
 import type { RequestUser } from './request-auth.js'
 
 const APP_SETTINGS_TABLE = 'app_settings'
@@ -559,7 +559,8 @@ export async function publicAppConfig() {
   const chatModels = providerSettings.providers
     .filter(provider => provider.kind === 'chat' && provider.enabled && provider.apiKeyConfigured)
     .flatMap(provider => {
-      const models = provider.models.length ? provider.models : provider.defaultModel ? [provider.defaultModel] : []
+      const models = (provider.models.length ? provider.models : provider.defaultModel ? [provider.defaultModel] : [])
+        .filter(isValidChatModel)
       return models.map(id => ({ id, name: id, provider: provider.name }))
     })
     .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)

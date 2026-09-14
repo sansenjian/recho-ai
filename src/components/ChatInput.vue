@@ -302,7 +302,7 @@ function skillIcon(name: string) {
             v-else
             size="icon"
             class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!canSubmit"
+            :disabled="!canSubmit || !currentModel"
             title="发送"
             @click="handleSubmit"
           >

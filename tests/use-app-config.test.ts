@@ -46,4 +46,28 @@ describe('useAppConfig', () => {
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('marks an empty server model list as loaded instead of falling back', async () => {
+    const { ensureAppConfig, useAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ chatModels: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await ensureAppConfig()
+
+    expect(useAppConfig().isLoaded.value).toBe(true)
+    expect(useAppConfig().chatModels.value).toEqual([])
+  })
+
+  it('keeps the config unloaded after a failed request', async () => {
+    const { ensureAppConfig, useAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'))
+
+    await ensureAppConfig()
+
+    expect(useAppConfig().isLoaded.value).toBe(false)
+  })
 })
