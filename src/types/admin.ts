@@ -252,6 +252,7 @@ export interface AdminProviderSetting {
   enabled: boolean
   priority: number
   defaultModel: string | null
+  models: string[]
   imageModel: string | null
   editModel: string | null
   imageCompatibilityMode: ImageProviderCompatibilityMode

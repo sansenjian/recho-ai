@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let appSettingRows: Array<Record<string, unknown>> = []
 let adminUserRows: Array<Record<string, unknown>> = []
+let providerSettingRows: Array<Record<string, unknown>> = []
 let appSettingsError: unknown = null
 let appSettingsSelectCount = 0
 
@@ -74,6 +75,14 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         }
       }
 
+      if (table === 'provider_settings') {
+        const chain: Record<string, unknown> = {
+          order: vi.fn(() => chain),
+          then: (resolve: (value: unknown) => void) => resolve({ data: providerSettingRows, error: null }),
+        }
+        return { select: vi.fn(() => chain) }
+      }
+
       throw new Error(`Unexpected table ${table}`)
     },
   }),
@@ -83,6 +92,7 @@ describe('app settings service', () => {
   beforeEach(() => {
     appSettingRows = []
     adminUserRows = []
+    providerSettingRows = []
     appSettingsError = null
     appSettingsSelectCount = 0
     vi.resetModules()
@@ -97,6 +107,18 @@ describe('app settings service', () => {
       { key: 'image_events_enabled', value: true },
       { key: 'canvas_context_enabled', value: true },
     ]
+    providerSettingRows = [{
+      id: '22222222-2222-4222-8222-222222222222',
+      kind: 'chat',
+      name: 'Custom Chat',
+      base_url: 'https://chat.example.test/v1',
+      models: ['gpt-5.5', 'gpt-5.6-sol'],
+      enabled: true,
+      priority: 10,
+      timeout_ms: 60000,
+      retry_count: 3,
+      api_key_encrypted: 'encrypted',
+    }]
     const { getAppSettings, publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
 
     await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
@@ -110,6 +132,10 @@ describe('app settings service', () => {
 
     const publicConfig = await publicAppConfig()
     expect(publicConfig).toEqual({
+      chatModels: [
+        { id: 'gpt-5.5', name: 'gpt-5.5', provider: 'Custom Chat' },
+        { id: 'gpt-5.6-sol', name: 'gpt-5.6-sol', provider: 'Custom Chat' },
+      ],
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
@@ -120,6 +146,7 @@ describe('app settings service', () => {
     expect(Object.keys(publicConfig).sort()).toEqual([
       'availableImageModels',
       'canvasContextEnabled',
+      'chatModels',
       'defaultImageModel',
       'guestGenerationEnabled',
       'imageCreditCostPerImage',

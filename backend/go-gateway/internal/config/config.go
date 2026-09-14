@@ -72,6 +72,12 @@ var ImageCreditCostPerImage = parseEnvFloat("IMAGE_CREDIT_COST_PER_IMAGE", 0.5)
 var ImageResponsesModel = parseEnvString("IMAGE_RESPONSES_MODEL", "gpt-image-2")
 var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gpt-image-2")
 
+// Chat providers mirrored by the Node gateway's environment-backed provider list.
+var OpenAIAPIKey = os.Getenv("OPENAI_API_KEY")
+var OpenAIBaseURL = os.Getenv("OPENAI_BASE_URL")
+var KimiAPIKey = os.Getenv("KIMI_API_KEY")
+var KimiBaseURL = os.Getenv("KIMI_BASE_URL")
+
 // ImageJobWorkerEnabled controls the durable image persistence path. It is
 // enabled by default after the image_generation_jobs migration is applied;
 // set IMAGE_JOB_WORKER_ENABLED=false only while rolling out that migration.

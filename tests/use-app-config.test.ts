@@ -17,6 +17,7 @@ describe('useAppConfig', () => {
     fetchMock
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        chatModels: [{ id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', provider: 'Custom Chat' }],
         imageEventsEnabled: true,
         canvasContextEnabled: true,
         imageCreditCostPerImage: 0.75,
@@ -26,6 +27,7 @@ describe('useAppConfig', () => {
       }))
 
     await expect(ensureAppConfig()).resolves.toEqual({
+      chatModels: [],
       imageEventsEnabled: false,
       canvasContextEnabled: false,
       guestGenerationEnabled: true,
@@ -34,6 +36,7 @@ describe('useAppConfig', () => {
       defaultImageModel: '',
     })
     await expect(ensureAppConfig()).resolves.toEqual({
+      chatModels: [{ id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', provider: 'Custom Chat' }],
       imageEventsEnabled: true,
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
@@ -42,5 +45,29 @@ describe('useAppConfig', () => {
       defaultImageModel: '',
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks an empty server model list as loaded instead of falling back', async () => {
+    const { ensureAppConfig, useAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ chatModels: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await ensureAppConfig()
+
+    expect(useAppConfig().isLoaded.value).toBe(true)
+    expect(useAppConfig().chatModels.value).toEqual([])
+  })
+
+  it('keeps the config unloaded after a failed request', async () => {
+    const { ensureAppConfig, useAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'))
+
+    await ensureAppConfig()
+
+    expect(useAppConfig().isLoaded.value).toBe(false)
   })
 })

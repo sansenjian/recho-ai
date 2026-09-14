@@ -31,6 +31,7 @@ export interface ProviderSetting {
   enabled: boolean
   priority: number
   defaultModel: string | null
+  models: string[]
   imageModel: string | null
   editModel: string | null
   imageCompatibilityMode: ImageProviderCompatibilityMode
@@ -51,6 +52,7 @@ export interface RuntimeChatProvider {
   baseUrl: string
   apiKey: string
   defaultModel: string | null
+  models: string[]
   timeoutMs: number
   retryCount: number
   source: 'database'
@@ -96,6 +98,22 @@ function cleanText(value: unknown, maxLength: number) {
 function nullableText(value: unknown, maxLength: number) {
   const text = cleanText(value, maxLength)
   return text || null
+}
+
+export function isValidChatModel(model: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/.test(model)
+}
+
+function normalizeModelList(value: unknown, options: { rejectInvalid?: boolean } = {}): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,]+/) : []
+  const models = [...new Set(values.map(item => cleanText(item, 120)).filter(Boolean))].slice(0, 100)
+  const invalid = models.find(model => !isValidChatModel(model))
+  if (invalid && options.rejectInvalid) {
+    throw new ProviderSettingsError('invalid_chat_model', {
+      publicMessage: `模型 ID 无效：${invalid}`,
+    })
+  }
+  return models.filter(isValidChatModel)
 }
 
 function normalizeName(value: unknown) {
@@ -172,6 +190,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_000,
       defaultModel: null,
+      models: [],
       imageModel: IMAGE_RESPONSES_IMAGE_MODEL,
       editModel: IMAGE_RESPONSES_IMAGE_MODEL,
       imageCompatibilityMode: 'auto',
@@ -195,6 +214,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_000,
       defaultModel: 'gpt-4o-mini',
+      models: ['gpt-4o-mini'],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -218,6 +238,7 @@ function envProviderRows(): ProviderSetting[] {
       enabled: true,
       priority: 10_001,
       defaultModel: 'kimi-k2-0711-preview',
+      models: ['kimi-k2-0711-preview'],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -247,7 +268,10 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
     baseUrl: String(row.base_url || '').replace(/\/+$/, ''),
     enabled: row.enabled === true,
     priority: normalizeInt(row.priority, 100, 0, 10_000),
-    defaultModel: typeof row.default_model === 'string' && row.default_model ? row.default_model : null,
+    defaultModel: typeof row.default_model === 'string' && isValidChatModel(row.default_model.trim())
+      ? row.default_model.trim()
+      : null,
+    models: normalizeModelList(row.models),
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
     imageCompatibilityMode: normalizeImageCompatibilityMode(row.image_compatibility_mode),
@@ -276,9 +300,10 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatPr
     name: String(row.name || ''),
     baseUrl,
     apiKey,
-    defaultModel: typeof row.default_model === 'string' && row.default_model.trim()
+    defaultModel: typeof row.default_model === 'string' && isValidChatModel(row.default_model.trim())
       ? row.default_model.trim()
       : null,
+    models: normalizeModelList(row.models),
     timeoutMs: normalizeInt(row.timeout_ms, 60_000, 1_000, 1_200_000),
     retryCount: normalizeInt(row.retry_count, 3, 0, 10),
     source: 'database',
@@ -313,6 +338,16 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   if ('enabled' in input) patch.enabled = normalizeBoolean(input.enabled)
   if ('priority' in input) patch.priority = normalizeInt(input.priority, 100, 0, 10_000)
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
+  if ('models' in input) {
+    const models = normalizeModelList(input.models, { rejectInvalid: true })
+    if (input.kind === 'chat' && models.length === 0) {
+      throw new ProviderSettingsError('chat_provider_models_required', {
+        publicMessage: 'Chat Provider 至少需要配置一个模型。',
+      })
+    }
+    patch.models = models
+    if (input.kind === 'chat') patch.default_model = models[0] || null
+  }
   if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
   if ('imageCompatibilityMode' in input) patch.image_compatibility_mode = normalizeImageCompatibilityMode(input.imageCompatibilityMode)
@@ -340,7 +375,7 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   return patch
 }
 
-function providerSelectColumns(includeSecret = false) {
+function providerSelectColumns(includeSecret = false, includeModels = true) {
   const columns = [
     'id',
     'kind',
@@ -359,9 +394,36 @@ function providerSelectColumns(includeSecret = false) {
     'created_at',
     'updated_at',
   ]
+  if (includeModels) columns.splice(7, 0, 'models')
   columns.push('api_key_preview')
   if (includeSecret) columns.push('api_key_encrypted')
   return columns.join(',')
+}
+
+function isMissingModelsColumnError(error: unknown) {
+  const record = error as Record<string, unknown> | null
+  const code = typeof record?.code === 'string' ? record.code.toLowerCase() : ''
+  const text = [record?.message, record?.details, record?.hint].filter(Boolean).join(' ').toLowerCase()
+  return (code === '42703' || code === 'pgrst204' || text.includes('schema cache')) &&
+    text.includes('models') &&
+    (text.includes('column') || text.includes('does not exist') || text.includes('could not find'))
+}
+
+async function loadProviderRow(client: any, providerId: string) {
+  let response = await client
+    .from(PROVIDER_SETTINGS_TABLE)
+    .select(providerSelectColumns(true))
+    .eq('id', providerId)
+    .maybeSingle()
+  if (response.error && isMissingModelsColumnError(response.error)) {
+    response = await client
+      .from(PROVIDER_SETTINGS_TABLE)
+      .select(providerSelectColumns(true, false))
+      .eq('id', providerId)
+      .maybeSingle()
+  }
+  if (response.error) throw response.error
+  return response.data as Record<string, unknown> | null
 }
 
 export function clearProviderSettingsCache() {
@@ -384,13 +446,23 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
   }
 
   try {
-    const { data, error } = await client
+    let { data, error } = await client
       .from(PROVIDER_SETTINGS_TABLE)
       .select(providerSelectColumns(true))
       .order('kind', { ascending: true })
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
+    if (error && isMissingModelsColumnError(error)) {
+      const legacy = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select(providerSelectColumns(true, false))
+        .order('kind', { ascending: true })
+        .order('priority', { ascending: true })
+        .order('updated_at', { ascending: false })
+      data = legacy.data
+      error = legacy.error
+    }
     if (error) throw error
     const cache = {
       expiresAt: now + PROVIDER_SETTINGS_CACHE_MS,
@@ -454,10 +526,34 @@ export async function updateProviderSetting(providerId: string, input: Record<st
     publicMessage: 'Provider 配置服务暂时不可用。',
   })
 
-  const patch = {
+  const existingRow = await loadProviderRow(client, providerId)
+  if (!existingRow) throw new ProviderSettingsError('invalid_provider_id')
+
+  const mergedKind = 'kind' in input ? normalizeKind(input.kind) : normalizeKind(existingRow.kind)
+  const modelsProvided = 'models' in input
+  const existingModels = normalizeModelList(existingRow.models)
+  const requestedModels = modelsProvided
+    ? normalizeModelList(input.models, { rejectInvalid: true })
+    : existingModels
+  const effectiveModels = requestedModels.length > 0
+    ? requestedModels
+    : (!modelsProvided && mergedKind === 'chat' && rowDefaultModel(existingRow) ? [rowDefaultModel(existingRow)] : [])
+  if (mergedKind === 'chat' && effectiveModels.length === 0) {
+    throw new ProviderSettingsError('chat_provider_models_required', {
+      publicMessage: 'Chat Provider 至少需要配置一个模型。',
+    })
+  }
+
+  const patch: Record<string, unknown> = {
     ...validateProviderInput(input, { partial: true }),
     updated_at: new Date().toISOString(),
     updated_by: adminUser.id,
+  }
+  if (modelsProvided) {
+    patch.models = requestedModels
+    if (mergedKind === 'chat') patch.default_model = requestedModels[0]
+  } else if ('kind' in input && mergedKind === 'chat') {
+    patch.default_model = effectiveModels[0]
   }
   const { data, error } = await client
     .from(PROVIDER_SETTINGS_TABLE)
@@ -487,7 +583,7 @@ export async function getRuntimeChatProvider(
   }
 
   try {
-    const { data, error } = await client
+    let { data, error } = await client
       .from(PROVIDER_SETTINGS_TABLE)
       .select([
         'id',
@@ -495,6 +591,7 @@ export async function getRuntimeChatProvider(
         'base_url',
         'api_key_encrypted',
         'default_model',
+        'models',
         'timeout_ms',
         'retry_count',
       ].join(','))
@@ -504,15 +601,36 @@ export async function getRuntimeChatProvider(
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
+    if (error && isMissingModelsColumnError(error)) {
+      const legacy = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select([
+          'id',
+          'name',
+          'base_url',
+          'api_key_encrypted',
+          'default_model',
+          'timeout_ms',
+          'retry_count',
+        ].join(','))
+        .eq('kind', 'chat')
+        .eq('enabled', true)
+        .not('api_key_encrypted', 'is', null)
+        .order('priority', { ascending: true })
+        .order('updated_at', { ascending: false })
+      data = legacy.data
+      error = legacy.error
+    }
     if (error) throw error
 
     const rows = ((data || []) as unknown as Array<Record<string, unknown>>)
-    const exactRows = rows.filter(row => rowDefaultModel(row) === model)
+    const exactRows = rows.filter(row => normalizeModelList(row.models).includes(model) || rowDefaultModel(row) === model)
     const familyRows = rows.filter((row) => {
+      const configured = normalizeModelList(row.models)
       const defaultModel = rowDefaultModel(row)
-      return defaultModel !== model && chatProviderMatchesModelName(defaultModel, model)
+      return configured.length === 0 && defaultModel !== model && chatProviderMatchesModelName(defaultModel, model)
     })
-    const fallbackRows = rows.filter(row => !rowDefaultModel(row))
+    const fallbackRows = rows.filter(row => normalizeModelList(row.models).length === 0 && !rowDefaultModel(row))
     const seen = new Set<Record<string, unknown>>()
     const candidates = [...exactRows, ...familyRows, ...fallbackRows].filter((row) => {
       if (seen.has(row)) return false

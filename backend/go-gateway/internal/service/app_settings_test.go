@@ -1,6 +1,11 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"go-gateway/internal/config"
+)
 
 func TestParseImageModelOptionsKeepsDatabaseValues(t *testing.T) {
 	tests := [][]byte{
@@ -31,6 +36,52 @@ func TestParseImageModelOptionsDoesNotAddFallbackModels(t *testing.T) {
 		models := parseImageModelOptions(raw)
 		if len(models) != 0 {
 			t.Fatalf("expected no models for %s, got %#v", string(raw), models)
+		}
+	}
+}
+
+func TestNormalizeModelNameAcceptsChatModelIdentifiers(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "moonshotai/kimi-k2.6", "vendor:model_v1"} {
+		if got := normalizeModelName(model, ""); got != model {
+			t.Fatalf("expected %q, got %q", model, got)
+		}
+	}
+}
+
+func TestNormalizeModelNameRejectsInvalidLeadingCharacters(t *testing.T) {
+	for _, model := range []string{"-gpt-4o", "_gpt-4o", "/vendor/model"} {
+		if got := normalizeModelName(model, "fallback"); got != "fallback" {
+			t.Fatalf("expected %q to use fallback, got %q", model, got)
+		}
+	}
+}
+
+func TestEnvironmentChatModelsIncludesConfiguredProviders(t *testing.T) {
+	original := struct {
+		openAIKey, openAIBase, kimiKey, kimiBase string
+	}{config.OpenAIAPIKey, config.OpenAIBaseURL, config.KimiAPIKey, config.KimiBaseURL}
+	t.Cleanup(func() {
+		config.OpenAIAPIKey = original.openAIKey
+		config.OpenAIBaseURL = original.openAIBase
+		config.KimiAPIKey = original.kimiKey
+		config.KimiBaseURL = original.kimiBase
+	})
+
+	config.OpenAIAPIKey = "sk-openai"
+	config.OpenAIBaseURL = "https://openai.example.test/v1"
+	config.KimiAPIKey = "sk-kimi"
+	config.KimiBaseURL = "https://kimi.example.test/v1"
+
+	models := environmentChatModels()
+	if len(models) != 2 || models[0].ID != "gpt-4o-mini" || models[1].ID != "kimi-k2-0711-preview" {
+		t.Fatalf("unexpected environment chat models: %#v", models)
+	}
+}
+
+func TestMissingChatModelsSchemaIsBackwardCompatible(t *testing.T) {
+	for _, code := range []string{"42703", "42P01"} {
+		if !isMissingChatModelsSchema(&pgconn.PgError{Code: code}) {
+			t.Fatalf("expected PostgreSQL error %s to be treated as a missing schema", code)
 		}
 	}
 }

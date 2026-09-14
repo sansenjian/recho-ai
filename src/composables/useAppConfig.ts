@@ -7,6 +7,7 @@ export interface ImageModelOption {
 }
 
 export interface PublicAppConfig {
+  chatModels: Array<{ id: string; name: string; provider: string }>
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
   guestGenerationEnabled: boolean
@@ -16,6 +17,7 @@ export interface PublicAppConfig {
 }
 
 const fallbackConfig: PublicAppConfig = {
+  chatModels: [],
   imageEventsEnabled: false,
   canvasContextEnabled: false,
   guestGenerationEnabled: true,
@@ -38,7 +40,17 @@ function normalizeImageModels(value: unknown): ImageModelOption[] {
 
 function normalizeConfig(value: unknown): PublicAppConfig {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const chatModels = Array.isArray(record.chatModels)
+    ? record.chatModels
+      .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object' && typeof (item as Record<string, unknown>).id === 'string')
+      .map(item => ({
+        id: item.id as string,
+        name: typeof item.name === 'string' && item.name ? item.name : item.id as string,
+        provider: typeof item.provider === 'string' && item.provider ? item.provider : 'Custom',
+      }))
+    : []
   return {
+    chatModels,
     imageEventsEnabled: typeof record.imageEventsEnabled === 'boolean'
       ? record.imageEventsEnabled
       : fallbackConfig.imageEventsEnabled,
@@ -89,6 +101,7 @@ export async function ensureAppConfig(options: { refresh?: boolean } = {}) {
 export function useAppConfig() {
   return {
     config: readonly(config),
+    chatModels: computed(() => config.value.chatModels),
     isLoaded: readonly(loaded),
     imageEventsEnabled: computed(() => config.value.imageEventsEnabled),
     canvasContextEnabled: computed(() => config.value.canvasContextEnabled),

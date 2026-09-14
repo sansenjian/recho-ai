@@ -3,6 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 let providerRows: Array<Record<string, unknown>> = []
 let insertedRow: Record<string, unknown> | null = null
 let updatedRow: Record<string, unknown> | null = null
+let modelsColumnAvailable = true
+
+const defaultProviderRow = {
+  id: '11111111-1111-4111-8111-111111111111',
+  kind: 'image',
+  name: 'Image Provider',
+  base_url: 'https://image.example.test/v1',
+  enabled: true,
+  priority: 100,
+  image_model: 'gpt-image-2',
+  edit_model: 'gpt-image-2',
+  timeout_ms: 360000,
+  retry_count: 3,
+  supports_webp_references: true,
+  api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
+  api_key_preview: 'sto...-key',
+  notes: null,
+}
 
 vi.mock('../backend/gateway/src/config', () => ({
   IMAGE_GEN_API_KEY: 'env-image-key',
@@ -27,9 +45,12 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
   getSupabaseAdminClient: () => ({
     from: (table: string) => {
       if (table !== 'provider_settings') throw new Error(`Unexpected table ${table}`)
+      let requestedModelsColumn = true
       const listResponse = async () => ({
         data: providerRows,
-        error: null,
+        error: requestedModelsColumn && !modelsColumnAvailable
+          ? { code: 'PGRST204', message: 'column provider_settings.models does not exist' }
+          : null,
       })
       const chain: Record<string, unknown> = {
         eq: vi.fn(() => chain),
@@ -37,9 +58,18 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         order: vi.fn(() => chain),
         then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) =>
           listResponse().then(resolve, reject),
+        maybeSingle: vi.fn(async () => ({
+          data: providerRows[0] ?? defaultProviderRow,
+          error: requestedModelsColumn && !modelsColumnAvailable
+            ? { code: 'PGRST204', message: 'column provider_settings.models does not exist' }
+            : null,
+        })),
       }
       return {
-        select: vi.fn(() => chain),
+        select: vi.fn((columns: string) => {
+          requestedModelsColumn = columns.includes('models')
+          return chain
+        }),
         insert: vi.fn((row: Record<string, unknown>) => {
           insertedRow = row
           const saved = {
@@ -93,6 +123,7 @@ describe('provider settings service', () => {
     providerRows = []
     insertedRow = null
     updatedRow = null
+    modelsColumnAvailable = true
     vi.resetModules()
   })
 
@@ -189,6 +220,44 @@ describe('provider settings service', () => {
     expect(updatedRow).not.toHaveProperty('api_key_preview')
   })
 
+  it('supports models-only chat provider updates and synchronizes default_model', async () => {
+    providerRows = [{ ...defaultProviderRow, kind: 'chat', default_model: 'gpt-4o', models: ['gpt-4o'] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      models: ['gpt-5.5', 'gpt-4o'],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({ models: ['gpt-5.5', 'gpt-4o'], default_model: 'gpt-5.5' })
+  })
+
+  it('rejects empty or invalid chat model lists during partial updates', async () => {
+    providerRows = [{ ...defaultProviderRow, kind: 'chat', default_model: 'gpt-4o', models: ['gpt-4o'] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      models: [],
+    }, { id: 'admin-user', email: 'admin@example.test' })).rejects.toMatchObject({ message: 'chat_provider_models_required' })
+    await expect(updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      models: ['gpt+unsafe'],
+    }, { id: 'admin-user', email: 'admin@example.test' })).rejects.toMatchObject({ message: 'invalid_chat_model' })
+  })
+
+  it('falls back to legacy provider queries when the models column is missing', async () => {
+    modelsColumnAvailable = false
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [{
+      ...defaultProviderRow,
+      kind: 'chat',
+      default_model: 'gpt-4o',
+      api_key_encrypted: encryptSecret('sk-legacy-runtime-secret'),
+    }]
+    const { getRuntimeChatProvider, listProviderSettings } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('gpt-4o', { strict: true })).resolves.toMatchObject({ defaultModel: 'gpt-4o' })
+    await expect(listProviderSettings({ refresh: true })).resolves.toMatchObject({ tableAvailable: true })
+  })
+
   it('resolves an enabled runtime chat provider for matching models', async () => {
     const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
     providerRows = [
@@ -218,6 +287,43 @@ describe('provider settings service', () => {
       apiKey: 'sk-chat-runtime-secret',
       timeoutMs: 90000,
       retryCount: 2,
+    })
+  })
+
+  it('routes each configured model to the provider that explicitly lists it', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'chat',
+        name: 'First OpenAI Compatible',
+        base_url: 'https://first.example.test/v1',
+        models: ['gpt-4o-mini', 'gpt-4o'],
+        enabled: true,
+        priority: 10,
+        timeout_ms: 60000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-first-secret'),
+      },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'chat',
+        name: 'Second OpenAI Compatible',
+        base_url: 'https://second.example.test/v1',
+        models: ['gpt-5.5'],
+        enabled: true,
+        priority: 20,
+        timeout_ms: 60000,
+        retry_count: 2,
+        api_key_encrypted: encryptSecret('sk-second-secret'),
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('gpt-5.5', { strict: true })).resolves.toMatchObject({
+      name: 'Second OpenAI Compatible',
+      baseUrl: 'https://second.example.test/v1',
+      models: ['gpt-5.5'],
     })
   })
 

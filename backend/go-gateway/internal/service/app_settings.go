@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-gateway/internal/config"
@@ -19,7 +20,14 @@ type ImageModelOption struct {
 	Name string `json:"name"`
 }
 
+type ChatModelOption struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+}
+
 type PublicAppConfig struct {
+	ChatModels              []ChatModelOption  `json:"chatModels"`
 	ImageEventsEnabled      bool               `json:"imageEventsEnabled"`
 	CanvasContextEnabled    bool               `json:"canvasContextEnabled"`
 	GuestGenerationEnabled  bool               `json:"guestGenerationEnabled"`
@@ -38,6 +46,7 @@ func NewAppSettingsService(pool *pgxpool.Pool) *AppSettingsService {
 
 func DefaultPublicAppConfig() PublicAppConfig {
 	return PublicAppConfig{
+		ChatModels:              []ChatModelOption{},
 		ImageEventsEnabled:      config.ImageEventsEnabled,
 		CanvasContextEnabled:    config.CanvasContextEnabled,
 		GuestGenerationEnabled:  config.GuestGenerationEnabled,
@@ -95,8 +104,100 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 	if err := rows.Err(); err != nil {
 		return cfg, err
 	}
+	rows.Close()
+
+	chatModels, err := s.loadChatModels(ctx)
+	if err != nil {
+		envModels := environmentChatModels()
+		if isMissingChatModelsSchema(err) || len(envModels) > 0 {
+			cfg.ChatModels = envModels
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	cfg.ChatModels = chatModels
 
 	return cfg, nil
+}
+
+func isMissingChatModelsSchema(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "42703" || pgErr.Code == "42P01")
+}
+
+func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOption, error) {
+	envModels := environmentChatModels()
+	rows, err := s.pool.Query(ctx, `
+		select name, models, default_model
+		from public.provider_settings
+		where kind = 'chat'
+			and enabled = true
+			and coalesce(api_key_encrypted, '') <> ''
+		order by priority asc, updated_at desc
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ChatModelOption, 0, len(envModels))
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var provider string
+		var models []string
+		var defaultModel *string
+		if err := rows.Scan(&provider, &models, &defaultModel); err != nil {
+			return nil, err
+		}
+		if len(models) == 0 && defaultModel != nil {
+			models = []string{*defaultModel}
+		}
+		for _, model := range models {
+			id := normalizeModelName(model, "")
+			if id == "" {
+				continue
+			}
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			result = append(result, ChatModelOption{ID: id, Name: id, Provider: provider})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, model := range envModels {
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
+	return result, nil
+}
+
+func environmentChatModels() []ChatModelOption {
+	providers := []struct {
+		apiKey  string
+		baseURL string
+		name    string
+		model   string
+	}{
+		{config.OpenAIAPIKey, config.OpenAIBaseURL, "Env OpenAI provider", "gpt-4o-mini"},
+		{config.KimiAPIKey, config.KimiBaseURL, "Env Kimi provider", "kimi-k2-0711-preview"},
+	}
+
+	result := make([]ChatModelOption, 0, len(providers))
+	for _, provider := range providers {
+		if strings.TrimSpace(provider.apiKey) == "" || strings.TrimSpace(provider.baseURL) == "" {
+			continue
+		}
+		if model := normalizeModelName(provider.model, ""); model != "" {
+			result = append(result, ChatModelOption{ID: model, Name: model, Provider: provider.name})
+		}
+	}
+	return result
 }
 
 func (s *AppSettingsService) ImageCreditCostPerImage(ctx context.Context) (float64, error) {
@@ -212,8 +313,16 @@ func parseJSONModelName(raw []byte, fallback string) string {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return fallback
 	}
+	return normalizeModelName(value, fallback)
+}
+
+func normalizeModelName(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 120 {
+		return fallback
+	}
+	first := value[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
 		return fallback
 	}
 	for _, r := range value {
