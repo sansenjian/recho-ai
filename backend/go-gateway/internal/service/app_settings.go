@@ -106,6 +106,15 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 	}
 	rows.Close()
 
+	providerImageModels, imageErr := s.loadImageModels(ctx)
+	if imageErr != nil {
+		providerImageModels = environmentImageModels()
+	}
+	cfg.AvailableImageModels = mergeImageModels(providerImageModels, cfg.AvailableImageModels)
+	if len(providerImageModels) > 0 {
+		cfg.DefaultImageModel = providerImageModels[0].ID
+	}
+
 	chatModels, err := s.loadChatModels(ctx)
 	if err != nil {
 		envModels := environmentChatModels()
@@ -116,12 +125,6 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 		return cfg, err
 	}
 	cfg.ChatModels = chatModels
-	if providerImageModels, imageErr := s.loadImageModels(ctx); imageErr == nil {
-		cfg.AvailableImageModels = mergeImageModels(providerImageModels, cfg.AvailableImageModels)
-		if len(providerImageModels) > 0 {
-			cfg.DefaultImageModel = providerImageModels[0].ID
-		}
-	}
 
 	return cfg, nil
 }
