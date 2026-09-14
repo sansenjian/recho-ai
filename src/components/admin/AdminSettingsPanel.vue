@@ -23,6 +23,10 @@ const emit = defineEmits<{
   dataChanged: [source: 'settings']
 }>()
 
+const props = withDefaults(defineProps<{
+  section?: 'all' | 'runtime' | 'providers'
+}>(), { section: 'all' })
+
 const { t } = useI18n()
 const settingsLoading = ref(false)
 const settingsLoaded = ref(false)
@@ -306,8 +310,8 @@ onMounted(refreshSettings)
       <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p>
       <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p>
     </div>
-    <div class="grid grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-4 max-lg:grid-cols-1">
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+    <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
+      <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3">
           <div><h2 class="text-sm font-semibold">{{ t('settings.runtimeConfig') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span></div>
           <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
@@ -328,7 +332,7 @@ onMounted(refreshSettings)
         </form>
       </div>
 
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+      <div v-if="props.section !== 'runtime'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">Provider / API Key</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? '数据库配置' : '仅环境变量兜底' }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="flex flex-col gap-3" @submit.prevent="saveProvider">
           <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">类型</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
@@ -357,7 +361,7 @@ onMounted(refreshSettings)
         <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border"><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Image Providers</span><strong class="block text-xl">{{ imageProviderRows.length }}</strong></div><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Chat Providers</span><strong class="block text-xl">{{ chatProviderRows.length }}</strong></div></div>
       </div>
 
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+      <div v-if="props.section === 'all'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.adminUsers') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ adminRuleTotal }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="mb-4 flex flex-wrap items-end gap-2" @submit.prevent="createAdminRule"><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminUserId') }}</span><input id="admin-user-id" v-model.trim="adminUserForm.userId" :placeholder="t('settings.adminUserId')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminEmail') }}</span><input id="admin-user-email" v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminNote') }}</span><input id="admin-user-note" v-model.trim="adminUserForm.note" :placeholder="t('settings.adminNote')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><Button type="submit" :disabled="actionLoading">{{ t('common.add') }}</Button></form>
         <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>

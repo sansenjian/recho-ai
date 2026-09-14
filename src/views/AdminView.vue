@@ -32,7 +32,7 @@ const AdminAnnouncementsPanel = defineAsyncComponent(() => import('../components
 const AdminSettingsPanel = defineAsyncComponent(() => import('../components/admin/AdminSettingsPanel.vue'))
 
 type AdminMode = 'visual' | 'manage'
-type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'system' | 'announcements' | 'settings'
+type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'system' | 'announcements' | 'runtime' | 'providers'
 
 const { t, locale } = useI18n()
 const { user, userEmail, isAuthReady, initAuth } = useAuthSession()
@@ -53,7 +53,8 @@ const navItems: Array<{ id: AdminViewId; labelKey: string; icon: Component }> = 
   { id: 'monitor', labelKey: 'nav.monitor', icon: Activity },
   { id: 'system', labelKey: 'nav.system', icon: Server },
   { id: 'announcements', labelKey: 'nav.announcements', icon: Megaphone },
-  { id: 'settings', labelKey: 'nav.settings', icon: Settings },
+  { id: 'runtime', labelKey: 'nav.runtime', icon: Settings },
+  { id: 'providers', labelKey: 'nav.providers', icon: Server },
 ]
 const panelComponents: Record<AdminViewId, Component> = {
   overview: AdminOverviewPanel,
@@ -62,13 +63,16 @@ const panelComponents: Record<AdminViewId, Component> = {
   monitor: AdminAttemptsViewPanel,
   system: AdminSystemPanel,
   announcements: AdminAnnouncementsPanel,
-  settings: AdminSettingsPanel,
+  runtime: AdminSettingsPanel,
+  providers: AdminSettingsPanel,
 }
 const activePanel = computed(() => panelComponents[activeView.value])
 const activePanelProps = computed(() => {
   if (activeView.value === 'overview') return { refreshVersion: refreshVersions.value.overview }
   if (activeView.value === 'system') return { refreshVersion: refreshVersions.value.system }
   if (activeView.value === 'images') return { adminMode: adminMode.value }
+  if (activeView.value === 'runtime') return { section: 'runtime' }
+  if (activeView.value === 'providers') return { section: 'providers' }
   return {}
 })
 

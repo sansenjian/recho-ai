@@ -90,6 +90,7 @@ const customAspectRatioWidth = ref('4')
 const customAspectRatioHeight = ref('5')
 const customAspectRatioError = ref<string | null>(null)
 const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.node.aspectRatio))
+const customAspectRatioSelected = computed(() => customAspectRatioActive.value || customAspectRatioOpen.value)
 
 watch(() => props.node.aspectRatio, (value) => {
   if (!isCustomImageAspectRatio(value)) return
@@ -123,11 +124,15 @@ function emitTextContent(event: Event) {
 
 function updateResolution(value: NodeResolution) {
   emit('update-resolution', props.node, value)
-  if (value === 'auto') emit('update-aspect-ratio', props.node, 'auto')
+  if (value === 'auto') {
+    customAspectRatioOpen.value = false
+    emit('update-aspect-ratio', props.node, 'auto')
+  }
 }
 
 function updateAspectRatio(value: NodeAspectRatio) {
   if (aspectRatioLocked.value && value !== 'auto') return
+  customAspectRatioOpen.value = false
   emit('update-aspect-ratio', props.node, value)
 }
 
@@ -147,7 +152,9 @@ function applyCustomAspectRatio() {
   customAspectRatioError.value = null
   customAspectRatioWidth.value = String(parts.width)
   customAspectRatioHeight.value = String(parts.height)
-  emit('update-aspect-ratio', props.node, parts.value as NodeAspectRatio)
+  if (props.node.aspectRatio !== parts.value) {
+    emit('update-aspect-ratio', props.node, parts.value as NodeAspectRatio)
+  }
 }
 </script>
 
@@ -448,7 +455,7 @@ function applyCustomAspectRatio() {
               <button
                 type="button"
                 :disabled="aspectRatioLocked"
-                :class="{ active: customAspectRatioActive }"
+                :class="{ active: customAspectRatioSelected }"
                 class="disabled:cursor-not-allowed disabled:opacity-40"
                 @click.stop="openCustomAspectRatio"
               >

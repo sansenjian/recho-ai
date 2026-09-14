@@ -136,6 +136,7 @@ describe('image generation Auto resolution controls', () => {
     const customButton = ratioGroup?.findAll('button').find(button => button.text() === '自定义')
     expect(customButton).toBeDefined()
     await customButton!.trigger('click')
+    expect(customButton!.classes()).toContain('active')
 
     const editor = ratioGroup?.find('.custom-ratio-editor')
     expect(editor).toBeDefined()
@@ -280,7 +281,9 @@ describe('image generation Auto resolution controls', () => {
 
     const ratioGroup = wrapper.findAll('.control-group')
       .find(group => group.find('.control-label').text() === '尺寸 / 比例')
-    await ratioGroup!.findAll('button').find(button => button.text() === '自定义')!.trigger('click')
+    const customButton = ratioGroup!.findAll('button').find(button => button.text() === '自定义')!
+    await customButton.trigger('click')
+    expect(customButton.classes()).toContain('active')
     const editor = ratioGroup!.find('.custom-ratio-editor')
     const inputs = editor.findAll('input')
     await inputs[0].setValue('4')
