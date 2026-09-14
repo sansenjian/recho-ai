@@ -108,7 +108,9 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 
 	chatModels, err := s.loadChatModels(ctx)
 	if err != nil {
-		if isMissingChatModelsSchema(err) {
+		envModels := environmentChatModels()
+		if isMissingChatModelsSchema(err) || len(envModels) > 0 {
+			cfg.ChatModels = envModels
 			return cfg, nil
 		}
 		return cfg, err
@@ -124,6 +126,7 @@ func isMissingChatModelsSchema(err error) bool {
 }
 
 func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOption, error) {
+	envModels := environmentChatModels()
 	rows, err := s.pool.Query(ctx, `
 		select name, models, default_model
 		from public.provider_settings
@@ -137,7 +140,7 @@ func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOpt
 	}
 	defer rows.Close()
 
-	result := make([]ChatModelOption, 0)
+	result := make([]ChatModelOption, 0, len(envModels))
 	seen := make(map[string]struct{})
 	for rows.Next() {
 		var provider string
@@ -164,7 +167,37 @@ func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOpt
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	for _, model := range envModels {
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
 	return result, nil
+}
+
+func environmentChatModels() []ChatModelOption {
+	providers := []struct {
+		apiKey  string
+		baseURL string
+		name    string
+		model   string
+	}{
+		{config.OpenAIAPIKey, config.OpenAIBaseURL, "Env OpenAI provider", "gpt-4o-mini"},
+		{config.KimiAPIKey, config.KimiBaseURL, "Env Kimi provider", "kimi-k2-0711-preview"},
+	}
+
+	result := make([]ChatModelOption, 0, len(providers))
+	for _, provider := range providers {
+		if strings.TrimSpace(provider.apiKey) == "" || strings.TrimSpace(provider.baseURL) == "" {
+			continue
+		}
+		if model := normalizeModelName(provider.model, ""); model != "" {
+			result = append(result, ChatModelOption{ID: model, Name: model, Provider: provider.name})
+		}
+	}
+	return result
 }
 
 func (s *AppSettingsService) ImageCreditCostPerImage(ctx context.Context) (float64, error) {
@@ -286,6 +319,10 @@ func parseJSONModelName(raw []byte, fallback string) string {
 func normalizeModelName(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 120 {
+		return fallback
+	}
+	first := value[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
 		return fallback
 	}
 	for _, r := range value {

@@ -148,6 +148,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 function handleSubmit() {
+  if (!props.currentModel) return
   const trimmed = inputValue.value.trim()
   const fallbackText = skillOnlyFallbackText.value
   if (!trimmed && !fallbackText) return
