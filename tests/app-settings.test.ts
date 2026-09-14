@@ -154,6 +154,36 @@ describe('app settings service', () => {
     ])
   })
 
+  it('exposes enabled image provider models ahead of legacy app settings', async () => {
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'gpt-image-2', name: 'GPT Image 2' }] },
+      { key: 'image_responses_image_model', value: 'gpt-image-2' },
+    ]
+    providerSettingRows = [
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        kind: 'image',
+        name: 'Primary Image',
+        base_url: 'https://image.example.test/v1',
+        image_model: 'gpt-image-2.5',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [
+        { id: 'gpt-image-2.5', name: 'gpt-image-2.5' },
+        { id: 'gpt-image-2', name: 'GPT Image 2' },
+      ],
+      defaultImageModel: 'gpt-image-2.5',
+    })
+  })
+
   it('briefly caches default settings when the settings table is unavailable', async () => {
     appSettingsError = { message: 'relation "app_settings" does not exist', code: '42P01' }
     const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
