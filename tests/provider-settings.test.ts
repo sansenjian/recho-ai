@@ -4,6 +4,7 @@ let providerRows: Array<Record<string, unknown>> = []
 let insertedRow: Record<string, unknown> | null = null
 let updatedRow: Record<string, unknown> | null = null
 let modelsColumnAvailable = true
+let modelCatalogColumnAvailable = true
 
 const defaultProviderRow = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -46,11 +47,14 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
     from: (table: string) => {
       if (table !== 'provider_settings') throw new Error(`Unexpected table ${table}`)
       let requestedModelsColumn = true
+      let requestedModelCatalogColumn = true
       const listResponse = async () => ({
         data: providerRows,
         error: requestedModelsColumn && !modelsColumnAvailable
           ? { code: 'PGRST204', message: 'column provider_settings.models does not exist' }
-          : null,
+          : requestedModelCatalogColumn && !modelCatalogColumnAvailable
+            ? { code: 'PGRST204', message: 'column provider_settings.model_catalog does not exist' }
+            : null,
       })
       const chain: Record<string, unknown> = {
         eq: vi.fn(() => chain),
@@ -62,12 +66,15 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
           data: providerRows[0] ?? defaultProviderRow,
           error: requestedModelsColumn && !modelsColumnAvailable
             ? { code: 'PGRST204', message: 'column provider_settings.models does not exist' }
-            : null,
+            : requestedModelCatalogColumn && !modelCatalogColumnAvailable
+              ? { code: 'PGRST204', message: 'column provider_settings.model_catalog does not exist' }
+              : null,
         })),
       }
       return {
         select: vi.fn((columns: string) => {
           requestedModelsColumn = columns.includes('models')
+          requestedModelCatalogColumn = columns.includes('model_catalog')
           return chain
         }),
         insert: vi.fn((row: Record<string, unknown>) => {
@@ -124,6 +131,7 @@ describe('provider settings service', () => {
     insertedRow = null
     updatedRow = null
     modelsColumnAvailable = true
+    modelCatalogColumnAvailable = true
     vi.resetModules()
   })
 
@@ -256,6 +264,46 @@ describe('provider settings service', () => {
 
     await expect(getRuntimeChatProvider('gpt-4o', { strict: true })).resolves.toMatchObject({ defaultModel: 'gpt-4o' })
     await expect(listProviderSettings({ refresh: true })).resolves.toMatchObject({ tableAvailable: true })
+  })
+
+  it('retains the legacy models column when only model_catalog is missing', async () => {
+    modelCatalogColumnAvailable = false
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [{
+      ...defaultProviderRow,
+      kind: 'chat',
+      models: ['gpt-4o', 'gpt-5.5'],
+      default_model: 'gpt-4o',
+      api_key_encrypted: encryptSecret('sk-legacy-models-secret'),
+    }]
+    const { getRuntimeChatProvider, listProviderSettings } = await import('../backend/gateway/src/services/provider-settings')
+
+    const settings = await listProviderSettings({ refresh: true })
+    expect(settings.providers.find(provider => provider.id === defaultProviderRow.id)).toMatchObject({
+      models: ['gpt-4o', 'gpt-5.5'],
+    })
+    await expect(getRuntimeChatProvider('gpt-5.5', { strict: true })).resolves.toMatchObject({
+      models: ['gpt-4o', 'gpt-5.5'],
+      resolvedModel: 'gpt-5.5',
+    })
+  })
+
+  it('retains model_catalog when only the legacy models column is missing', async () => {
+    modelsColumnAvailable = false
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [{
+      ...defaultProviderRow,
+      kind: 'chat',
+      model_catalog: [{ id: 'vendor/fast-v1', name: 'Fast Chat', enabled: true }],
+      default_model: 'vendor/fast-v1',
+      api_key_encrypted: encryptSecret('sk-catalog-secret'),
+    }]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('Fast Chat', { strict: true })).resolves.toMatchObject({
+      models: ['vendor/fast-v1'],
+      resolvedModel: 'vendor/fast-v1',
+    })
   })
 
   it('resolves an enabled runtime chat provider for matching models', async () => {

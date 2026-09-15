@@ -205,12 +205,15 @@ func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOpt
 			}
 			key := strings.ToLower(name)
 			if index, exists := seen[key]; exists {
+				if len(result[index].Providers) == 0 {
+					result[index].Providers = []string{result[index].Provider}
+				}
 				result[index].Providers = append(result[index].Providers, provider)
 				result[index].Provider = strings.Join(result[index].Providers, " / ")
 				continue
 			}
 			seen[key] = len(result)
-			result = append(result, ChatModelOption{ID: id, Name: name, Provider: provider, Providers: []string{provider}})
+			result = append(result, ChatModelOption{ID: id, Name: name, Provider: provider})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -222,7 +225,6 @@ func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOpt
 			continue
 		}
 		seen[key] = len(result)
-		model.Providers = []string{model.Provider}
 		result = append(result, model)
 	}
 	return result, nil

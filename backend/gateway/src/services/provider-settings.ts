@@ -438,7 +438,9 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   return patch
 }
 
-function providerSelectColumns(includeSecret = false, includeModels = true) {
+type ProviderModelColumnMode = 'both' | 'models' | 'catalog' | 'none'
+
+function providerSelectColumns(includeSecret = false, modelColumns: ProviderModelColumnMode = 'both') {
   const columns = [
     'id',
     'kind',
@@ -457,7 +459,9 @@ function providerSelectColumns(includeSecret = false, includeModels = true) {
     'created_at',
     'updated_at',
   ]
-  if (includeModels) columns.splice(7, 0, 'models', 'model_catalog')
+  if (modelColumns === 'both') columns.splice(7, 0, 'models', 'model_catalog')
+  if (modelColumns === 'models') columns.splice(7, 0, 'models')
+  if (modelColumns === 'catalog') columns.splice(7, 0, 'model_catalog')
   columns.push('api_key_preview')
   if (includeSecret) columns.push('api_key_encrypted')
   return columns.join(',')
@@ -481,18 +485,49 @@ function isMissingModelCatalogColumnError(error: unknown) {
     (text.includes('column') || text.includes('does not exist') || text.includes('could not find'))
 }
 
+function modelColumnFallbackMode(error: unknown): ProviderModelColumnMode | null {
+  const modelsMissing = isMissingModelsColumnError(error)
+  const catalogMissing = isMissingModelCatalogColumnError(error)
+  if (!modelsMissing && !catalogMissing) return null
+  if (modelsMissing && catalogMissing) return 'none'
+  return modelsMissing ? 'catalog' : 'models'
+}
+
+function runtimeProviderSelectColumns(modelColumns: ProviderModelColumnMode = 'both') {
+  const columns = [
+    'id',
+    'name',
+    'base_url',
+    'api_key_encrypted',
+    'default_model',
+    'timeout_ms',
+    'retry_count',
+  ]
+  if (modelColumns === 'both' || modelColumns === 'models') columns.splice(5, 0, 'models')
+  if (modelColumns === 'both' || modelColumns === 'catalog') columns.splice(modelColumns === 'catalog' ? 5 : 6, 0, 'model_catalog')
+  return columns.join(',')
+}
+
 async function loadProviderRow(client: any, providerId: string) {
   let response = await client
     .from(PROVIDER_SETTINGS_TABLE)
     .select(providerSelectColumns(true))
     .eq('id', providerId)
     .maybeSingle()
-  if (response.error && (isMissingModelsColumnError(response.error) || isMissingModelCatalogColumnError(response.error))) {
+  const fallbackMode = modelColumnFallbackMode(response.error)
+  if (fallbackMode) {
     response = await client
       .from(PROVIDER_SETTINGS_TABLE)
-      .select(providerSelectColumns(true, false))
+      .select(providerSelectColumns(true, fallbackMode))
       .eq('id', providerId)
       .maybeSingle()
+    if (modelColumnFallbackMode(response.error)) {
+      response = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select(providerSelectColumns(true, 'none'))
+        .eq('id', providerId)
+        .maybeSingle()
+    }
   }
   if (response.error) throw response.error
   return response.data as Record<string, unknown> | null
@@ -525,15 +560,26 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
-    if (error && (isMissingModelsColumnError(error) || isMissingModelCatalogColumnError(error))) {
+    const fallbackMode = modelColumnFallbackMode(error)
+    if (fallbackMode) {
       const legacy = await client
         .from(PROVIDER_SETTINGS_TABLE)
-        .select(providerSelectColumns(true, false))
+        .select(providerSelectColumns(true, fallbackMode))
         .order('kind', { ascending: true })
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
       data = legacy.data
       error = legacy.error
+      if (modelColumnFallbackMode(error)) {
+        const minimal = await client
+          .from(PROVIDER_SETTINGS_TABLE)
+          .select(providerSelectColumns(true, 'none'))
+          .order('kind', { ascending: true })
+          .order('priority', { ascending: true })
+          .order('updated_at', { ascending: false })
+        data = minimal.data
+        error = minimal.error
+      }
     }
     if (error) throw error
     const cache = {
@@ -661,35 +707,18 @@ export async function getRuntimeChatProvider(
   try {
     let { data, error } = await client
       .from(PROVIDER_SETTINGS_TABLE)
-      .select([
-        'id',
-        'name',
-        'base_url',
-        'api_key_encrypted',
-        'default_model',
-        'models',
-        'model_catalog',
-        'timeout_ms',
-        'retry_count',
-      ].join(','))
+      .select(runtimeProviderSelectColumns())
       .eq('kind', 'chat')
       .eq('enabled', true)
       .not('api_key_encrypted', 'is', null)
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
-    if (error && (isMissingModelsColumnError(error) || isMissingModelCatalogColumnError(error))) {
+    const fallbackMode = modelColumnFallbackMode(error)
+    if (fallbackMode) {
       const legacy = await client
         .from(PROVIDER_SETTINGS_TABLE)
-        .select([
-          'id',
-          'name',
-          'base_url',
-          'api_key_encrypted',
-          'default_model',
-          'timeout_ms',
-          'retry_count',
-        ].join(','))
+        .select(runtimeProviderSelectColumns(fallbackMode))
         .eq('kind', 'chat')
         .eq('enabled', true)
         .not('api_key_encrypted', 'is', null)
@@ -697,6 +726,18 @@ export async function getRuntimeChatProvider(
         .order('updated_at', { ascending: false })
       data = legacy.data
       error = legacy.error
+      if (modelColumnFallbackMode(error)) {
+        const minimal = await client
+          .from(PROVIDER_SETTINGS_TABLE)
+          .select(runtimeProviderSelectColumns('none'))
+          .eq('kind', 'chat')
+          .eq('enabled', true)
+          .not('api_key_encrypted', 'is', null)
+          .order('priority', { ascending: true })
+          .order('updated_at', { ascending: false })
+        data = minimal.data
+        error = minimal.error
+      }
     }
     if (error) throw error
 
