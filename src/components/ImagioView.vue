@@ -54,6 +54,7 @@ const customAspectRatioError = ref<string | null>(null)
 const canGenerate = computed(() => Boolean(promptText.value.trim()) && !props.isGenerating)
 const aspectRatioLocked = computed(() => props.resolution === 'auto')
 const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.aspectRatio))
+const customAspectRatioSelected = computed(() => customAspectRatioActive.value || customAspectRatioOpen.value)
 
 watch(() => props.aspectRatio, (value) => {
   if (!value || !isCustomImageAspectRatio(value)) return
@@ -115,11 +116,15 @@ function removeReference(index: number) {
 
 function updateResolution(value: ImageResolution) {
   emit('update:resolution', value)
-  if (value === 'auto') emit('update:aspect-ratio', 'auto')
+  if (value === 'auto') {
+    customAspectRatioOpen.value = false
+    emit('update:aspect-ratio', 'auto')
+  }
 }
 
 function updateAspectRatio(value: ImageAspectRatio) {
   if (aspectRatioLocked.value && value !== 'auto') return
+  customAspectRatioOpen.value = false
   emit('update:aspect-ratio', value)
 }
 
@@ -139,7 +144,7 @@ function applyCustomAspectRatio() {
   customAspectRatioError.value = null
   customAspectRatioWidth.value = String(parts.width)
   customAspectRatioHeight.value = String(parts.height)
-  emit('update:aspect-ratio', parts.value)
+  if (props.aspectRatio !== parts.value) emit('update:aspect-ratio', parts.value)
 }
 
 async function handlePaste(event: ClipboardEvent) {
@@ -271,7 +276,7 @@ async function handleGenerate() {
               <button
                 type="button"
                 :disabled="aspectRatioLocked"
-                :class="{ active: customAspectRatioActive }"
+                :class="{ active: customAspectRatioSelected }"
                 class="disabled:cursor-not-allowed disabled:opacity-40"
                 @click="openCustomAspectRatio"
               >

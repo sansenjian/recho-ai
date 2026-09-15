@@ -68,6 +68,7 @@ export interface ModelOption {
   level: string
   hint?: string
   status?: 'recommended' | 'available' | 'slow'
+  providers?: string[]
 }
 
 export type AgentModeId = 'chat' | 'code' | 'plan'

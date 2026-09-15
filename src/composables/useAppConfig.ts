@@ -7,7 +7,7 @@ export interface ImageModelOption {
 }
 
 export interface PublicAppConfig {
-  chatModels: Array<{ id: string; name: string; provider: string }>
+  chatModels: Array<{ id: string; name: string; provider: string; providers?: string[] }>
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
   guestGenerationEnabled: boolean
@@ -47,6 +47,7 @@ function normalizeConfig(value: unknown): PublicAppConfig {
         id: item.id as string,
         name: typeof item.name === 'string' && item.name ? item.name : item.id as string,
         provider: typeof item.provider === 'string' && item.provider ? item.provider : 'Custom',
+        providers: Array.isArray(item.providers) ? item.providers.filter((value): value is string => typeof value === 'string') : undefined,
       }))
     : []
   return {

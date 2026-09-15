@@ -10,6 +10,7 @@ import type {
   AdminAccessSummary,
   AdminAppSettings,
   AdminProviderSetting,
+  AdminProviderModel,
   AdminProviderSettingsState,
   AdminRole,
   AdminUserRule,
@@ -22,6 +23,10 @@ const emit = defineEmits<{
   roleChanged: [role: AdminRole]
   dataChanged: [source: 'settings']
 }>()
+
+const props = withDefaults(defineProps<{
+  section?: 'all' | 'runtime' | 'providers'
+}>(), { section: 'all' })
 
 const { t } = useI18n()
 const settingsLoading = ref(false)
@@ -60,6 +65,7 @@ const providerForm = ref({
   priority: 100,
   defaultModel: '',
   models: [] as string[],
+  modelCatalog: [] as AdminProviderModel[],
   imageModel: 'gpt-image-2',
   editModel: 'gpt-image-2',
   imageCompatibilityMode: 'auto' as ImageProviderCompatibilityMode,
@@ -105,6 +111,7 @@ function resetProviderForm(kind: 'chat' | 'image' = 'image') {
     priority: 100,
     defaultModel: kind === 'chat' ? 'gpt-4o-mini' : '',
     models: kind === 'chat' ? ['gpt-4o-mini'] : [],
+    modelCatalog: kind === 'chat' ? [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true }] : [],
     imageModel: kind === 'image' ? 'gpt-image-2' : '',
     editModel: kind === 'image' ? 'gpt-image-2' : '',
     imageCompatibilityMode: 'auto',
@@ -127,6 +134,10 @@ function editProvider(provider: AdminProviderSetting) {
     priority: provider.priority,
     defaultModel: provider.defaultModel || '',
     models: provider.models?.length ? [...provider.models] : provider.defaultModel ? [provider.defaultModel] : [],
+    modelCatalog: provider.modelCatalog?.length
+      ? provider.modelCatalog.map(model => ({ ...model }))
+      : (provider.models?.length ? provider.models : provider.defaultModel ? [provider.defaultModel] : [])
+        .map(id => ({ id, name: id, enabled: true })),
     imageModel: provider.imageModel || '',
     editModel: provider.editModel || '',
     imageCompatibilityMode: provider.imageCompatibilityMode,
@@ -138,11 +149,11 @@ function editProvider(provider: AdminProviderSetting) {
 }
 
 function addProviderModel() {
-  providerForm.value.models.push('')
+  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true })
 }
 
 function removeProviderModel(index: number) {
-  providerForm.value.models.splice(index, 1)
+  providerForm.value.modelCatalog.splice(index, 1)
 }
 
 function providerStatusLabel(provider: AdminProviderSetting) {
@@ -234,8 +245,11 @@ async function saveProvider() {
     const isUpdate = Boolean(providerForm.value.id)
     const { id: _id, ...providerPayload } = providerForm.value
     if (providerPayload.kind === 'chat') {
-      providerPayload.models = providerPayload.models.map(model => model.trim()).filter(Boolean)
-      providerPayload.defaultModel = providerPayload.models[0] || providerPayload.defaultModel.trim()
+      providerPayload.modelCatalog = providerPayload.modelCatalog
+        .map(model => ({ id: model.id.trim(), name: model.name.trim() || model.id.trim(), enabled: Boolean(model.enabled) }))
+        .filter(model => model.id)
+      providerPayload.models = providerPayload.modelCatalog.map(model => model.id)
+      providerPayload.defaultModel = providerPayload.modelCatalog.find(model => model.enabled)?.id || providerPayload.defaultModel.trim()
     }
     const data = await adminApiJson<{ provider: AdminProviderSetting; providerSettings: AdminProviderSettingsState }>(
       isUpdate ? `/api/admin/settings/providers/${encodeURIComponent(providerForm.value.id)}` : '/api/admin/settings/providers',
@@ -306,8 +320,8 @@ onMounted(refreshSettings)
       <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p>
       <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p>
     </div>
-    <div class="grid grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-4 max-lg:grid-cols-1">
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+    <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
+      <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3">
           <div><h2 class="text-sm font-semibold">{{ t('settings.runtimeConfig') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span></div>
           <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
@@ -328,7 +342,7 @@ onMounted(refreshSettings)
         </form>
       </div>
 
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+      <div v-if="props.section !== 'runtime'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">Provider / API Key</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? '数据库配置' : '仅环境变量兜底' }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="flex flex-col gap-3" @submit.prevent="saveProvider">
           <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">类型</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
@@ -339,7 +353,12 @@ onMounted(refreshSettings)
           <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? '优先级' : field === 'timeoutMs' ? '超时 ms' : '重试' }}</span><input :id="`provider-${field}`" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
           <div v-if="providerForm.kind === 'chat'" class="flex flex-col gap-2">
             <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">Chat 模型</span><Button type="button" variant="outline" size="sm" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />添加模型</Button></div>
-            <div v-for="(_, index) in providerForm.models" :key="index" class="flex items-center gap-2"><input :id="`provider-model-${index}`" v-model.trim="providerForm.models[index]" :placeholder="index === 0 ? '例如 gpt-4o-mini' : '模型 ID'" class="min-h-8 min-w-0 flex-1 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"><Button type="button" variant="ghost" size="icon" :disabled="providerForm.models.length <= 1" :aria-label="`删除模型 ${index + 1}`" title="删除模型" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button></div>
+            <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
+              <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? '模型 ID，例如 gpt-4o-mini' : '模型 ID'" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <input :id="`provider-model-name-${index}`" v-model.trim="model.name" placeholder="展示名，例如 GPT-4o Mini" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">启用</label>
+              <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="`删除模型 ${index + 1}`" title="删除模型" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
+            </div>
             <span class="text-[11px] text-[var(--text-muted)]">同一个 Base URL 下可配置多个模型，模型 ID 需与上游服务一致。</span>
           </div>
           <template v-else>
@@ -353,11 +372,11 @@ onMounted(refreshSettings)
           <div class="flex flex-wrap gap-2"><Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? '保存 Provider' : '新增 Provider' }}</Button><Button variant="outline" type="button" @click="resetProviderForm(providerForm.kind)">重置</Button></div>
         </form>
         <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
-        <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[720px] border-collapse text-[13px]"><thead><tr><th v-for="heading in ['类型','名称','模型','兼容','Key','状态','操作']" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs">{{ provider.kind === 'image' ? provider.imageModel || '-' : (provider.models?.length ? provider.models.join(', ') : provider.defaultModel || '-') }}</td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || '已配置' : '未配置' }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">编辑</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">暂无 Provider 配置</td></tr></tbody></table></div>
+        <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in ['类型','名称','模型目录','兼容','Key','状态','操作']" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">优先级 {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div v-if="provider.kind === 'image'">{{ provider.imageModel || '-' }}</div><div v-else class="flex flex-col gap-0.5"><span v-for="model in (provider.modelCatalog?.length ? provider.modelCatalog : provider.models.map(id => ({ id, name: id, enabled: true })))" :key="model.id" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!provider.modelCatalog?.length && !provider.models?.length">{{ provider.defaultModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || '已配置' : '未配置' }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">编辑</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">暂无 Provider 配置</td></tr></tbody></table></div>
         <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border"><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Image Providers</span><strong class="block text-xl">{{ imageProviderRows.length }}</strong></div><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Chat Providers</span><strong class="block text-xl">{{ chatProviderRows.length }}</strong></div></div>
       </div>
 
-      <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
+      <div v-if="props.section === 'all'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.adminUsers') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ adminRuleTotal }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="mb-4 flex flex-wrap items-end gap-2" @submit.prevent="createAdminRule"><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminUserId') }}</span><input id="admin-user-id" v-model.trim="adminUserForm.userId" :placeholder="t('settings.adminUserId')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminEmail') }}</span><input id="admin-user-email" v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminNote') }}</span><input id="admin-user-note" v-model.trim="adminUserForm.note" :placeholder="t('settings.adminNote')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><Button type="submit" :disabled="actionLoading">{{ t('common.add') }}</Button></form>
         <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>

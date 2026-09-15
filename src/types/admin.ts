@@ -244,6 +244,12 @@ export interface AdminAppSettings {
 export type ProviderKind = 'chat' | 'image'
 export type ImageProviderCompatibilityMode = 'auto' | 'openai' | 'lucen'
 
+export interface AdminProviderModel {
+  id: string
+  name: string
+  enabled: boolean
+}
+
 export interface AdminProviderSetting {
   id: string
   kind: ProviderKind
@@ -253,6 +259,7 @@ export interface AdminProviderSetting {
   priority: number
   defaultModel: string | null
   models: string[]
+  modelCatalog: AdminProviderModel[]
   imageModel: string | null
   editModel: string | null
   imageCompatibilityMode: ImageProviderCompatibilityMode

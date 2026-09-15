@@ -105,7 +105,7 @@ router.post('/chat', async (req: Request, res: Response) => {
 
       // Unified TAOR loop: streaming + tools always provided.
       // The model autonomously decides whether to call tools.
-      await runTAORLoop(client, model, conversationMessages, tools, res, controller)
+      await runTAORLoop(client, runtimeProvider?.resolvedModel || model, conversationMessages, tools, res, controller)
       return
     } catch (err: any) {
       if (controller.signal.aborted || res.writableEnded) {

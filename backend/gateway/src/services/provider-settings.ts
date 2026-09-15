@@ -23,6 +23,12 @@ const PROVIDER_SETTINGS_CACHE_MS = 15_000
 export type ProviderKind = 'chat' | 'image'
 export type ImageProviderCompatibilityMode = 'auto' | 'openai' | 'lucen'
 
+export interface ProviderModel {
+  id: string
+  name: string
+  enabled: boolean
+}
+
 export interface ProviderSetting {
   id: string
   kind: ProviderKind
@@ -32,6 +38,7 @@ export interface ProviderSetting {
   priority: number
   defaultModel: string | null
   models: string[]
+  modelCatalog: ProviderModel[]
   imageModel: string | null
   editModel: string | null
   imageCompatibilityMode: ImageProviderCompatibilityMode
@@ -53,6 +60,8 @@ export interface RuntimeChatProvider {
   apiKey: string
   defaultModel: string | null
   models: string[]
+  modelCatalog: ProviderModel[]
+  resolvedModel: string
   timeoutMs: number
   retryCount: number
   source: 'database'
@@ -114,6 +123,38 @@ function normalizeModelList(value: unknown, options: { rejectInvalid?: boolean }
     })
   }
   return models.filter(isValidChatModel)
+}
+
+function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolean } = {}): ProviderModel[] {
+  if (!Array.isArray(value)) return []
+  const result: ProviderModel[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    const record = typeof item === 'string' ? { id: item } : item
+    if (!record || typeof record !== 'object') continue
+    const source = record as Record<string, unknown>
+    const id = cleanText(source.id, 120)
+    if (!id || seen.has(id)) continue
+    if (!isValidChatModel(id)) {
+      if (options.rejectInvalid) throw new ProviderSettingsError('invalid_chat_model', {
+        publicMessage: `模型 ID 无效：${id}`,
+      })
+      continue
+    }
+    seen.add(id)
+    result.push({
+      id,
+      name: cleanText(source.name, 120) || id,
+      enabled: source.enabled !== false,
+    })
+  }
+  return result.slice(0, 100)
+}
+
+function modelCatalogFromInput(input: Record<string, unknown>): ProviderModel[] {
+  const catalog = normalizeModelCatalog(input.modelCatalog, { rejectInvalid: true })
+  if (catalog.length > 0) return catalog
+  return normalizeModelList(input.models, { rejectInvalid: true }).map(id => ({ id, name: id, enabled: true }))
 }
 
 function normalizeName(value: unknown) {
@@ -191,6 +232,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_000,
       defaultModel: null,
       models: [],
+      modelCatalog: [],
       imageModel: IMAGE_RESPONSES_IMAGE_MODEL,
       editModel: IMAGE_RESPONSES_IMAGE_MODEL,
       imageCompatibilityMode: 'auto',
@@ -215,6 +257,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_000,
       defaultModel: 'gpt-4o-mini',
       models: ['gpt-4o-mini'],
+      modelCatalog: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -239,6 +282,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_001,
       defaultModel: 'kimi-k2-0711-preview',
       models: ['kimi-k2-0711-preview'],
+      modelCatalog: [{ id: 'kimi-k2-0711-preview', name: 'kimi-k2-0711-preview', enabled: true }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -272,6 +316,10 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
       ? row.default_model.trim()
       : null,
     models: normalizeModelList(row.models),
+    modelCatalog: (() => {
+      const catalog = normalizeModelCatalog(row.model_catalog)
+      return catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+    })(),
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
     imageCompatibilityMode: normalizeImageCompatibilityMode(row.image_compatibility_mode),
@@ -287,7 +335,7 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
   }
 }
 
-function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatProvider | null {
+function runtimeChatProviderFromRow(row: Record<string, unknown>, requestedModel?: string, requestedName?: string): RuntimeChatProvider | null {
   let apiKey = ''
   const encryptedKey = typeof row.api_key_encrypted === 'string' ? row.api_key_encrypted.trim() : ''
   if (encryptedKey) {
@@ -295,6 +343,17 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatPr
   }
   const baseUrl = typeof row.base_url === 'string' ? row.base_url.trim().replace(/\/+$/, '') : ''
   if (!apiKey || !baseUrl) return null
+  const catalog = normalizeModelCatalog(row.model_catalog)
+  const models = catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+  const resolvedModel = models.find(item => item.enabled && (
+    item.id === requestedModel ||
+    item.name.trim().toLowerCase() === requestedModel?.trim().toLowerCase() ||
+    item.name.trim().toLowerCase() === requestedName?.trim().toLowerCase()
+  ))?.id
+    || rowDefaultModel(row)
+    || models.find(item => item.enabled)?.id
+    || requestedModel
+    || ''
   return {
     id: String(row.id || ''),
     name: String(row.name || ''),
@@ -303,7 +362,9 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>): RuntimeChatPr
     defaultModel: typeof row.default_model === 'string' && isValidChatModel(row.default_model.trim())
       ? row.default_model.trim()
       : null,
-    models: normalizeModelList(row.models),
+    models: models.map(item => item.id),
+    modelCatalog: models,
+    resolvedModel,
     timeoutMs: normalizeInt(row.timeout_ms, 60_000, 1_000, 1_200_000),
     retryCount: normalizeInt(row.retry_count, 3, 0, 10),
     source: 'database',
@@ -338,15 +399,17 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   if ('enabled' in input) patch.enabled = normalizeBoolean(input.enabled)
   if ('priority' in input) patch.priority = normalizeInt(input.priority, 100, 0, 10_000)
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
-  if ('models' in input) {
-    const models = normalizeModelList(input.models, { rejectInvalid: true })
-    if (input.kind === 'chat' && models.length === 0) {
+  if ('models' in input || 'modelCatalog' in input) {
+    const modelCatalog = modelCatalogFromInput(input)
+    const models = modelCatalog.map(model => model.id)
+    if (input.kind === 'chat' && modelCatalog.filter(model => model.enabled).length === 0) {
       throw new ProviderSettingsError('chat_provider_models_required', {
         publicMessage: 'Chat Provider 至少需要配置一个模型。',
       })
     }
     patch.models = models
-    if (input.kind === 'chat') patch.default_model = models[0] || null
+    patch.model_catalog = modelCatalog
+    if (input.kind === 'chat') patch.default_model = modelCatalog.find(model => model.enabled)?.id || null
   }
   if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
@@ -375,7 +438,9 @@ function validateProviderInput(input: Record<string, unknown>, options: { partia
   return patch
 }
 
-function providerSelectColumns(includeSecret = false, includeModels = true) {
+type ProviderModelColumnMode = 'both' | 'models' | 'catalog' | 'none'
+
+function providerSelectColumns(includeSecret = false, modelColumns: ProviderModelColumnMode = 'both') {
   const columns = [
     'id',
     'kind',
@@ -394,7 +459,9 @@ function providerSelectColumns(includeSecret = false, includeModels = true) {
     'created_at',
     'updated_at',
   ]
-  if (includeModels) columns.splice(7, 0, 'models')
+  if (modelColumns === 'both') columns.splice(7, 0, 'models', 'model_catalog')
+  if (modelColumns === 'models') columns.splice(7, 0, 'models')
+  if (modelColumns === 'catalog') columns.splice(7, 0, 'model_catalog')
   columns.push('api_key_preview')
   if (includeSecret) columns.push('api_key_encrypted')
   return columns.join(',')
@@ -409,18 +476,58 @@ function isMissingModelsColumnError(error: unknown) {
     (text.includes('column') || text.includes('does not exist') || text.includes('could not find'))
 }
 
+function isMissingModelCatalogColumnError(error: unknown) {
+  const record = error as Record<string, unknown> | null
+  const code = typeof record?.code === 'string' ? record.code.toLowerCase() : ''
+  const text = [record?.message, record?.details, record?.hint].filter(Boolean).join(' ').toLowerCase()
+  return (code === '42703' || code === 'pgrst204' || text.includes('schema cache')) &&
+    text.includes('model_catalog') &&
+    (text.includes('column') || text.includes('does not exist') || text.includes('could not find'))
+}
+
+function modelColumnFallbackMode(error: unknown): ProviderModelColumnMode | null {
+  const modelsMissing = isMissingModelsColumnError(error)
+  const catalogMissing = isMissingModelCatalogColumnError(error)
+  if (!modelsMissing && !catalogMissing) return null
+  if (modelsMissing && catalogMissing) return 'none'
+  return modelsMissing ? 'catalog' : 'models'
+}
+
+function runtimeProviderSelectColumns(modelColumns: ProviderModelColumnMode = 'both') {
+  const columns = [
+    'id',
+    'name',
+    'base_url',
+    'api_key_encrypted',
+    'default_model',
+    'timeout_ms',
+    'retry_count',
+  ]
+  if (modelColumns === 'both' || modelColumns === 'models') columns.splice(5, 0, 'models')
+  if (modelColumns === 'both' || modelColumns === 'catalog') columns.splice(modelColumns === 'catalog' ? 5 : 6, 0, 'model_catalog')
+  return columns.join(',')
+}
+
 async function loadProviderRow(client: any, providerId: string) {
   let response = await client
     .from(PROVIDER_SETTINGS_TABLE)
     .select(providerSelectColumns(true))
     .eq('id', providerId)
     .maybeSingle()
-  if (response.error && isMissingModelsColumnError(response.error)) {
+  const fallbackMode = modelColumnFallbackMode(response.error)
+  if (fallbackMode) {
     response = await client
       .from(PROVIDER_SETTINGS_TABLE)
-      .select(providerSelectColumns(true, false))
+      .select(providerSelectColumns(true, fallbackMode))
       .eq('id', providerId)
       .maybeSingle()
+    if (modelColumnFallbackMode(response.error)) {
+      response = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select(providerSelectColumns(true, 'none'))
+        .eq('id', providerId)
+        .maybeSingle()
+    }
   }
   if (response.error) throw response.error
   return response.data as Record<string, unknown> | null
@@ -453,15 +560,26 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
-    if (error && isMissingModelsColumnError(error)) {
+    const fallbackMode = modelColumnFallbackMode(error)
+    if (fallbackMode) {
       const legacy = await client
         .from(PROVIDER_SETTINGS_TABLE)
-        .select(providerSelectColumns(true, false))
+        .select(providerSelectColumns(true, fallbackMode))
         .order('kind', { ascending: true })
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
       data = legacy.data
       error = legacy.error
+      if (modelColumnFallbackMode(error)) {
+        const minimal = await client
+          .from(PROVIDER_SETTINGS_TABLE)
+          .select(providerSelectColumns(true, 'none'))
+          .order('kind', { ascending: true })
+          .order('priority', { ascending: true })
+          .order('updated_at', { ascending: false })
+        data = minimal.data
+        error = minimal.error
+      }
     }
     if (error) throw error
     const cache = {
@@ -530,15 +648,18 @@ export async function updateProviderSetting(providerId: string, input: Record<st
   if (!existingRow) throw new ProviderSettingsError('invalid_provider_id')
 
   const mergedKind = 'kind' in input ? normalizeKind(input.kind) : normalizeKind(existingRow.kind)
-  const modelsProvided = 'models' in input
-  const existingModels = normalizeModelList(existingRow.models)
-  const requestedModels = modelsProvided
-    ? normalizeModelList(input.models, { rejectInvalid: true })
-    : existingModels
-  const effectiveModels = requestedModels.length > 0
-    ? requestedModels
-    : (!modelsProvided && mergedKind === 'chat' && rowDefaultModel(existingRow) ? [rowDefaultModel(existingRow)] : [])
-  if (mergedKind === 'chat' && effectiveModels.length === 0) {
+  const modelsProvided = 'models' in input || 'modelCatalog' in input
+  const existingCatalog = normalizeModelCatalog(existingRow.model_catalog)
+  const existingModels = existingCatalog.length > 0
+    ? existingCatalog
+    : normalizeModelList(existingRow.models).map(id => ({ id, name: id, enabled: true }))
+  const requestedCatalog = modelsProvided ? modelCatalogFromInput(input) : existingModels
+  const effectiveCatalog = requestedCatalog.length > 0
+    ? requestedCatalog
+    : (!modelsProvided && mergedKind === 'chat' && rowDefaultModel(existingRow)
+      ? [{ id: rowDefaultModel(existingRow), name: rowDefaultModel(existingRow), enabled: true }]
+      : [])
+  if (mergedKind === 'chat' && effectiveCatalog.filter(model => model.enabled).length === 0) {
     throw new ProviderSettingsError('chat_provider_models_required', {
       publicMessage: 'Chat Provider 至少需要配置一个模型。',
     })
@@ -550,10 +671,11 @@ export async function updateProviderSetting(providerId: string, input: Record<st
     updated_by: adminUser.id,
   }
   if (modelsProvided) {
-    patch.models = requestedModels
-    if (mergedKind === 'chat') patch.default_model = requestedModels[0]
+    patch.models = requestedCatalog.map(model => model.id)
+    patch.model_catalog = requestedCatalog
+    if (mergedKind === 'chat') patch.default_model = requestedCatalog.find(model => model.enabled)?.id
   } else if ('kind' in input && mergedKind === 'chat') {
-    patch.default_model = effectiveModels[0]
+    patch.default_model = effectiveCatalog.find(model => model.enabled)?.id
   }
   const { data, error } = await client
     .from(PROVIDER_SETTINGS_TABLE)
@@ -585,34 +707,18 @@ export async function getRuntimeChatProvider(
   try {
     let { data, error } = await client
       .from(PROVIDER_SETTINGS_TABLE)
-      .select([
-        'id',
-        'name',
-        'base_url',
-        'api_key_encrypted',
-        'default_model',
-        'models',
-        'timeout_ms',
-        'retry_count',
-      ].join(','))
+      .select(runtimeProviderSelectColumns())
       .eq('kind', 'chat')
       .eq('enabled', true)
       .not('api_key_encrypted', 'is', null)
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
 
-    if (error && isMissingModelsColumnError(error)) {
+    const fallbackMode = modelColumnFallbackMode(error)
+    if (fallbackMode) {
       const legacy = await client
         .from(PROVIDER_SETTINGS_TABLE)
-        .select([
-          'id',
-          'name',
-          'base_url',
-          'api_key_encrypted',
-          'default_model',
-          'timeout_ms',
-          'retry_count',
-        ].join(','))
+        .select(runtimeProviderSelectColumns(fallbackMode))
         .eq('kind', 'chat')
         .eq('enabled', true)
         .not('api_key_encrypted', 'is', null)
@@ -620,11 +726,32 @@ export async function getRuntimeChatProvider(
         .order('updated_at', { ascending: false })
       data = legacy.data
       error = legacy.error
+      if (modelColumnFallbackMode(error)) {
+        const minimal = await client
+          .from(PROVIDER_SETTINGS_TABLE)
+          .select(runtimeProviderSelectColumns('none'))
+          .eq('kind', 'chat')
+          .eq('enabled', true)
+          .not('api_key_encrypted', 'is', null)
+          .order('priority', { ascending: true })
+          .order('updated_at', { ascending: false })
+        data = minimal.data
+        error = minimal.error
+      }
     }
     if (error) throw error
 
     const rows = ((data || []) as unknown as Array<Record<string, unknown>>)
-    const exactRows = rows.filter(row => normalizeModelList(row.models).includes(model) || rowDefaultModel(row) === model)
+    const requestedName = model.trim().toLowerCase()
+    const requestedAliases = new Set(rows.flatMap(row => {
+      const catalog = normalizeModelCatalog(row.model_catalog)
+      return catalog.filter(item => item.enabled && item.id === model).map(item => item.name.trim().toLowerCase())
+    }))
+    const exactRows = rows.filter(row => {
+      const catalog = normalizeModelCatalog(row.model_catalog)
+      const entries = catalog.length > 0 ? catalog.filter(item => item.enabled) : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+      return entries.some(item => item.id === model || requestedAliases.has(item.name.trim().toLowerCase()) || item.name.trim().toLowerCase() === requestedName) || rowDefaultModel(row) === model
+    })
     const familyRows = rows.filter((row) => {
       const configured = normalizeModelList(row.models)
       const defaultModel = rowDefaultModel(row)
@@ -641,7 +768,7 @@ export async function getRuntimeChatProvider(
     let candidateError: unknown = null
     for (const row of candidates) {
       try {
-        const provider = runtimeChatProviderFromRow(row)
+        const provider = runtimeChatProviderFromRow(row, model, requestedAliases.values().next().value)
         if (provider) return provider
       } catch (err) {
         candidateError = err

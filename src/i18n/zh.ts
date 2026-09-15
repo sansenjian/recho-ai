@@ -7,6 +7,8 @@ export default {
     system: '系统状态',
     announcements: '公告管理',
     settings: '系统设置',
+    runtime: '运行时配置',
+    providers: 'Provider 配置',
     canvas: '画布',
     works: '作品',
   },

@@ -7,6 +7,8 @@ export default {
     system: 'System',
     announcements: 'Announcements',
     settings: 'Settings',
+    runtime: 'Runtime Config',
+    providers: 'Provider Config',
     canvas: 'Canvas',
     works: 'Works',
   },
