@@ -327,6 +327,75 @@ describe('provider settings service', () => {
     })
   })
 
+  it('groups duplicate display names and routes the canonical model by priority', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        kind: 'chat',
+        name: 'Primary Chat',
+        base_url: 'https://primary.example.test/v1',
+        model_catalog: [{ id: 'vendor/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 10,
+        api_key_encrypted: encryptSecret('sk-primary-secret'),
+      },
+      {
+        id: '66666666-6666-4666-8666-666666666666',
+        kind: 'chat',
+        name: 'Backup Chat',
+        base_url: 'https://backup.example.test/v1',
+        model_catalog: [{ id: 'backup/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 20,
+        api_key_encrypted: encryptSecret('sk-backup-secret'),
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('vendor/fast-v1', { strict: true })).resolves.toMatchObject({
+      name: 'Primary Chat',
+      resolvedModel: 'vendor/fast-v1',
+    })
+    await expect(getRuntimeChatProvider('Fast Chat', { strict: true })).resolves.toMatchObject({
+      name: 'Primary Chat',
+      resolvedModel: 'vendor/fast-v1',
+    })
+  })
+
+  it('falls back to the next priority provider when the canonical provider key is invalid', async () => {
+    const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
+    providerRows = [
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        kind: 'chat',
+        name: 'Primary Chat',
+        base_url: 'https://primary.example.test/v1',
+        model_catalog: [{ id: 'vendor/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 10,
+        api_key_encrypted: 'v1.aes-256-gcm.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA',
+      },
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        kind: 'chat',
+        name: 'Backup Chat',
+        base_url: 'https://backup.example.test/v1',
+        model_catalog: [{ id: 'backup/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 20,
+        api_key_encrypted: encryptSecret('sk-backup-secret'),
+      },
+    ]
+    const { getRuntimeChatProvider } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(getRuntimeChatProvider('vendor/fast-v1', { strict: true })).resolves.toMatchObject({
+      name: 'Backup Chat',
+      resolvedModel: 'backup/fast-v1',
+      apiKey: 'sk-backup-secret',
+    })
+  })
+
   it('skips malformed encrypted chat rows and uses the next matching provider', async () => {
     const { encryptSecret } = await import('../backend/gateway/src/services/secret-crypto')
     providerRows = [

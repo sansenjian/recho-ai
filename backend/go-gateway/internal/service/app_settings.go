@@ -21,9 +21,16 @@ type ImageModelOption struct {
 }
 
 type ChatModelOption struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Provider  string   `json:"provider"`
+	Providers []string `json:"providers,omitempty"`
+}
+
+type providerModelOption struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
 }
 
 type PublicAppConfig struct {
@@ -136,8 +143,9 @@ func isMissingChatModelsSchema(err error) bool {
 
 func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOption, error) {
 	envModels := environmentChatModels()
+	hasCatalog := true
 	rows, err := s.pool.Query(ctx, `
-		select name, models, default_model
+		select name, models, model_catalog, default_model
 		from public.provider_settings
 		where kind = 'chat'
 			and enabled = true
@@ -145,45 +153,90 @@ func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOpt
 		order by priority asc, updated_at desc
 	`)
 	if err != nil {
+		hasCatalog = false
+		rows, err = s.pool.Query(ctx, `
+			select name, models, default_model
+			from public.provider_settings
+			where kind = 'chat'
+				and enabled = true
+				and coalesce(api_key_encrypted, '') <> ''
+			order by priority asc, updated_at desc
+		`)
+	}
+	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	result := make([]ChatModelOption, 0, len(envModels))
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 	for rows.Next() {
 		var provider string
 		var models []string
+		var catalogRaw []byte
 		var defaultModel *string
-		if err := rows.Scan(&provider, &models, &defaultModel); err != nil {
+		if hasCatalog {
+			if err := rows.Scan(&provider, &models, &catalogRaw, &defaultModel); err != nil {
+				return nil, err
+			}
+		} else if err := rows.Scan(&provider, &models, &defaultModel); err != nil {
 			return nil, err
 		}
-		if len(models) == 0 && defaultModel != nil {
-			models = []string{*defaultModel}
+		entries := parseProviderModelOptions(catalogRaw)
+		if len(entries) == 0 {
+			if len(models) == 0 && defaultModel != nil {
+				models = []string{*defaultModel}
+			}
+			for _, model := range models {
+				entries = append(entries, providerModelOption{ID: model, Name: model, Enabled: true})
+			}
 		}
-		for _, model := range models {
-			id := normalizeModelName(model, "")
+		for _, model := range entries {
+			if !model.Enabled {
+				continue
+			}
+			id := normalizeModelName(model.ID, "")
 			if id == "" {
 				continue
 			}
-			if _, exists := seen[id]; exists {
+			name := strings.TrimSpace(model.Name)
+			if name == "" {
+				name = id
+			}
+			key := strings.ToLower(name)
+			if index, exists := seen[key]; exists {
+				result[index].Providers = append(result[index].Providers, provider)
+				result[index].Provider = strings.Join(result[index].Providers, " / ")
 				continue
 			}
-			seen[id] = struct{}{}
-			result = append(result, ChatModelOption{ID: id, Name: id, Provider: provider})
+			seen[key] = len(result)
+			result = append(result, ChatModelOption{ID: id, Name: name, Provider: provider, Providers: []string{provider}})
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for _, model := range envModels {
-		if _, exists := seen[model.ID]; exists {
+		key := strings.ToLower(strings.TrimSpace(model.Name))
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[model.ID] = struct{}{}
+		seen[key] = len(result)
+		model.Providers = []string{model.Provider}
 		result = append(result, model)
 	}
 	return result, nil
+}
+
+func parseProviderModelOptions(raw []byte) []providerModelOption {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entries []providerModelOption
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil
+	}
+	return entries
 }
 
 func environmentChatModels() []ChatModelOption {

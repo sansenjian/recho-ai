@@ -40,6 +40,13 @@ export interface ImageModelEntry {
   name: string
 }
 
+export interface ChatModelEntry {
+  id: string
+  name: string
+  provider: string
+  providers?: string[]
+}
+
 export interface AppSettings {
   imageCreditCostPerImage: number
   imageAnalyticsEnabled: boolean
@@ -556,14 +563,31 @@ export async function updateAdminUserRule(ruleId: string, input: Record<string, 
 export async function publicAppConfig() {
   const settings = await getAppSettings()
   const providerSettings = await listProviderSettings()
-  const chatModels = providerSettings.providers
+  const chatModelGroups = new Map<string, ChatModelEntry>()
+  providerSettings.providers
     .filter(provider => provider.kind === 'chat' && provider.enabled && provider.apiKeyConfigured)
-    .flatMap(provider => {
-      const models = (provider.models.length ? provider.models : provider.defaultModel ? [provider.defaultModel] : [])
-        .filter(isValidChatModel)
-      return models.map(id => ({ id, name: id, provider: provider.name }))
+    .forEach(provider => {
+      const models = (provider.modelCatalog.length
+        ? provider.modelCatalog.filter(model => model.enabled)
+        : (provider.models.length ? provider.models : provider.defaultModel ? [provider.defaultModel] : [])
+          .filter(isValidChatModel)
+          .map(id => ({ id, name: id, enabled: true })))
+      for (const model of models) {
+        const key = model.name.trim().toLowerCase()
+        if (!key || !isValidChatModel(model.id)) continue
+        const existing = chatModelGroups.get(key)
+        if (existing) {
+          existing.providers = [...(existing.providers || [existing.provider]), provider.name]
+          existing.provider = existing.providers.join(' / ')
+          continue
+        }
+        chatModelGroups.set(key, { id: model.id, name: model.name.trim() || model.id, provider: provider.name })
+      }
     })
-    .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)
+  const chatModels = [...chatModelGroups.values()].map(model => ({
+    ...model,
+    ...(model.providers && model.providers.length > 1 ? { provider: model.providers.join(' / '), providers: model.providers } : {}),
+  }))
   const providerImageModels = providerSettings.providers
     .filter(provider => provider.kind === 'image' && provider.enabled && provider.apiKeyConfigured)
     .map(provider => normalizeModelName(provider.imageModel, ''))

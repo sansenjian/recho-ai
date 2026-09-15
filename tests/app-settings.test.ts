@@ -184,6 +184,41 @@ describe('app settings service', () => {
     })
   })
 
+  it('groups chat models by display name while keeping the highest-priority route id', async () => {
+    providerSettingRows = [
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        kind: 'chat',
+        name: 'Primary Chat',
+        base_url: 'https://primary.example.test/v1',
+        model_catalog: [{ id: 'vendor/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 1,
+        api_key_encrypted: 'encrypted-primary',
+      },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'chat',
+        name: 'Backup Chat',
+        base_url: 'https://backup.example.test/v1',
+        model_catalog: [{ id: 'backup/fast-v1', name: 'Fast Chat', enabled: true }],
+        enabled: true,
+        priority: 20,
+        api_key_encrypted: 'encrypted-backup',
+      },
+    ]
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      chatModels: [{
+        id: 'vendor/fast-v1',
+        name: 'Fast Chat',
+        provider: 'Primary Chat / Backup Chat',
+        providers: ['Primary Chat', 'Backup Chat'],
+      }],
+    })
+  })
+
   it('briefly caches default settings when the settings table is unavailable', async () => {
     appSettingsError = { message: 'relation "app_settings" does not exist', code: '42P01' }
     const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
