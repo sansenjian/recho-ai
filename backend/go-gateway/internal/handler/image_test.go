@@ -27,7 +27,7 @@ type stubImageCreditService struct {
 	costPerImage float64
 }
 
-func (s *stubImageCreditService) ReserveCredits(ctx context.Context, userID string, imageCount int) (string, float64, float64, float64, error) {
+func (s *stubImageCreditService) ReserveCredits(ctx context.Context, userID string, model string, imageCount int) (string, float64, float64, float64, error) {
 	costPerImage := s.costPerImage
 	if costPerImage <= 0 {
 		costPerImage = 1.0
@@ -45,7 +45,7 @@ func (s *stubImageCreditService) RefundCredits(ctx context.Context, userID strin
 	return s.balance, nil
 }
 
-func (s *stubImageCreditService) GetCreditCost(ctx context.Context, imageCount int) (float64, float64) {
+func (s *stubImageCreditService) GetCreditCost(ctx context.Context, model string, imageCount int) (float64, float64) {
 	costPerImage := s.costPerImage
 	if costPerImage <= 0 {
 		costPerImage = 1.0
@@ -381,11 +381,13 @@ func (s *stubImageIdempotencyService) Complete(ctx context.Context, userID, idem
 }
 
 type stubProviderSettingsService struct {
-	cfg service.ImageProviderConfig
-	err error
+	cfg            service.ImageProviderConfig
+	err            error
+	requestedModel string
 }
 
-func (s *stubProviderSettingsService) ImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
+func (s *stubProviderSettingsService) ImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error) {
+	s.requestedModel = model
 	if s.err != nil {
 		return service.DefaultImageProviderConfig(), s.err
 	}
@@ -459,6 +461,66 @@ func TestImageGenerateUsesProviderSettings(t *testing.T) {
 	}
 	if model != "db-image-model" {
 		t.Fatalf("expected provider image model, got %q", model)
+	}
+}
+
+func TestImageGenerateForwardsRequestedModelToProviderSettings(t *testing.T) {
+	creditSvc := &stubImageCreditService{balance: 10}
+	storageSvc := &stubImageStorageService{
+		storeFunc: func(ctx context.Context, data []byte, mime, hint string) (*service.StoredImage, error) {
+			return &service.StoredImage{
+				PublicURL:     "https://cdn.example.test/generated.png",
+				PreviewURL:    "https://cdn.example.test/generated.preview.webp",
+				ThumbnailURL:  "https://cdn.example.test/generated.thumb.webp",
+				StoragePath:   "generated/test.png",
+				PreviewPath:   "generated/test.preview.webp",
+				ThumbnailPath: "generated/test.thumb.webp",
+				Width:         1024,
+				Height:        1024,
+				Bytes:         1234,
+			}, nil
+		},
+	}
+	idemSvc := &stubImageIdempotencyService{}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"url":"https://example.com/image.png"}]}`))
+	}))
+	defer upstream.Close()
+
+	providerSvc := &stubProviderSettingsService{
+		cfg: service.ImageProviderConfig{
+			Name:                   "db image provider",
+			BaseURL:                upstream.URL,
+			APIKey:                 "db-secret-key",
+			ImageModel:             "default-model",
+			EditModel:              "edit-model",
+			ImageModels:            []string{"default-model", "alt-model"},
+			Timeout:                360000000000,
+			SupportsWebpReferences: true,
+			Source:                 "database",
+		},
+	}
+	h := NewImageHandler(creditSvc, storageSvc, idemSvc).WithProviderSettings(providerSvc)
+
+	raw, err := json.Marshal(map[string]any{"prompt": "test prompt", "count": 1, "model": "alt-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/image/generate", bytes.NewReader(raw))
+	req = req.WithContext(middleware.WithUser(req.Context(), &middleware.User{ID: "user_123"}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "idem-requested-model")
+	res := httptest.NewRecorder()
+
+	h.Generate(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if providerSvc.requestedModel != "alt-model" {
+		t.Fatalf("expected the requested model to reach provider resolution, got %q", providerSvc.requestedModel)
 	}
 }
 

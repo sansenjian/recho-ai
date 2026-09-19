@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -39,8 +40,28 @@ type PublicAppConfig struct {
 	CanvasContextEnabled    bool               `json:"canvasContextEnabled"`
 	GuestGenerationEnabled  bool               `json:"guestGenerationEnabled"`
 	ImageCreditCostPerImage float64            `json:"imageCreditCostPerImage"`
-	AvailableImageModels    []ImageModelOption `json:"availableImageModels"`
-	DefaultImageModel       string             `json:"defaultImageModel"`
+	// ImageModelCreditCosts 是兜底价之外的按模型覆盖价；未命中覆盖价的模型回退
+	// ImageCreditCostPerImage。形状与 Node 侧 publicAppConfig 保持一致（数组）。
+	ImageModelCreditCosts []ImageModelCreditCostEntry `json:"imageModelCreditCosts"`
+	AvailableImageModels  []ImageModelOption          `json:"availableImageModels"`
+	DefaultImageModel     string                      `json:"defaultImageModel"`
+}
+
+// ImageModelCreditCostEntry 是「模型 id → 单价」覆盖表对外下发的一项。
+type ImageModelCreditCostEntry struct {
+	ID   string  `json:"id"`
+	Cost float64 `json:"cost"`
+}
+
+// imageModelCreditCostEntries 把解析后的覆盖表转成按 id 排序的数组，
+// 保证同一份数据每次序列化结果稳定（便于前端 diff 与契约测试）。
+func imageModelCreditCostEntries(costs map[string]float64) []ImageModelCreditCostEntry {
+	entries := make([]ImageModelCreditCostEntry, 0, len(costs))
+	for id, cost := range costs {
+		entries = append(entries, ImageModelCreditCostEntry{ID: id, Cost: cost})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+	return entries
 }
 
 type AppSettingsService struct {
@@ -58,6 +79,7 @@ func DefaultPublicAppConfig() PublicAppConfig {
 		CanvasContextEnabled:    config.CanvasContextEnabled,
 		GuestGenerationEnabled:  config.GuestGenerationEnabled,
 		ImageCreditCostPerImage: normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage),
+		ImageModelCreditCosts:   []ImageModelCreditCostEntry{},
 		AvailableImageModels:    []ImageModelOption{},
 		DefaultImageModel:       config.ImageResponsesImageModel,
 	}
@@ -77,6 +99,7 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 			'canvas_context_enabled',
 			'guest_generation_enabled',
 			'image_credit_cost_per_image',
+			'image_model_credit_costs',
 			'image_responses_image_model',
 			'available_image_models'
 		)
@@ -102,6 +125,10 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 			cfg.GuestGenerationEnabled = parseJSONBool(raw, cfg.GuestGenerationEnabled)
 		case "image_credit_cost_per_image":
 			cfg.ImageCreditCostPerImage = parseJSONCreditCost(raw, cfg.ImageCreditCostPerImage)
+		case "image_model_credit_costs":
+			if costs := normalizeImageModelCreditCosts(raw); costs != nil {
+				cfg.ImageModelCreditCosts = imageModelCreditCostEntries(costs)
+			}
 		case "image_responses_image_model":
 			cfg.DefaultImageModel = parseJSONModelName(raw, cfg.DefaultImageModel)
 		case "available_image_models":
@@ -293,10 +320,44 @@ func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {
 	return result
 }
 
+// imageModelsForProviderRow resolves the generation models a single provider row
+// contributes to the public list.
+//
+// A catalog that is present is authoritative: when every entry is disabled it
+// contributes nothing. Only a row with no catalog at all falls back to its legacy
+// single image_model, which keeps pre-catalog configurations working. Keying the
+// fallback on "no enabled entry was appended" instead would treat a fully
+// disabled catalog as a legacy row and resurrect a model the operator turned off.
+func imageModelsForProviderRow(catalog []byte, legacyModel string) []ImageModelOption {
+	entries := parseProviderModelOptions(catalog)
+	if len(entries) > 0 {
+		models := make([]ImageModelOption, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.Enabled {
+				continue
+			}
+			id := normalizeModelName(entry.ID, "")
+			if id == "" {
+				continue
+			}
+			name := strings.TrimSpace(entry.Name)
+			if name == "" {
+				name = id
+			}
+			models = append(models, ImageModelOption{ID: id, Name: name})
+		}
+		return models
+	}
+	if id := normalizeModelName(legacyModel, ""); id != "" {
+		return []ImageModelOption{{ID: id, Name: id}}
+	}
+	return nil
+}
+
 func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelOption, error) {
 	envModels := environmentImageModels()
 	rows, err := s.pool.Query(ctx, `
-		select name, image_model
+		select coalesce(ps.model_catalog, '[]'::jsonb), coalesce(ps.image_model, '')
 		from public.provider_settings ps
 		where ps.kind = 'image'
 			and ps.enabled = true
@@ -304,7 +365,10 @@ func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelO
 				coalesce(ps.api_key_encrypted, '') <> ''
 				or coalesce(to_jsonb(ps)->>'api_key', '') <> ''
 			)
-			and coalesce(trim(ps.image_model), '') <> ''
+			and (
+				coalesce(ps.model_catalog, '[]'::jsonb) <> '[]'::jsonb
+				or coalesce(trim(ps.image_model), '') <> ''
+			)
 		order by ps.priority asc, ps.updated_at desc
 	`)
 	if err != nil {
@@ -314,16 +378,12 @@ func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelO
 
 	models := make([]ImageModelOption, 0, len(envModels))
 	for rows.Next() {
-		var providerName string
-		var model string
-		if err := rows.Scan(&providerName, &model); err != nil {
+		var catalog []byte
+		var legacyModel string
+		if err := rows.Scan(&catalog, &legacyModel); err != nil {
 			return nil, err
 		}
-		id := normalizeModelName(model, "")
-		if id == "" {
-			continue
-		}
-		models = append(models, ImageModelOption{ID: id, Name: id})
+		models = append(models, imageModelsForProviderRow(catalog, legacyModel)...)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -350,6 +410,48 @@ func (s *AppSettingsService) ImageCreditCostPerImage(ctx context.Context) (float
 		return fallback, err
 	}
 	return parseJSONCreditCost(raw, fallback), nil
+}
+
+// ImageModelCreditCosts 读取「模型 id → 单价」覆盖表；未配置或全部非法时返回 nil。
+func (s *AppSettingsService) ImageModelCreditCosts(ctx context.Context) (map[string]float64, error) {
+	if s == nil || s.pool == nil {
+		return nil, nil
+	}
+
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `
+		select value
+		from public.app_settings
+		where key = 'image_model_credit_costs'
+	`).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return normalizeImageModelCreditCosts(raw), nil
+}
+
+// ImageCreditCostPerModel 返回某模型**实际**应使用的每张单价：命中覆盖表就用覆盖价，
+// 否则回退到 image_credit_cost_per_image（最终回退环境变量）。
+//
+// 调用方必须传入「本次生成真正会使用的模型」，否则会出现显示价与扣费价不一致。
+func (s *AppSettingsService) ImageCreditCostPerModel(ctx context.Context, model string) (float64, error) {
+	base, baseErr := s.ImageCreditCostPerImage(ctx)
+	modelID := normalizeModelName(model, "")
+	if modelID == "" {
+		return base, baseErr
+	}
+
+	costs, err := s.ImageModelCreditCosts(ctx)
+	if err != nil {
+		return base, err
+	}
+	if cost, ok := costs[modelID]; ok {
+		return cost, nil
+	}
+	return base, baseErr
 }
 
 func parseJSONBool(raw []byte, fallback bool) bool {
@@ -389,12 +491,81 @@ func parseJSONCreditCost(raw []byte, fallback float64) float64 {
 	return normalizeImageCreditCostPerImageWithFallback(parsed, fallback)
 }
 
+// imageModelCreditCostEntry 用 any 承接字段，便于逐条宽容解析。
+type imageModelCreditCostEntry struct {
+	ID   any `json:"id"`
+	Cost any `json:"cost"`
+}
+
+const maxImageModelCreditCostEntries = 200
+
+// normalizeImageModelCreditCosts 解析「模型 id → 单价」覆盖表。
+//
+// 与 normalizeImageCreditCostPerImageWithFallback 的取舍**故意不同**：单条非法
+// （缺 id、id 不合法、价格非数字或低于下限）意味着「该模型没有覆盖价」，于是丢弃这
+// 一条让它回退兜底价；而**不是**把非法值钳成默认价，否则一次手滑的输入会静默改变某
+// 个模型的真实计费。逐条解析（而不是整体 Unmarshal 进结构体）也是为了一条脏数据不
+// 至于让整张表失效。
+//
+// 空表/无有效项都返回 nil，调用方据此回退兜底价。
+func normalizeImageModelCreditCosts(raw []byte) map[string]float64 {
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return nil
+	}
+	// 兼容「JSON 字符串里再套一层数组」的存储写法。
+	if text[0] == '"' {
+		var inner string
+		if err := json.Unmarshal([]byte(text), &inner); err != nil {
+			return nil
+		}
+		return normalizeImageModelCreditCosts([]byte(inner))
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal([]byte(text), &entries); err != nil {
+		return nil
+	}
+	result := make(map[string]float64, len(entries))
+	for _, rawEntry := range entries {
+		var entry imageModelCreditCostEntry
+		if err := json.Unmarshal(rawEntry, &entry); err != nil {
+			continue
+		}
+		id, ok := entry.ID.(string)
+		if !ok {
+			continue
+		}
+		modelID := normalizeModelName(id, "")
+		if modelID == "" {
+			continue
+		}
+		// 同一模型重复出现时以第一条为准，避免表内顺序决定实际计费。
+		if _, exists := result[modelID]; exists {
+			continue
+		}
+		cost, ok := creditCostNumber(entry.Cost)
+		if !ok || cost < 0.01 {
+			continue
+		}
+		result[modelID] = math.Round(cost*100) / 100
+		if len(result) >= maxImageModelCreditCostEntries {
+			break
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 func normalizeImageCreditCostPerImage(value any) float64 {
 	return normalizeImageCreditCostPerImageWithFallback(value, 1)
 }
 
-func normalizeImageCreditCostPerImageWithFallback(value any, fallback float64) float64 {
-	fallback = normalizePositiveCreditCostFallback(fallback)
+// creditCostNumber 把任意来源的额度数值转成 float64。
+// 无法解析、NaN/Inf 或非正数时返回 false，由调用方决定是回退还是丢弃。
+func creditCostNumber(value any) (float64, bool) {
 	var number float64
 	switch v := value.(type) {
 	case float64:
@@ -408,19 +579,28 @@ func normalizeImageCreditCostPerImageWithFallback(value any, fallback float64) f
 	case json.Number:
 		parsed, err := v.Float64()
 		if err != nil {
-			return fallback
+			return 0, false
 		}
 		number = parsed
 	case string:
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 		if err != nil {
-			return fallback
+			return 0, false
 		}
 		number = parsed
 	default:
-		return fallback
+		return 0, false
 	}
 	if math.IsNaN(number) || math.IsInf(number, 0) || number <= 0 {
+		return 0, false
+	}
+	return number, true
+}
+
+func normalizeImageCreditCostPerImageWithFallback(value any, fallback float64) float64 {
+	fallback = normalizePositiveCreditCostFallback(fallback)
+	number, ok := creditCostNumber(value)
+	if !ok {
 		return fallback
 	}
 	if number < 0.01 {

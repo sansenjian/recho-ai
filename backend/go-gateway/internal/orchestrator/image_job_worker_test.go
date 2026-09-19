@@ -18,7 +18,7 @@ type workerCreditService struct {
 	refundAmt   float64
 }
 
-func (s *workerCreditService) ReserveCredits(context.Context, string, int) (string, float64, float64, float64, error) {
+func (s *workerCreditService) ReserveCredits(context.Context, string, string, int) (string, float64, float64, float64, error) {
 	return "", 0, 0, 0, errors.New("not used")
 }
 func (s *workerCreditService) RefundCredits(_ context.Context, _ string, _ string, amount float64, _ string) (float64, error) {
@@ -29,7 +29,7 @@ func (s *workerCreditService) RefundCredits(_ context.Context, _ string, _ strin
 	}
 	return 10, nil
 }
-func (s *workerCreditService) GetCreditCost(context.Context, int) (float64, float64) { return 1, 1 }
+func (s *workerCreditService) GetCreditCost(context.Context, string, int) (float64, float64) { return 1, 1 }
 
 func workerJob(t *testing.T, status string, manifest imageJobManifest) *repository.ImageGenerationJob {
 	t.Helper()
@@ -278,7 +278,7 @@ type blockingWorkerCreditService struct {
 	once    sync.Once
 }
 
-func (s *blockingWorkerCreditService) ReserveCredits(context.Context, string, int) (string, float64, float64, float64, error) {
+func (s *blockingWorkerCreditService) ReserveCredits(context.Context, string, string, int) (string, float64, float64, float64, error) {
 	return "", 0, 0, 0, errors.New("not used")
 }
 
@@ -290,7 +290,7 @@ func (s *blockingWorkerCreditService) RefundCredits(ctx context.Context, _ strin
 	return 0, ctx.Err()
 }
 
-func (s *blockingWorkerCreditService) GetCreditCost(context.Context, int) (float64, float64) {
+func (s *blockingWorkerCreditService) GetCreditCost(context.Context, string, int) (float64, float64) {
 	return 1, 1
 }
 

@@ -390,28 +390,45 @@ function chatProviderMatchesModelName(configuredModel: string | null | undefined
   return chatProviderFamily(configuredModel) === chatProviderFamily(model)
 }
 
-function validateProviderInput(input: Record<string, unknown>, options: { partial?: boolean } = {}) {
+function validateProviderInput(
+  input: Record<string, unknown>,
+  options: { partial?: boolean; kind?: ProviderKind } = {},
+) {
   const patch: Record<string, unknown> = {}
 
   if (!options.partial || 'kind' in input) patch.kind = normalizeKind(input.kind)
+  // Partial updates usually omit `kind`, so callers pass the merged kind of the
+  // stored row. Without it we cannot tell whether a catalog edit should sync
+  // default_model (chat) or image_model (image).
+  const effectiveKind = options.kind ?? (typeof patch.kind === 'string' ? (patch.kind as ProviderKind) : undefined)
   if (!options.partial || 'name' in input) patch.name = normalizeName(input.name)
   if (!options.partial || 'baseUrl' in input) patch.base_url = normalizeBaseUrl(input.baseUrl)
   if ('enabled' in input) patch.enabled = normalizeBoolean(input.enabled)
   if ('priority' in input) patch.priority = normalizeInt(input.priority, 100, 0, 10_000)
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
-  if ('models' in input || 'modelCatalog' in input) {
+  const catalogProvided = 'models' in input || 'modelCatalog' in input
+  if (catalogProvided) {
     const modelCatalog = modelCatalogFromInput(input)
-    const models = modelCatalog.map(model => model.id)
-    if (input.kind === 'chat' && modelCatalog.filter(model => model.enabled).length === 0) {
+    const enabledCatalog = modelCatalog.filter(model => model.enabled)
+    if (effectiveKind === 'chat' && enabledCatalog.length === 0) {
       throw new ProviderSettingsError('chat_provider_models_required', {
         publicMessage: 'Chat Provider 至少需要配置一个模型。',
       })
     }
-    patch.models = models
+    patch.models = modelCatalog.map(model => model.id)
     patch.model_catalog = modelCatalog
-    if (input.kind === 'chat') patch.default_model = modelCatalog.find(model => model.enabled)?.id || null
+    if (effectiveKind === 'chat') patch.default_model = enabledCatalog[0]?.id || null
+    // Image providers treat the catalog as selectable generation models and keep
+    // image_model as the default (first enabled entry). edit_model is untouched.
+    if (effectiveKind === 'image') patch.image_model = enabledCatalog[0]?.id || null
   }
-  if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
+  // The catalog is the source of truth for an image provider's default generation
+  // model, so an explicitly supplied imageModel must not overwrite the value just
+  // derived from it. Otherwise a create request carrying both an all-disabled
+  // catalog and a stale imageModel would persist a model the operator disabled.
+  if ('imageModel' in input && !(effectiveKind === 'image' && catalogProvided)) {
+    patch.image_model = nullableText(input.imageModel, 120)
+  }
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
   if ('imageCompatibilityMode' in input) patch.image_compatibility_mode = normalizeImageCompatibilityMode(input.imageCompatibilityMode)
   if ('timeoutMs' in input) patch.timeout_ms = normalizeInt(input.timeoutMs, 360_000, 1_000, 1_200_000)
@@ -649,10 +666,16 @@ export async function updateProviderSetting(providerId: string, input: Record<st
 
   const mergedKind = 'kind' in input ? normalizeKind(input.kind) : normalizeKind(existingRow.kind)
   const modelsProvided = 'models' in input || 'modelCatalog' in input
+  const existingImageModel = nullableText(existingRow.image_model, 120)
   const existingCatalog = normalizeModelCatalog(existingRow.model_catalog)
+  const storedModels = normalizeModelList(existingRow.models).map(id => ({ id, name: id, enabled: true }))
   const existingModels = existingCatalog.length > 0
     ? existingCatalog
-    : normalizeModelList(existingRow.models).map(id => ({ id, name: id, enabled: true }))
+    : storedModels.length > 0
+      ? storedModels
+      : (mergedKind === 'image' && existingImageModel
+        ? [{ id: existingImageModel, name: existingImageModel, enabled: true }]
+        : [])
   const requestedCatalog = modelsProvided ? modelCatalogFromInput(input) : existingModels
   const effectiveCatalog = requestedCatalog.length > 0
     ? requestedCatalog
@@ -666,16 +689,20 @@ export async function updateProviderSetting(providerId: string, input: Record<st
   }
 
   const patch: Record<string, unknown> = {
-    ...validateProviderInput(input, { partial: true }),
+    ...validateProviderInput(input, { partial: true, kind: mergedKind }),
     updated_at: new Date().toISOString(),
     updated_by: adminUser.id,
   }
   if (modelsProvided) {
     patch.models = requestedCatalog.map(model => model.id)
     patch.model_catalog = requestedCatalog
-    if (mergedKind === 'chat') patch.default_model = requestedCatalog.find(model => model.enabled)?.id
-  } else if ('kind' in input && mergedKind === 'chat') {
-    patch.default_model = effectiveCatalog.find(model => model.enabled)?.id
+    const enabledDefault = requestedCatalog.find(model => model.enabled)?.id ?? null
+    if (mergedKind === 'chat') patch.default_model = enabledDefault
+    if (mergedKind === 'image') patch.image_model = enabledDefault
+  } else if ('kind' in input) {
+    const enabledDefault = effectiveCatalog.find(model => model.enabled)?.id ?? null
+    if (mergedKind === 'chat') patch.default_model = enabledDefault
+    if (mergedKind === 'image') patch.image_model = enabledDefault ?? existingImageModel
   }
   const { data, error } = await client
     .from(PROVIDER_SETTINGS_TABLE)

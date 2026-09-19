@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-gateway/internal/config"
@@ -24,11 +25,15 @@ const (
 )
 
 type ImageProviderConfig struct {
-	Name                   string
-	BaseURL                string
-	APIKey                 string
-	ImageModel             string
-	EditModel              string
+	Name       string
+	BaseURL    string
+	APIKey     string
+	ImageModel string
+	EditModel  string
+	// ImageModels lists the selectable generation models declared by the
+	// provider's model_catalog. It is used to route a requested model to the
+	// provider that actually offers it.
+	ImageModels            []string
 	CompatibilityMode      ImageProviderCompatibilityMode
 	Timeout                time.Duration
 	RetryCount             int
@@ -60,7 +65,8 @@ var imageProviderQuery = fmt.Sprintf(`
 		coalesce(to_jsonb(ps)->>'image_compatibility_mode', 'auto'),
 		ps.timeout_ms,
 		ps.retry_count,
-		ps.supports_webp_references
+		ps.supports_webp_references,
+		coalesce(ps.model_catalog, '[]'::jsonb)
 	from public.provider_settings ps
 	where ps.kind = 'image'
 		and ps.enabled = true
@@ -87,7 +93,32 @@ func DefaultImageProviderConfig() ImageProviderConfig {
 	}
 }
 
-func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProviderConfig, error) {
+// imageProviderCandidate is one enabled image provider row plus the decoded
+// pieces needed to turn it into a usable config.
+type imageProviderCandidate struct {
+	config            ImageProviderConfig
+	encryptedAPIKey   string
+	legacyAPIKey      string
+	compatibilityMode string
+	timeoutMs         int
+	models            []string
+}
+
+func (c imageProviderCandidate) defaultCatalogModel() string {
+	if len(c.models) > 0 {
+		return c.models[0]
+	}
+	return ""
+}
+
+// ImageProvider 解析应当承载 requestedModel 的图片 Provider。
+//
+// 路由规则：
+//  1. 若 requestedModel 命中了某个 Provider 的 model_catalog 启用项，则由该
+//     Provider 承载，并把 ImageModel 设置为请求模型，使生成调用真正使用用户
+//     选择的模型。EditModel 不受影响，因此带参考图的请求仍然走专用编辑模型。
+//  2. 未命中时回退到优先级最高且可用的 Provider，即历史单 Provider 行为。
+func (s *ProviderSettingsService) ImageProvider(ctx context.Context, requestedModel string) (ImageProviderConfig, error) {
 	fallback := DefaultImageProviderConfig()
 	if s == nil || s.pool == nil {
 		return fallback, nil
@@ -100,55 +131,27 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 	defer rows.Close()
 
 	var candidateErr error
+	usable := make([]ImageProviderConfig, 0, 4)
 	for rows.Next() {
-		var cfg ImageProviderConfig
-		var timeoutMs int
-		var encryptedAPIKey string
-		var legacyAPIKey string
-		var compatibilityMode string
-		if err := rows.Scan(
-			&cfg.Name,
-			&cfg.BaseURL,
-			&encryptedAPIKey,
-			&legacyAPIKey,
-			&cfg.ImageModel,
-			&cfg.EditModel,
-			&compatibilityMode,
-			&timeoutMs,
-			&cfg.RetryCount,
-			&cfg.SupportsWebpReferences,
-		); err != nil {
-			return fallback, err
+		candidate, scanErr := scanImageProviderCandidate(rows)
+		if scanErr != nil {
+			return fallback, scanErr
 		}
-
-		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-		cfg.APIKey, err = providerAPIKeyFromSettings(encryptedAPIKey, legacyAPIKey)
-		if err != nil {
-			candidateErr = err
+		cfg, ok, buildErr := buildImageProviderConfig(candidate, fallback)
+		if buildErr != nil {
+			candidateErr = buildErr
 			continue
 		}
-		cfg.APIKey = strings.TrimSpace(cfg.APIKey)
-		if cfg.APIKey == "" || cfg.BaseURL == "" {
+		if !ok {
 			continue
 		}
-		cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, fallback.ImageModel)
-		cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
-		cfg.CompatibilityMode = normalizeImageProviderCompatibilityMode(compatibilityMode)
-		if timeoutMs < minImageProviderTimeoutMS {
-			timeoutMs = defaultImageProviderTimeoutMS
-		}
-		cfg.Timeout = time.Duration(timeoutMs) * time.Millisecond
-		if cfg.RetryCount < 0 {
-			cfg.RetryCount = 0
-		}
-		if cfg.RetryCount > 10 {
-			cfg.RetryCount = 10
-		}
-		cfg.Source = "database"
-		return cfg, nil
+		usable = append(usable, cfg)
 	}
 	if err := rows.Err(); err != nil {
 		return fallback, err
+	}
+	if selected, ok := selectImageProvider(usable, requestedModel); ok {
+		return selected, nil
 	}
 	if fallback.APIKey != "" && fallback.BaseURL != "" {
 		return fallback, nil
@@ -157,6 +160,92 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context) (ImageProvi
 		return fallback, candidateErr
 	}
 	return fallback, nil
+}
+
+// selectImageProvider 从「已按优先级排序的可用 Provider」中挑选承载 requestedModel 的那个。
+// 命中声明该模型的 Provider 时返回它并覆盖 ImageModel；否则回退到优先级最高的 Provider。
+func selectImageProvider(candidates []ImageProviderConfig, requestedModel string) (ImageProviderConfig, bool) {
+	if len(candidates) == 0 {
+		return ImageProviderConfig{}, false
+	}
+	requested := strings.TrimSpace(requestedModel)
+	if requested != "" {
+		for _, candidate := range candidates {
+			if declaresImageModel(candidate.ImageModels, requested) {
+				candidate.ImageModel = requested
+				return candidate, true
+			}
+		}
+	}
+	return candidates[0], true
+}
+
+func scanImageProviderCandidate(rows pgx.Rows) (imageProviderCandidate, error) {
+	var candidate imageProviderCandidate
+	var catalog []byte
+	if err := rows.Scan(
+		&candidate.config.Name,
+		&candidate.config.BaseURL,
+		&candidate.encryptedAPIKey,
+		&candidate.legacyAPIKey,
+		&candidate.config.ImageModel,
+		&candidate.config.EditModel,
+		&candidate.compatibilityMode,
+		&candidate.timeoutMs,
+		&candidate.config.RetryCount,
+		&candidate.config.SupportsWebpReferences,
+		&catalog,
+	); err != nil {
+		return candidate, err
+	}
+	for _, entry := range parseProviderModelOptions(catalog) {
+		if !entry.Enabled {
+			continue
+		}
+		if id := normalizeModelName(entry.ID, ""); id != "" {
+			candidate.models = append(candidate.models, id)
+		}
+	}
+	return candidate, nil
+}
+
+func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImageProviderConfig) (ImageProviderConfig, bool, error) {
+	cfg := candidate.config
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	apiKey, err := providerAPIKeyFromSettings(candidate.encryptedAPIKey, candidate.legacyAPIKey)
+	if err != nil {
+		return cfg, false, err
+	}
+	cfg.APIKey = strings.TrimSpace(apiKey)
+	if cfg.APIKey == "" || cfg.BaseURL == "" {
+		return cfg, false, nil
+	}
+	cfg.ImageModels = candidate.models
+	cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, candidate.defaultCatalogModel(), fallback.ImageModel)
+	cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
+	cfg.CompatibilityMode = normalizeImageProviderCompatibilityMode(candidate.compatibilityMode)
+	timeoutMs := candidate.timeoutMs
+	if timeoutMs < minImageProviderTimeoutMS {
+		timeoutMs = defaultImageProviderTimeoutMS
+	}
+	cfg.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	if cfg.RetryCount < 0 {
+		cfg.RetryCount = 0
+	}
+	if cfg.RetryCount > 10 {
+		cfg.RetryCount = 10
+	}
+	cfg.Source = "database"
+	return cfg, true, nil
+}
+
+func declaresImageModel(models []string, model string) bool {
+	for _, candidate := range models {
+		if candidate == model {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeImageProviderCompatibilityMode(value string) ImageProviderCompatibilityMode {

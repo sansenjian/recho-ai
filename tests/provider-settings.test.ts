@@ -196,6 +196,44 @@ describe('provider settings service', () => {
     expect(JSON.stringify(provider)).not.toContain('sk-created-secret')
   })
 
+  it('ignores a stale imageModel when a create request carries the model catalog', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    // The admin form keeps sending the previously saved model alongside the
+    // catalog, so a fully disabled catalog would otherwise persist a model the
+    // operator just turned off.
+    await createProviderSetting({
+      kind: 'image',
+      name: 'Disabled Catalog Provider',
+      baseUrl: 'https://disabled.example.test/v1',
+      apiKey: 'sk-created-secret',
+      imageModel: 'gpt-image-2',
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: false },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: false },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(insertedRow).toMatchObject({
+      image_model: null,
+      models: ['gpt-image-2', 'flux-pro'],
+    })
+  })
+
+  it('still honours an explicit imageModel when no catalog is supplied', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await createProviderSetting({
+      kind: 'image',
+      name: 'Legacy Image Provider',
+      baseUrl: 'https://legacy.example.test/v1',
+      apiKey: 'sk-created-secret',
+      imageModel: 'legacy-image-model',
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(insertedRow).toMatchObject({ image_model: 'legacy-image-model' })
+  })
+
   it('rejects unsupported image compatibility modes', async () => {
     const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
 
@@ -237,6 +275,78 @@ describe('provider settings service', () => {
     }, { id: 'admin-user', email: 'admin@example.test' })
 
     expect(updatedRow).toMatchObject({ models: ['gpt-5.5', 'gpt-4o'], default_model: 'gpt-5.5' })
+  })
+
+  it('synchronizes image_model from the model catalog without touching edit_model', async () => {
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({
+      models: ['gpt-image-2', 'flux-pro'],
+      model_catalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
+      ],
+      image_model: 'gpt-image-2',
+    })
+    // Edit routing keeps using the dedicated edit_model column.
+    expect(updatedRow).not.toHaveProperty('edit_model')
+  })
+
+  it('skips disabled catalog entries when picking the default image model', async () => {
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'legacy-image-1', name: 'Legacy', enabled: false },
+        { id: 'gpt-image-3', name: 'GPT Image 3', enabled: true },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({ image_model: 'gpt-image-3' })
+  })
+
+  it('allows an image provider to keep every catalog entry disabled', async () => {
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [{ id: 'gpt-image-2', name: 'GPT Image 2', enabled: false }],
+    }, { id: 'admin-user', email: 'admin@example.test' })).resolves.toBeTruthy()
+
+    expect(updatedRow).toMatchObject({
+      model_catalog: [{ id: 'gpt-image-2', name: 'GPT Image 2', enabled: false }],
+      image_model: null,
+    })
+  })
+
+  it('keeps a legacy image_model intact when an un-migrated image provider is updated', async () => {
+    // Rows written before the catalog backfill only carry image_model. A partial
+    // update must not blank it out (the admin UI reads image_model as a fallback).
+    providerRows = [{
+      ...defaultProviderRow,
+      models: [],
+      model_catalog: [],
+      image_model: 'legacy-image-model',
+    }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      notes: 'touched',
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({ notes: 'touched' })
+    expect(updatedRow).not.toHaveProperty('image_model')
+    expect(updatedRow).not.toHaveProperty('models')
+    expect(updatedRow).not.toHaveProperty('model_catalog')
   })
 
   it('rejects empty or invalid chat model lists during partial updates', async () => {

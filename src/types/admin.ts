@@ -229,8 +229,14 @@ export interface AdminOverview {
   generatedAt: string
 }
 
+export interface AdminImageModelCreditCost {
+  id: string
+  cost: number
+}
+
 export interface AdminAppSettings {
   imageCreditCostPerImage: number
+  imageModelCreditCosts: AdminImageModelCreditCost[]
   imageAnalyticsEnabled: boolean
   imageResponsesModel: string
   imageResponsesImageModel: string

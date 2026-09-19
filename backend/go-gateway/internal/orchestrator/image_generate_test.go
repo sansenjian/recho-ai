@@ -26,9 +26,12 @@ func (f imageRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error)
 type testCreditService struct {
 	reserveErr error
 	refundCh   chan struct{}
+	mu         sync.Mutex
+	models     []string
 }
 
-func (s *testCreditService) ReserveCredits(ctx context.Context, userID string, imageCount int) (string, float64, float64, float64, error) {
+func (s *testCreditService) ReserveCredits(ctx context.Context, userID string, model string, imageCount int) (string, float64, float64, float64, error) {
+	s.recordModel(model)
 	if s.reserveErr != nil {
 		return "", 0, 0, 0, s.reserveErr
 	}
@@ -42,8 +45,22 @@ func (s *testCreditService) RefundCredits(ctx context.Context, userID string, tr
 	return 99, nil
 }
 
-func (s *testCreditService) GetCreditCost(ctx context.Context, imageCount int) (float64, float64) {
+func (s *testCreditService) GetCreditCost(ctx context.Context, model string, imageCount int) (float64, float64) {
+	s.recordModel(model)
 	return 1, float64(imageCount)
+}
+
+// recordModel 记录每次取价/预留携带的模型，供「计费按实际使用的模型」断言使用。
+func (s *testCreditService) recordModel(model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.models = append(s.models, model)
+}
+
+func (s *testCreditService) recordedModels() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.models...)
 }
 
 type testStorageService struct {
@@ -184,8 +201,21 @@ type testProviderSettingsService struct {
 	cfg service.ImageProviderConfig
 }
 
-func (s testProviderSettingsService) ImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
-	return s.cfg, nil
+// ImageProvider mirrors the real service's routing: a requested model only
+// takes effect when the provider declares it in ImageModels.
+func (s testProviderSettingsService) ImageProvider(_ context.Context, model string) (service.ImageProviderConfig, error) {
+	cfg := s.cfg
+	requested := strings.TrimSpace(model)
+	if requested == "" {
+		return cfg, nil
+	}
+	for _, declared := range cfg.ImageModels {
+		if declared == requested {
+			cfg.ImageModel = requested
+			return cfg, nil
+		}
+	}
+	return cfg, nil
 }
 
 func storedImageForHint(hint string) *service.StoredImage {
@@ -669,6 +699,80 @@ func TestGenerateFailsIdempotencyWhenCreditReserveReturnsServiceError(t *testing
 		}
 	default:
 		t.Fatal("expected idempotency failure when reserve returns a service error")
+	}
+}
+
+// TestGenerateBillsCreditsForResolvedImageModel 守护「计费按实际使用的模型」：
+//   - 请求未指定模型 → 按 provider 的 image_model 计费；
+//   - 请求指定了 provider 目录内的模型 → 按该模型计费；
+//   - 带参考图（走 /images/edits）→ 按 edit_model 计费。
+//
+// 若计价发生在 Provider/模型解析之前，价格会落在与真正请求的模型不同的模型上，
+// 造成「页面显示价 ≠ 实际扣费价」。
+func TestGenerateBillsCreditsForResolvedImageModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"url":"https://provider.example.test/image.png"}]}`))
+	}))
+	defer upstream.Close()
+
+	tests := []struct {
+		name      string
+		req       GenRequest
+		wantModel string
+	}{
+		{
+			name:      "request without model bills provider image_model",
+			req:       GenRequest{Prompt: "test", Count: 1},
+			wantModel: "image-default",
+		},
+		{
+			name:      "request naming a declared model bills that model",
+			req:       GenRequest{Prompt: "test", Count: 1, Model: "image-chosen"},
+			wantModel: "image-chosen",
+		},
+		{
+			name: "request with reference bills the edit model",
+			req: GenRequest{
+				Prompt:     "test",
+				Count:      1,
+				References: []GenReference{{ID: "ref-1", DataUrl: "data:image/png;base64,aGVsbG8="}},
+			},
+			wantModel: "image-edit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			credits := &testCreditService{}
+			o := NewImageOrchestrator(credits, &testStorageService{}, &testIdempotencyService{}).
+				WithProviderSettings(testProviderSettingsService{cfg: service.ImageProviderConfig{
+					BaseURL:     upstream.URL,
+					APIKey:      "provider-key",
+					ImageModel:  "image-default",
+					EditModel:   "image-edit",
+					ImageModels: []string{"image-chosen"},
+				}})
+
+			if _, statusErr := o.Generate(context.Background(), GenerateParams{
+				User:    &middleware.User{ID: "user_123"},
+				RawBody: []byte(`{"prompt":"test"}`),
+				IdemKey: "idem-model-billing",
+				Request: tt.req,
+			}); statusErr != nil {
+				t.Fatalf("Generate returned status error: %v", statusErr)
+			}
+
+			models := credits.recordedModels()
+			if len(models) == 0 {
+				t.Fatal("expected credits to be consulted for a logged-in user")
+			}
+			for _, got := range models {
+				if got != tt.wantModel {
+					t.Fatalf("expected billing model %q, got %q (all: %v)", tt.wantModel, got, models)
+				}
+			}
+		})
 	}
 }
 

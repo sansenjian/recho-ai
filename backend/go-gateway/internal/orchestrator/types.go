@@ -23,9 +23,9 @@ import (
 
 // CreditService 描述额度资源操作。预留/退款走 PostgreSQL RPC，保证原子性。
 type CreditService interface {
-	ReserveCredits(ctx context.Context, userID string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
+	ReserveCredits(ctx context.Context, userID string, model string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
 	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
-	GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64)
+	GetCreditCost(ctx context.Context, model string, imageCount int) (costPerImage, totalCost float64)
 }
 
 // StorageService 描述图片存储与历史资源操作。
@@ -96,7 +96,7 @@ type IdempotencyService interface {
 
 // ProviderSettingsService 描述图片 Provider 配置读取。
 type ProviderSettingsService interface {
-	ImageProvider(ctx context.Context) (service.ImageProviderConfig, error)
+	ImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error)
 }
 
 // --- Domain 类型（handler 包通过类型别名 re-export，保持测试不变） ---
@@ -104,6 +104,7 @@ type ProviderSettingsService interface {
 // GenRequest 是图片生成请求的 domain 表示，与 HTTP body 一一对应。
 type GenRequest struct {
 	Prompt        string         `json:"prompt"`
+	Model         string         `json:"model,omitempty"`
 	DisplayPrompt string         `json:"displayPrompt,omitempty"`
 	UserPrompt    string         `json:"userPrompt,omitempty"`
 	SystemPrompt  string         `json:"systemPrompt,omitempty"`
