@@ -293,6 +293,40 @@ func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {
 	return result
 }
 
+// imageModelsForProviderRow resolves the generation models a single provider row
+// contributes to the public list.
+//
+// A catalog that is present is authoritative: when every entry is disabled it
+// contributes nothing. Only a row with no catalog at all falls back to its legacy
+// single image_model, which keeps pre-catalog configurations working. Keying the
+// fallback on "no enabled entry was appended" instead would treat a fully
+// disabled catalog as a legacy row and resurrect a model the operator turned off.
+func imageModelsForProviderRow(catalog []byte, legacyModel string) []ImageModelOption {
+	entries := parseProviderModelOptions(catalog)
+	if len(entries) > 0 {
+		models := make([]ImageModelOption, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.Enabled {
+				continue
+			}
+			id := normalizeModelName(entry.ID, "")
+			if id == "" {
+				continue
+			}
+			name := strings.TrimSpace(entry.Name)
+			if name == "" {
+				name = id
+			}
+			models = append(models, ImageModelOption{ID: id, Name: name})
+		}
+		return models
+	}
+	if id := normalizeModelName(legacyModel, ""); id != "" {
+		return []ImageModelOption{{ID: id, Name: id}}
+	}
+	return nil
+}
+
 func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelOption, error) {
 	envModels := environmentImageModels()
 	rows, err := s.pool.Query(ctx, `
@@ -322,30 +356,7 @@ func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelO
 		if err := rows.Scan(&catalog, &legacyModel); err != nil {
 			return nil, err
 		}
-		appended := false
-		for _, entry := range parseProviderModelOptions(catalog) {
-			if !entry.Enabled {
-				continue
-			}
-			id := normalizeModelName(entry.ID, "")
-			if id == "" {
-				continue
-			}
-			name := strings.TrimSpace(entry.Name)
-			if name == "" {
-				name = id
-			}
-			models = append(models, ImageModelOption{ID: id, Name: name})
-			appended = true
-		}
-		if appended {
-			continue
-		}
-		// Providers without a catalog keep exposing their single image_model so
-		// existing configurations survive the rollout.
-		if id := normalizeModelName(legacyModel, ""); id != "" {
-			models = append(models, ImageModelOption{ID: id, Name: id})
-		}
+		models = append(models, imageModelsForProviderRow(catalog, legacyModel)...)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

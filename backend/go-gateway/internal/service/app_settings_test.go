@@ -40,6 +40,46 @@ func TestParseImageModelOptionsDoesNotAddFallbackModels(t *testing.T) {
 	}
 }
 
+func TestImageModelsForProviderRowHidesFullyDisabledCatalog(t *testing.T) {
+	// The legacy image_model is deliberately still populated: a catalog that
+	// exists wins over it, so the disabled entries must stay hidden.
+	got := imageModelsForProviderRow(
+		[]byte(`[{"id":"gpt-image-2","name":"GPT Image 2","enabled":false},{"id":"flux-pro","name":"FLUX Pro","enabled":false}]`),
+		"gpt-image-2",
+	)
+	if len(got) != 0 {
+		t.Fatalf("expected no models for a fully disabled catalog, got %#v", got)
+	}
+}
+
+func TestImageModelsForProviderRowKeepsEnabledCatalogEntries(t *testing.T) {
+	got := imageModelsForProviderRow(
+		[]byte(`[{"id":"gpt-image-2","name":"GPT Image 2","enabled":true},{"id":"flux-pro","name":"FLUX Pro","enabled":false},{"id":"","name":"Broken","enabled":true}]`),
+		"legacy-image-model",
+	)
+	want := []ImageModelOption{{ID: "gpt-image-2", Name: "GPT Image 2"}}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestImageModelsForProviderRowFallsBackOnlyWithoutCatalog(t *testing.T) {
+	for _, catalog := range [][]byte{[]byte(`[]`), []byte(`null`), []byte(`not-json`)} {
+		got := imageModelsForProviderRow(catalog, "legacy-image-model")
+		want := ImageModelOption{ID: "legacy-image-model", Name: "legacy-image-model"}
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("catalog %s: got %#v, want %#v", string(catalog), got, want)
+		}
+	}
+}
+
+func TestImageModelsForProviderRowDefaultsNameToID(t *testing.T) {
+	got := imageModelsForProviderRow([]byte(`[{"id":"gpt-image-2","enabled":true}]`), "")
+	if len(got) != 1 || got[0].Name != "gpt-image-2" {
+		t.Fatalf("expected the id to be used as the name, got %#v", got)
+	}
+}
+
 func TestNormalizeModelNameAcceptsChatModelIdentifiers(t *testing.T) {
 	for _, model := range []string{"gpt-5.6-sol", "moonshotai/kimi-k2.6", "vendor:model_v1"} {
 		if got := normalizeModelName(model, ""); got != model {
