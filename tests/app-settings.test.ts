@@ -222,6 +222,38 @@ describe('app settings service', () => {
     expect(config.defaultImageModel).toBe('gpt-image-2')
   })
 
+  it('hides every model when an image provider catalog exists but is fully disabled', async () => {
+    appSettingRows = [{ key: 'image_responses_image_model', value: 'env-image-model' }]
+    providerSettingRows = [
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        kind: 'image',
+        name: 'Disabled Catalog Image',
+        base_url: 'https://disabled-catalog.example.test/v1',
+        // The catalog sync mirrors every catalog id into `models`, disabled ones
+        // included, so the legacy column must not be used as a fallback here.
+        models: ['gpt-image-2', 'flux-pro'],
+        model_catalog: [
+          { id: 'gpt-image-2', name: 'GPT Image 2', enabled: false },
+          { id: 'flux-pro', name: 'FLUX Pro', enabled: false },
+        ],
+        // Rows whose entries are all disabled persist image_model as null.
+        image_model: null,
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [],
+      defaultImageModel: 'env-image-model',
+    })
+  })
+
   it('still exposes a single image_model for providers without a catalog', async () => {
     appSettingRows = [{ key: 'image_responses_image_model', value: 'env-image-model' }]
     providerSettingRows = [

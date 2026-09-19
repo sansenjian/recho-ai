@@ -591,9 +591,15 @@ export async function publicAppConfig() {
   const providerImageModels = providerSettings.providers
     .filter(provider => provider.kind === 'image' && provider.enabled && provider.apiKeyConfigured)
     .flatMap((provider): ImageModelEntry[] => {
-      const enabledCatalog = provider.modelCatalog.filter(model => model.enabled)
-      if (enabledCatalog.length > 0) {
-        return enabledCatalog
+      // An existing catalog is authoritative. Discriminating on "any entry
+      // enabled" would conflate two opposite states that both yield zero enabled
+      // entries: a legacy row with no catalog (fall back to imageModel) and a
+      // catalog whose entries are all disabled (surface nothing). The legacy
+      // `models` column mirrors every catalog id - disabled ones included - so
+      // falling through on an all-disabled catalog would leak them to clients.
+      if (provider.modelCatalog.length > 0) {
+        return provider.modelCatalog
+          .filter(model => model.enabled)
           .map(model => ({ id: normalizeModelName(model.id, ''), name: model.name.trim() || model.id }))
           .filter((entry): entry is ImageModelEntry => Boolean(entry.id))
       }
