@@ -196,6 +196,44 @@ describe('provider settings service', () => {
     expect(JSON.stringify(provider)).not.toContain('sk-created-secret')
   })
 
+  it('ignores a stale imageModel when a create request carries the model catalog', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    // The admin form keeps sending the previously saved model alongside the
+    // catalog, so a fully disabled catalog would otherwise persist a model the
+    // operator just turned off.
+    await createProviderSetting({
+      kind: 'image',
+      name: 'Disabled Catalog Provider',
+      baseUrl: 'https://disabled.example.test/v1',
+      apiKey: 'sk-created-secret',
+      imageModel: 'gpt-image-2',
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: false },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: false },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(insertedRow).toMatchObject({
+      image_model: null,
+      models: ['gpt-image-2', 'flux-pro'],
+    })
+  })
+
+  it('still honours an explicit imageModel when no catalog is supplied', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await createProviderSetting({
+      kind: 'image',
+      name: 'Legacy Image Provider',
+      baseUrl: 'https://legacy.example.test/v1',
+      apiKey: 'sk-created-secret',
+      imageModel: 'legacy-image-model',
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(insertedRow).toMatchObject({ image_model: 'legacy-image-model' })
+  })
+
   it('rejects unsupported image compatibility modes', async () => {
     const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
 

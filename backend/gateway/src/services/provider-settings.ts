@@ -406,7 +406,8 @@ function validateProviderInput(
   if ('enabled' in input) patch.enabled = normalizeBoolean(input.enabled)
   if ('priority' in input) patch.priority = normalizeInt(input.priority, 100, 0, 10_000)
   if ('defaultModel' in input) patch.default_model = nullableText(input.defaultModel, 120)
-  if ('models' in input || 'modelCatalog' in input) {
+  const catalogProvided = 'models' in input || 'modelCatalog' in input
+  if (catalogProvided) {
     const modelCatalog = modelCatalogFromInput(input)
     const enabledCatalog = modelCatalog.filter(model => model.enabled)
     if (effectiveKind === 'chat' && enabledCatalog.length === 0) {
@@ -421,7 +422,13 @@ function validateProviderInput(
     // image_model as the default (first enabled entry). edit_model is untouched.
     if (effectiveKind === 'image') patch.image_model = enabledCatalog[0]?.id || null
   }
-  if ('imageModel' in input) patch.image_model = nullableText(input.imageModel, 120)
+  // The catalog is the source of truth for an image provider's default generation
+  // model, so an explicitly supplied imageModel must not overwrite the value just
+  // derived from it. Otherwise a create request carrying both an all-disabled
+  // catalog and a stale imageModel would persist a model the operator disabled.
+  if ('imageModel' in input && !(effectiveKind === 'image' && catalogProvided)) {
+    patch.image_model = nullableText(input.imageModel, 120)
+  }
   if ('editModel' in input) patch.edit_model = nullableText(input.editModel, 120)
   if ('imageCompatibilityMode' in input) patch.image_compatibility_mode = normalizeImageCompatibilityMode(input.imageCompatibilityMode)
   if ('timeoutMs' in input) patch.timeout_ms = normalizeInt(input.timeoutMs, 360_000, 1_000, 1_200_000)
