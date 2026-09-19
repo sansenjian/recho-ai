@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"go-gateway/internal/config"
 	"go-gateway/internal/repository"
@@ -11,6 +12,9 @@ import (
 
 type ImageCreditCostProvider interface {
 	ImageCreditCostPerImage(ctx context.Context) (float64, error)
+	// ImageCreditCostPerModel 返回按模型定价后的每张单价；
+	// 该模型未配置覆盖价时返回兜底价（与 ImageCreditCostPerImage 一致）。
+	ImageCreditCostPerModel(ctx context.Context, model string) (float64, error)
 }
 
 // CreditService handles credit business logic
@@ -51,9 +55,10 @@ func (s *CreditService) GetBalance(ctx context.Context, userID string) (float64,
 func (s *CreditService) ReserveCredits(
 	ctx context.Context,
 	userID string,
+	model string,
 	imageCount int,
 ) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error) {
-	creditCostPerImage, err = s.reserveImageCreditCostPerImage(ctx)
+	creditCostPerImage, err = s.reserveImageCreditCostPerModel(ctx, model)
 	if err != nil {
 		return "", 0, 0, 0, err
 	}
@@ -67,6 +72,10 @@ func (s *CreditService) ReserveCredits(
 		"count":              imageCount,
 		"creditCostPerImage": creditCostPerImage,
 		"totalCost":          totalCost,
+	}
+	// 记录计费所用模型，便于对账时解释单价来源（覆盖价 vs 兜底价）。
+	if normalized := strings.TrimSpace(model); normalized != "" {
+		metadata["model"] = normalized
 	}
 
 	txID, balance, err := s.repo.ReserveCredits(ctx, userID, totalCost, metadata)
@@ -113,9 +122,10 @@ func (s *CreditService) AddCredits(
 	return err
 }
 
-// GetCreditCost calculates the credit cost for image generation
-func (s *CreditService) GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64) {
-	costPerImage = s.imageCreditCostPerImage(ctx)
+// GetCreditCost calculates the credit cost for image generation.
+// model 必须是本次生成实际会使用的模型，用于命中「按模型定价」的覆盖价。
+func (s *CreditService) GetCreditCost(ctx context.Context, model string, imageCount int) (costPerImage, totalCost float64) {
+	costPerImage = s.imageCreditCostPerModel(ctx, model)
 	totalCost = roundToTwoDecimals(float64(imageCount) * costPerImage)
 	return costPerImage, totalCost
 }
@@ -134,25 +144,28 @@ func (s *CreditService) ReserveAmount(
 	return s.repo.ReserveCredits(ctx, userID, amount, metadata)
 }
 
-func (s *CreditService) imageCreditCostPerImage(ctx context.Context) float64 {
+// imageCreditCostPerModel 用于「展示/预估」：取价失败时回退兜底价，不阻断生成。
+func (s *CreditService) imageCreditCostPerModel(ctx context.Context, model string) float64 {
 	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
-	cost, err := s.normalizedImageCreditCostPerImage(ctx)
+	cost, err := s.normalizedImageCreditCostPerModel(ctx, model)
 	if err != nil {
 		return fallback
 	}
 	return cost
 }
 
-func (s *CreditService) reserveImageCreditCostPerImage(ctx context.Context) (float64, error) {
-	return s.normalizedImageCreditCostPerImage(ctx)
+// reserveImageCreditCostPerModel 用于「扣费」：取价失败必须 fail closed，
+// 否则会按未知单价扣款（宁可拒绝也不能按错的价扣）。
+func (s *CreditService) reserveImageCreditCostPerModel(ctx context.Context, model string) (float64, error) {
+	return s.normalizedImageCreditCostPerModel(ctx, model)
 }
 
-func (s *CreditService) normalizedImageCreditCostPerImage(ctx context.Context) (float64, error) {
+func (s *CreditService) normalizedImageCreditCostPerModel(ctx context.Context, model string) (float64, error) {
 	fallback := normalizeImageCreditCostPerImage(config.ImageCreditCostPerImage)
 	if s == nil || s.costProvider == nil {
 		return fallback, nil
 	}
-	cost, err := s.costProvider.ImageCreditCostPerImage(ctx)
+	cost, err := s.costProvider.ImageCreditCostPerModel(ctx, model)
 	if err != nil {
 		return 0, fmt.Errorf("image credit cost unavailable: %w", err)
 	}

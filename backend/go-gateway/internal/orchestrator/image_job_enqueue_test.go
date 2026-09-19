@@ -47,7 +47,7 @@ type enqueueCreditService struct {
 	refundAmount float64
 }
 
-func (s *enqueueCreditService) ReserveCredits(context.Context, string, int) (string, float64, float64, float64, error) {
+func (s *enqueueCreditService) ReserveCredits(context.Context, string, string, int) (string, float64, float64, float64, error) {
 	return "tx-enqueue", 99, 1, 1, nil
 }
 
@@ -59,7 +59,7 @@ func (s *enqueueCreditService) RefundCredits(_ context.Context, _ string, _ stri
 	return 100, nil
 }
 
-func (s *enqueueCreditService) GetCreditCost(_ context.Context, count int) (float64, float64) {
+func (s *enqueueCreditService) GetCreditCost(_ context.Context, _ string, count int) (float64, float64) {
 	return 1, float64(count)
 }
 

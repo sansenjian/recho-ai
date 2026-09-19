@@ -201,14 +201,9 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 	displayPrompt := firstNonEmpty(strings.TrimSpace(req.UserPrompt), strings.TrimSpace(req.DisplayPrompt), strings.TrimSpace(req.Prompt))
 	modelPrompt := firstNonEmpty(strings.TrimSpace(req.ModelPrompt), strings.TrimSpace(req.Prompt))
 
-	// --- 计算额度 ---
-	costPerImage := config.ImageCreditCostPerImage
-	totalCost := roundToTwoDecimals(float64(count) * costPerImage)
-	if o.credit != nil {
-		costPerImage, totalCost = o.credit.GetCreditCost(ctx, count)
-	}
-
 	// --- 解析 Provider 配置 ---
+	// 必须早于计价：按模型定价要先确定本次实际使用的模型，否则「展示价」与
+	// 「扣费价」可能落在不同模型上（例如请求未显式指定模型时的回退路径）。
 	providerCfg, perr := o.resolveImageProvider(ctx, req.Model)
 	if perr != nil {
 		o.logger.Printf("[image] provider config unavailable: %v", perr)
@@ -218,6 +213,14 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 	if providerCfg.APIKey == "" || providerCfg.BaseURL == "" {
 		o.failIdempotency(user, idemKey)
 		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeProviderUnavailable, "图片 Provider 尚未配置，请联系管理员。")
+	}
+	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
+
+	// --- 计算额度（按实际使用的模型取价）---
+	costPerImage := config.ImageCreditCostPerImage
+	totalCost := roundToTwoDecimals(float64(count) * costPerImage)
+	if o.credit != nil {
+		costPerImage, totalCost = o.credit.GetCreditCost(ctx, imageModel, count)
 	}
 
 	// --- 构建初始任务 metadata ---
@@ -247,7 +250,7 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		AspectRatio:    aspectRatio,
 		Resolution:     resolution,
 		Quality:        quality,
-		ImageModel:     imageModelForRequest(providerCfg, len(req.References) > 0),
+		ImageModel:     imageModel,
 		References:     references,
 		ReferenceCount: len(references),
 		Visibility:     visibility,
@@ -272,7 +275,7 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		}
 		metadata.CreditTransactionID = started.TransactionID
 	} else if usesCredits {
-		txID, newBalance, reservedCostPerImage, cost, err := o.credit.ReserveCredits(ctx, user.ID, count)
+		txID, newBalance, reservedCostPerImage, cost, err := o.credit.ReserveCredits(ctx, user.ID, imageModel, count)
 		if err != nil {
 			if errors.Is(err, repository.ErrInsufficientCredits) {
 				o.failIdempotency(user, idemKey)
@@ -489,6 +492,15 @@ func (o *ImageOrchestrator) startCreditImageJob(
 		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeImageJobUnavailable, "图片任务服务暂不支持原子扣费，请稍后重试。")
 	}
 	manifest := imageJobManifestJSON(imageJobManifestFor(nil, metadata))
+	creditMetadata := map[string]any{
+		"count":              requestedCount,
+		"creditCostPerImage": costPerImage,
+		"totalCost":          reservedAmount,
+	}
+	// 记录计费所用模型，便于对账时解释单价来源（覆盖价 vs 兜底价）。
+	if model := strings.TrimSpace(metadata.ImageModel); model != "" {
+		creditMetadata["model"] = model
+	}
 	input := repository.StartImageGenerationJobInput{
 		UserID:            user.ID,
 		IdempotencyKey:    idempotencyKey,
@@ -497,14 +509,10 @@ func (o *ImageOrchestrator) startCreditImageJob(
 		RequestID:         requestID,
 		RequestedCount:    requestedCount,
 		ReservedAmount:    reservedAmount,
-		CreditMetadata: map[string]any{
-			"count":              requestedCount,
-			"creditCostPerImage": costPerImage,
-			"totalCost":          reservedAmount,
-		},
-		ResultManifest: manifest,
-		LockOwner:      requestID,
-		LeaseDuration:  stagingJobLeaseDuration,
+		CreditMetadata:    creditMetadata,
+		ResultManifest:    manifest,
+		LockOwner:         requestID,
+		LeaseDuration:     stagingJobLeaseDuration,
 	}
 	started, err := starter.StartWithCredit(ctx, input)
 	if err != nil && ctx.Err() == nil {
