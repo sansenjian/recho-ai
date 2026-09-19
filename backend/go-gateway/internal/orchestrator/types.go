@@ -23,9 +23,9 @@ import (
 
 // CreditService 描述额度资源操作。预留/退款走 PostgreSQL RPC，保证原子性。
 type CreditService interface {
-	ReserveCredits(ctx context.Context, userID string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
+	ReserveCredits(ctx context.Context, userID string, model string, imageCount int) (transactionID string, newBalance float64, creditCostPerImage float64, totalCost float64, err error)
 	RefundCredits(ctx context.Context, userID string, transactionID string, refundAmount float64, reason string) (float64, error)
-	GetCreditCost(ctx context.Context, imageCount int) (costPerImage, totalCost float64)
+	GetCreditCost(ctx context.Context, model string, imageCount int) (costPerImage, totalCost float64)
 }
 
 // StorageService 描述图片存储与历史资源操作。

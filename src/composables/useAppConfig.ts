@@ -6,12 +6,19 @@ export interface ImageModelOption {
   name: string
 }
 
+export interface ImageModelCreditCost {
+  id: string
+  cost: number
+}
+
 export interface PublicAppConfig {
   chatModels: Array<{ id: string; name: string; provider: string; providers?: string[] }>
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
   guestGenerationEnabled: boolean
   imageCreditCostPerImage: number
+  /** 按模型覆盖价；未命中覆盖价的模型回退 imageCreditCostPerImage。 */
+  imageModelCreditCosts: ImageModelCreditCost[]
   availableImageModels: ImageModelOption[]
   defaultImageModel: string
 }
@@ -22,6 +29,7 @@ const fallbackConfig: PublicAppConfig = {
   canvasContextEnabled: false,
   guestGenerationEnabled: true,
   imageCreditCostPerImage: 1,
+  imageModelCreditCosts: [],
   availableImageModels: [],
   defaultImageModel: '',
 }
@@ -36,6 +44,22 @@ function normalizeImageModels(value: unknown): ImageModelOption[] {
     .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
     .filter((item) => typeof item.id === 'string')
     .map((item) => ({ id: item.id as string, name: typeof item.name === 'string' ? item.name as string : item.id as string }))
+}
+
+function normalizeImageModelCreditCosts(value: unknown): ImageModelCreditCost[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: ImageModelCreditCost[] = []
+  for (const item of value) {
+    if (item == null || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    // 非法单价在服务端已被丢弃；这里同样丢弃，避免出现「覆盖价为 0/NaN」的假数据。
+    if (!id || seen.has(id) || typeof record.cost !== 'number' || !Number.isFinite(record.cost) || record.cost < 0.01) continue
+    seen.add(id)
+    result.push({ id, cost: Math.round(record.cost * 100) / 100 })
+  }
+  return result
 }
 
 function normalizeConfig(value: unknown): PublicAppConfig {
@@ -64,6 +88,7 @@ function normalizeConfig(value: unknown): PublicAppConfig {
     imageCreditCostPerImage: typeof record.imageCreditCostPerImage === 'number' && Number.isFinite(record.imageCreditCostPerImage)
       ? Math.max(0.01, Math.round(record.imageCreditCostPerImage * 100) / 100)
       : fallbackConfig.imageCreditCostPerImage,
+    imageModelCreditCosts: normalizeImageModelCreditCosts(record.imageModelCreditCosts),
     availableImageModels: normalizeImageModels(record.availableImageModels),
     defaultImageModel: typeof record.defaultImageModel === 'string'
       ? record.defaultImageModel

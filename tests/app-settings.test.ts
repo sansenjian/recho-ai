@@ -5,6 +5,7 @@ let adminUserRows: Array<Record<string, unknown>> = []
 let providerSettingRows: Array<Record<string, unknown>> = []
 let appSettingsError: unknown = null
 let appSettingsSelectCount = 0
+let upsertedRows: Array<Record<string, unknown>> = []
 
 vi.mock('../backend/gateway/src/config', () => ({
   ADMIN_USER_EMAILS: ['env-admin@example.test'],
@@ -48,7 +49,10 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
               error: appSettingsError,
             }
           }),
-          upsert: vi.fn(async () => ({ error: null })),
+          upsert: vi.fn(async (rows: Array<Record<string, unknown>>) => {
+            upsertedRows = Array.isArray(rows) ? rows : [rows]
+            return { error: null }
+          }),
         }
       }
 
@@ -95,6 +99,7 @@ describe('app settings service', () => {
     providerSettingRows = []
     appSettingsError = null
     appSettingsSelectCount = 0
+    upsertedRows = []
     vi.resetModules()
   })
 
@@ -140,6 +145,7 @@ describe('app settings service', () => {
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
       imageCreditCostPerImage: 0.25,
+      imageModelCreditCosts: [],
       availableImageModels: [],
       defaultImageModel: 'custom-image-model',
     })
@@ -151,7 +157,63 @@ describe('app settings service', () => {
       'guestGenerationEnabled',
       'imageCreditCostPerImage',
       'imageEventsEnabled',
+      'imageModelCreditCosts',
     ])
+  })
+
+  it('loads per-model image prices and exposes them in the public config', async () => {
+    appSettingRows = [
+      { key: 'image_credit_cost_per_image', value: 1 },
+      { key: 'image_model_credit_costs', value: [{ id: 'gpt-image-2', cost: 3 }, { id: 'flux-pro', cost: 0.5 }] },
+    ]
+    const { getAppSettings, publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      imageCreditCostPerImage: 1,
+      imageModelCreditCosts: [
+        { id: 'gpt-image-2', cost: 3 },
+        { id: 'flux-pro', cost: 0.5 },
+      ],
+    })
+
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      imageCreditCostPerImage: 1,
+      imageModelCreditCosts: [
+        { id: 'gpt-image-2', cost: 3 },
+        { id: 'flux-pro', cost: 0.5 },
+      ],
+    })
+  })
+
+  it('drops invalid per-model price rows instead of clamping them', async () => {
+    // 非法行 = 「该模型没有覆盖价」，必须消失并回退兜底价；
+    // 若被钳成默认价，一次手滑就会静默改动真实计费。
+    appSettingRows = [
+      { key: 'image_model_credit_costs', value: [
+        { id: 'good', cost: 2 },
+        { id: '   ', cost: 5 },
+        { id: 'bad cost', cost: 5 },
+        { id: 'zero', cost: 0 },
+        { id: 'notanumber', cost: 'nope' },
+        { cost: 9 },
+      ] },
+    ]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      imageModelCreditCosts: [{ id: 'good', cost: 2 }],
+    })
+  })
+
+  it('keeps the first row when the same model is priced twice', async () => {
+    appSettingRows = [
+      { key: 'image_model_credit_costs', value: [{ id: 'dup', cost: 2 }, { id: 'dup', cost: 9 }] },
+    ]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      imageModelCreditCosts: [{ id: 'dup', cost: 2 }],
+    })
   })
 
   it('exposes enabled image provider models ahead of legacy app settings', async () => {
@@ -329,6 +391,41 @@ describe('app settings service', () => {
     })
 
     expect(appSettingsSelectCount).toBe(1)
+  })
+
+  it('persists per-model prices as a JSON array under the app settings key', async () => {
+    const { updateAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await updateAppSettings(
+      {
+        imageCreditCostPerImage: 0.75,
+        imageModelCreditCosts: [
+          { id: 'gpt-image-2', cost: 3 },
+          { id: 'flux-pro', cost: 1.5 },
+        ],
+      },
+      { id: 'admin-1', email: 'admin@example.test' },
+    )
+
+    const costRow = upsertedRows.find(row => row.key === 'image_model_credit_costs')
+    expect(costRow).toBeDefined()
+    // 数组必须序列化成 JSON 字符串：app_settings.value 是标量列，
+    // 直接传数组会被下游读成「非数组」而静默丢价。
+    expect(costRow?.value).toBe(JSON.stringify([{ id: 'gpt-image-2', cost: 3 }, { id: 'flux-pro', cost: 1.5 }]))
+    expect(costRow?.updated_by).toBe('admin-1')
+
+    const fallbackRow = upsertedRows.find(row => row.key === 'image_credit_cost_per_image')
+    expect(fallbackRow?.value).toBe(0.75)
+  })
+
+  it('clears every per-model price when an empty list is saved', async () => {
+    const { updateAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await updateAppSettings({ imageModelCreditCosts: [] }, { id: 'admin-1', email: null })
+
+    const costRow = upsertedRows.find(row => row.key === 'image_model_credit_costs')
+    // 空数组是合法状态（全部走兜底价），必须写出 "[]" 而不是被忽略掉。
+    expect(costRow?.value).toBe('[]')
   })
 
   it('combines database admin rules with env bootstrap admins', async () => {

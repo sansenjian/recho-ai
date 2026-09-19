@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -220,5 +221,92 @@ func TestNormalizePositiveCreditCostFallbackClampsTinyFallback(t *testing.T) {
 	got := normalizeImageCreditCostPerImageWithFallback(-1, 0.004)
 	if got != 0.01 {
 		t.Fatalf("expected tiny fallback to clamp to 0.01, got %v", got)
+	}
+}
+
+func TestNormalizeImageModelCreditCostsParsesValidEntries(t *testing.T) {
+	got := normalizeImageModelCreditCosts([]byte(`[{"id":"gpt-image-2","cost":3},{"id":"flux-pro","cost":"1.5"}]`))
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d (%v)", len(got), got)
+	}
+	if got["gpt-image-2"] != 3 {
+		t.Fatalf("expected gpt-image-2=3, got %v", got["gpt-image-2"])
+	}
+	if got["flux-pro"] != 1.5 {
+		t.Fatalf("expected flux-pro=1.5, got %v", got["flux-pro"])
+	}
+}
+
+func TestNormalizeImageModelCreditCostsDropsInvalidEntries(t *testing.T) {
+	// 关键取舍：非法条目「丢弃」→ 该模型回退兜底价，而不是钳成默认价静默改价。
+	raw := []byte(`[
+		{"id":"good","cost":2},
+		{"id":"","cost":5},
+		{"id":"bad cost","cost":5},
+		{"id":"zero","cost":0},
+		{"id":"negative","cost":-3},
+		{"cost":9},
+		{"id":"notanumber","cost":"nope"}
+	]`)
+
+	got := normalizeImageModelCreditCosts(raw)
+
+	if len(got) != 1 {
+		t.Fatalf("expected only the valid entry to survive, got %v", got)
+	}
+	if got["good"] != 2 {
+		t.Fatalf("expected good=2, got %v", got["good"])
+	}
+}
+
+func TestNormalizeImageModelCreditCostsKeepsFirstDuplicate(t *testing.T) {
+	got := normalizeImageModelCreditCosts([]byte(`[{"id":"dup","cost":2},{"id":"dup","cost":9}]`))
+
+	if got["dup"] != 2 {
+		t.Fatalf("expected first duplicate to win, got %v", got["dup"])
+	}
+}
+
+func TestNormalizeImageModelCreditCostsReturnsNilForEmptyOrBroken(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(``), []byte(`[]`), []byte(`null`), []byte(`not json`), []byte(`{"id":"x"}`)} {
+		if got := normalizeImageModelCreditCosts(raw); got != nil {
+			t.Fatalf("expected nil for %q, got %v", string(raw), got)
+		}
+	}
+}
+
+func TestNormalizeImageModelCreditCostsUnwrapsJSONEncodedString(t *testing.T) {
+	// app_settings.value 存在「JSON 字符串里再套一层数组」的历史写法。
+	got := normalizeImageModelCreditCosts([]byte(`"[{\"id\":\"wrapped\",\"cost\":4}]"`))
+
+	if got["wrapped"] != 4 {
+		t.Fatalf("expected wrapped=4, got %v", got)
+	}
+}
+
+func TestImageModelCreditCostEntriesSortedByID(t *testing.T) {
+	entries := imageModelCreditCostEntries(map[string]float64{"zeta": 2, "alpha": 1})
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %#v", entries)
+	}
+	if entries[0].ID != "alpha" || entries[1].ID != "zeta" {
+		t.Fatalf("expected id-sorted entries, got %#v", entries)
+	}
+	if entries[0].Cost != 1 || entries[1].Cost != 2 {
+		t.Fatalf("expected costs to stay attached to their ids, got %#v", entries)
+	}
+}
+
+func TestImageCreditCostPerModelFallsBackWithoutDatabase(t *testing.T) {
+	svc := &AppSettingsService{}
+
+	got, err := svc.ImageCreditCostPerModel(context.Background(), "unlisted-model")
+	if err != nil {
+		t.Fatalf("expected no error without database, got %v", err)
+	}
+	if got <= 0 {
+		t.Fatalf("expected positive fallback cost, got %v", got)
 	}
 }

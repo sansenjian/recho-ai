@@ -75,6 +75,27 @@ func TestConfigAppUsesAppSettingsProvider(t *testing.T) {
 	}
 }
 
+// TestDefaultAppConfigExposesEmptyPerModelCostsArray 固定公共配置里按模型定价的
+// JSON 形状：始终是数组（空时为 []），客户端与契约测试可依赖该形状。
+func TestDefaultAppConfigExposesEmptyPerModelCostsArray(t *testing.T) {
+	payload, err := json.Marshal(service.DefaultPublicAppConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := body["imageModelCreditCosts"]
+	if !ok {
+		t.Fatal("expected imageModelCreditCosts in the public app config")
+	}
+	if string(raw) != "[]" {
+		t.Fatalf("expected empty array shape, got %s", string(raw))
+	}
+}
+
 func TestConfigAppFallsBackWithoutHardcodedModels(t *testing.T) {
 	h := NewConfigHandler(&stubAppConfigProvider{err: errors.New("database unavailable")}, nil)
 

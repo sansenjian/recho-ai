@@ -11,7 +11,11 @@ import {
   IMAGE_RESPONSES_MODEL,
 } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
-import { normalizeImageCreditCostPerImage } from './image-credit-cost.js'
+import {
+  normalizeImageCreditCostPerImage,
+  normalizeImageModelCreditCosts,
+  type ImageModelCreditCostEntry,
+} from './image-credit-cost.js'
 import { safeErrorDetail } from './safe-error.js'
 import { isValidChatModel, listProviderSettings } from './provider-settings.js'
 import type { RequestUser } from './request-auth.js'
@@ -32,6 +36,7 @@ type AppSettingKey =
   | 'free_generation_enabled'
   | 'guest_generation_enabled'
   | 'available_image_models'
+  | 'image_model_credit_costs'
 
 export type AdminRole = 'senior' | 'operator'
 
@@ -57,6 +62,8 @@ export interface AppSettings {
   freeGenerationEnabled: boolean
   guestGenerationEnabled: boolean
   availableImageModels: ImageModelEntry[]
+  /** 按模型 id 覆盖单价；未列出的模型使用 imageCreditCostPerImage 兜底。 */
+  imageModelCreditCosts: ImageModelCreditCostEntry[]
 }
 
 export interface AdminUserRule {
@@ -102,6 +109,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   freeGenerationEnabled: FREE_GENERATION_ENABLED,
   guestGenerationEnabled: GUEST_GENERATION_ENABLED,
   availableImageModels: [],
+  imageModelCreditCosts: [],
 }
 
 const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
@@ -114,6 +122,7 @@ const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
   free_generation_enabled: 'freeGenerationEnabled',
   guest_generation_enabled: 'guestGenerationEnabled',
   available_image_models: 'availableImageModels',
+  image_model_credit_costs: 'imageModelCreditCosts',
 }
 
 const propertyToSettingKey = Object.fromEntries(
@@ -245,6 +254,8 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
       settings[property] = normalizeModelName(value, settings[property])
     } else if (property === 'availableImageModels') {
       settings[property] = normalizeImageModelList(value, settings[property])
+    } else if (property === 'imageModelCreditCosts') {
+      settings[property] = normalizeImageModelCreditCosts(value)
     }
   }
 
@@ -288,6 +299,10 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
       publicMessage: '至少需要一个可用的图像模型。',
     })
     next.availableImageModels = models
+  }
+  if ('imageModelCreditCosts' in input) {
+    // 空表是合法状态（表示全部走兜底价），因此不像 availableImageModels 那样要求非空。
+    next.imageModelCreditCosts = normalizeImageModelCreditCosts(input.imageModelCreditCosts)
   }
 
   return next
@@ -621,6 +636,8 @@ export async function publicAppConfig() {
     canvasContextEnabled: settings.canvasContextEnabled,
     guestGenerationEnabled: settings.guestGenerationEnabled,
     imageCreditCostPerImage: settings.imageCreditCostPerImage,
+    // 兜底价 + 按模型覆盖价一并下发：前端据此显示单价，未命中覆盖价的模型回退兜底价。
+    imageModelCreditCosts: settings.imageModelCreditCosts,
     availableImageModels,
     defaultImageModel: providerImageModels[0]?.id || settings.imageResponsesImageModel,
   }

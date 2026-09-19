@@ -32,6 +32,7 @@ describe('useAppConfig', () => {
       canvasContextEnabled: false,
       guestGenerationEnabled: true,
       imageCreditCostPerImage: 1,
+      imageModelCreditCosts: [],
       availableImageModels: [],
       defaultImageModel: '',
     })
@@ -41,10 +42,39 @@ describe('useAppConfig', () => {
       canvasContextEnabled: true,
       guestGenerationEnabled: true,
       imageCreditCostPerImage: 0.75,
+      imageModelCreditCosts: [],
       availableImageModels: [],
       defaultImageModel: '',
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps only well-formed per-model prices from the server config', async () => {
+    const { ensureAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      imageCreditCostPerImage: 1,
+      imageModelCreditCosts: [
+        { id: 'gpt-image-2', cost: 3 },
+        { id: 'flux-pro', cost: '1.5' },
+        { id: 'zero', cost: 0 },
+        { id: 'dup', cost: 2 },
+        { id: 'dup', cost: 9 },
+        { cost: 4 },
+        null,
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    const config = await ensureAppConfig()
+
+    // 字符串价格、0 价、无 id 的行都被丢弃；重复 id 以第一条为准。
+    expect(config.imageModelCreditCosts).toEqual([
+      { id: 'gpt-image-2', cost: 3 },
+      { id: 'dup', cost: 2 },
+    ])
   })
 
   it('marks an empty server model list as loaded instead of falling back', async () => {

@@ -9,6 +9,7 @@ import { publicClientErrorMessage } from '../../lib/safe-error'
 import type {
   AdminAccessSummary,
   AdminAppSettings,
+  AdminImageModelCreditCost,
   AdminProviderSetting,
   AdminProviderModel,
   AdminProviderSettingsState,
@@ -45,6 +46,7 @@ const currentAdminRole = ref<AdminRole>('operator')
 
 const settingsForm = ref<AdminAppSettings>({
   imageCreditCostPerImage: 1,
+  imageModelCreditCosts: [],
   imageAnalyticsEnabled: false,
   imageResponsesModel: 'gpt-image-2',
   imageResponsesImageModel: 'gpt-image-2',
@@ -87,6 +89,83 @@ const settingsPricePreview = computed(() => [1, 4, 8].map(count => ({
 const providerRows = computed(() => providerSettings.value?.providers || [])
 const imageProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'image'))
 const chatProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'chat'))
+
+/**
+ * 可能被计费的模型清单，用于「按模型定价」的取值候选。
+ *
+ * 为什么要带上 editModel：带参考图的请求走 /images/edits，扣费模型是 editModel，
+ * 它与默认生图模型是两条独立的计费路径，必须能分别定价。
+ */
+const billableImageModelIds = computed(() => {
+  const ids: string[] = []
+  const push = (value?: string | null) => {
+    const id = (value || '').trim()
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  for (const provider of imageProviderRows.value) {
+    for (const model of providerModelCatalogRows(provider)) {
+      if (model.enabled) push(model.id)
+    }
+    push(provider.editModel)
+    push(provider.imageModel)
+  }
+  push(settingsForm.value.imageResponsesImageModel)
+  return ids
+})
+
+/** 某模型的生效单价：命中覆盖价用覆盖价，否则回退兜底价。 */
+function effectiveModelPrice(cost: number | null | undefined) {
+  const value = normalizeCreditBalance(cost ?? 0)
+  return value !== null && value >= 0.01 ? value : settingsPricePerImage.value
+}
+
+function addModelPriceRow(modelId = '') {
+  const rows = settingsForm.value.imageModelCreditCosts
+  if (!modelId && !rows.length) {
+    // 首次展开时把所有已配置的模型一次补齐，管理员只需改价，不必逐个手打 id。
+    fillModelPriceRows()
+    return
+  }
+  rows.push({ id: modelId, cost: settingsPricePerImage.value })
+}
+
+function removeModelPriceRow(index: number) {
+  settingsForm.value.imageModelCreditCosts.splice(index, 1)
+}
+
+/** 把候选模型里尚未出现在表中的项补进来，价格先取当前兜底价。 */
+function fillModelPriceRows() {
+  const rows = settingsForm.value.imageModelCreditCosts
+  const existing = new Set(rows.map(row => row.id.trim()).filter(Boolean))
+  for (const id of billableImageModelIds.value) {
+    if (existing.has(id)) continue
+    rows.push({ id, cost: settingsPricePerImage.value })
+    existing.add(id)
+  }
+  if (!rows.length) rows.push({ id: '', cost: settingsPricePerImage.value })
+}
+
+/**
+ * 提交前清洗覆盖价行：trim 模型 id、价格保留两位小数；
+ * 空 id / 重复 id / 价格非正数的行直接丢弃。
+ *
+ * 与后端 normalizeImageModelCreditCosts 的语义一致（丢弃而非钳成默认价），
+ * 避免一次手滑输入静默改动某个模型的真实计费。
+ */
+function normalizeModelPriceRows(rows: AdminImageModelCreditCost[]): AdminImageModelCreditCost[] {
+  const seen = new Set<string>()
+  const result: AdminImageModelCreditCost[] = []
+  for (const row of rows) {
+    const id = row.id.trim()
+    if (!id || seen.has(id)) continue
+    const cost = normalizeCreditBalance(row.cost)
+    if (cost === null || cost < 0.01) continue
+    seen.add(id)
+    result.push({ id, cost: Math.round(cost * 100) / 100 })
+  }
+  return result
+}
+
 const editingProvider = computed(() => providerForm.value.id
   ? providerRows.value.find(provider => provider.id === providerForm.value.id) || null
   : null)
@@ -101,7 +180,12 @@ function setError(error: unknown, fallback = '后台操作失败，请稍后重�
 
 function syncSettingsForm(settings: AdminAppSettings) {
   appSettings.value = settings
-  settingsForm.value = { ...settings }
+  settingsForm.value = {
+    ...settings,
+    // 覆盖价行要能被就地编辑，必须与接口返回的对象断开引用，
+    // 否则未保存的改动会污染 appSettings 里的快照。
+    imageModelCreditCosts: (settings.imageModelCreditCosts || []).map(row => ({ ...row })),
+  }
   settingsLoaded.value = true
 }
 
@@ -230,6 +314,7 @@ async function saveSettings() {
       method: 'PATCH',
       body: JSON.stringify({
         imageCreditCostPerImage: settingsPricePerImage.value,
+        imageModelCreditCosts: normalizeModelPriceRows(settingsForm.value.imageModelCreditCosts),
         imageAnalyticsEnabled: Boolean(settingsForm.value.imageAnalyticsEnabled),
         imageResponsesModel: settingsForm.value.imageResponsesModel,
         imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
@@ -241,7 +326,10 @@ async function saveSettings() {
       }),
     })
     syncSettingsForm(data.settings)
-    noticeMessage.value = `生图价格已保存：每张 ${data.settings.imageCreditCostPerImage} 额度`
+    noticeMessage.value = t('settings.savedNotice', {
+      cost: data.settings.imageCreditCostPerImage,
+      count: data.settings.imageModelCreditCosts?.length || 0,
+    })
     emit('dataChanged', 'settings')
   } catch (error) {
     setError(error)
@@ -348,8 +436,29 @@ onMounted(refreshSettings)
           <label class="flex flex-col gap-1" for="setting-image-price">
             <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imagePrice') }}</span>
             <input id="setting-image-price" v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]">
+            <span class="text-[11px] text-[var(--text-muted)]">{{ t('settings.imagePriceHint') }}</span>
             <div class="mt-1.5 flex flex-wrap gap-1.5"><span v-for="item in settingsPricePreview" :key="item.label" class="inline-flex min-h-6 items-center rounded-md border border-border bg-[var(--bubble-bg)] px-2 text-[11px] text-[var(--text-muted)]">{{ item.label }} {{ item.value }} 额度</span></div>
           </label>
+          <div class="flex flex-col gap-2 rounded-md border border-border bg-[var(--bubble-bg)] p-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.modelPriceTitle') }}</span>
+                <span class="mt-0.5 block text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceHint') }}</span>
+              </div>
+              <div class="flex shrink-0 gap-1.5">
+                <Button type="button" variant="outline" size="sm" :disabled="!billableImageModelIds.length" @click="fillModelPriceRows()">{{ t('settings.modelPriceFill') }}</Button>
+                <Button type="button" variant="outline" size="sm" @click="addModelPriceRow()"><Plus class="mr-1 h-4 w-4" />{{ t('common.add') }}</Button>
+              </div>
+            </div>
+            <div v-for="(row, index) in settingsForm.imageModelCreditCosts" :key="index" class="grid grid-cols-[minmax(0,1fr)_minmax(0,120px)_auto_auto] items-center gap-2">
+              <input :id="`setting-model-price-id-${index}`" v-model.trim="row.id" :list="`setting-model-price-options-${index}`" :placeholder="t('settings.modelPriceIdPlaceholder')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <datalist :id="`setting-model-price-options-${index}`"><option v-for="modelId in billableImageModelIds" :key="modelId" :value="modelId" /></datalist>
+              <input :id="`setting-model-price-cost-${index}`" v-model.number="row.cost" type="number" min="0.01" step="0.01" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <span class="whitespace-nowrap text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceEffective', { cost: effectiveModelPrice(row.cost) }) }}</span>
+              <Button type="button" variant="ghost" size="icon" :aria-label="`删除第 ${index + 1} 条模型价格`" :title="t('settings.modelPriceRemove')" @click="removeModelPriceRow(index)"><Trash2 class="h-4 w-4" /></Button>
+            </div>
+            <span v-if="!settingsForm.imageModelCreditCosts.length" class="text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceEmpty') }}</span>
+          </div>
           <label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.responseModel') }}</span><input id="setting-response-model" v-model.trim="settingsForm.imageResponsesModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]"></label>
           <label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imageModel') }}</span><input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]"></label>
           <label v-for="field in ['imageAnalyticsEnabled','imageEventsEnabled','canvasContextEnabled','freeGenerationEnabled','guestGenerationEnabled'] as const" :key="field" class="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3">

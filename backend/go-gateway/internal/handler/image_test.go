@@ -27,7 +27,7 @@ type stubImageCreditService struct {
 	costPerImage float64
 }
 
-func (s *stubImageCreditService) ReserveCredits(ctx context.Context, userID string, imageCount int) (string, float64, float64, float64, error) {
+func (s *stubImageCreditService) ReserveCredits(ctx context.Context, userID string, model string, imageCount int) (string, float64, float64, float64, error) {
 	costPerImage := s.costPerImage
 	if costPerImage <= 0 {
 		costPerImage = 1.0
@@ -45,7 +45,7 @@ func (s *stubImageCreditService) RefundCredits(ctx context.Context, userID strin
 	return s.balance, nil
 }
 
-func (s *stubImageCreditService) GetCreditCost(ctx context.Context, imageCount int) (float64, float64) {
+func (s *stubImageCreditService) GetCreditCost(ctx context.Context, model string, imageCount int) (float64, float64) {
 	costPerImage := s.costPerImage
 	if costPerImage <= 0 {
 		costPerImage = 1.0
