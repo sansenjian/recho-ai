@@ -296,7 +296,7 @@ func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {
 func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelOption, error) {
 	envModels := environmentImageModels()
 	rows, err := s.pool.Query(ctx, `
-		select name, image_model
+		select coalesce(ps.model_catalog, '[]'::jsonb), coalesce(ps.image_model, '')
 		from public.provider_settings ps
 		where ps.kind = 'image'
 			and ps.enabled = true
@@ -304,7 +304,10 @@ func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelO
 				coalesce(ps.api_key_encrypted, '') <> ''
 				or coalesce(to_jsonb(ps)->>'api_key', '') <> ''
 			)
-			and coalesce(trim(ps.image_model), '') <> ''
+			and (
+				coalesce(ps.model_catalog, '[]'::jsonb) <> '[]'::jsonb
+				or coalesce(trim(ps.image_model), '') <> ''
+			)
 		order by ps.priority asc, ps.updated_at desc
 	`)
 	if err != nil {
@@ -314,16 +317,35 @@ func (s *AppSettingsService) loadImageModels(ctx context.Context) ([]ImageModelO
 
 	models := make([]ImageModelOption, 0, len(envModels))
 	for rows.Next() {
-		var providerName string
-		var model string
-		if err := rows.Scan(&providerName, &model); err != nil {
+		var catalog []byte
+		var legacyModel string
+		if err := rows.Scan(&catalog, &legacyModel); err != nil {
 			return nil, err
 		}
-		id := normalizeModelName(model, "")
-		if id == "" {
+		appended := false
+		for _, entry := range parseProviderModelOptions(catalog) {
+			if !entry.Enabled {
+				continue
+			}
+			id := normalizeModelName(entry.ID, "")
+			if id == "" {
+				continue
+			}
+			name := strings.TrimSpace(entry.Name)
+			if name == "" {
+				name = id
+			}
+			models = append(models, ImageModelOption{ID: id, Name: name})
+			appended = true
+		}
+		if appended {
 			continue
 		}
-		models = append(models, ImageModelOption{ID: id, Name: id})
+		// Providers without a catalog keep exposing their single image_model so
+		// existing configurations survive the rollout.
+		if id := normalizeModelName(legacyModel, ""); id != "" {
+			models = append(models, ImageModelOption{ID: id, Name: id})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

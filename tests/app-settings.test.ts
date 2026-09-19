@@ -184,6 +184,70 @@ describe('app settings service', () => {
     })
   })
 
+  it('expands an image provider model catalog into the public generation model list', async () => {
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'gpt-image-2', name: 'GPT Image 2' }] },
+      { key: 'image_responses_image_model', value: 'gpt-image-2' },
+    ]
+    providerSettingRows = [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        kind: 'image',
+        name: 'Multi Image',
+        base_url: 'https://multi-image.example.test/v1',
+        models: ['gpt-image-2', 'flux-pro', 'retired-image'],
+        model_catalog: [
+          { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true },
+          { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
+          { id: 'retired-image', name: 'Retired', enabled: false },
+        ],
+        image_model: 'gpt-image-2',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    const config = await publicAppConfig()
+
+    // Disabled catalog rows stay hidden; duplicate ids from app settings collapse.
+    expect(config.availableImageModels).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2' },
+      { id: 'flux-pro', name: 'FLUX Pro' },
+    ])
+    // The first enabled catalog entry becomes the default generation model.
+    expect(config.defaultImageModel).toBe('gpt-image-2')
+  })
+
+  it('still exposes a single image_model for providers without a catalog', async () => {
+    appSettingRows = [{ key: 'image_responses_image_model', value: 'env-image-model' }]
+    providerSettingRows = [
+      {
+        id: '66666666-6666-4666-8666-666666666666',
+        kind: 'image',
+        name: 'Legacy Image',
+        base_url: 'https://legacy-image.example.test/v1',
+        models: [],
+        model_catalog: [],
+        image_model: 'legacy-image-model',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [{ id: 'legacy-image-model', name: 'legacy-image-model' }],
+      defaultImageModel: 'legacy-image-model',
+    })
+  })
+
   it('groups chat models by display name while keeping the highest-priority route id', async () => {
     providerSettingRows = [
       {

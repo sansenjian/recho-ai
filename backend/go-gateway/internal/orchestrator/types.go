@@ -96,7 +96,7 @@ type IdempotencyService interface {
 
 // ProviderSettingsService 描述图片 Provider 配置读取。
 type ProviderSettingsService interface {
-	ImageProvider(ctx context.Context) (service.ImageProviderConfig, error)
+	ImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error)
 }
 
 // --- Domain 类型（handler 包通过类型别名 re-export，保持测试不变） ---
@@ -104,6 +104,7 @@ type ProviderSettingsService interface {
 // GenRequest 是图片生成请求的 domain 表示，与 HTTP body 一一对应。
 type GenRequest struct {
 	Prompt        string         `json:"prompt"`
+	Model         string         `json:"model,omitempty"`
 	DisplayPrompt string         `json:"displayPrompt,omitempty"`
 	UserPrompt    string         `json:"userPrompt,omitempty"`
 	SystemPrompt  string         `json:"systemPrompt,omitempty"`

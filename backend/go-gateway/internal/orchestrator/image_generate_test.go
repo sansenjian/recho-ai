@@ -184,8 +184,21 @@ type testProviderSettingsService struct {
 	cfg service.ImageProviderConfig
 }
 
-func (s testProviderSettingsService) ImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
-	return s.cfg, nil
+// ImageProvider mirrors the real service's routing: a requested model only
+// takes effect when the provider declares it in ImageModels.
+func (s testProviderSettingsService) ImageProvider(_ context.Context, model string) (service.ImageProviderConfig, error) {
+	cfg := s.cfg
+	requested := strings.TrimSpace(model)
+	if requested == "" {
+		return cfg, nil
+	}
+	for _, declared := range cfg.ImageModels {
+		if declared == requested {
+			cfg.ImageModel = requested
+			return cfg, nil
+		}
+	}
+	return cfg, nil
 }
 
 func storedImageForHint(hint string) *service.StoredImage {

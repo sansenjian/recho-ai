@@ -138,3 +138,147 @@ func encryptedProviderSecretForTest(t *testing.T, plaintext string) string {
 		base64.RawURLEncoding.EncodeToString(sealed[:tagStart]),
 	}, ".")
 }
+
+func TestImageProviderQuerySelectsModelCatalog(t *testing.T) {
+	if !strings.Contains(imageProviderQuery, "coalesce(ps.model_catalog, '[]'::jsonb)") {
+		t.Fatalf("expected image provider query to select the model catalog, got %q", imageProviderQuery)
+	}
+}
+
+func TestDeclaresImageModel(t *testing.T) {
+	models := []string{"gpt-image-2", "gpt-image-1.5"}
+
+	if !declaresImageModel(models, "gpt-image-1.5") {
+		t.Fatal("expected gpt-image-1.5 to be declared by the provider catalog")
+	}
+	if declaresImageModel(models, "gpt-image-3") {
+		t.Fatal("expected an undeclared model to fall through to the priority default")
+	}
+	if declaresImageModel(nil, "gpt-image-2") {
+		t.Fatal("expected an empty catalog to declare nothing")
+	}
+}
+
+func TestImageProviderCandidateDefaultCatalogModel(t *testing.T) {
+	if got := (imageProviderCandidate{}).defaultCatalogModel(); got != "" {
+		t.Fatalf("expected empty default for a catalog-less provider, got %q", got)
+	}
+	candidate := imageProviderCandidate{models: []string{"first", "second"}}
+	if got := candidate.defaultCatalogModel(); got != "first" {
+		t.Fatalf("expected first catalog model, got %q", got)
+	}
+}
+
+func TestBuildImageProviderConfigFallsBackToFirstCatalogModel(t *testing.T) {
+	candidate := imageProviderCandidate{
+		config: ImageProviderConfig{
+			Name:       "provider",
+			BaseURL:    "https://provider.example/v1/",
+			ImageModel: "",
+			EditModel:  "provider-edit-model",
+			RetryCount: 3,
+		},
+		legacyAPIKey:      "legacy-key",
+		compatibilityMode: "auto",
+		timeoutMs:         defaultImageProviderTimeoutMS,
+		models:            []string{"model-one", "model-two"},
+	}
+
+	cfg, usable, err := buildImageProviderConfig(candidate, DefaultImageProviderConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !usable {
+		t.Fatal("expected a provider with base URL and API key to be usable")
+	}
+	if cfg.BaseURL != "https://provider.example/v1" {
+		t.Fatalf("expected trailing slash to be trimmed, got %q", cfg.BaseURL)
+	}
+	if cfg.ImageModel != "model-one" {
+		t.Fatalf("expected the first catalog model as default, got %q", cfg.ImageModel)
+	}
+	if cfg.EditModel != "provider-edit-model" {
+		t.Fatalf("expected edit_model to stay untouched, got %q", cfg.EditModel)
+	}
+	if len(cfg.ImageModels) != 2 {
+		t.Fatalf("expected 2 declared models, got %#v", cfg.ImageModels)
+	}
+	if cfg.Source != "database" {
+		t.Fatalf("expected database source, got %q", cfg.Source)
+	}
+}
+
+func TestBuildImageProviderConfigRejectsProviderWithoutCredentials(t *testing.T) {
+	candidate := imageProviderCandidate{
+		config:    ImageProviderConfig{Name: "provider", BaseURL: "https://provider.example/v1"},
+		timeoutMs: defaultImageProviderTimeoutMS,
+		models:    []string{"model-one"},
+	}
+
+	_, usable, err := buildImageProviderConfig(candidate, DefaultImageProviderConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if usable {
+		t.Fatal("expected a provider without an API key to be skipped")
+	}
+}
+
+func TestSelectImageProviderRoutesRequestedModelToOwningProvider(t *testing.T) {
+	candidates := []ImageProviderConfig{
+		{Name: "primary", ImageModel: "model-one", EditModel: "primary-edit", ImageModels: []string{"model-one"}},
+		{Name: "secondary", ImageModel: "model-two", EditModel: "secondary-edit", ImageModels: []string{"model-two", "model-three"}},
+	}
+
+	got, ok := selectImageProvider(candidates, "model-three")
+	if !ok {
+		t.Fatal("expected a provider to be selected")
+	}
+	if got.Name != "secondary" {
+		t.Fatalf("expected the secondary provider to own model-three, got %q", got.Name)
+	}
+	if got.ImageModel != "model-three" {
+		t.Fatalf("expected ImageModel to be the requested model, got %q", got.ImageModel)
+	}
+	if got.EditModel != "secondary-edit" {
+		t.Fatalf("expected EditModel to stay untouched, got %q", got.EditModel)
+	}
+}
+
+func TestSelectImageProviderFallsBackToHighestPriority(t *testing.T) {
+	candidates := []ImageProviderConfig{
+		{Name: "primary", ImageModel: "model-one", ImageModels: []string{"model-one"}},
+		{Name: "secondary", ImageModel: "model-two", ImageModels: []string{"model-two"}},
+	}
+
+	for _, requested := range []string{"", "model-unknown"} {
+		got, ok := selectImageProvider(candidates, requested)
+		if !ok {
+			t.Fatalf("expected a fallback provider for requested model %q", requested)
+		}
+		if got.Name != "primary" {
+			t.Fatalf("expected the highest priority provider for %q, got %q", requested, got.Name)
+		}
+		if got.ImageModel != "model-one" {
+			t.Fatalf("expected the provider default model for %q, got %q", requested, got.ImageModel)
+		}
+	}
+}
+
+func TestSelectImageProviderHandlesCatalogLessProviders(t *testing.T) {
+	candidates := []ImageProviderConfig{
+		{Name: "legacy", ImageModel: "legacy-model"},
+	}
+
+	got, ok := selectImageProvider(candidates, "legacy-model")
+	if !ok {
+		t.Fatal("expected a legacy provider to still be selectable")
+	}
+	if got.ImageModel != "legacy-model" {
+		t.Fatalf("expected the legacy provider default model, got %q", got.ImageModel)
+	}
+
+	if _, ok := selectImageProvider(nil, "anything"); ok {
+		t.Fatal("expected no selection when no usable provider exists")
+	}
+}

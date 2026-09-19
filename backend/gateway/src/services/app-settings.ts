@@ -590,9 +590,23 @@ export async function publicAppConfig() {
   }))
   const providerImageModels = providerSettings.providers
     .filter(provider => provider.kind === 'image' && provider.enabled && provider.apiKeyConfigured)
-    .map(provider => normalizeModelName(provider.imageModel, ''))
-    .filter((model): model is string => Boolean(model))
-    .map(id => ({ id, name: id }))
+    .flatMap((provider): ImageModelEntry[] => {
+      const enabledCatalog = provider.modelCatalog.filter(model => model.enabled)
+      if (enabledCatalog.length > 0) {
+        return enabledCatalog
+          .map(model => ({ id: normalizeModelName(model.id, ''), name: model.name.trim() || model.id }))
+          .filter((entry): entry is ImageModelEntry => Boolean(entry.id))
+      }
+      // Rows without a catalog (legacy image providers and env fallbacks) keep
+      // exposing their single imageModel so nothing disappears after the rollout.
+      const legacyModels = provider.models.length > 0
+        ? provider.models
+        : (provider.imageModel ? [provider.imageModel] : [])
+      return legacyModels
+        .map(id => normalizeModelName(id, ''))
+        .filter((id): id is string => Boolean(id))
+        .map(id => ({ id, name: id }))
+    })
   const availableImageModels = [...providerImageModels, ...settings.availableImageModels]
     .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)
   return {

@@ -209,7 +209,7 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 	}
 
 	// --- 解析 Provider 配置 ---
-	providerCfg, perr := o.resolveImageProvider(ctx)
+	providerCfg, perr := o.resolveImageProvider(ctx, req.Model)
 	if perr != nil {
 		o.logger.Printf("[image] provider config unavailable: %v", perr)
 		o.failIdempotency(user, idemKey)
@@ -815,12 +815,13 @@ func (o *ImageOrchestrator) completeIdempotency(ctx context.Context, user *middl
 	}
 }
 
-// resolveImageProvider 解析图片 Provider 配置。
-func (o *ImageOrchestrator) resolveImageProvider(ctx context.Context) (service.ImageProviderConfig, error) {
+// resolveImageProvider 解析图片 Provider 配置。model 为请求体中的模型选择，
+// 用于把请求路由到真正提供该模型的 Provider；为空时退回优先级最高的 Provider。
+func (o *ImageOrchestrator) resolveImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error) {
 	if o.provider == nil {
 		return service.DefaultImageProviderConfig(), nil
 	}
-	return o.provider.ImageProvider(ctx)
+	return o.provider.ImageProvider(ctx, model)
 }
 
 // persistAsyncSaga 在 goroutine 中用 saga 执行异步持久化。
