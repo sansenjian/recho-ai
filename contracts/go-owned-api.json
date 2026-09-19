@@ -118,6 +118,7 @@
         "canvasContextEnabled",
         "guestGenerationEnabled",
         "imageCreditCostPerImage",
+        "imageModelCreditCosts",
         "availableImageModels",
         "defaultImageModel"
       ]
