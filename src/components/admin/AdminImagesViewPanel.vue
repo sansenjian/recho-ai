@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import AdminImagesPanel from './AdminImagesPanel.vue'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
+import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageItem, AdminImageStorageOverview, AdminImageStorageStat } from '../../types/admin'
 import { formatCreditAmount } from '../../utils/credit-format'
 
@@ -25,7 +25,7 @@ const query = ref('')
 const errorMessage = ref('')
 const noticeMessage = ref('')
 
-function setError(error: unknown) { errorMessage.value = publicClientErrorMessage(error, '作品管理操作失败，请稍后重试。') }
+function setError(error: unknown) { errorMessage.value = adminErrorMessage(error, t('feedback.worksFailed')) }
 function formatByteSize(bytes: number) {
   if (!bytes || bytes < 1024) return `${bytes} B`
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(2)} KB`
@@ -116,7 +116,7 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
 
 <template>
   <section class="flex flex-col gap-4">
-    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p></div>
+    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p></div>
     <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('images.storageOverview') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span></div><Button variant="outline" size="sm" :disabled="storageLoading" @click="refreshStorage">{{ t('common.refresh') }}</Button></div>

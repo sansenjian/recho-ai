@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type {
   AdminAccessSummary,
   AdminAppSettings,
@@ -17,7 +16,7 @@ import type {
   AdminUserRule,
   ImageProviderCompatibilityMode,
 } from '../../types/admin'
-import { dateTime, shortId } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { normalizeCreditBalance } from '../../utils/credit-format'
 
 const emit = defineEmits<{
@@ -83,7 +82,7 @@ const settingsPricePerImage = computed(() => {
   return cost !== null ? Math.max(0.01, cost) : 1
 })
 const settingsPricePreview = computed(() => [1, 4, 8].map(count => ({
-  label: `${count} 张`,
+  label: t('settings.priceCountLabel', { count }),
   value: settingsPricePerImage.value * count,
 })))
 const providerRows = computed(() => providerSettings.value?.providers || [])
@@ -174,8 +173,8 @@ const adminRuleTotal = computed(() => adminAccess.value
   : adminUserRules.value.length)
 const canManageAdminUsers = computed(() => currentAdminRole.value === 'senior')
 
-function setError(error: unknown, fallback = '后台操作失败，请稍后重试。') {
-  errorMessage.value = publicClientErrorMessage(error, fallback)
+function setError(error: unknown, fallback = t('feedback.operationFailed')) {
+  errorMessage.value = adminErrorMessage(error, fallback)
 }
 
 function syncSettingsForm(settings: AdminAppSettings) {
@@ -255,16 +254,16 @@ function removeProviderModel(index: number) {
 }
 
 function providerStatusLabel(provider: AdminProviderSetting) {
-  if (provider.enabled && provider.apiKeyConfigured) return '已启用'
-  if (provider.enabled) return '缺少 Key'
-  return '已停用'
+  if (provider.enabled && provider.apiKeyConfigured) return t('settings.providerStatusEnabled')
+  if (provider.enabled) return t('settings.providerStatusMissingKey')
+  return t('settings.providerStatusDisabled')
 }
 
 function providerCompatibilityLabel(provider: AdminProviderSetting) {
   if (provider.kind !== 'image') return '-'
-  if (provider.imageCompatibilityMode === 'openai') return '标准 OpenAI'
+  if (provider.imageCompatibilityMode === 'openai') return t('settings.providerCompatOpenai')
   if (provider.imageCompatibilityMode === 'lucen') return 'Lucen / sub2api'
-  return '自动判断'
+  return t('settings.providerCompatAuto')
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -363,10 +362,10 @@ async function saveProvider() {
     )
     providerSettings.value = data.providerSettings
     resetProviderForm(providerForm.value.kind)
-    noticeMessage.value = `Provider 已保存：${data.provider.name}`
+    noticeMessage.value = t('settings.providerSaved', { name: data.provider.name })
     emit('dataChanged', 'settings')
   } catch (error) {
-    setError(error, 'Provider 配置保存失败，请稍后重试。')
+    setError(error, t('feedback.providerSaveFailed'))
   } finally {
     providerActionId.value = null
   }
@@ -423,8 +422,8 @@ onMounted(refreshSettings)
 <template>
   <section class="flex flex-col gap-4">
     <div class="min-h-0" aria-live="polite">
-      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p>
+      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p>
+      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p>
     </div>
     <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
       <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
@@ -437,7 +436,7 @@ onMounted(refreshSettings)
             <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imagePrice') }}</span>
             <input id="setting-image-price" v-model.number="settingsForm.imageCreditCostPerImage" type="number" min="0.01" step="0.01" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]">
             <span class="text-[11px] text-[var(--text-muted)]">{{ t('settings.imagePriceHint') }}</span>
-            <div class="mt-1.5 flex flex-wrap gap-1.5"><span v-for="item in settingsPricePreview" :key="item.label" class="inline-flex min-h-6 items-center rounded-md border border-border bg-[var(--bubble-bg)] px-2 text-[11px] text-[var(--text-muted)]">{{ item.label }} {{ item.value }} 额度</span></div>
+            <div class="mt-1.5 flex flex-wrap gap-1.5"><span v-for="item in settingsPricePreview" :key="item.label" class="inline-flex min-h-6 items-center rounded-md border border-border bg-[var(--bubble-bg)] px-2 text-[11px] text-[var(--text-muted)]">{{ item.label }} {{ item.value }} {{ t('settings.creditUnit') }}</span></div>
           </label>
           <div class="flex flex-col gap-2 rounded-md border border-border bg-[var(--bubble-bg)] p-3">
             <div class="flex items-start justify-between gap-2">
@@ -455,7 +454,7 @@ onMounted(refreshSettings)
               <datalist :id="`setting-model-price-options-${index}`"><option v-for="modelId in billableImageModelIds" :key="modelId" :value="modelId" /></datalist>
               <input :id="`setting-model-price-cost-${index}`" v-model.number="row.cost" type="number" min="0.01" step="0.01" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
               <span class="whitespace-nowrap text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceEffective', { cost: effectiveModelPrice(row.cost) }) }}</span>
-              <Button type="button" variant="ghost" size="icon" :aria-label="`删除第 ${index + 1} 条模型价格`" :title="t('settings.modelPriceRemove')" @click="removeModelPriceRow(index)"><Trash2 class="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="icon" :aria-label="t('settings.providerRemoveModelPriceAria', { index: index + 1 })" :title="t('settings.modelPriceRemove')" @click="removeModelPriceRow(index)"><Trash2 class="h-4 w-4" /></Button>
             </div>
             <span v-if="!settingsForm.imageModelCreditCosts.length" class="text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceEmpty') }}</span>
           </div>
@@ -470,35 +469,35 @@ onMounted(refreshSettings)
       </div>
 
       <div v-if="props.section !== 'runtime'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
-        <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">Provider / API Key</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? '数据库配置' : '仅环境变量兜底' }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
+        <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.providerSection') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? t('settings.providerSourceDb') : t('settings.providerSourceEnv') }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="flex flex-col gap-3" @submit.prevent="saveProvider">
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">类型</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">名称</span><input id="provider-name" v-model.trim="providerForm.name" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
+          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerKind') }}</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
+          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerName') }}</span><input id="provider-name" v-model.trim="providerForm.name" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
           <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">Base URL</span><input id="provider-base-url" v-model.trim="providerForm.baseUrl" type="url" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">API Key</span><input id="provider-api-key" v-model.trim="providerForm.apiKey" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? `保持当前 ${editingProvider.apiKeyPreview || ''}` : '输入 API key'" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label v-if="editingProvider?.apiKeyConfigured" class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-clear-api-key" v-model="providerForm.clearApiKey" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">清空当前 API Key</span></label>
-          <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? '优先级' : field === 'timeoutMs' ? '超时 ms' : '重试' }}</span><input :id="`provider-${field}`" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
+          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerApiKey') }}</span><input id="provider-api-key" v-model.trim="providerForm.apiKey" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? t('settings.providerApiKeyKeep', { preview: editingProvider.apiKeyPreview || '' }) : t('settings.providerApiKeyPlaceholder')" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
+          <label v-if="editingProvider?.apiKeyConfigured" class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-clear-api-key" v-model="providerForm.clearApiKey" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerClearApiKey') }}</span></label>
+          <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? t('settings.providerPriority') : field === 'timeoutMs' ? t('settings.providerTimeoutMs') : t('settings.providerRetry') }}</span><input :id="`provider-${field}`" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
           <div class="flex flex-col gap-2">
-            <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? 'Chat 模型' : '生图模型目录' }}</span><Button type="button" variant="outline" size="sm" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />添加模型</Button></div>
+            <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerChatModels') : t('settings.providerImageModels') }}</span><Button type="button" variant="outline" size="sm" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button></div>
             <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
-              <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? `模型 ID，例如 ${providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2'}` : '模型 ID'" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <input :id="`provider-model-name-${index}`" v-model.trim="model.name" :placeholder="index === 0 ? `展示名，例如 ${providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2'}` : '展示名'" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">启用</label>
-              <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="`删除模型 ${index + 1}`" title="删除模型" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
+              <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? t('settings.providerModelIdExample', { example: providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2' }) : t('settings.providerModelId')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <input :id="`provider-model-name-${index}`" v-model.trim="model.name" :placeholder="index === 0 ? t('settings.providerModelNameExample', { example: providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2' }) : t('settings.providerModelName')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">{{ t('common.enable') }}</label>
+              <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="t('settings.providerRemoveModelAria', { index: index + 1 })" :title="t('settings.providerRemoveModel')" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
             </div>
-            <span class="text-[11px] text-[var(--text-muted)]">同一个 Base URL 下可配置多个模型，模型 ID 需与上游服务一致。{{ providerForm.kind === 'image' ? '第一个启用项会作为默认生图模型。' : '' }}</span>
+            <span class="text-[11px] text-[var(--text-muted)]">{{ t('settings.providerModelHint') }}{{ providerForm.kind === 'image' ? t('settings.providerImageDefaultHint') : '' }}</span>
           </div>
           <template v-if="providerForm.kind === 'image'">
-            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">编辑模型（带参考图时使用）</span><input id="provider-edit-model" v-model.trim="providerForm.editModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">兼容预设</span><select id="provider-compat-mode" v-model="providerForm.imageCompatibilityMode" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"><option value="auto">自动判断</option><option value="openai">标准 OpenAI</option><option value="lucen">Lucen / sub2api OAuth</option></select></label>
-            <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-webp-refs" v-model="providerForm.supportsWebpReferences" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">支持 WebP 参考图</span></label>
+            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerEditModel') }}</span><input id="provider-edit-model" v-model.trim="providerForm.editModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
+            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerCompatMode') }}</span><select id="provider-compat-mode" v-model="providerForm.imageCompatibilityMode" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"><option value="auto">{{ t('settings.providerCompatAuto') }}</option><option value="openai">{{ t('settings.providerCompatOpenai') }}</option><option value="lucen">Lucen / sub2api OAuth</option></select></label>
+            <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-webp-refs" v-model="providerForm.supportsWebpReferences" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerWebpRefs') }}</span></label>
           </template>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">备注</span><input id="provider-notes" v-model.trim="providerForm.notes" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-enabled" v-model="providerForm.enabled" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">启用</span></label>
-          <div class="flex flex-wrap gap-2"><Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? '保存 Provider' : '新增 Provider' }}</Button><Button variant="outline" type="button" @click="resetProviderForm(providerForm.kind)">重置</Button></div>
+          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('common.note') }}</span><input id="provider-notes" v-model.trim="providerForm.notes" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
+          <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-enabled" v-model="providerForm.enabled" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('common.enable') }}</span></label>
+          <div class="flex flex-wrap gap-2"><Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? t('settings.providerSave') : t('settings.providerCreate') }}</Button><Button variant="outline" type="button" @click="resetProviderForm(providerForm.kind)">{{ t('settings.providerReset') }}</Button></div>
         </form>
         <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
-        <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in ['类型','名称','模型目录','兼容','Key','状态','操作']" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">优先级 {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || '已配置' : '未配置' }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">编辑</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">暂无 Provider 配置</td></tr></tbody></table></div>
+        <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.providerTable.kind'),t('settings.providerTable.name'),t('settings.providerTable.models'),t('settings.providerTable.compat'),t('settings.providerTable.key'),t('settings.providerTable.status'),t('settings.providerTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ t('settings.providerPriority') }} {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || t('settings.providerApiKeyConfigured') : t('settings.providerApiKeyUnconfigured') }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">{{ t('common.edit') }}</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.providerNoRows') }}</td></tr></tbody></table></div>
         <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border"><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Image Providers</span><strong class="block text-xl">{{ imageProviderRows.length }}</strong></div><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Chat Providers</span><strong class="block text-xl">{{ chatProviderRows.length }}</strong></div></div>
       </div>
 
@@ -506,7 +505,7 @@ onMounted(refreshSettings)
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.adminUsers') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ adminRuleTotal }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
         <form v-if="canManageAdminUsers" class="mb-4 flex flex-wrap items-end gap-2" @submit.prevent="createAdminRule"><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminUserId') }}</span><input id="admin-user-id" v-model.trim="adminUserForm.userId" :placeholder="t('settings.adminUserId')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminEmail') }}</span><input id="admin-user-email" v-model.trim="adminUserForm.email" type="email" :placeholder="t('settings.adminEmail')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><label class="flex min-w-[160px] flex-1 flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminNote') }}</span><input id="admin-user-note" v-model.trim="adminUserForm.note" :placeholder="t('settings.adminNote')" class="min-h-[30px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"></label><Button type="submit" :disabled="actionLoading">{{ t('common.add') }}</Button></form>
         <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
-        <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.adminTable.account'),t('settings.adminTable.level'),t('settings.adminTable.source'),t('settings.adminTable.status'),t('settings.adminTable.updated'),t('settings.adminTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="rule in adminUserRules" :key="rule.id" class="border-b border-border"><td class="px-3 py-2">{{ adminRuleIdentity(rule) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ adminRuleRoleLabel(rule) }}</Badge></td><td class="px-3 py-2 text-xs">{{ adminRuleSource(rule) }}</td><td class="px-3 py-2" :class="rule.enabled ? 'text-emerald-600' : 'text-red-500'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td><td class="px-3 py-2 text-xs">{{ dateTime(rule.updatedAt) }}</td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id" @click="setAdminRuleEnabled(rule, !rule.enabled)">{{ rule.enabled ? t('common.disable') : t('common.enable') }}</Button></td></tr><tr v-if="!adminUserRules.length"><td colspan="6" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.noRules') }}</td></tr></tbody></table></div>
+        <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.adminTable.account'),t('settings.adminTable.level'),t('settings.adminTable.source'),t('settings.adminTable.status'),t('settings.adminTable.updated'),t('settings.adminTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="rule in adminUserRules" :key="rule.id" class="border-b border-border"><td class="px-3 py-2">{{ adminRuleIdentity(rule) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ adminRuleRoleLabel(rule) }}</Badge></td><td class="px-3 py-2 text-xs">{{ adminRuleSource(rule) }}</td><td class="px-3 py-2" :class="rule.enabled ? 'text-success' : 'text-danger'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td><td class="px-3 py-2 text-xs">{{ dateTime(rule.updatedAt) }}</td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id" @click="setAdminRuleEnabled(rule, !rule.enabled)">{{ rule.enabled ? t('common.disable') : t('common.enable') }}</Button></td></tr><tr v-if="!adminUserRules.length"><td colspan="6" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.noRules') }}</td></tr></tbody></table></div>
       </div>
     </div>
   </section>

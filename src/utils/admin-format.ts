@@ -1,8 +1,12 @@
+import i18n from '../i18n'
+import { classifyClientError, publicClientErrorMessage } from '../lib/safe-error'
 import type {
   AdminImageAttemptItem,
   AdminImageItem,
   AdminSystemTableStatus,
 } from '../types/admin'
+
+const t = i18n.global.t
 
 export function shortId(value: string) {
   return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
@@ -21,12 +25,12 @@ export function dateTime(value: string | null) {
 }
 
 export function imageVisibilityLabel(visibility: AdminImageItem['visibility']) {
-  return visibility === 'private' ? '已隐藏' : '公开'
+  return visibility === 'private' ? t('images.hidden') : t('images.public')
 }
 
 export function imageFundingLabel(image: AdminImageItem) {
-  if (image.fundingSource === 'credit') return '额度'
-  if (image.fundingSource === 'free') return '免费'
+  if (image.fundingSource === 'credit') return t('images.credit')
+  if (image.fundingSource === 'free') return t('images.free')
   return '-'
 }
 
@@ -36,18 +40,18 @@ export function imagePreviewSrc(image: AdminImageItem) {
 
 export function imageDetails(image: AdminImageItem) {
   const parts = [
-    image.quality ? `质量 ${image.quality}` : '',
-    image.resolution ? `分辨率 ${image.resolution}` : '',
-    image.size ? `尺寸 ${image.size}` : '',
-    image.aspectRatio ? `比例 ${image.aspectRatio}` : '',
-    image.creditCost > 0 ? `${image.creditCost} 额度` : '',
+    image.quality ? t('genDetails.quality', { value: image.quality }) : '',
+    image.resolution ? t('genDetails.resolution', { value: image.resolution }) : '',
+    image.size ? t('genDetails.size', { value: image.size }) : '',
+    image.aspectRatio ? t('genDetails.aspectRatio', { value: image.aspectRatio }) : '',
+    image.creditCost > 0 ? t('genDetails.credits', { cost: image.creditCost }) : '',
   ].filter(Boolean)
 
   return parts.length ? parts.join(' / ') : '-'
 }
 
 export function attemptStatusLabel(status: AdminImageAttemptItem['status']) {
-  return status === 'succeeded' ? '成功' : '失败'
+  return status === 'succeeded' ? t('monitor.succeeded') : t('monitor.failed')
 }
 
 export function latencyLabel(value: number | null) {
@@ -68,9 +72,9 @@ export function attemptErrorSummary(attempt: AdminImageAttemptItem) {
 }
 
 export function storageLocationLabel(location: AdminImageItem['storageLocation']) {
-  if (location === 'cos') return '腾讯云 COS'
-  if (location === 'supabase') return 'Supabase'
-  if (location === 'data') return '内联数据'
+  if (location === 'cos') return t('images.cos')
+  if (location === 'supabase') return t('images.supabase')
+  if (location === 'data') return t('images.data')
   return '-'
 }
 
@@ -82,9 +86,28 @@ export function storageLocationClass(location: AdminImageItem['storageLocation']
 }
 
 export function tableStatusLabel(status: AdminSystemTableStatus['status']) {
-  if (status === 'ok') return '正常'
-  if (status === 'missing') return '缺失'
-  if (status === 'restricted') return '受限'
-  if (status === 'unavailable') return '未配置'
-  return '异常'
+  if (status === 'ok') return t('system.tableStatus.ok')
+  if (status === 'missing') return t('system.tableStatus.missing')
+  if (status === 'restricted') return t('system.tableStatus.restricted')
+  if (status === 'unavailable') return t('system.tableStatus.unconfigured')
+  return t('system.tableStatus.error')
+}
+
+/**
+ * `publicClientErrorMessage` already classifies the failure (timeout / network /
+ * upstream) but renders that classification in Chinese, so an English admin
+ * console would show Chinese for those three cases. The classification is
+ * language-neutral, so it is reused and only the wording is localized here — the
+ * admin panels must route through this helper instead of calling the raw one.
+ *
+ * The upstream wording is deliberately generic: the shared classifier matches any
+ * 5xx / provider error, not just the image pipeline, so "image service" would be
+ * wrong for an admin API.
+ */
+export function adminErrorMessage(error: unknown, fallback: string) {
+  const category = classifyClientError(error)
+  if (category === 'timeout') return t('feedback.timeout')
+  if (category === 'network') return t('feedback.network')
+  if (category === 'upstream') return t('feedback.upstream')
+  return publicClientErrorMessage(error, fallback)
 }

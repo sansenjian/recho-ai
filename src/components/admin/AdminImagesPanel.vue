@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { AdminImageItem } from '../../types/admin'
@@ -13,6 +14,8 @@ import {
   storageLocationLabel,
   storageLocationClass,
 } from '../../utils/admin-format'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   images: AdminImageItem[]
@@ -89,40 +92,40 @@ function toggleImage(id: string, event: Event) {
 </script>
 
 <template>
-  <section class="mx-auto mb-3.5 w-full min-w-0 max-w-[1360px] rounded-lg border border-border bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]" aria-label="作品管理">
+  <section class="w-full min-w-0 rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm" :aria-label="t('images.title')">
     <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
-        <span class="block text-sm">作品管理</span>
+        <span class="block text-sm">{{ t('images.title') }}</span>
         <strong class="block mt-0.5 text-lg">{{ images.length }}</strong>
       </div>
       <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
         <select
           :value="visibilityFilter"
-          aria-label="筛选作品状态"
+          :aria-label="t('images.filterVisibility')"
           :disabled="loading"
           class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateVisibilityFilter"
         >
-          <option value="">全部状态</option>
-          <option value="public">公开</option>
-          <option value="private">已隐藏</option>
+          <option value="">{{ t('images.allVisibility') }}</option>
+          <option value="public">{{ t('images.public') }}</option>
+          <option value="private">{{ t('images.hidden') }}</option>
         </select>
         <select
           :value="fundingFilter"
-          aria-label="筛选作品来源"
+          :aria-label="t('images.filterFunding')"
           :disabled="loading"
           class="min-h-9 min-w-[130px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateFundingFilter"
         >
-          <option value="">全部来源</option>
-          <option value="free">免费</option>
-          <option value="credit">额度</option>
+          <option value="">{{ t('images.allFunding') }}</option>
+          <option value="free">{{ t('images.free') }}</option>
+          <option value="credit">{{ t('images.credit') }}</option>
         </select>
         <input
           :value="userFilter"
           type="search"
-          aria-label="按用户 ID 筛选"
-          placeholder="用户 ID"
+          :aria-label="t('images.filterUserId')"
+          :placeholder="t('common.userId')"
           :disabled="loading"
           class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateUserFilter"
@@ -130,24 +133,24 @@ function toggleImage(id: string, event: Event) {
         <input
           :value="query"
           type="search"
-          aria-label="按提示词搜索"
-          placeholder="提示词"
+          :aria-label="t('images.filterPrompt')"
+          :placeholder="t('images.promptFilter')"
           :disabled="loading"
           class="min-h-9 w-[180px] min-w-[140px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateQuery"
         >
-        <Button type="submit" variant="outline" size="sm" :disabled="loading">筛选</Button>
-        <Button type="button" variant="outline" size="sm" :disabled="loading" @click="emit('refresh')">刷新</Button>
+        <Button type="submit" variant="outline" size="sm" :disabled="loading">{{ t('common.filter') }}</Button>
+        <Button type="button" variant="outline" size="sm" :disabled="loading" @click="emit('refresh')">{{ t('common.refresh') }}</Button>
       </form>
     </div>
 
     <div class="flex items-center justify-start gap-2 flex-wrap mb-2.5">
-      <span class="text-xs font-extrabold text-[var(--text-secondary)]">已选 {{ selectedCount }}</span>
-      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">批量归档</Button>
-      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">批量删除</Button>
+      <span class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.selectedCount', { count: selectedCount }) }}</span>
+      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">{{ t('images.bulkArchive') }}</Button>
+      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">{{ t('images.bulkDelete') }}</Button>
     </div>
 
-    <div class="w-full overflow-auto rounded-lg border border-border max-h-[560px]">
+    <div class="w-full overflow-auto rounded-md border border-border max-h-[560px]">
       <table class="w-full border-collapse text-[13px] min-w-[1360px]">
         <thead>
           <tr>
@@ -156,21 +159,21 @@ function toggleImage(id: string, event: Event) {
                 type="checkbox"
                 :checked="allVisibleSelected"
                 :disabled="loading || !images.length"
-                aria-label="选择当前列表"
+                :aria-label="t('images.selectAll')"
                 class="w-4 h-4"
                 @change="toggleAll"
               >
             </th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">预览</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">时间</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">用户</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">状态</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">来源</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">存储</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">模型</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">参数</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">提示词</th>
-            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">操作</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.preview') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.time') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.user') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.status') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.source') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.storage') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.model') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.params') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.prompt') }}</th>
+            <th class="text-left px-2.5 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('images.table.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -180,14 +183,14 @@ function toggleImage(id: string, event: Event) {
                 type="checkbox"
                 :checked="selectedSet.has(image.id)"
                 :disabled="loading"
-                :aria-label="`选择 ${image.id}`"
+                :aria-label="t('images.selectImage', { id: image.id })"
                 class="w-4 h-4"
                 @change="toggleImage(image.id, $event)"
               >
             </td>
             <td class="px-2.5 py-2 align-middle">
               <img v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-border bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="">
-              <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-border bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">无图</span>
+              <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-border bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">{{ t('images.noImage') }}</span>
             </td>
             <td class="px-2.5 py-2 align-middle">{{ dateTime(image.generatedAt) }}</td>
             <td class="px-2.5 py-2 align-middle">{{ image.email || (image.userId ? shortId(image.userId) : '-') }}</td>
@@ -213,7 +216,7 @@ function toggleImage(id: string, event: Event) {
                 :disabled="actionId === image.id"
                 @click="emit('setVisibility', image, 'private')"
               >
-                隐藏
+                {{ t('common.hide') }}
               </Button>
               <Button
                 v-else-if="image.fundingSource !== 'credit'"
@@ -223,13 +226,13 @@ function toggleImage(id: string, event: Event) {
                 :disabled="actionId === image.id"
                 @click="emit('setVisibility', image, 'public')"
               >
-                公开
+                {{ t('images.public') }}
               </Button>
-              <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">私有</span>
+              <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.private') }}</span>
             </td>
           </tr>
           <tr v-if="!images.length">
-            <td colspan="11" class="px-2.5 py-2 text-center">暂无作品</td>
+            <td colspan="11" class="px-2.5 py-2 text-center">{{ t('images.noWorks') }}</td>
           </tr>
         </tbody>
       </table>

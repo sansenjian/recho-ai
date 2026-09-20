@@ -4,9 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type { AdminCode, AdminCodeRedemption, AdminTransaction, AdminUser } from '../../types/admin'
-import { dateTime, shortId } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { formatCreditAmount, formatSignedCreditAmount } from '../../utils/credit-format'
 
 const emit = defineEmits<{ dataChanged: [source: 'credits'] }>()
@@ -39,9 +38,9 @@ const createdCsv = computed(() => {
   return rows.map(row => row.map(value => `"${value.replace(/"/g, '""')}"`).join(',')).join('\n')
 })
 
-function setError(error: unknown, fallback = '后台操作失败，请稍后重试。') {
+function setError(error: unknown, fallback = t('feedback.operationFailed')) {
   if (error instanceof DOMException && error.name === 'AbortError') return
-  errorMessage.value = publicClientErrorMessage(error, fallback)
+  errorMessage.value = adminErrorMessage(error, fallback)
 }
 function creditAmount(value: unknown) { return formatCreditAmount(value) }
 function signedCreditAmount(value: unknown) { return formatSignedCreditAmount(value) }
@@ -221,8 +220,8 @@ onBeforeUnmount(() => {
 <template>
   <section class="flex flex-col gap-4">
     <div class="min-h-0" aria-live="polite">
-      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p>
+      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p>
+      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p>
     </div>
     <div class="grid grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-4 max-lg:grid-cols-1">
       <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
@@ -234,7 +233,7 @@ onBeforeUnmount(() => {
         <div class="mb-4"><h2 class="text-sm font-semibold">{{ t('credits.userDetail') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ selectedUserTitle }}</span></div>
         <div v-if="selectedUser" class="mb-4 grid grid-cols-4 gap-px overflow-hidden rounded-md border border-border bg-border max-md:grid-cols-2"><div v-for="item in [{ label: t('credits.balance'), value: creditAmount(selectedUser.balance) },{ label: t('credits.totalRedeemed'), value: creditAmount(selectedUser.totalRedeemed) },{ label: t('credits.totalSpent'), value: creditAmount(selectedUser.totalSpent) },{ label: t('common.updatedAt'), value: dateTime(selectedUser.updatedAt) }]" :key="item.label" class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">{{ item.label }}</span><strong class="block text-lg">{{ item.value }}</strong></div></div>
         <form class="mb-4 flex flex-wrap items-end gap-2" @submit.prevent="submitAdjustment"><input v-model.number="adjustAmount" type="number" class="min-h-[30px] max-w-[140px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"><input v-model.trim="adjustNote" :placeholder="t('credits.adjustNotePlaceholder')" class="min-h-[30px] max-w-[180px] rounded-md border border-border bg-[var(--surface)] px-2 text-xs"><Button type="submit" :disabled="actionLoading || !selectedUser || !adjustAmount">{{ t('common.submit') }}</Button></form>
-        <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('credits.table.time'),t('credits.table.type'),t('credits.table.change'),t('credits.table.balance'),t('credits.table.note')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold">{{ heading }}</th></tr></thead><tbody><tr v-for="tx in transactions" :key="tx.id" class="border-b border-border"><td class="px-3 py-2 text-xs">{{ dateTime(tx.created_at) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ transactionReason(tx.reason) }}</Badge></td><td class="px-3 py-2 font-mono" :class="tx.amount >= 0 ? 'text-emerald-600' : 'text-red-500'">{{ signedCreditAmount(tx.amount) }}</td><td class="px-3 py-2 font-mono">{{ creditAmount(tx.balance_after) }}</td><td class="px-3 py-2 text-xs">{{ transactionNote(tx) }}</td></tr><tr v-if="!transactions.length"><td colspan="5" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('common.noData') }}</td></tr></tbody></table></div>
+        <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('credits.table.time'),t('credits.table.type'),t('credits.table.change'),t('credits.table.balance'),t('credits.table.note')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold">{{ heading }}</th></tr></thead><tbody><tr v-for="tx in transactions" :key="tx.id" class="border-b border-border"><td class="px-3 py-2 text-xs">{{ dateTime(tx.created_at) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ transactionReason(tx.reason) }}</Badge></td><td class="px-3 py-2 font-mono" :class="tx.amount >= 0 ? 'text-success' : 'text-danger'">{{ signedCreditAmount(tx.amount) }}</td><td class="px-3 py-2 font-mono">{{ creditAmount(tx.balance_after) }}</td><td class="px-3 py-2 text-xs">{{ transactionNote(tx) }}</td></tr><tr v-if="!transactions.length"><td colspan="5" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('common.noData') }}</td></tr></tbody></table></div>
       </div>
     </div>
 

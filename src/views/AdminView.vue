@@ -20,7 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../composables/useAdminApi'
 import { useAuthSession } from '../composables/useAuthSession'
-import { publicClientErrorMessage } from '../lib/safe-error'
+import { adminErrorMessage } from '../utils/admin-format'
 import type { AdminRole } from '../types/admin'
 
 const AdminOverviewPanel = defineAsyncComponent(() => import('../components/admin/AdminOverviewPanel.vue'))
@@ -104,7 +104,7 @@ async function checkAdmin() {
     isAdmin.value = Boolean(data.admin)
   } catch (error) {
     isAdmin.value = false
-    errorMessage.value = publicClientErrorMessage(error, '当前账号没有后台权限。')
+    errorMessage.value = adminErrorMessage(error, t('feedback.noAccess'))
   } finally {
     adminChecked.value = true
   }
@@ -121,7 +121,7 @@ onMounted(async () => {
     <aside class="fixed inset-y-0 left-0 z-20 flex flex-col overflow-hidden border-r border-border bg-[var(--surface)] transition-[width] duration-150" :class="sidebarCollapsed ? 'w-16' : 'w-[240px] max-lg:w-16'">
       <div class="flex h-14 shrink-0 items-center justify-between border-b border-border px-4 max-lg:justify-center max-lg:px-0">
         <div class="flex min-w-0 items-center gap-2.5"><Zap class="h-6 w-6 shrink-0" /><span v-show="!sidebarCollapsed" class="whitespace-nowrap text-[15px] font-semibold max-lg:hidden">Recho Admin</span></div>
-        <Button variant="ghost" size="icon-xs" class="shrink-0 max-lg:hidden" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" @click="toggleSidebar"><ChevronLeft v-if="!sidebarCollapsed" class="h-4 w-4" /><ChevronRight v-else class="h-4 w-4" /></Button>
+        <Button variant="ghost" size="icon-xs" class="shrink-0 max-lg:hidden" :title="sidebarCollapsed ? t('common.expand') : t('common.collapse')" @click="toggleSidebar"><ChevronLeft v-if="!sidebarCollapsed" class="h-4 w-4" /><ChevronRight v-else class="h-4 w-4" /></Button>
       </div>
 
       <nav class="flex-1 overflow-y-auto p-2">

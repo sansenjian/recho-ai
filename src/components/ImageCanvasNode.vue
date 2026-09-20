@@ -626,7 +626,7 @@ function applyCustomAspectRatio() {
 
 .node-remove:hover {
   background: var(--hover-bg);
-  color: var(--danger);
+  color: var(--color-danger);
 }
 
 .node-textarea,
@@ -1217,7 +1217,7 @@ function applyCustomAspectRatio() {
 }
 
 .node-error {
-  color: var(--danger);
+  color: var(--color-danger);
 }
 
 .generate-button {
