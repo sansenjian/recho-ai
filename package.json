@@ -20,6 +20,8 @@
     "test:contracts": "vitest run tests/go-owned-api-contract.test.ts tests/go-sidecar-contract.test.ts tests/go-sidecar-live-contract.test.ts",
     "credits:create": "cd backend/gateway && npm run credits:create --",
     "test:watch": "vitest",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -48,6 +50,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "jsdom": "^29.1.1",
+    "oxlint": "^1.83.0",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.2",
