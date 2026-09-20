@@ -4,9 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type { AdminAnnouncement } from '../../types/admin'
-import { dateTime } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime } from '../../utils/admin-format'
 
 const emit = defineEmits<{ dataChanged: [source: 'announcements'] }>()
 const { t } = useI18n()
@@ -18,7 +17,7 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const form = ref({ title: '', body: '' })
 
-function setError(error: unknown) { errorMessage.value = publicClientErrorMessage(error, t('feedback.announcementFailed')) }
+function setError(error: unknown) { errorMessage.value = adminErrorMessage(error, t('feedback.announcementFailed')) }
 function statusLabel(status: AdminAnnouncement['status']) {
   if (status === 'published') return t('announcements.statusPublished')
   if (status === 'archived') return t('announcements.statusArchived')

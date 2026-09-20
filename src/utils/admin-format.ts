@@ -1,4 +1,5 @@
 import i18n from '../i18n'
+import { classifyClientError, publicClientErrorMessage } from '../lib/safe-error'
 import type {
   AdminImageAttemptItem,
   AdminImageItem,
@@ -90,4 +91,23 @@ export function tableStatusLabel(status: AdminSystemTableStatus['status']) {
   if (status === 'restricted') return t('system.tableStatus.restricted')
   if (status === 'unavailable') return t('system.tableStatus.unconfigured')
   return t('system.tableStatus.error')
+}
+
+/**
+ * `publicClientErrorMessage` already classifies the failure (timeout / network /
+ * upstream) but renders that classification in Chinese, so an English admin
+ * console would show Chinese for those three cases. The classification is
+ * language-neutral, so it is reused and only the wording is localized here — the
+ * admin panels must route through this helper instead of calling the raw one.
+ *
+ * The upstream wording is deliberately generic: the shared classifier matches any
+ * 5xx / provider error, not just the image pipeline, so "image service" would be
+ * wrong for an admin API.
+ */
+export function adminErrorMessage(error: unknown, fallback: string) {
+  const category = classifyClientError(error)
+  if (category === 'timeout') return t('feedback.timeout')
+  if (category === 'network') return t('feedback.network')
+  if (category === 'upstream') return t('feedback.upstream')
+  return publicClientErrorMessage(error, fallback)
 }

@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminImageAttemptsPanel from './AdminImageAttemptsPanel.vue'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
+import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageAttemptItem, AdminImageAttemptOverview } from '../../types/admin'
 
 const { t } = useI18n()
@@ -32,7 +32,7 @@ async function refresh() {
     overview.value = data.overview
     attempts.value = data.attempts
   } catch (error) {
-    errorMessage.value = publicClientErrorMessage(error, t('feedback.monitorFailed'))
+    errorMessage.value = adminErrorMessage(error, t('feedback.monitorFailed'))
   } finally {
     loading.value = false
   }

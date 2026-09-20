@@ -4,9 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type { AdminLedgerEntry, AdminOverview } from '../../types/admin'
-import { dateTime, shortId } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { formatCreditAmount, formatSignedCreditAmount } from '../../utils/credit-format'
 
 const props = defineProps<{ refreshVersion?: number }>()
@@ -40,7 +39,7 @@ const overviewGeneratedAt = computed(() => overview.value
   : t('overview.waiting'))
 
 function setError(error: unknown) {
-  errorMessage.value = publicClientErrorMessage(error, t('feedback.operationFailed'))
+  errorMessage.value = adminErrorMessage(error, t('feedback.operationFailed'))
 }
 function creditAmount(value: unknown) { return formatCreditAmount(value) }
 function signedCreditAmount(value: unknown) { return formatSignedCreditAmount(value) }

@@ -423,6 +423,9 @@ export default {
   },
   feedback: {
     operationFailed: '后台操作失败，请稍后重试。',
+    timeout: '服务响应超时，请稍后重试。',
+    network: '网络连接异常，请稍后重试。',
+    upstream: '服务暂时不可用，请稍后重试。',
     noAccess: '当前账号没有后台权限。',
     requestFailed: '请求失败',
     loginRequired: '请先登录。',

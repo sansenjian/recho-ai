@@ -26,22 +26,31 @@ export function redactSensitiveClientText(value: unknown) {
     .trim()
 }
 
-export function publicClientErrorMessage(error: unknown, fallback = '请求失败，请稍后重试。') {
+export type ClientErrorCategory = 'timeout' | 'network' | 'upstream' | 'unknown'
+
+/**
+ * Classifies a client-side failure without choosing any wording. Callers that are
+ * localized (the admin console) map the category to their own copy; callers that
+ * are not (the Chinese-only chat UI) keep using `publicClientErrorMessage`.
+ */
+export function classifyClientError(error: unknown): ClientErrorCategory {
   const message = rawErrorMessage(error)
 
-  if (/AbortError|timeout|timed out|aborted|超时/i.test(message)) {
-    return '服务响应超时，请稍后重试。'
-  }
+  if (/AbortError|timeout|timed out|aborted|超时/i.test(message)) return 'timeout'
+  if (/Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|Load failed|network/i.test(message)) return 'network'
+  if (/Responses API|Images API|upstream|provider|Service temporarily unavailable|Upstream request failed|502|503|504/i.test(message)) return 'upstream'
 
-  if (/Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|Load failed|network/i.test(message)) {
-    return '网络连接异常，请稍后重试。'
-  }
+  return 'unknown'
+}
 
-  if (/Responses API|Images API|upstream|provider|Service temporarily unavailable|Upstream request failed|502|503|504/i.test(message)) {
-    return '图片生成服务暂时不可用，请稍后重试。'
-  }
+export function publicClientErrorMessage(error: unknown, fallback = '请求失败，请稍后重试。') {
+  const category = classifyClientError(error)
 
-  const redacted = redactSensitiveClientText(message)
+  if (category === 'timeout') return '服务响应超时，请稍后重试。'
+  if (category === 'network') return '网络连接异常，请稍后重试。'
+  if (category === 'upstream') return '图片生成服务暂时不可用，请稍后重试。'
+
+  const redacted = redactSensitiveClientText(rawErrorMessage(error))
   if (!redacted || /\[redacted-(secret|url|host)\]/.test(redacted)) return fallback
   return redacted.slice(0, 180)
 }

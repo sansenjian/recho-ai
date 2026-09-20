@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import AdminImagesPanel from './AdminImagesPanel.vue'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
+import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageItem, AdminImageStorageOverview, AdminImageStorageStat } from '../../types/admin'
 import { formatCreditAmount } from '../../utils/credit-format'
 
@@ -25,7 +25,7 @@ const query = ref('')
 const errorMessage = ref('')
 const noticeMessage = ref('')
 
-function setError(error: unknown) { errorMessage.value = publicClientErrorMessage(error, t('feedback.worksFailed')) }
+function setError(error: unknown) { errorMessage.value = adminErrorMessage(error, t('feedback.worksFailed')) }
 function formatByteSize(bytes: number) {
   if (!bytes || bytes < 1024) return `${bytes} B`
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(2)} KB`

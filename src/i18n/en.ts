@@ -423,6 +423,9 @@ export default {
   },
   feedback: {
     operationFailed: 'Operation failed, please try again.',
+    timeout: 'The service timed out, please try again.',
+    network: 'Network error, please try again.',
+    upstream: 'The service is temporarily unavailable, please try again.',
     noAccess: 'This account does not have admin access.',
     requestFailed: 'Request failed',
     loginRequired: 'Please log in first.',

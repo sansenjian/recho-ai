@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type {
   AdminAccessSummary,
   AdminAppSettings,
@@ -17,7 +16,7 @@ import type {
   AdminUserRule,
   ImageProviderCompatibilityMode,
 } from '../../types/admin'
-import { dateTime, shortId } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { normalizeCreditBalance } from '../../utils/credit-format'
 
 const emit = defineEmits<{
@@ -175,7 +174,7 @@ const adminRuleTotal = computed(() => adminAccess.value
 const canManageAdminUsers = computed(() => currentAdminRole.value === 'senior')
 
 function setError(error: unknown, fallback = t('feedback.operationFailed')) {
-  errorMessage.value = publicClientErrorMessage(error, fallback)
+  errorMessage.value = adminErrorMessage(error, fallback)
 }
 
 function syncSettingsForm(settings: AdminAppSettings) {

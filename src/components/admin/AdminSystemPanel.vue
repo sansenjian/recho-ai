@@ -4,9 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type { AdminOverview, AdminSystemStatus } from '../../types/admin'
-import { dateTime, tableStatusLabel } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, tableStatusLabel } from '../../utils/admin-format'
 
 const props = defineProps<{ refreshVersion?: number }>()
 const { t } = useI18n()
@@ -46,7 +45,7 @@ async function refreshPanel() {
     overview.value = overviewData.overview
     loadedVersion.value = props.refreshVersion ?? 0
   } catch (error) {
-    errorMessage.value = publicClientErrorMessage(error, t('feedback.systemFailed'))
+    errorMessage.value = adminErrorMessage(error, t('feedback.systemFailed'))
   } finally {
     loading.value = false
   }

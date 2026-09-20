@@ -20,7 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../composables/useAdminApi'
 import { useAuthSession } from '../composables/useAuthSession'
-import { publicClientErrorMessage } from '../lib/safe-error'
+import { adminErrorMessage } from '../utils/admin-format'
 import type { AdminRole } from '../types/admin'
 
 const AdminOverviewPanel = defineAsyncComponent(() => import('../components/admin/AdminOverviewPanel.vue'))
@@ -104,7 +104,7 @@ async function checkAdmin() {
     isAdmin.value = Boolean(data.admin)
   } catch (error) {
     isAdmin.value = false
-    errorMessage.value = publicClientErrorMessage(error, t('feedback.noAccess'))
+    errorMessage.value = adminErrorMessage(error, t('feedback.noAccess'))
   } finally {
     adminChecked.value = true
   }

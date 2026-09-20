@@ -4,9 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { publicClientErrorMessage } from '../../lib/safe-error'
 import type { AdminCode, AdminCodeRedemption, AdminTransaction, AdminUser } from '../../types/admin'
-import { dateTime, shortId } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { formatCreditAmount, formatSignedCreditAmount } from '../../utils/credit-format'
 
 const emit = defineEmits<{ dataChanged: [source: 'credits'] }>()
@@ -41,7 +40,7 @@ const createdCsv = computed(() => {
 
 function setError(error: unknown, fallback = t('feedback.operationFailed')) {
   if (error instanceof DOMException && error.name === 'AbortError') return
-  errorMessage.value = publicClientErrorMessage(error, fallback)
+  errorMessage.value = adminErrorMessage(error, fallback)
 }
 function creditAmount(value: unknown) { return formatCreditAmount(value) }
 function signedCreditAmount(value: unknown) { return formatSignedCreditAmount(value) }
