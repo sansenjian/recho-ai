@@ -5,9 +5,10 @@ import type { CanvasWorkspace } from '../lib/canvas-workspace-cache'
 import { hasDisplayImage } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import WorkspaceList from './WorkspaceList.vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Plus, GripVertical, Type, Image, Sparkles, Trash2 } from '@lucide/vue'
+import { Type, Image, Sparkles } from '@lucide/vue'
 
 type MiniMapLayout = {
   connections: Array<{
@@ -53,6 +54,14 @@ const emit = defineEmits<{
 }>()
 
 const historyCountText = computed(() => `${props.historyImages.length} 个任务`)
+
+function onSelectWorkspace(id: string) {
+  emit('select-canvas-workspace', id)
+}
+
+function onRemoveWorkspace(id: string) {
+  emit('delete-canvas-workspace', id)
+}
 </script>
 
 <template>
@@ -82,44 +91,15 @@ const historyCountText = computed(() => `${props.historyImages.length} 个任务
     </div>
 
     <!-- Workspace list -->
-    <div class="px-3.5 pb-[18px] mb-1 border-b border-border">
-      <div class="flex items-center justify-between mb-2 text-foreground text-xs font-extrabold">
-        <span>工作区</span>
-        <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground" title="新建画布" @click="emit('create-canvas-workspace')">
-          <Plus :size="14" />
-        </Button>
-      </div>
-      <div class="flex flex-col gap-0.5">
-        <div
-          v-for="ws in workspaces"
-          :key="ws.id"
-          class="group flex items-center gap-1 w-full min-h-[38px] rounded-md transition-colors duration-150"
-        >
-          <button
-            type="button"
-            :class="[
-              'flex items-center gap-2 min-w-0 flex-1 min-h-[38px] px-2.5 py-0 border-0 rounded-md bg-transparent text-muted-foreground text-[13px] font-bold cursor-pointer text-left transition-colors duration-150',
-              ws.id === activeWorkspaceId ? 'bg-accent text-foreground' : 'hover:bg-accent hover:text-foreground',
-            ]"
-            @click="emit('select-canvas-workspace', ws.id)"
-          >
-            <GripVertical :size="14" class="shrink-0 text-muted-foreground opacity-[0.55]" />
-            <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{{ ws.name }}</span>
-          </button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            :disabled="workspaces.length <= 1"
-            :aria-label="workspaces.length <= 1 ? '至少保留一个画布' : `删除${ws.name}`"
-            :title="workspaces.length <= 1 ? '至少保留一个画布' : `删除${ws.name}`"
-            class="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-35"
-            @click="emit('delete-canvas-workspace', ws.id)"
-          >
-            <Trash2 :size="14" />
-          </Button>
-        </div>
-      </div>
-    </div>
+    <WorkspaceList
+      :workspaces="workspaces"
+      :active-id="activeWorkspaceId"
+      create-label="新建画布"
+      keep-one-hint="至少保留一个画布"
+      @select="onSelectWorkspace"
+      @create="emit('create-canvas-workspace')"
+      @remove="onRemoveWorkspace"
+    />
 
     <!-- Canvas-specific: mini-map + quick create -->
     <div class="px-3.5 pb-[18px] mb-1 border-b border-border">
