@@ -18,7 +18,7 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const form = ref({ title: '', body: '' })
 
-function setError(error: unknown) { errorMessage.value = publicClientErrorMessage(error, '公告操作失败，请稍后重试。') }
+function setError(error: unknown) { errorMessage.value = publicClientErrorMessage(error, t('feedback.announcementFailed')) }
 function statusLabel(status: AdminAnnouncement['status']) {
   if (status === 'published') return t('announcements.statusPublished')
   if (status === 'archived') return t('announcements.statusArchived')
@@ -68,7 +68,7 @@ onMounted(refresh)
 
 <template>
   <section class="flex flex-col gap-4">
-    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-emerald-500/10 px-3 text-[13px] font-medium text-emerald-600">{{ noticeMessage }}</p></div>
+    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p></div>
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('announcements.title') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ announcements.length }}</span></div><Button variant="outline" size="sm" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</Button></div>
       <form class="mb-4 flex flex-col gap-2.5 border-b border-border pb-4" @submit.prevent="createAnnouncement"><label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.titleLabel') }}</span><input v-model.trim="form.title" maxlength="120" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label><label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.bodyLabel') }}</span><textarea v-model.trim="form.body" rows="4" maxlength="4000" required class="rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-xs font-mono" /></label><Button type="submit" :disabled="actionLoading">{{ t('announcements.publishBtn') }}</Button></form>

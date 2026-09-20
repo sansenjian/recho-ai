@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { AdminImageAttemptItem, AdminImageAttemptOverview } from '../../types/admin'
@@ -10,6 +11,8 @@ import {
   latencyLabel,
   shortId,
 } from '../../utils/admin-format'
+
+const { t } = useI18n()
 
 const expandedErrors = ref(new Set<string>())
 
@@ -50,15 +53,15 @@ const selectedWindowLabel = computed(() => {
 const outcomeBars = computed(() => [
   {
     key: 'succeeded',
-    label: '成功',
+    label: t('monitor.succeeded'),
     value: props.overview?.succeeded ?? 0,
-    className: 'bg-emerald-500',
+    className: 'bg-success',
   },
   {
     key: 'failed',
-    label: '失败',
+    label: t('monitor.failed'),
     value: props.overview?.failed ?? 0,
-    className: 'bg-red-500',
+    className: 'bg-danger',
   },
 ])
 const topErrorCount = computed(() => Math.max(0, ...((props.overview?.byErrorType || []).map(item => item.count))))
@@ -96,10 +99,10 @@ function barWidth(value: number, max: number) {
 </script>
 
 <template>
-  <section class="mx-auto mb-3.5 w-full min-w-0 max-w-[1360px] rounded-lg border border-border bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)]" aria-label="生图监控">
+  <section class="w-full min-w-0 rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm" :aria-label="t('monitor.title')">
     <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
-        <span class="block text-sm">生图监控</span>
+        <span class="block text-sm">{{ t('monitor.title') }}</span>
         <strong class="block mt-0.5 text-lg">{{ total }}</strong>
       </div>
       <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
@@ -109,9 +112,9 @@ function barWidth(value: number, max: number) {
           class="min-h-9 min-w-[110px] cursor-pointer rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @change="updateStatusFilter"
         >
-          <option value="">全部状态</option>
-          <option value="succeeded">成功</option>
-          <option value="failed">失败</option>
+          <option value="">{{ t('monitor.allStatus') }}</option>
+          <option value="succeeded">{{ t('monitor.succeeded') }}</option>
+          <option value="failed">{{ t('monitor.failed') }}</option>
         </select>
         <select
           :value="hoursFilter"
@@ -126,7 +129,7 @@ function barWidth(value: number, max: number) {
         <input
           :value="userFilter"
           type="search"
-          placeholder="用户 ID"
+          :placeholder="t('monitor.userIdFilter')"
           :disabled="loading"
           class="min-h-9 w-[150px] min-w-[110px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateUserFilter"
@@ -134,7 +137,7 @@ function barWidth(value: number, max: number) {
         <input
           :value="errorTypeFilter"
           type="search"
-          placeholder="错误类型"
+          :placeholder="t('monitor.errorTypeFilter')"
           :disabled="loading"
           class="min-h-9 w-[150px] min-w-[110px] rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateErrorTypeFilter"
@@ -149,33 +152,33 @@ function barWidth(value: number, max: number) {
           class="min-h-9 w-24 rounded-md border border-border bg-[var(--input-bg)] text-[var(--text-primary)] px-2 py-1.5 text-sm"
           @input="updateHttpStatusFilter"
         >
-        <Button type="submit" variant="outline" size="sm" :disabled="loading">筛选</Button>
-        <Button type="button" variant="outline" size="sm" :disabled="loading" @click="emit('refresh')">刷新</Button>
+        <Button type="submit" variant="outline" size="sm" :disabled="loading">{{ t('common.filter') }}</Button>
+        <Button type="button" variant="outline" size="sm" :disabled="loading" @click="emit('refresh')">{{ t('common.refresh') }}</Button>
       </form>
     </div>
 
     <div class="grid grid-cols-4 gap-2.5 mb-2.5 max-[980px]:grid-cols-2 max-[680px]:grid-cols-1">
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ selectedWindowLabel }} 成功</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ selectedWindowLabel }} {{ t('monitor.succeeded') }}</span>
         <strong class="block mt-[3px] text-lg">{{ overview?.succeeded ?? 0 }}</strong>
       </div>
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ selectedWindowLabel }} 失败</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ selectedWindowLabel }} {{ t('monitor.failed') }}</span>
         <strong class="block mt-[3px] text-lg">{{ overview?.failed ?? 0 }}</strong>
       </div>
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">失败率</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ t('monitor.failureRate') }}</span>
         <strong class="block mt-[3px] text-lg">{{ overview?.failureRate ?? 0 }}%</strong>
       </div>
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">平均耗时</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)]">{{ t('monitor.avgDuration') }}</span>
         <strong class="block mt-[3px] text-lg">{{ latencyLabel(overview?.averageLatencyMs ?? null) }}</strong>
       </div>
     </div>
 
     <div class="grid grid-cols-2 gap-2.5 mb-2.5 max-[980px]:grid-cols-2 max-[680px]:grid-cols-1">
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)] mb-2">结果分布</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)] mb-2">{{ t('monitor.resultDistribution') }}</span>
         <div v-for="bar in outcomeBars" :key="bar.key" class="grid grid-cols-[minmax(70px,140px)_minmax(0,1fr)_auto] items-center gap-2 min-h-6 text-xs">
           <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)] font-bold">{{ bar.label }}</span>
           <div class="h-2 overflow-hidden rounded-full bg-border">
@@ -185,29 +188,29 @@ function barWidth(value: number, max: number) {
         </div>
       </div>
       <div class="min-w-0 p-2.5 rounded-md border border-border bg-[var(--surface-soft)]">
-        <span class="block text-xs font-extrabold text-[var(--text-secondary)] mb-2">错误类型</span>
+        <span class="block text-xs font-extrabold text-[var(--text-secondary)] mb-2">{{ t('monitor.errorTypeFilter') }}</span>
         <div v-for="item in overview?.byErrorType || []" :key="item.errorType" class="grid grid-cols-[minmax(70px,140px)_minmax(0,1fr)_auto] items-center gap-2 min-h-6 text-xs">
           <span class="overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)] font-bold">{{ item.errorType }}</span>
           <div class="h-2 overflow-hidden rounded-full bg-border">
-            <div class="h-full rounded-full bg-red-500" :style="{ width: barWidth(item.count, topErrorCount) }" />
+            <div class="h-full rounded-full bg-danger" :style="{ width: barWidth(item.count, topErrorCount) }" />
           </div>
           <strong class="text-xs">{{ item.count }}</strong>
         </div>
-        <div v-if="!(overview?.byErrorType || []).length" class="min-h-6 text-xs font-extrabold text-[var(--text-secondary)]">暂无错误类型</div>
+        <div v-if="!(overview?.byErrorType || []).length" class="min-h-6 text-xs font-extrabold text-[var(--text-secondary)]">{{ t('monitor.noErrorTypes') }}</div>
       </div>
     </div>
 
-    <div class="w-full overflow-auto rounded-lg border border-border">
+    <div class="w-full overflow-auto rounded-md border border-border">
       <table class="w-full border-collapse text-[13px] min-w-[1020px]">
         <thead>
           <tr>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">时间</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">用户</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">状态</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">耗时</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">生成 ID</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">错误摘要</th>
-            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">详情</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.time') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.user') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.status') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.duration') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.generationId') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.errorSummary') }}</th>
+            <th class="text-left px-3 py-2 bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold border-b border-border">{{ t('monitor.table.details') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -228,7 +231,7 @@ function barWidth(value: number, max: number) {
                 size="xs"
                 @click="toggleErrorDetail(attempt.id)"
               >
-                {{ expandedErrors.has(attempt.id) ? '收起' : '详情' }}
+                {{ expandedErrors.has(attempt.id) ? t('common.collapseRow') : t('common.detail') }}
               </Button>
               <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">-</span>
             </td>
@@ -237,26 +240,26 @@ function barWidth(value: number, max: number) {
             <td colspan="7" class="bg-[var(--surface-soft)] p-3">
               <div class="flex flex-col gap-2">
                 <div class="flex gap-3">
-                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">错误类型</span>
+                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">{{ t('monitor.detail.errorType') }}</span>
                   <span class="text-[13px] text-[var(--text-primary)]">{{ attempt.errorType || '-' }}</span>
                 </div>
                 <div class="flex gap-3">
-                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">HTTP 状态</span>
+                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">{{ t('monitor.detail.httpStatus') }}</span>
                   <span class="text-[13px] text-[var(--text-primary)]">{{ attempt.httpStatus !== null ? `HTTP ${attempt.httpStatus}` : '-' }}</span>
                 </div>
                 <div class="flex gap-3">
-                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">错误码</span>
+                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">{{ t('monitor.detail.errorCode') }}</span>
                   <span class="text-[13px] text-[var(--text-primary)]">{{ attempt.errorCode || '-' }}</span>
                 </div>
                 <div class="flex flex-col gap-1">
-                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">错误信息</span>
-                  <pre class="m-0 p-2 bg-[var(--surface)] border border-border rounded-md text-xs text-red-500 whitespace-pre-wrap break-all">{{ attempt.errorMessage || '-' }}</pre>
+                  <span class="w-[100px] text-xs font-extrabold text-[var(--text-secondary)] shrink-0">{{ t('monitor.detail.errorMessage') }}</span>
+                  <pre class="m-0 p-2 bg-[var(--surface)] border border-border rounded-md text-xs text-danger whitespace-pre-wrap break-all">{{ attempt.errorMessage || '-' }}</pre>
                 </div>
               </div>
             </td>
           </tr>
           <tr v-if="!attempts.length">
-            <td colspan="7" class="px-3 py-2 text-center">暂无尝试记录</td>
+            <td colspan="7" class="px-3 py-2 text-center">{{ t('monitor.noAttempts') }}</td>
           </tr>
         </tbody>
       </table>
