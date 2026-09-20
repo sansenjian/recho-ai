@@ -64,17 +64,23 @@ function whitelistRevisions() {
 
 const revisions = whitelistRevisions()
 const latest = revisions[revisions.length - 1]
-const previous = revisions[revisions.length - 2]
 
 describe('app_settings key whitelist', () => {
   it('widens the whitelist with a migration instead of assuming app_settings is schemaless', () => {
     expect(revisions.length).toBeGreaterThan(0)
     expect(latest).toBeDefined()
 
-    // The whitelist can only grow; a revision must restate every earlier key.
-    expect([...latest!.keys].sort()).toEqual(
-      expect.arrayContaining([...previous!.keys]),
+    // The whitelist can only grow, so compare every adjacent pair rather than just
+    // the newest one: a key dropped by an earlier migration and restored later
+    // would otherwise slip through, even though rows written in between are
+    // rejected. A key may never be removed -- existing rows would become unwritable.
+    const drops = revisions.slice(1).flatMap((revision, index) =>
+      revisions[index].keys
+        .filter(key => !revision.keys.includes(key))
+        .map(key => `${revisions[index].name} -> ${revision.name} drops ${key}`),
     )
+
+    expect(drops).toEqual([])
   })
 
   it('allows every key the gateway can write', () => {
