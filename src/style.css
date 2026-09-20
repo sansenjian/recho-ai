@@ -15,7 +15,9 @@
   --surface-soft: var(--color-muted);
   --surface-raised: var(--color-secondary);
   --text-primary: var(--color-foreground);
-  --text-secondary: var(--color-muted-foreground);
+  /* Deliberately stronger than --text-muted: captions and table headers must stay
+     distinguishable from body text, and both previously resolved to the same hue. */
+  --text-secondary: hsl(0 0% 32%);
   --text-muted: var(--color-muted-foreground);
   --text-link: var(--color-foreground);
   --border-strong: var(--color-border);
@@ -26,8 +28,6 @@
   --accent-strong: oklch(0.145 0 0);
   --accent-soft: oklch(0.145 0 0 / 6%);
   --info: var(--color-foreground);
-  --warn: #f59e0b;
-  --danger: var(--color-destructive);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
 }
@@ -38,7 +38,7 @@
   --surface-soft: var(--color-muted);
   --surface-raised: var(--color-secondary);
   --text-primary: var(--color-foreground);
-  --text-secondary: var(--color-muted-foreground);
+  --text-secondary: hsl(0 0% 66%);
   --text-muted: var(--color-muted-foreground);
   --text-link: var(--color-foreground);
   --border-strong: var(--color-border);
@@ -49,8 +49,6 @@
   --accent-strong: oklch(0.985 0 0);
   --accent-soft: oklch(0.985 0 0 / 10%);
   --info: var(--color-foreground);
-  --warn: #fbbf24;
-  --danger: var(--color-destructive);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
 }

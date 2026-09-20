@@ -157,7 +157,7 @@ onUnmounted(() => {
 .auth-callback-status.error {
   border-color: rgba(220, 38, 38, 0.24);
   background: rgba(220, 38, 38, 0.08);
-  color: var(--danger);
+  color: var(--color-danger);
 }
 
 .auth-callback-card h1 {
