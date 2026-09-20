@@ -91,6 +91,70 @@ describe('admin i18n parity', () => {
     expect(unresolved).toEqual([])
   })
 
+  /**
+   * `t(\`nav.${activeView}\`)` and `t(item.labelKey)` build their key at runtime, so
+   * the static scan above cannot see them — and unlike `credits.transactionReason.*`
+   * there is no fallback, meaning a missing key renders the raw path in the sidebar.
+   * Candidates are derived from `navItems` so that adding a nav entry without a
+   * translation fails here instead of in the UI.
+   */
+  it('resolves nav keys derived from AdminView navItems', () => {
+    const source = readFileSync(adminViewPath, 'utf8')
+    const navBlock = source.match(/const navItems[^=]*=\s*\[([\s\S]*?)\n\]/)?.[1] ?? ''
+    const ids = [...navBlock.matchAll(/\bid:\s*'([^']+)'/g)].map(m => m[1])
+    const labelKeys = [...navBlock.matchAll(/\blabelKey:\s*'([^']+)'/g)].map(m => m[1])
+
+    expect(ids.length).toBeGreaterThan(0)
+    expect(labelKeys.length).toBe(ids.length)
+
+    const candidates = new Set<string>([...ids.map(id => `nav.${id}`), ...labelKeys])
+    const unresolved = [...candidates].filter(key => !zhKeySet.has(key) || !enKeySet.has(key))
+    expect(unresolved).toEqual([])
+  })
+
+  /**
+   * `t(\`settings.${cond ? 'a' : 'b'}\`)` picks its tail at runtime; only the ternary
+   * branches are translation keys (the identifiers before `?` are form field names).
+   * Same reasoning as above: the static scan is blind to these.
+   */
+  it('resolves keys chosen by a ternary inside a template literal', () => {
+    const offenders: string[] = []
+    let checked = 0
+    for (const file of adminSourceFiles()) {
+      const source = stripComments(readFileSync(file, 'utf8'))
+      for (const match of source.matchAll(/\bt\(\s*`([A-Za-z0-9_.]+)\$\{([^`]*)`/g)) {
+        const prefix = match[1]
+        for (const tail of [...match[2].matchAll(/[?:]\s*'([A-Za-z0-9_]+)'/g)].map(m => m[1])) {
+          checked++
+          const key = `${prefix}${tail}`
+          if (!zhKeySet.has(key) || !enKeySet.has(key)) {
+            offenders.push(`${key} (${file.slice(root.length + 1)})`)
+          }
+        }
+      }
+    }
+
+    expect(checked).toBeGreaterThan(0)
+    expect(offenders).toEqual([])
+  })
+
+  /**
+   * The shared `publicClientErrorMessage` classifies the failure but words the
+   * timeout / network / upstream branches in Chinese, so calling it from a panel
+   * leaks Chinese into the English console. `admin-format.ts` is the facade that
+   * calls it deliberately (and localizes the categories); panels must use
+   * `adminErrorMessage`.
+   */
+  it('routes admin error messages through the localized helper', () => {
+    const scanned = adminSourceFiles().filter(file => file !== adminFormatPath)
+    expect(scanned.length).toBeGreaterThan(0)
+
+    const offenders = scanned
+      .filter(file => /\bpublicClientErrorMessage\b/.test(stripComments(readFileSync(file, 'utf8'))))
+      .map(file => file.slice(root.length + 1))
+    expect(offenders).toEqual([])
+  })
+
   it('keeps user-visible admin copy free of hardcoded Chinese', () => {
     // The language toggle labels the *other* locale in its own script, so the
     // native name is intentional rather than an untranslated string.
