@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import AdminSettingsPanel from '../src/components/admin/AdminSettingsPanel.vue'
 import en from '../src/i18n/en'
 import zh from '../src/i18n/zh'
 import type { AdminAccessSummary, AdminAppSettings, AdminProviderSetting } from '../src/types/admin'
@@ -76,8 +77,12 @@ function settingsResponse(settings: AdminAppSettings = baseSettings) {
   }
 }
 
+// AdminSettingsPanel 在模块顶层导入：这个 SFC 的编译成本落在模块收集阶段，
+// 不再占用某一条用例的 5s testTimeout 预算。
+// 原先在 mountPanel() 里动态 import，等于让「第一条跑到的用例」独自扛下编译
+// （实测该用例 2.4–2.9s，其余 6 条各约 1ms），而「哪条算第一」会随 -t 过滤、
+// 分片、随机顺序变化 ⇒ 负载稍高就会偶发超时，且换一条用例先跑还会复现。
 async function mountPanel() {
-  const AdminSettingsPanel = (await import('../src/components/admin/AdminSettingsPanel.vue')).default
   const wrapper = mount(AdminSettingsPanel, {
     props: { section: 'runtime' },
     global: {
