@@ -12,6 +12,7 @@ import {
   type CanvasNode,
   type Connection,
 } from './image-canvas-model'
+import { isNamedWorkspace } from './workspace-list'
 import type { CanvasDocumentState } from '../composables/useImageCanvasDocument'
 
 export const CANVAS_WORKSPACE_CACHE_VERSION = 1
@@ -56,7 +57,8 @@ export function removeCanvasWorkspace(
   const index = state.workspaces.findIndex(workspace => workspace.id === workspaceId)
   if (index < 0) return state
 
-  const workspaces = state.workspaces.filter(workspace => workspace.id !== workspaceId)
+  // 按位置删除，而不是按 id 过滤：id 重复时按 id 过滤会一次删掉多项。
+  const workspaces = [...state.workspaces.slice(0, index), ...state.workspaces.slice(index + 1)]
   const snapshots = new Map(state.snapshots)
   snapshots.delete(workspaceId)
 
@@ -173,10 +175,10 @@ function parseSnapshotRecords(
   return restored
 }
 
+// 画布工作区复用了命名工作区的结构，直接委托给 isNamedWorkspace，
+// 从而自动共用「id 非空」这条入口校验（空 id 会让删除永远点不动）。
 export function isCanvasWorkspace(value: unknown): value is CanvasWorkspace {
-  if (typeof value !== 'object' || value === null) return false
-  if (!('id' in value) || !('name' in value)) return false
-  return typeof value.id === 'string' && typeof value.name === 'string'
+  return isNamedWorkspace(value)
 }
 
 function parseCanvasWorkspaces(raw: string | null): CanvasWorkspace[] {

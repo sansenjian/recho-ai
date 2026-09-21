@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { hasDisplayImage } from '../lib/image-gallery'
-import { removeNamedWorkspace, type NamedWorkspace } from '../lib/workspace-list'
+import { isNamedWorkspace, removeNamedWorkspace, type NamedWorkspace } from '../lib/workspace-list'
 import { useCredits } from '../composables/useCredits'
 import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
@@ -48,8 +48,13 @@ function loadWorkspaces(): Workspace[] {
   try {
     const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) return parsed
+      // id 为空串会让删除永远点不动、id 重复会让一次删除连带删掉多项，
+      // 所以持久化数据一律在入口过滤。
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(isNamedWorkspace)
+        if (valid.length > 0) return valid
+      }
     }
   } catch (err) {
     console.warn('[imagio-sidebar] failed to load workspaces from localStorage', err)
@@ -220,7 +225,7 @@ refreshCredits()
       </DialogHeader>
       <DialogFooter class="mt-6 gap-2">
         <Button type="button" variant="outline" @click="removeWorkspaceDialogOpen = false">取消</Button>
-        <Button type="button" variant="destructive" @click="pendingRemoveWorkspaceId && removeWorkspace(pendingRemoveWorkspaceId)">删除</Button>
+        <Button type="button" variant="destructive" @click="pendingRemoveWorkspaceId !== null && removeWorkspace(pendingRemoveWorkspaceId)">删除</Button>
       </DialogFooter>
     </Dialog>
   </aside>

@@ -14,7 +14,7 @@ vi.mock('../src/composables/useCredits', () => ({
 import ImagioSidebar from '../src/components/ImagioSidebar.vue'
 import WorkspaceList from '../src/components/WorkspaceList.vue'
 import ImageCanvasSidebar from '../src/components/ImageCanvasSidebar.vue'
-import { removeNamedWorkspace, type NamedWorkspace } from '../src/lib/workspace-list'
+import { isNamedWorkspace, removeNamedWorkspace, type NamedWorkspace } from '../src/lib/workspace-list'
 
 const pair: NamedWorkspace[] = [
   { id: 'a', name: '工作区 A' },
@@ -48,6 +48,49 @@ describe('removeNamedWorkspace', () => {
 
   it('returns null for an unknown id', () => {
     expect(removeNamedWorkspace(pair, 'a', 'missing')).toBeNull()
+  })
+
+  it('removes only one entry when all ids are identical', () => {
+    const next = removeNamedWorkspace([{ id: 'x', name: 'A' }, { id: 'x', name: 'B' }], 'x', 'x')
+    expect(next?.workspaces.length).toBe(1)
+    expect(next?.workspaces[0].name).toBe('B')
+    expect(next?.activeId).toBe('x')
+  })
+
+  it('removes only one entry when two ids are duplicated', () => {
+    const next = removeNamedWorkspace(
+      [{ id: 'x', name: 'X' }, { id: 'y', name: 'Y' }, { id: 'x', name: 'X2' }],
+      'y',
+      'x',
+    )
+    expect(next?.workspaces.map(workspace => workspace.id)).toEqual(['y', 'x'])
+    expect(next?.activeId).toBe('y')
+  })
+})
+
+describe('isNamedWorkspace', () => {
+  it('accepts a workspace with a non-empty id and name', () => {
+    expect(isNamedWorkspace({ id: 'a', name: 'n' })).toBe(true)
+  })
+
+  it('rejects an empty id', () => {
+    expect(isNamedWorkspace({ id: '', name: 'n' })).toBe(false)
+  })
+
+  it('rejects a missing name', () => {
+    expect(isNamedWorkspace({ id: 'a' })).toBe(false)
+  })
+
+  it('rejects null', () => {
+    expect(isNamedWorkspace(null)).toBe(false)
+  })
+
+  it('rejects a string', () => {
+    expect(isNamedWorkspace('a')).toBe(false)
+  })
+
+  it('rejects a non-string name', () => {
+    expect(isNamedWorkspace({ id: 'a', name: 1 })).toBe(false)
   })
 })
 
@@ -150,5 +193,35 @@ describe('workspace sidebar parity', () => {
     expect(JSON.parse(localStorage.getItem('imagio-workspaces')!)).toEqual([pair[1]])
     expect(localStorage.getItem('imagio-active-workspace')).toBe('b')
     expect(wrapper.findAll('button').some(button => button.text().includes('工作区 A'))).toBe(false)
+  })
+
+  it('drops persisted workspaces with an empty id', () => {
+    localStorage.setItem('imagio-workspaces', JSON.stringify([
+      { id: 'a', name: '工作区 A' },
+      { id: '', name: '坏工作区' },
+    ]))
+    localStorage.setItem('imagio-active-workspace', 'a')
+
+    const wrapper = mount(ImagioSidebar, {
+      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
+    })
+
+    expect(wrapper.text()).not.toContain('坏工作区')
+    expect(wrapper.text()).toContain('工作区 A')
+  })
+
+  it('falls back to a single default workspace when persisted data is all invalid', () => {
+    localStorage.setItem('imagio-workspaces', JSON.stringify([
+      { id: '', name: '坏工作区' },
+    ]))
+
+    const wrapper = mount(ImagioSidebar, {
+      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
+    })
+
+    const keepOne = wrapper.find('button[aria-label="至少保留一个工作区"]')
+    expect(keepOne.exists()).toBe(true)
+    expect(keepOne.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('新工作区')
   })
 })

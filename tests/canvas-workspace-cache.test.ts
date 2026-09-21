@@ -284,4 +284,21 @@ describe('canvas workspace cache', () => {
 
     expect(removeCanvasWorkspace(state, 'workspace_1')).toBe(state)
   })
+
+  it('removes only one workspace when ids are duplicated', () => {
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_1', name: '画布 1 副本' },
+      ],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map<string, CanvasWorkspaceSnapshot>(),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_1')
+
+    expect(next.workspaces).toHaveLength(1)
+    expect(next.workspaces.map(workspace => workspace.id)).toEqual(['workspace_1'])
+    expect(next.activeWorkspaceId).toBe('workspace_1')
+  })
 })
