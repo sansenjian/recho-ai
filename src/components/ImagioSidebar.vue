@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Plus, GripVertical } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { hasDisplayImage } from '../lib/image-gallery'
+import { isNamedWorkspace, removeNamedWorkspace, type NamedWorkspace } from '../lib/workspace-list'
 import { useCredits } from '../composables/useCredits'
 import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import WorkspaceList from './WorkspaceList.vue'
 
-interface Workspace {
-  id: string
-  name: string
-}
+type Workspace = NamedWorkspace
 
 const WORKSPACES_STORAGE_KEY = 'imagio-workspaces'
 const ACTIVE_WORKSPACE_KEY = 'imagio-active-workspace'
@@ -49,8 +48,13 @@ function loadWorkspaces(): Workspace[] {
   try {
     const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) return parsed
+      // id 为空串会让删除永远点不动、id 重复会让一次删除连带删掉多项，
+      // 所以持久化数据一律在入口过滤。
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(isNamedWorkspace)
+        if (valid.length > 0) return valid
+      }
     }
   } catch (err) {
     console.warn('[imagio-sidebar] failed to load workspaces from localStorage', err)
@@ -66,6 +70,18 @@ function loadActiveId(workspaces: Workspace[]): string {
 
 const workspaces = ref<Workspace[]>(loadWorkspaces())
 const activeWorkspaceId = ref(loadActiveId(workspaces.value))
+const pendingRemoveWorkspaceId = ref<string | null>(null)
+
+const pendingRemoveWorkspace = computed(() =>
+  workspaces.value.find(workspace => workspace.id === pendingRemoveWorkspaceId.value) ?? null,
+)
+
+const removeWorkspaceDialogOpen = computed({
+  get: () => pendingRemoveWorkspaceId.value !== null,
+  set: (open: boolean) => {
+    if (!open) pendingRemoveWorkspaceId.value = null
+  },
+})
 
 function persistWorkspaces() {
   localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.value))
@@ -82,6 +98,26 @@ function addWorkspace() {
 
 function selectWorkspace(id: string) {
   activeWorkspaceId.value = id
+  persistWorkspaces()
+}
+
+function requestRemoveWorkspace(id: string) {
+  if (workspaces.value.length <= 1 || !workspaces.value.some(workspace => workspace.id === id)) {
+    return
+  }
+  pendingRemoveWorkspaceId.value = id
+}
+
+function removeWorkspace(id: string) {
+  const next = removeNamedWorkspace(workspaces.value, activeWorkspaceId.value, id)
+  if (!next) {
+    pendingRemoveWorkspaceId.value = null
+    return
+  }
+
+  workspaces.value = next.workspaces
+  activeWorkspaceId.value = next.activeId
+  pendingRemoveWorkspaceId.value = null
   persistWorkspaces()
 }
 
@@ -116,36 +152,16 @@ refreshCredits()
       </button>
     </div>
 
-    <!-- Workspace section -->
-    <div class="px-3.5 pb-3.5 border-b border-border mb-1">
-      <div class="flex items-center justify-between mb-2 text-foreground text-xs font-extrabold">
-        <span>工作区</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="w-6 h-6 rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          title="新建工作区"
-          @click="addWorkspace"
-        >
-          <Plus class="w-3.5 h-3.5" />
-        </Button>
-      </div>
-      <div class="flex flex-col gap-0.5">
-        <Button
-          v-for="ws in workspaces"
-          :key="ws.id"
-          variant="ghost"
-          class="w-full justify-start gap-2 min-h-[38px] px-2.5 py-0 text-[13px] font-bold text-left rounded-md text-muted-foreground"
-          :class="{ 'bg-accent text-accent-foreground': ws.id === activeWorkspaceId }"
-          @click="selectWorkspace(ws.id)"
-        >
-          <GripVertical class="shrink-0 w-3.5 h-3.5 text-muted-foreground opacity-[0.55]" />
-          <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-            {{ ws.name }}
-          </span>
-        </Button>
-      </div>
-    </div>
+    <!-- Workspace section (shared with canvas sidebar) -->
+    <WorkspaceList
+      :workspaces="workspaces"
+      :active-id="activeWorkspaceId"
+      create-label="新建工作区"
+      keep-one-hint="至少保留一个工作区"
+      @select="selectWorkspace"
+      @create="addWorkspace"
+      @remove="requestRemoveWorkspace"
+    />
 
     <!-- History section -->
     <div class="flex-1 min-h-0 overflow-y-auto pt-3 px-3.5 pb-3.5">
@@ -199,5 +215,18 @@ refreshCredits()
         暂无记录
       </div>
     </div>
+
+    <Dialog v-model:open="removeWorkspaceDialogOpen">
+      <DialogHeader>
+        <DialogTitle>删除工作区？</DialogTitle>
+        <DialogDescription>
+          “{{ pendingRemoveWorkspace?.name }}”将从工作区列表中移除，且无法恢复。
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="mt-6 gap-2">
+        <Button type="button" variant="outline" @click="removeWorkspaceDialogOpen = false">取消</Button>
+        <Button type="button" variant="destructive" @click="pendingRemoveWorkspaceId !== null && removeWorkspace(pendingRemoveWorkspaceId)">删除</Button>
+      </DialogFooter>
+    </Dialog>
   </aside>
 </template>

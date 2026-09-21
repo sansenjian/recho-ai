@@ -284,4 +284,60 @@ describe('canvas workspace cache', () => {
 
     expect(removeCanvasWorkspace(state, 'workspace_1')).toBe(state)
   })
+
+  it('removes only one workspace when ids are duplicated', () => {
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_1', name: '画布 1 副本' },
+      ],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map<string, CanvasWorkspaceSnapshot>(),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_1')
+
+    expect(next.workspaces).toHaveLength(1)
+    expect(next.workspaces.map(workspace => workspace.id)).toEqual(['workspace_1'])
+    expect(next.activeWorkspaceId).toBe('workspace_1')
+  })
+
+  it('keeps the snapshot while a duplicated workspace id is still referenced', () => {
+    const snapshot: CanvasWorkspaceSnapshot = {
+      document: { nodes: [], connections: [], selectedNodeId: null },
+      viewport: { x: 12, y: 34, zoom: 1.5 },
+    }
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_1', name: '画布 1 副本' },
+      ],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map([['workspace_1', snapshot]]),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_1')
+
+    expect(next.workspaces).toHaveLength(1)
+    expect(next.snapshots.get('workspace_1')).toEqual(snapshot)
+  })
+
+  it('drops the snapshot once no workspace references the id anymore', () => {
+    const snapshot: CanvasWorkspaceSnapshot = {
+      document: { nodes: [], connections: [], selectedNodeId: null },
+      viewport: { x: 12, y: 34, zoom: 1.5 },
+    }
+    const state = {
+      workspaces: [
+        { id: 'workspace_1', name: '画布 1' },
+        { id: 'workspace_2', name: '画布 2' },
+      ],
+      activeWorkspaceId: 'workspace_1',
+      snapshots: new Map([['workspace_1', snapshot]]),
+    }
+
+    const next = removeCanvasWorkspace(state, 'workspace_1')
+
+    expect(next.snapshots.has('workspace_1')).toBe(false)
+  })
 })
