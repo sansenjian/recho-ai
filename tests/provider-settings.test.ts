@@ -400,8 +400,10 @@ describe('provider settings service', () => {
 
   it('keeps a per-row edit model usable when truncation would land on a space', async () => {
     // 回归：若先 trim 再 slice，第 120 位恰为空白时空白会被截回来，
-    // 'a'*119 + ' ' 通不过 isValidChatModel，整单被 400 拒绝 —— 而该值本身是可用的。
-    // 截断之后再 trim 一次，它应回落到合法的 'a'*119。
+    // 'a'*119 + ' ' 通不过 isValidChatModel ⇒ 整单被 400 拒绝。
+    // 截断后补一次 trim，它应被规范化为合法的 'a'*119。
+    // （注意：Go 对「trim 后仍超 120」的值是**丢弃**而非截断，所以这里断言的是
+    //  Node 侧规范化契约，不是与 Go 等价 —— 详见 cleanText 的注释。）
     providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
     const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
 
