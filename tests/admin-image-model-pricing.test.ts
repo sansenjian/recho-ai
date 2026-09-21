@@ -124,6 +124,38 @@ describe('runtime config per-model image pricing', () => {
     expect(ids).not.toContain('retired-model')
   })
 
+  it('includes a per-row catalog edit model in the billable model candidates', async () => {
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/admin/settings') {
+        return {
+          ...settingsResponse(),
+          providerSettings: {
+            providers: [imageProvider({
+              modelCatalog: [
+                { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'row-edit-model' },
+                { id: 'retired-model', name: 'Retired', enabled: false, editModel: 'retired-edit-model' },
+              ],
+            })],
+            tableAvailable: true,
+          },
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    const wrapper = await mountPanel()
+
+    const fillButton = wrapper.findAll('button').find(button => button.text() === '补齐已配置模型')
+    await fillButton!.trigger('click')
+
+    const ids = wrapper.findAll<HTMLInputElement>('input[id^="setting-model-price-id-"]').map(input => input.element.value)
+    // 行内编辑模型是带参考图请求的真实扣费模型，必须能单独定价。
+    expect(ids).toContain('row-edit-model')
+    // 被停用的目录行不参与计费，它的编辑模型也不该成为候选。
+    expect(ids).not.toContain('retired-edit-model')
+  })
+
   it('drops blank rows and normalizes costs before saving', async () => {
     const wrapper = await mountPanel()
 
@@ -152,5 +184,56 @@ describe('runtime config per-model image pricing', () => {
 
     expect(wrapper.find('#setting-model-price-id-0').exists()).toBe(false)
     expect(wrapper.text()).toContain('暂无按模型定价')
+  })
+})
+
+async function mountProviderPanel() {
+  const AdminSettingsPanel = (await import('../src/components/admin/AdminSettingsPanel.vue')).default
+  const wrapper = mount(AdminSettingsPanel, {
+    props: { section: 'providers' },
+    global: {
+      plugins: [createI18n({ legacy: false, locale: 'zh', fallbackLocale: 'en', messages: { en, zh } })],
+    },
+  })
+  await vi.waitFor(() => {
+    expect(adminApiJsonMock).toHaveBeenCalled()
+  })
+  await wrapper.vm.$nextTick()
+  return wrapper
+}
+
+describe('provider model catalog row layout', () => {
+  beforeEach(() => {
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/admin/settings') return settingsResponse()
+      throw new Error(`unexpected request: ${url}`)
+    })
+  })
+
+  it('renders generation, edit and display model inputs in that order for image providers', async () => {
+    const wrapper = await mountProviderPanel()
+
+    // 初始表单目录为空，先加一行才能看到 image 的三输入布局。
+    const addButton = wrapper.findAll('button').find(button => button.text() === '添加模型')
+    await addButton!.trigger('click')
+
+    const rowInputIds = wrapper.findAll<HTMLInputElement>('input[id^="provider-model-"]').map(input => input.element.id)
+    expect(rowInputIds).toEqual([
+      'provider-model-id-0',
+      'provider-model-edit-0',
+      'provider-model-name-0',
+    ])
+  })
+
+  it('keeps the two-input layout for chat providers', async () => {
+    const wrapper = await mountProviderPanel()
+
+    // 切换类型会重置表单，默认给出一行 Chat 模型。
+    await wrapper.find('#provider-kind').setValue('chat')
+    await wrapper.vm.$nextTick()
+
+    const rowInputIds = wrapper.findAll<HTMLInputElement>('input[id^="provider-model-"]').map(input => input.element.id)
+    expect(rowInputIds).toEqual(['provider-model-id-0', 'provider-model-name-0'])
   })
 })

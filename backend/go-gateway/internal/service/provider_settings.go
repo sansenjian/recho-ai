@@ -33,7 +33,12 @@ type ImageProviderConfig struct {
 	// ImageModels lists the selectable generation models declared by the
 	// provider's model_catalog. It is used to route a requested model to the
 	// provider that actually offers it.
-	ImageModels            []string
+	ImageModels []string
+	// ModelEditModels maps a catalog row id (the generation model the user
+	// picked) to that row's edit model. It is consulted first for requests that
+	// carry reference images, so a per-row edit model wins over the provider-wide
+	// EditModel fallback.
+	ModelEditModels        map[string]string
 	CompatibilityMode      ImageProviderCompatibilityMode
 	Timeout                time.Duration
 	RetryCount             int
@@ -102,6 +107,7 @@ type imageProviderCandidate struct {
 	compatibilityMode string
 	timeoutMs         int
 	models            []string
+	editModels        map[string]string
 }
 
 func (c imageProviderCandidate) defaultCatalogModel() string {
@@ -116,8 +122,13 @@ func (c imageProviderCandidate) defaultCatalogModel() string {
 // 路由规则：
 //  1. 若 requestedModel 命中了某个 Provider 的 model_catalog 启用项，则由该
 //     Provider 承载，并把 ImageModel 设置为请求模型，使生成调用真正使用用户
-//     选择的模型。EditModel 不受影响，因此带参考图的请求仍然走专用编辑模型。
+//     选择的模型。EditModel 不受影响。
 //  2. 未命中时回退到优先级最高且可用的 Provider，即历史单 Provider 行为。
+//
+// 带参考图的请求按「行内优先 → Provider 级兜底 → 生图模型」选择编辑模型：
+// ImageModel 对应的目录行若配置了 editModel，就用它（ModelEditModels）；
+// 否则回落到 Provider 级 EditModel；两者都没有时行为与历史一致，用生图模型。
+// 因此只配置了 Provider 级 edit_model 的老配置行为完全不变。
 func (s *ProviderSettingsService) ImageProvider(ctx context.Context, requestedModel string) (ImageProviderConfig, error) {
 	fallback := DefaultImageProviderConfig()
 	if s == nil || s.pool == nil {
@@ -198,15 +209,38 @@ func scanImageProviderCandidate(rows pgx.Rows) (imageProviderCandidate, error) {
 	); err != nil {
 		return candidate, err
 	}
-	for _, entry := range parseProviderModelOptions(catalog) {
+	candidate.models, candidate.editModels = catalogModels(catalog)
+	return candidate, nil
+}
+
+// catalogModels 从 model_catalog 的原始 jsonb 解出两部分：
+//   - 启用行的生成模型 id 列表（用于路由用户请求到正确的 Provider）；
+//   - 启用行自己的编辑模型表，键为生成模型 id。
+//
+// 只有「启用且 editModel 非空」的行才进编辑模型表：停用的行不能把带参考图的
+// 请求计费到一个管理员已经关掉的模型上。没有任何编辑模型时返回 nil，调用方据此
+// 回落到 Provider 级 EditModel。
+func catalogModels(catalog []byte) ([]string, map[string]string) {
+	options := parseProviderModelOptions(catalog)
+	models := make([]string, 0, len(options))
+	editModels := make(map[string]string, len(options))
+	for _, entry := range options {
 		if !entry.Enabled {
 			continue
 		}
-		if id := normalizeModelName(entry.ID, ""); id != "" {
-			candidate.models = append(candidate.models, id)
+		id := normalizeModelName(entry.ID, "")
+		if id == "" {
+			continue
+		}
+		models = append(models, id)
+		if editModel := normalizeModelName(entry.EditModel, ""); editModel != "" {
+			editModels[id] = editModel
 		}
 	}
-	return candidate, nil
+	if len(editModels) == 0 {
+		editModels = nil
+	}
+	return models, editModels
 }
 
 func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImageProviderConfig) (ImageProviderConfig, bool, error) {
@@ -221,6 +255,7 @@ func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImagePr
 		return cfg, false, nil
 	}
 	cfg.ImageModels = candidate.models
+	cfg.ModelEditModels = candidate.editModels
 	cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, candidate.defaultCatalogModel(), fallback.ImageModel)
 	cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
 	cfg.CompatibilityMode = normalizeImageProviderCompatibilityMode(candidate.compatibilityMode)

@@ -1556,9 +1556,19 @@ func usesLucenImageCompatibility(provider service.ImageProviderConfig) bool {
 	}
 }
 
+// imageModelForRequest 选出本次请求真正要调用的模型。
+//
+// 带参考图（走 /images/edits）时按「行内优先 → Provider 级兜底 → 生图模型」：
+// 先看当前生图模型对应的目录行是否配置了 editModel，其次回落到 Provider 级
+// EditModel，最后沿用生图模型。不带参考图时始终用生图模型。
 func imageModelForRequest(provider service.ImageProviderConfig, edits bool) string {
-	if edits && strings.TrimSpace(provider.EditModel) != "" {
-		return strings.TrimSpace(provider.EditModel)
+	if edits {
+		if rowEditModel := strings.TrimSpace(provider.ModelEditModels[strings.TrimSpace(provider.ImageModel)]); rowEditModel != "" {
+			return rowEditModel
+		}
+		if providerEditModel := strings.TrimSpace(provider.EditModel); providerEditModel != "" {
+			return providerEditModel
+		}
 	}
 	if strings.TrimSpace(provider.ImageModel) != "" {
 		return strings.TrimSpace(provider.ImageModel)

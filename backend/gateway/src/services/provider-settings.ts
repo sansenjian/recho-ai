@@ -27,6 +27,9 @@ export interface ProviderModel {
   id: string
   name: string
   enabled: boolean
+  // Per-row edit model: used when the request carries reference images. It is
+  // deliberately not part of the model list clients may select from.
+  editModel: string | null
 }
 
 export interface ProviderSetting {
@@ -142,10 +145,17 @@ function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolea
       continue
     }
     seen.add(id)
+    const editModel = cleanText(source.editModel, 120)
+    if (editModel && !isValidChatModel(editModel) && options.rejectInvalid) {
+      throw new ProviderSettingsError('invalid_edit_model', {
+        publicMessage: `编辑模型 ID 无效：${editModel}`,
+      })
+    }
     result.push({
       id,
       name: cleanText(source.name, 120) || id,
       enabled: source.enabled !== false,
+      editModel: isValidChatModel(editModel) ? editModel : null,
     })
   }
   return result.slice(0, 100)
@@ -154,7 +164,7 @@ function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolea
 function modelCatalogFromInput(input: Record<string, unknown>): ProviderModel[] {
   const catalog = normalizeModelCatalog(input.modelCatalog, { rejectInvalid: true })
   if (catalog.length > 0) return catalog
-  return normalizeModelList(input.models, { rejectInvalid: true }).map(id => ({ id, name: id, enabled: true }))
+  return normalizeModelList(input.models, { rejectInvalid: true }).map(id => ({ id, name: id, enabled: true, editModel: null }))
 }
 
 function normalizeName(value: unknown) {
@@ -257,7 +267,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_000,
       defaultModel: 'gpt-4o-mini',
       models: ['gpt-4o-mini'],
-      modelCatalog: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true }],
+      modelCatalog: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true, editModel: null }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -282,7 +292,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_001,
       defaultModel: 'kimi-k2-0711-preview',
       models: ['kimi-k2-0711-preview'],
-      modelCatalog: [{ id: 'kimi-k2-0711-preview', name: 'kimi-k2-0711-preview', enabled: true }],
+      modelCatalog: [{ id: 'kimi-k2-0711-preview', name: 'kimi-k2-0711-preview', enabled: true, editModel: null }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -318,7 +328,7 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
     models: normalizeModelList(row.models),
     modelCatalog: (() => {
       const catalog = normalizeModelCatalog(row.model_catalog)
-      return catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+      return catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
     })(),
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
@@ -344,7 +354,7 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>, requestedModel
   const baseUrl = typeof row.base_url === 'string' ? row.base_url.trim().replace(/\/+$/, '') : ''
   if (!apiKey || !baseUrl) return null
   const catalog = normalizeModelCatalog(row.model_catalog)
-  const models = catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+  const models = catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
   const resolvedModel = models.find(item => item.enabled && (
     item.id === requestedModel ||
     item.name.trim().toLowerCase() === requestedModel?.trim().toLowerCase() ||
@@ -419,7 +429,9 @@ function validateProviderInput(
     patch.model_catalog = modelCatalog
     if (effectiveKind === 'chat') patch.default_model = enabledCatalog[0]?.id || null
     // Image providers treat the catalog as selectable generation models and keep
-    // image_model as the default (first enabled entry). edit_model is untouched.
+    // image_model as the default (first enabled entry). edit_model is untouched:
+    // it stays the provider-level *fallback* edit model, while each catalog row
+    // now carries its own editModel inside model_catalog.
     if (effectiveKind === 'image') patch.image_model = enabledCatalog[0]?.id || null
   }
   // The catalog is the source of truth for an image provider's default generation
@@ -668,19 +680,19 @@ export async function updateProviderSetting(providerId: string, input: Record<st
   const modelsProvided = 'models' in input || 'modelCatalog' in input
   const existingImageModel = nullableText(existingRow.image_model, 120)
   const existingCatalog = normalizeModelCatalog(existingRow.model_catalog)
-  const storedModels = normalizeModelList(existingRow.models).map(id => ({ id, name: id, enabled: true }))
+  const storedModels = normalizeModelList(existingRow.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
   const existingModels = existingCatalog.length > 0
     ? existingCatalog
     : storedModels.length > 0
       ? storedModels
       : (mergedKind === 'image' && existingImageModel
-        ? [{ id: existingImageModel, name: existingImageModel, enabled: true }]
+        ? [{ id: existingImageModel, name: existingImageModel, enabled: true, editModel: null }]
         : [])
   const requestedCatalog = modelsProvided ? modelCatalogFromInput(input) : existingModels
   const effectiveCatalog = requestedCatalog.length > 0
     ? requestedCatalog
     : (!modelsProvided && mergedKind === 'chat' && rowDefaultModel(existingRow)
-      ? [{ id: rowDefaultModel(existingRow), name: rowDefaultModel(existingRow), enabled: true }]
+      ? [{ id: rowDefaultModel(existingRow), name: rowDefaultModel(existingRow), enabled: true, editModel: null }]
       : [])
   if (mergedKind === 'chat' && effectiveCatalog.filter(model => model.enabled).length === 0) {
     throw new ProviderSettingsError('chat_provider_models_required', {
@@ -776,7 +788,7 @@ export async function getRuntimeChatProvider(
     }))
     const exactRows = rows.filter(row => {
       const catalog = normalizeModelCatalog(row.model_catalog)
-      const entries = catalog.length > 0 ? catalog.filter(item => item.enabled) : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true }))
+      const entries = catalog.length > 0 ? catalog.filter(item => item.enabled) : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
       return entries.some(item => item.id === model || requestedAliases.has(item.name.trim().toLowerCase()) || item.name.trim().toLowerCase() === requestedName) || rowDefaultModel(row) === model
     })
     const familyRows = rows.filter((row) => {

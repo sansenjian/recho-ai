@@ -88,12 +88,20 @@ const settingsPricePreview = computed(() => [1, 4, 8].map(count => ({
 const providerRows = computed(() => providerSettings.value?.providers || [])
 const imageProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'image'))
 const chatProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'chat'))
+// Image rows grow a third input (the per-row edit model); chat rows keep the
+// historical id + display-name pair. The header row reuses the same template so
+// the labels stay aligned with the inputs.
+const providerModelGridClass = computed(() => providerForm.value.kind === 'image'
+  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]'
+  : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]')
 
 /**
  * 可能被计费的模型清单，用于「按模型定价」的取值候选。
  *
- * 为什么要带上 editModel：带参考图的请求走 /images/edits，扣费模型是 editModel，
- * 它与默认生图模型是两条独立的计费路径，必须能分别定价。
+ * 为什么要带上 editModel：带参考图的请求走 /images/edits，扣费模型是编辑模型，
+ * 它与默认生图模型是两条独立的计费路径，必须能分别定价。编辑模型有两处来源：
+ * Provider 级 edit_model（行内未配置时的兜底），以及每个目录行自己的 editModel
+ * （行内优先，真正扣费的就是它），所以两者都要进候选。
  */
 const billableImageModelIds = computed(() => {
   const ids: string[] = []
@@ -103,7 +111,10 @@ const billableImageModelIds = computed(() => {
   }
   for (const provider of imageProviderRows.value) {
     for (const model of providerModelCatalogRows(provider)) {
-      if (model.enabled) push(model.id)
+      if (!model.enabled) continue
+      push(model.id)
+      // 行内编辑模型是带参考图请求的真实扣费模型，必须能单独定价。
+      push(model.editModel)
     }
     push(provider.editModel)
     push(provider.imageModel)
@@ -195,7 +206,7 @@ function resetProviderForm(kind: 'chat' | 'image' = 'image') {
     priority: 100,
     defaultModel: kind === 'chat' ? defaultModel : '',
     models: [defaultModel],
-    modelCatalog: [{ id: defaultModel, name: defaultModel, enabled: true }],
+    modelCatalog: [{ id: defaultModel, name: defaultModel, enabled: true, editModel: null }],
     imageModel: kind === 'image' ? defaultModel : '',
     editModel: kind === 'image' ? defaultModel : '',
     imageCompatibilityMode: 'auto',
@@ -217,8 +228,8 @@ function providerLegacyModelIds(provider: AdminProviderSetting): string[] {
 
 function providerModelCatalogRows(provider: AdminProviderSetting): AdminProviderModel[] {
   if (provider.modelCatalog?.length) return provider.modelCatalog
-  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true }))
-  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true }))
+  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true, editModel: null }))
+  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true, editModel: null }))
 }
 
 function editProvider(provider: AdminProviderSetting) {
@@ -246,7 +257,7 @@ function editProvider(provider: AdminProviderSetting) {
 }
 
 function addProviderModel() {
-  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true })
+  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true, editModel: null })
 }
 
 function removeProviderModel(index: number) {
@@ -346,7 +357,12 @@ async function saveProvider() {
     const isUpdate = Boolean(providerForm.value.id)
     const { id: _id, ...providerPayload } = providerForm.value
     providerPayload.modelCatalog = providerPayload.modelCatalog
-      .map(model => ({ id: model.id.trim(), name: model.name.trim() || model.id.trim(), enabled: Boolean(model.enabled) }))
+      .map(model => ({
+        id: model.id.trim(),
+        name: model.name.trim() || model.id.trim(),
+        enabled: Boolean(model.enabled),
+        editModel: (model.editModel || '').trim() || null,
+      }))
       .filter(model => model.id)
     providerPayload.models = providerPayload.modelCatalog.map(model => model.id)
     const defaultCatalogModel = providerPayload.modelCatalog.find(model => model.enabled)?.id
@@ -479,8 +495,16 @@ onMounted(refreshSettings)
           <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? t('settings.providerPriority') : field === 'timeoutMs' ? t('settings.providerTimeoutMs') : t('settings.providerRetry') }}</span><input :id="`provider-${field}`" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerChatModels') : t('settings.providerImageModels') }}</span><Button type="button" variant="outline" size="sm" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button></div>
-            <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
+            <div v-if="providerForm.modelCatalog.length" class="grid gap-2" :class="providerModelGridClass">
+              <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerColumnChatModel') : t('settings.providerColumnImageModel') }}</span>
+              <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnEditModel') }}</span>
+              <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnName') }}</span>
+              <span aria-hidden="true"></span>
+              <span aria-hidden="true"></span>
+            </div>
+            <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid items-center gap-2" :class="providerModelGridClass">
               <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? t('settings.providerModelIdExample', { example: providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2' }) : t('settings.providerModelId')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <input v-if="providerForm.kind === 'image'" :id="`provider-model-edit-${index}`" v-model.trim="model.editModel" :placeholder="index === 0 ? t('settings.providerModelEditExample', { example: 'gpt-image-2' }) : t('settings.providerModelEdit')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
               <input :id="`provider-model-name-${index}`" v-model.trim="model.name" :placeholder="index === 0 ? t('settings.providerModelNameExample', { example: providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2' }) : t('settings.providerModelName')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
               <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">{{ t('common.enable') }}</label>
               <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="t('settings.providerRemoveModelAria', { index: index + 1 })" :title="t('settings.providerRemoveModel')" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
