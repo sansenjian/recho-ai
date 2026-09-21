@@ -63,7 +63,7 @@ export function removeCanvasWorkspace(
   snapshots.delete(workspaceId)
 
   const activeWorkspaceId = state.activeWorkspaceId === workspaceId
-    ? workspaces[Math.min(index, workspaces.length - 1)]?.id ?? workspaces[0].id
+    ? workspaces[Math.min(index, workspaces.length - 1)].id
     : state.activeWorkspaceId
 
   return { workspaces, activeWorkspaceId, snapshots }
