@@ -104,7 +104,16 @@ function normalizeKind(value: unknown): ProviderKind {
 
 function cleanText(value: unknown, maxLength: number) {
   if (typeof value !== 'string') return ''
-  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength)
+  // 本函数的契约是「规范化」：换行归一为空格 → 去首尾空白 → 截到 maxLength → 再去一次首尾空白。
+  // 最后那次 trim 不可省：截断本身会把空白带回尾部（`'a'.repeat(119) + ' b'` 截到 120 位后
+  // 正好以空格结尾），而清洗函数的输出必须能通过下游校验（isValidChatModel），
+  // 否则「稍微过长」的输入会变成整单 400 拒绝（写路径）或把配置静默归一为 null（读路径）。
+  //
+  // 这**不等于**与 Go 等价：Go `normalizeModelName` 只做 TrimSpace 后判长，trim 后超过 120 就
+  // 丢弃（**不截断**，得不出 'a'.repeat(119)）。此处截断是沿用 maxLength 的既有契约
+  // （'e'.repeat(130) → 'e'.repeat(120)），并非与 Go 同语义。
+  // 两者唯一的对齐点是：Node 落库值必 ≤ maxLength，因此一定过得了 Go 的校验。
+  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength).trim()
 }
 
 function nullableText(value: unknown, maxLength: number) {
