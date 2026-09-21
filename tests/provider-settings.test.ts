@@ -346,6 +346,58 @@ describe('provider settings service', () => {
     ])
   })
 
+  it('rejects an invalid per-row edit model id on the write path', async () => {
+    // 空格在 Go 侧 normalizeModelName 会被丢弃，编辑模型会静默失效；
+    // 写路径必须直接拒绝，而不是存下一个永远不会生效的值。
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await expect(updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'row edit' },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })).rejects.toMatchObject({
+      message: 'invalid_edit_model',
+      status: 400,
+    })
+    expect(updatedRow).toBeNull()
+  })
+
+  it('accepts a valid per-row edit model id on the write path', async () => {
+    // 正对照：新校验不能把合法值一起拦下（trim 后仍须原样持久化）。
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: '  gpt-image-edit  ' },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({
+      model_catalog: [{ id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' }],
+    })
+  })
+
+  it('normalizes an unusable persisted per-row edit model to null but keeps a valid one', async () => {
+    providerRows = [{
+      ...defaultProviderRow,
+      model_catalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'row edit' },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+      ],
+    }]
+    const { listProviderSettings } = await import('../backend/gateway/src/services/provider-settings')
+
+    const result = await listProviderSettings({ refresh: true })
+
+    // 宽松读路径把不可用的值归一为 null（而不是原样透传），同时合法值必须原样往返。
+    expect(result.providers[0].modelCatalog).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: null },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+    ])
+  })
+
   it('skips disabled catalog entries when picking the default image model', async () => {
     providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
     const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')

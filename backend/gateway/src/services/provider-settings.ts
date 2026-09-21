@@ -145,11 +145,17 @@ function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolea
       continue
     }
     seen.add(id)
+    const editModel = cleanText(source.editModel, 120)
+    if (editModel && !isValidChatModel(editModel) && options.rejectInvalid) {
+      throw new ProviderSettingsError('invalid_edit_model', {
+        publicMessage: `编辑模型 ID 无效：${editModel}`,
+      })
+    }
     result.push({
       id,
       name: cleanText(source.name, 120) || id,
       enabled: source.enabled !== false,
-      editModel: cleanText(source.editModel, 120) || null,
+      editModel: isValidChatModel(editModel) ? editModel : null,
     })
   }
   return result.slice(0, 100)
