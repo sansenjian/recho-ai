@@ -104,7 +104,10 @@ function normalizeKind(value: unknown): ProviderKind {
 
 function cleanText(value: unknown, maxLength: number) {
   if (typeof value !== 'string') return ''
-  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength)
+  // 截断会把空白重新推回尾部（例如 `'a'.repeat(119) + ' b'` 截到 120 位后正好以空格结尾），
+  // 所以 slice 之后必须再 trim 一次。顺序对齐 Go 侧「先 TrimSpace 再判长」的语义，
+  // 否则一个本可用的值会在写路径被误判非法并整单拒绝。
+  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength).trim()
 }
 
 function nullableText(value: unknown, maxLength: number) {

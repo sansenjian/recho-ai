@@ -398,6 +398,98 @@ describe('provider settings service', () => {
     ])
   })
 
+  it('keeps a per-row edit model usable when truncation would land on a space', async () => {
+    // 回归：若先 trim 再 slice，第 120 位恰为空白时空白会被截回来，
+    // 'a'*119 + ' ' 通不过 isValidChatModel，整单被 400 拒绝 —— 而该值本身是可用的。
+    // 截断之后再 trim 一次，它应回落到合法的 'a'*119。
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: `${'a'.repeat(119)} b` },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({
+      model_catalog: [{ id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'a'.repeat(119) }],
+    })
+  })
+
+  it('keeps 120 characters and clamps 121 at the per-row edit model length boundary', async () => {
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'b'.repeat(120) },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'c'.repeat(121) },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({
+      model_catalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'b'.repeat(120) },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'c'.repeat(120) },
+      ],
+    })
+  })
+
+  it('strips tabs around a per-row edit model before validating it', async () => {
+    // 正对照：空白只在首尾，清掉后是合法 id，必须通过 —— 校验不得发生在 trim 之前。
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: '\t gpt-image-edit \t' },
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(updatedRow).toMatchObject({
+      model_catalog: [{ id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' }],
+    })
+  })
+
+  it('rejects per-row edit models whose characters fall outside the ASCII model charset', async () => {
+    // 换行会先被规范成空格，落在 id 内部即非法；U+2010 连字符肉眼近似 '-'，
+    // 同样不在 Go normalizeModelName 放行的字符集内，非 ASCII 值一并覆盖。
+    providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
+    const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    for (const editModel of ['gpt-image\nedit', 'gpt\u2010image-edit', '编辑模型']) {
+      await expect(updateProviderSetting('11111111-1111-4111-8111-111111111111', {
+        modelCatalog: [
+          { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel },
+        ],
+      }, { id: 'admin-user', email: 'admin@example.test' })).rejects.toMatchObject({
+        message: 'invalid_edit_model',
+        status: 400,
+      })
+    }
+    expect(updatedRow).toBeNull()
+  })
+
+  it('recovers a stored per-row edit model that truncation would have pushed whitespace into', async () => {
+    // 读路径同样受益：这条记录以前会被归一成 null，等于把可恢复的配置整条丢掉。
+    // 同一断言里带上合法值，证明修复没有顺手改动正常值。
+    providerRows = [{
+      ...defaultProviderRow,
+      model_catalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: `${'a'.repeat(119)} b` },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+      ],
+    }]
+    const { listProviderSettings } = await import('../backend/gateway/src/services/provider-settings')
+
+    const result = await listProviderSettings({ refresh: true })
+
+    expect(result.providers[0].modelCatalog).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'a'.repeat(119) },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+    ])
+  })
+
   it('skips disabled catalog entries when picking the default image model', async () => {
     providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
     const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
