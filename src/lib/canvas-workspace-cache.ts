@@ -60,7 +60,11 @@ export function removeCanvasWorkspace(
   // 按位置删除，而不是按 id 过滤：id 重复时按 id 过滤会一次删掉多项。
   const workspaces = [...state.workspaces.slice(0, index), ...state.workspaces.slice(index + 1)]
   const snapshots = new Map(state.snapshots)
-  snapshots.delete(workspaceId)
+  // 快照按 id 索引：若还有同 id 的工作区留下来（重复 id），两者共用这一份快照，
+  // 此时删掉它会让幸存的那条回退成空白画布，所以只在 id 已无人引用时才回收。
+  if (!workspaces.some(workspace => workspace.id === workspaceId)) {
+    snapshots.delete(workspaceId)
+  }
 
   const activeWorkspaceId = state.activeWorkspaceId === workspaceId
     ? workspaces[Math.min(index, workspaces.length - 1)].id
