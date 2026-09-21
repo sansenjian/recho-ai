@@ -32,6 +32,10 @@ type providerModelOption struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
+	// EditModel is the per-row edit model. It routes requests that carry
+	// reference images and is intentionally never surfaced as a selectable
+	// generation model.
+	EditModel string `json:"editModel"`
 }
 
 type PublicAppConfig struct {

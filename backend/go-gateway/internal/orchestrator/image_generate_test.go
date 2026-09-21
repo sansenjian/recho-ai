@@ -776,6 +776,108 @@ func TestGenerateBillsCreditsForResolvedImageModel(t *testing.T) {
 	}
 }
 
+// TestImageModelForRequestRoutesEditModelPerRow 覆盖带参考图时的编辑模型路由优先级：
+// 行内 editModel > Provider 级 edit_model > 生图模型；不带参考图时始终用生图模型。
+func TestImageModelForRequestRoutesEditModelPerRow(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider service.ImageProviderConfig
+		edits    bool
+		want     string
+	}{
+		{
+			name: "reference with a row edit model uses the row edit model",
+			provider: service.ImageProviderConfig{
+				ImageModel:      "image-default",
+				EditModel:       "provider-edit",
+				ModelEditModels: map[string]string{"image-default": "row-edit"},
+			},
+			edits: true,
+			want:  "row-edit",
+		},
+		{
+			name: "reference without a row edit model falls back to the provider edit model",
+			provider: service.ImageProviderConfig{
+				ImageModel:      "image-default",
+				EditModel:       "provider-edit",
+				ModelEditModels: map[string]string{"image-other": "row-edit"},
+			},
+			edits: true,
+			want:  "provider-edit",
+		},
+		{
+			name: "reference without either edit model keeps the image model",
+			provider: service.ImageProviderConfig{
+				ImageModel: "image-default",
+			},
+			edits: true,
+			want:  "image-default",
+		},
+		{
+			name: "no reference keeps the image model even when a row edit model exists",
+			provider: service.ImageProviderConfig{
+				ImageModel:      "image-default",
+				EditModel:       "provider-edit",
+				ModelEditModels: map[string]string{"image-default": "row-edit"},
+			},
+			edits: false,
+			want:  "image-default",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := imageModelForRequest(tt.provider, tt.edits); got != tt.want {
+				t.Fatalf("imageModelForRequest(...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGenerateBillsRowEditModelWhenReferencePresent 断言计费用的是被路由后的模型：
+// 带参考图且目录行配置了 editModel 时，扣费模型必须是行内编辑模型，而不是
+// Provider 级兜底或生图模型。
+func TestGenerateBillsRowEditModelWhenReferencePresent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"url":"https://provider.example.test/image.png"}]}`))
+	}))
+	defer upstream.Close()
+
+	credits := &testCreditService{}
+	o := NewImageOrchestrator(credits, &testStorageService{}, &testIdempotencyService{}).
+		WithProviderSettings(testProviderSettingsService{cfg: service.ImageProviderConfig{
+			BaseURL:         upstream.URL,
+			APIKey:          "provider-key",
+			ImageModel:      "image-default",
+			EditModel:       "provider-edit",
+			ModelEditModels: map[string]string{"image-default": "row-edit"},
+		}})
+
+	if _, statusErr := o.Generate(context.Background(), GenerateParams{
+		User:    &middleware.User{ID: "user_123"},
+		RawBody: []byte(`{"prompt":"test"}`),
+		IdemKey: "idem-row-edit-billing",
+		Request: GenRequest{
+			Prompt:     "test",
+			Count:      1,
+			References: []GenReference{{ID: "ref-1", DataUrl: "data:image/png;base64,aGVsbG8="}},
+		},
+	}); statusErr != nil {
+		t.Fatalf("Generate returned status error: %v", statusErr)
+	}
+
+	models := credits.recordedModels()
+	if len(models) == 0 {
+		t.Fatal("expected credits to be consulted for a logged-in user")
+	}
+	for _, got := range models {
+		if got != "row-edit" {
+			t.Fatalf("expected the row edit model to be billed, got %q (all: %v)", got, models)
+		}
+	}
+}
+
 func TestGenerateTreatsTypedNilResourcesAsUnavailable(t *testing.T) {
 	var creditSvc *service.CreditService
 	var storageSvc *service.StorageService

@@ -254,6 +254,7 @@ export interface AdminProviderModel {
   id: string
   name: string
   enabled: boolean
+  editModel: string | null
 }
 
 export interface AdminProviderSetting {

@@ -282,3 +282,73 @@ func TestSelectImageProviderHandlesCatalogLessProviders(t *testing.T) {
 		t.Fatal("expected no selection when no usable provider exists")
 	}
 }
+
+func TestCatalogModelsCollectsPerRowEditModels(t *testing.T) {
+	catalog := []byte(`[
+		{"id":"gpt-image-2","name":"GPT Image 2","enabled":true,"editModel":"gpt-image-2-edit"},
+		{"id":"flux-pro","name":"FLUX Pro","enabled":true},
+		{"id":"retired-model","name":"Retired","enabled":false,"editModel":"retired-edit"}
+	]`)
+
+	models, editModels := catalogModels(catalog)
+	if len(models) != 2 || models[0] != "gpt-image-2" || models[1] != "flux-pro" {
+		t.Fatalf("unexpected models: %#v", models)
+	}
+	if len(editModels) != 1 || editModels["gpt-image-2"] != "gpt-image-2-edit" {
+		t.Fatalf("unexpected per-row edit models: %#v", editModels)
+	}
+	// 停用的行不得贡献编辑模型，否则会把带参考图的请求计费到管理员已关掉的模型上。
+	if _, exists := editModels["retired-model"]; exists {
+		t.Fatalf("disabled rows must not contribute an edit model: %#v", editModels)
+	}
+}
+
+func TestCatalogModelsSkipsRowsWithoutAnEditModel(t *testing.T) {
+	models, editModels := catalogModels([]byte(`[{"id":"gpt-image-2","enabled":true},{"id":"flux-pro","enabled":true,"editModel":"  "}]`))
+	if len(models) != 2 {
+		t.Fatalf("unexpected models: %#v", models)
+	}
+	if editModels != nil {
+		t.Fatalf("expected nil edit models when no row configures one, got %#v", editModels)
+	}
+
+	if _, unparsable := catalogModels([]byte(`not-json`)); unparsable != nil {
+		t.Fatalf("expected nil edit models for an unparsable catalog, got %#v", unparsable)
+	}
+}
+
+func TestBuildImageProviderConfigFillsModelEditModels(t *testing.T) {
+	models, editModels := catalogModels([]byte(`[
+		{"id":"model-one","enabled":true,"editModel":"row-edit"},
+		{"id":"model-two","enabled":true,"editModel":""}
+	]`))
+	candidate := imageProviderCandidate{
+		config: ImageProviderConfig{
+			Name:       "provider",
+			BaseURL:    "https://provider.example/v1/",
+			ImageModel: "",
+			EditModel:  "provider-edit-model",
+			RetryCount: 3,
+		},
+		legacyAPIKey:      "legacy-key",
+		compatibilityMode: "auto",
+		timeoutMs:         defaultImageProviderTimeoutMS,
+		models:            models,
+		editModels:        editModels,
+	}
+
+	cfg, usable, err := buildImageProviderConfig(candidate, DefaultImageProviderConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !usable {
+		t.Fatal("expected a provider with base URL and API key to be usable")
+	}
+	if len(cfg.ModelEditModels) != 1 || cfg.ModelEditModels["model-one"] != "row-edit" {
+		t.Fatalf("expected the per-row edit model to be filled, got %#v", cfg.ModelEditModels)
+	}
+	// Provider 级 EditModel 仍是行内未配置时的兜底，不能被目录改写。
+	if cfg.EditModel != "provider-edit-model" {
+		t.Fatalf("expected the provider-level edit_model to stay untouched, got %q", cfg.EditModel)
+	}
+}

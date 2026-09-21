@@ -300,6 +300,52 @@ describe('provider settings service', () => {
     expect(updatedRow).not.toHaveProperty('edit_model')
   })
 
+  it('normalizes the per-row edit model when persisting the model catalog', async () => {
+    const { createProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+
+    await createProviderSetting({
+      kind: 'image',
+      name: 'Image Provider',
+      baseUrl: 'https://image.example.test/v1',
+      apiKey: 'sk-created-secret',
+      modelCatalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: '  gpt-image-edit  ' },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: '' },
+        { id: 'legacy-edit', name: 'Legacy Edit', enabled: true, editModel: 'e'.repeat(130) },
+        { id: 'non-string-edit', name: 'Non String', enabled: true, editModel: 123 },
+        'string-row-model',
+      ],
+    }, { id: 'admin-user', email: 'admin@example.test' })
+
+    expect(insertedRow?.model_catalog).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
+      // 空串归一为 null，表示「行内未配置，回落到 Provider 级 edit_model」。
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null },
+      { id: 'legacy-edit', name: 'Legacy Edit', enabled: true, editModel: 'e'.repeat(120) },
+      // 非字符串忽略；字符串行没有行内编辑模型。
+      { id: 'non-string-edit', name: 'Non String', enabled: true, editModel: null },
+      { id: 'string-row-model', name: 'string-row-model', enabled: true, editModel: null },
+    ])
+  })
+
+  it('reads back a per-row edit model from a persisted catalog', async () => {
+    providerRows = [{
+      ...defaultProviderRow,
+      model_catalog: [
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
+        { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
+      ],
+    }]
+    const { listProviderSettings } = await import('../backend/gateway/src/services/provider-settings')
+
+    const result = await listProviderSettings({ refresh: true })
+
+    expect(result.providers[0].modelCatalog).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null },
+    ])
+  })
+
   it('skips disabled catalog entries when picking the default image model', async () => {
     providerRows = [{ ...defaultProviderRow, model_catalog: [] }]
     const { updateProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
