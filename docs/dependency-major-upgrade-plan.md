@@ -43,7 +43,7 @@ npm test && npm run build
 ### F2. markdown-it 14 → 15
 
 ```bash
-npm install markdown-it@^15.0.2 @types/markdown-it@^15
+npm install markdown-it@^15.0.2
 npm test && npm run build
 ```
 
@@ -176,7 +176,7 @@ npm run typecheck
 
 建议顺序（低风险 → 高风险）：
 
-```
+```text
 G2 → G3 → F1 → F4 → F2 → F5 → G1 → G4 → G6 → G3(TS) → G5(openai)
 ```
 
