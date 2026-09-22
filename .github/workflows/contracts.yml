@@ -44,9 +44,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # 必须 >= 24.15（理由见 ci.yml 同名注释）：npm 10 在本仓库
+          # 必须 >= 26（理由见 ci.yml 同名注释）：npm 10 在本仓库
           # lockfile 上无法求解依赖图，依赖更新依赖自带 npm 11 的 node。
-          node-version: 24
+          node-version: 26
           cache: npm
 
       - uses: actions/setup-go@v5

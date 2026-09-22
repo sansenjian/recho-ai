@@ -41,13 +41,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # 必须 >= 24.15：npm 生态的 nopt@10 / abbrev@5 /
+          # 必须 >= 26：npm 生态的 nopt@10 / abbrev@5 /
           # validate-npm-package-name@8 声明 engines 为
-          # `^22.22.2 || ^24.15.0 || >=26.0.0`，24.13 会报 EBADENGINE。
-          # 选 24 而非 22 的真正原因：npm 10.9.7 在本仓库 lockfile 上
-          # 无法求解依赖图（arborist `reading 'edgesOut'` 崩溃），
+          # `^22.22.2 || ^24.15.0 || >=26.0.0`。选 26 而非 22 的原因：
+          # npm 10.9.7 在本仓库 lockfile 上无法求解依赖图
+          # （arborist `reading 'edgesOut'` 崩溃），
           # 而依赖更新必须能求解 ⇒ 必须用自带 npm 11 的 node。
-          node-version: 24
+          node-version: 26
           cache: npm
           cache-dependency-path: |
             package-lock.json
