@@ -16,10 +16,11 @@ FROM go-builder AS go-vips-test
 COPY contracts /app/contracts
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go test ./... -count=1
+    CGO_ENABLED=1 go vet ./... \
+    && CGO_ENABLED=1 go test ./... -count=1
 
 # Install Node production deps in a source-independent layer.
-FROM node:22-alpine AS node-prod-deps
+FROM node:24-alpine AS node-prod-deps
 
 WORKDIR /app/backend/gateway
 COPY backend/gateway/package*.json ./
@@ -27,7 +28,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev
 
 # Build Node gateway
-FROM node:22-alpine AS node-builder
+FROM node:24-alpine AS node-builder
 
 WORKDIR /app/backend/gateway
 COPY backend/gateway/package*.json ./
@@ -39,7 +40,7 @@ COPY backend/gateway/skills ./skills
 RUN npm run build
 
 # Runtime
-FROM node:22-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 

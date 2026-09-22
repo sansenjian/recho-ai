@@ -1,0 +1,84 @@
+name: CI
+
+# 这个 workflow 的存在理由：仓库既有的三个 workflow（contracts / image-libvips /
+# supabase-migrations）都是「路径受限的专项检查」，没有任何一个跑全量测试、lint、
+# 前端类型检查或前端构建。结果是 `src/**` 的改动不触发任何 CI，而改了
+# backend/gateway/** 的 PR 虽然会跑 contracts，却只执行 3 个契约测试文件
+# （`npm run test:contracts`）——测试套件里其余 53 个文件在 PR 阶段完全没有覆盖。
+#
+# 所以这里**故意不设 paths 过滤**：宁可让文档改动的 PR 也付一次 CI 时间，
+# 也不要再出现「CI 全绿但改动其实从未被测过」的情况。
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, type-check, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # 全量测试里 tests/go-sidecar-live-contract.test.ts 会 shell out 去
+      # `go build ./cmd/server/...`。该模块的 govips 依赖在 cgo 打开时要求系统里有
+      # libvips（`pkg-config --cflags -- vips` 报 "Package vips was not found"），
+      # 而 ubuntu-latest 上并没有。关掉 cgo 后即走不依赖 libvips 的构建路径——
+      # 这与 contracts.yml 对同一组契约测试的做法一致（那里也是 CGO_ENABLED=0）。
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          # 必须 >= 24.15：npm 生态的 nopt@10 / abbrev@5 /
+          # validate-npm-package-name@8 声明 engines 为
+          # `^22.22.2 || ^24.15.0 || >=26.0.0`，24.13 会报 EBADENGINE。
+          # 选 24 而非 22 的真正原因：npm 10.9.7 在本仓库 lockfile 上
+          # 无法求解依赖图（arborist `reading 'edgesOut'` 崩溃），
+          # 而依赖更新必须能求解 ⇒ 必须用自带 npm 11 的 node。
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/gateway/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 全量测试会构建 Go 网关（live contract 测试 shell out 到 go build），
+      # 所以这里显式准备 Go 工具链——否则就靠 runner 预装版本 + 测试运行时临时
+      # 下载 go1.25.0，既慢又可能在测试中途抖动。缓存沿用 contracts.yml 的口径。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go-gateway/go.mod
+          cache-dependency-path: backend/go-gateway/go.sum
+
+      - name: Install Node Gateway dependencies
+        run: npm ci --prefix backend/gateway
+
+      # 先跑 lint：最快、最容易失败的检查放最前面，反馈时间最短。
+      - name: Lint
+        run: npm run lint
+
+      # `npm run build` = `vue-tsc -b && vite build`
+      # 这一步同时覆盖前端类型检查与生产构建——两者此前都只在 Render 部署时
+      # （即 push 到 master 之后）才被执行，PR 阶段完全没有保护。
+      - name: Type-check and build frontend
+        run: npm run build
+
+      # 全量测试套件（含契约测试，因此与 contracts.yml 有重叠——重叠无害）。
+      # 注意：若干测试文件靠文件首行的 `// @vitest-environment jsdom` 单独立环境，
+      # 缺少该标注会立刻因 localStorage / window 未定义而失败，不会静默降级。
+      - name: Run the full test suite
+        run: npm test

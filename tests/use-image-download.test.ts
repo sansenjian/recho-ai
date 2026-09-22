@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useImageDownload } from '../src/composables/useImageDownload'
 import type { GeneratedImage } from '../src/types/image'
