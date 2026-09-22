@@ -40,7 +40,7 @@ export function applySkillSystemPrompt<T extends ChatRouteMessage>(
   return cloned
 }
 
-export function filterToolsForSkill<T extends ChatRouteTool>(
+export function filterToolsForSkill<T>(
   tools: T[],
   skill: SkillToolScope | null,
 ): T[] {
@@ -48,7 +48,7 @@ export function filterToolsForSkill<T extends ChatRouteTool>(
   if (!skill.tools?.length) return []
   const allowed = new Set(skill.tools)
   return tools.filter(tool => {
-    const name = tool.function?.name
+    const name = (tool as ChatRouteTool).function?.name
     return typeof name === 'string' && allowed.has(name)
   })
 }

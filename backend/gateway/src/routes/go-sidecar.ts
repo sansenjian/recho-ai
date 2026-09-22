@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
-import { Agent } from 'undici'
+import { Agent, fetch } from 'undici'
 import { recordImageGenerationAttempt, type ImageGenerationAttempt } from '../services/image-attempts.js'
 import {
   firstImageID,
@@ -195,7 +195,7 @@ router.use(async (req: Request, res: Response, next) => {
       duplex: body ? 'half' : undefined,
       signal: controller.signal,
       dispatcher: goSidecarDispatcher,
-    } as RequestInit & { duplex?: 'half'; dispatcher: Agent })
+    })
 
     res.status(upstream.status)
     upstream.headers.forEach((value, key) => {
