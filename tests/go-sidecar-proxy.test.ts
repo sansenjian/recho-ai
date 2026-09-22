@@ -1,6 +1,32 @@
 import http from 'node:http'
 import express from 'express'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { vi } from 'vitest'
+
+const undiciMock = vi.hoisted(() => {
+  const fetchSpy = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    if (!init || !(init as RequestInit & { dispatcher?: unknown }).dispatcher) {
+      throw new TypeError('fetch failed before the application proxy timeout')
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
+  return { fetchSpy, passthrough: true as boolean }
+})
+
+vi.mock('../backend/gateway/node_modules/undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>()
+  return {
+    ...actual,
+    fetch: async (url: string | URL | Request, init?: RequestInit) => {
+      if (undiciMock.passthrough) return actual.fetch(url, init)
+      return undiciMock.fetchSpy(url, init)
+    },
+  }
+})
+
+import { afterEach, describe, expect, it } from 'vitest'
 import { requestObservabilityMiddleware } from '../backend/gateway/src/middleware/request-observability'
 import goSidecarRouter from '../backend/gateway/src/routes/go-sidecar'
 
@@ -176,22 +202,21 @@ describe('go sidecar proxy', () => {
   })
 
   it('uses a dedicated fetch dispatcher for long-running sidecar requests', async () => {
-    const fetchSpy = vi.fn(async (_url: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
-      if (!init?.dispatcher) {
-        throw new TypeError('fetch failed before the application proxy timeout')
-      }
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    })
-    vi.stubGlobal('fetch', fetchSpy)
-    const proxy = await startProxy('http://go-gateway.test')
+    undiciMock.passthrough = false
+    try {
+      const proxy = await startProxy('http://go-gateway.test')
 
-    const response = await getWithNodeHTTP(`${proxy.url}/api/image/history`)
+      const response = await getWithNodeHTTP(`${proxy.url}/api/image/history`)
 
-    expect(response.status).toBe(200)
-    expect(JSON.parse(response.body)).toEqual({ ok: true })
+      expect(response.status).toBe(200)
+      expect(JSON.parse(response.body)).toEqual({ ok: true })
+      expect(undiciMock.fetchSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ dispatcher: expect.anything() }),
+      )
+    } finally {
+      undiciMock.passthrough = true
+    }
   })
 
   it('returns a correlated timeout error when the sidecar request is aborted', async () => {

@@ -67,6 +67,11 @@ jobs:
       - name: Install Node Gateway dependencies
         run: npm ci --prefix backend/gateway
 
+      # 网关 TypeScript 是独立 tsconfig 编译单元（vue-tsc 只覆盖前端），
+      # 必须在 CI 单独类型检查，否则 backend/gateway/src/** 的类型回归会漏掉。
+      - name: Type-check Node Gateway
+        run: npm run typecheck --prefix backend/gateway
+
       # 先跑 lint：最快、最容易失败的检查放最前面，反馈时间最短。
       - name: Lint
         run: npm run lint
