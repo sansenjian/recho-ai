@@ -20,7 +20,7 @@
 
 ### 前置要求
 
-- Go 1.25+
+- Go 1.26+
 - PostgreSQL 连接（通过 `DATABASE_URL` 或 Supabase `POSTGRES_URL`）
 
 ### 安装依赖

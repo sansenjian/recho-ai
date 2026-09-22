@@ -29,7 +29,7 @@
 | F3 | typescript | 6.0.3 | 7.0.2 | 高 | 全项目类型检查、vue-tsc 兼容性 |
 | F4 | vitest + @vitest/coverage-v8 | 4.1.11 | 5.0.1 | 中 | 全部 339 个测试 |
 | F5 | @vueuse/core | 14.4.0 | 15.0.0 | 中 | 全局 composable 使用 |
-| F6 | @types/node | 24.13.6 | 26.6.2 | 高 | **暂缓**（与 Node 24 运行时不匹配） |
+| F6 | @types/node | 24.13.6 | 26.6.2 | 高 | ✅ 已于 2026-09-23 升级（见 6.1） |
 
 ### F1. concurrently 9 → 10
 
@@ -81,7 +81,7 @@ npm test && npm run build
 - 关注：`useLocalStorage`、`useDebounceFn` 等被使用 API 的签名变化（先用 `npm run build` 的 vue-tsc 暴露引用点）。
 - 验证：构建 + 相关 composable 测试（`use-stream`、`use-image-download` 等）。
 
-### F6. @types/node 24 → 26（暂缓）
+### F6. @types/node 24 → 26（原计划，已执行见 6.1）
 
 - 依赖升级 Node 运行时到 26 后执行；升级时网关侧 G7 需同步。
 
@@ -97,7 +97,7 @@ npm test && npm run build
 | G4 | express | 4.22.3 | 5.2.1 | 高 | 全部 /api 路由、中间件、错误处理 |
 | G5 | openai | 4.104.0 | 7.21.0 | 高 | chat-loop 流式调用、工具调用、兼容层 |
 | G6 | typescript | 6.0.3 | 7.0.2 | 高 | 网关类型检查 |
-| G7 | @types/node | 25.9.8 | 26.6.2 | 高 | **暂缓**（同 F6） |
+| G7 | @types/node | 25.9.8 | 26.6.2 | 高 | ✅ 已于 2026-09-23 升级（见 6.1） |
 
 ### G1. undici 7 → 8
 
@@ -166,7 +166,7 @@ npm run typecheck
 
 - 验证：`tsc --noEmit` 通过。可与 F3 分开进行。
 
-### G7. @types/node 25 → 26（暂缓）
+### G7. @types/node 25 → 26（原计划，已执行见 6.1）
 
 - 同 F6，随 Node 运行时升级一起做。
 
