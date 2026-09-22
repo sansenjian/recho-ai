@@ -198,11 +198,17 @@ G2 → G3 → F1 → F4 → F2 → F5 → G1 → G4 → G6 → G3(TS) → G5(ope
 
 ## 六、补充研究（2026-09-23，分支 feat/research-remaining-deps）
 
+### 6.4 ✅ 运行时 Node 升级到 26（2026-09-23，分支 chore/node26）
+
+- 本机运行时：24.13.0 → **26.9.0**（与 @types/node 26 对齐，消除 nopt@10 等生态的 EBADENGINE）
+- 同步更新：`.nvmrc` 24→26、根目录 `engines.node` >=24→>=26、CI（ci.yml/contracts.yml）node-version 24→26、Dockerfile 三处 node:24-alpine→node:26-alpine
+- 验证：node-version-consistency 测试（钉住 .nvmrc/CI/engines/Dockerfile 四处一致）通过；339 测试 + 前端 build + 网关 typecheck/build 全绿
+
 ### 6.1 ✅ @types/node 26 已升级
 
 - 根目录 24.13.6 → 26.6.2，网关 25.9.8 → 26.6.2
 - 验证：前端 build（vue-tsc + vite）、网关 typecheck/build、339 测试全绿
-- 结论：`@types/*` 仅编译期类型，与 Node 24 运行时解耦，跨版本升级安全。升级后两端 `npm outdated` 无输出。
+- 结论：`@types/*` 仅编译期类型，与 Node 24 运行时解耦，跨版本升级安全。升级后两端 `npm outdated` 无输出。**（运行时随后已升到 Node 26，见 6.4）**
 
 ### 6.2 ⏳ 前端 typescript 7 仍待 vue-tsc 支持
 
