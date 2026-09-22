@@ -7,7 +7,7 @@ export { extractThinking, sanitizeVisibleAssistantText, stripThinking } from './
 
 const hljs = configureHighlightJs()
 
-const md: MarkdownIt = new MarkdownIt({
+const md = new MarkdownIt({
   breaks: true,
   linkify: true,
   highlight(str: string, lang: string): string {
