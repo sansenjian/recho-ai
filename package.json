@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "npm run dev:go",
     "dev:node": "concurrently -k -n gateway,vite -c cyan,magenta \"npm run dev:backend\" \"npm run dev:frontend:wait\"",
@@ -45,6 +48,7 @@
     "@tailwindcss/vite": "^4.3.1",
     "@types/node": "^24.12.3",
     "@vitejs/plugin-vue": "^6.0.6",
+    "@vitest/coverage-v8": "^4.1.6",
     "@vue/test-utils": "^2.4.10",
     "@vue/tsconfig": "^0.9.1",
     "concurrently": "^9.2.1",
