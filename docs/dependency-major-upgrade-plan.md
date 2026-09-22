@@ -10,13 +10,13 @@
 > - ❌ F3 前端 typescript 6→7（**回滚**）：TypeScript 7 为原生 Go（tsgo）重写，vue-tsc 依赖 JS 版 tsc 内部结构（require `typescript/lib/tsc` + fs 劫持注入），无法兼容，vue-tsc 现无支持版本。前端 TS 保持 6.0.3。
 > - 🔶 G3 额外修复：测试 fixture 1x1 PNG 数据损坏（IDAT zlib 无效），sharp 0.35 的 libpng 严格校验拒绝读取，已替换为合法 PNG。
 >
-> 剩余未升级项（建议暂缓）：`@types/node` 26.x（对应 Node 26，需等运行时升级）、前端 typescript（等 vue-tsc 支持 tsgo）。
+> 剩余未升级项（建议暂缓）：~~`@types/node` 26.x~~ ✅ **已于 2026-09-23 升级**（根目录 24→26.6.2、网关 25→26.6.2，typecheck/build/339 测试全绿——@types/node 仅编译期类型，与 Node 24 运行时解耦）、前端 typescript（等 vue-tsc 支持 tsgo）。
 
 ## 背景
 
 - 本机 Node：v24.13.0（package.json `engines: >=24`）
 - 升级原则：只升级 `Latest` 列（major 跨版本）中确有收益且可控的项；工具链类（typescript / @types/node）默认**暂缓**，避免与当前 Node 24 运行时及项目约束脱节。
-- `@types/node` 26.x 对应 Node 26，与当前 Node 24 运行时**不匹配**，建议等 Node 升级后再处理，本规划中标记为「暂缓」。
+- `@types/node` 26.x 对应 Node 26 的类型声明，但 @types/* 只影响编译期，与 Node 24 运行时解耦，已实测兼容（2026-09-23 升级根目录与网关到 26.6.2）。
 
 ---
 
@@ -29,7 +29,7 @@
 | F3 | typescript | 6.0.3 | 7.0.2 | 高 | 全项目类型检查、vue-tsc 兼容性 |
 | F4 | vitest + @vitest/coverage-v8 | 4.1.11 | 5.0.1 | 中 | 全部 339 个测试 |
 | F5 | @vueuse/core | 14.4.0 | 15.0.0 | 中 | 全局 composable 使用 |
-| F6 | @types/node | 24.13.6 | 26.6.2 | 高 | **暂缓**（与 Node 24 运行时不匹配） |
+| F6 | @types/node | 24.13.6 | 26.6.2 | 高 | ✅ 已于 2026-09-23 升级（见 6.1） |
 
 ### F1. concurrently 9 → 10
 
@@ -81,7 +81,7 @@ npm test && npm run build
 - 关注：`useLocalStorage`、`useDebounceFn` 等被使用 API 的签名变化（先用 `npm run build` 的 vue-tsc 暴露引用点）。
 - 验证：构建 + 相关 composable 测试（`use-stream`、`use-image-download` 等）。
 
-### F6. @types/node 24 → 26（暂缓）
+### F6. @types/node 24 → 26（原计划，已执行见 6.1）
 
 - 依赖升级 Node 运行时到 26 后执行；升级时网关侧 G7 需同步。
 
@@ -97,7 +97,7 @@ npm test && npm run build
 | G4 | express | 4.22.3 | 5.2.1 | 高 | 全部 /api 路由、中间件、错误处理 |
 | G5 | openai | 4.104.0 | 7.21.0 | 高 | chat-loop 流式调用、工具调用、兼容层 |
 | G6 | typescript | 6.0.3 | 7.0.2 | 高 | 网关类型检查 |
-| G7 | @types/node | 25.9.8 | 26.6.2 | 高 | **暂缓**（同 F6） |
+| G7 | @types/node | 25.9.8 | 26.6.2 | 高 | ✅ 已于 2026-09-23 升级（见 6.1） |
 
 ### G1. undici 7 → 8
 
@@ -166,7 +166,7 @@ npm run typecheck
 
 - 验证：`tsc --noEmit` 通过。可与 F3 分开进行。
 
-### G7. @types/node 25 → 26（暂缓）
+### G7. @types/node 25 → 26（原计划，已执行见 6.1）
 
 - 同 F6，随 Node 运行时升级一起做。
 
@@ -195,3 +195,25 @@ G2 → G3 → F1 → F4 → F2 → F5 → G1 → G4 → G6 → G3(TS) → G5(ope
 ## 五、已知需保留到后续（不随本规划执行）
 
 - `npm audit` 报出的 moderate/high：多为 major 升级后自动消除（如 express 5、openai 7、undici 8），随上表升级复查即可；不单独执行 `npm audit fix --force`（会触发未规划的大范围破坏性变更）。
+
+## 六、补充研究（2026-09-23，分支 feat/research-remaining-deps）
+
+### 6.1 ✅ @types/node 26 已升级
+
+- 根目录 24.13.6 → 26.6.2，网关 25.9.8 → 26.6.2
+- 验证：前端 build（vue-tsc + vite）、网关 typecheck/build、339 测试全绿
+- 结论：`@types/*` 仅编译期类型，与 Node 24 运行时解耦，跨版本升级安全。升级后两端 `npm outdated` 无输出。
+
+### 6.2 ⏳ 前端 typescript 7 仍待 vue-tsc 支持
+
+- 网关 TS 已 7.0.2 ✅；前端受 vue-tsc 3.3.11（最新）无法解析 TS7（tsgo 重写破坏其 `typescript/lib/tsc` 注入机制）阻塞，保持 6.0.3。
+- 后续动作：关注 vue-tsc 发布支持 tsgo 的版本后单独升级。
+
+### 6.3 🔶 npm audit 漏洞剩余项
+
+**网关（已清零 ✅）**：`npm audit fix` 修复 hono 4.12.24→4.13.8、ip-address 10.2.0→10.7.2（@modelcontextprotocol/sdk 传递依赖），0 vulnerabilities。
+
+**根目录（✅ 已清零，2026-09-23）**：
+- 漏洞链原来源：shadcn-vue CLI 工具链（devDependency）的 `stylus 0.55-0.58 → css → source-map-resolve → decode-uri-component`（ReDoS）
+- 修复方式：package.json 增加 `overrides`（`decode-uri-component: 0.5.0`、`stylus: 0.64.0`），stylus 0.64 已移除 css/source-map-resolve 依赖链，漏洞包直接从依赖树消失
+- 验证：两端 `npm audit` 均 **0 vulnerabilities**，339 测试 + 前端 build 全绿

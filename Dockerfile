@@ -1,5 +1,5 @@
 # Build Go sidecar
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /app/backend/go-gateway
 RUN apk add --no-cache git vips-dev vips-heif build-base pkgconf
