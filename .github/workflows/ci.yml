@@ -27,6 +27,13 @@ jobs:
     name: Lint, type-check, build and test
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      # 全量测试里 tests/go-sidecar-live-contract.test.ts 会 shell out 去
+      # `go build ./cmd/server/...`。该模块的 govips 依赖在 cgo 打开时要求系统里有
+      # libvips（`pkg-config --cflags -- vips` 报 "Package vips was not found"），
+      # 而 ubuntu-latest 上并没有。关掉 cgo 后即走不依赖 libvips 的构建路径——
+      # 这与 contracts.yml 对同一组契约测试的做法一致（那里也是 CGO_ENABLED=0）。
+      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +55,14 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      # 全量测试会构建 Go 网关（live contract 测试 shell out 到 go build），
+      # 所以这里显式准备 Go 工具链——否则就靠 runner 预装版本 + 测试运行时临时
+      # 下载 go1.25.0，既慢又可能在测试中途抖动。缓存沿用 contracts.yml 的口径。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go-gateway/go.mod
+          cache-dependency-path: backend/go-gateway/go.sum
 
       - name: Install Node Gateway dependencies
         run: npm ci --prefix backend/gateway
