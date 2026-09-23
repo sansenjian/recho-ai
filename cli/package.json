@@ -13,8 +13,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run"
   },
   "keywords": [
