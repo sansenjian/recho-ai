@@ -61,6 +61,118 @@ function sleep(ms: number, signal: AbortSignal | null | undefined) {
 }
 
 export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // 幂等读请求（GET/HEAD/OPTIONS、无 body）在并发场景下共享同一支 in-flight 请求，
+  // 避免组件重复挂载 / 快速切页时对同一接口发起重复请求（见 weak-network-optimization-plan §3）。
+  // 原则：仅对"可重用"读接口去重；显式 cache: 'no-store'（如历史列表，需保新鲜）不去重。
+  const dedupeKey = dedupeFetchKey(url, init)
+  if (dedupeKey) {
+    return dedupeSharedRequest(dedupeKey, url, init)
+  }
+  return performFetch(url, init)
+}
+
+// ---------------------------------------------------------------------------
+// In-flight 去重
+// ---------------------------------------------------------------------------
+
+interface SharedRequest {
+  promise: Promise<MaterializedResponse>
+  refs: number
+}
+
+interface MaterializedResponse {
+  status: number
+  statusText: string
+  headers: Headers
+  body: ArrayBuffer
+}
+
+const inflightShared = new Map<string, SharedRequest>()
+
+// 返回去重 key；不满足去重条件（写请求、带 body、显式 no-store、非幂等）返回 null。
+function dedupeFetchKey(url: string, init: RequestInit): string | null {
+  if (!isIdempotentMethod(init.method)) return null
+  if (init.body) return null
+  if (init.cache === 'no-store') return null
+  return `${(init.method || 'GET').toUpperCase()} ${url}`
+}
+
+// 同 key 并发时复用唯一一次底层 fetch，并把响应体物化后返回独立副本，
+// 保证每个调用方都能读取自己的 Response body（底层 body 只读一次）。
+async function dedupeSharedRequest(
+  key: string,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const signal = init.signal
+  const existing = inflightShared.get(key)
+  if (existing) {
+    existing.refs += 1
+    try {
+      const materialized = await withAbort(existing.promise, signal)
+      return materializeResponse(materialized)
+    } finally {
+      releaseSharedRef(key, existing)
+    }
+  }
+
+  const entry: SharedRequest = {
+    refs: 1,
+    promise: performFetch(url, init).then(async (response) => {
+      const body = await response.arrayBuffer()
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        body,
+      }
+    }),
+  }
+  inflightShared.set(key, entry)
+  try {
+    const materialized = await withAbort(entry.promise, signal)
+    return materializeResponse(materialized)
+  } finally {
+    releaseSharedRef(key, entry)
+  }
+}
+
+function releaseSharedRef(key: string, entry: SharedRequest) {
+  entry.refs -= 1
+  if (entry.refs <= 0) {
+    inflightShared.delete(key)
+  }
+}
+
+// 每个调用方拿一份独立 body 副本，避免共享 Response 导致 body 被读两次。
+function materializeResponse(materialized: MaterializedResponse): Response {
+  const body = new Uint8Array(materialized.body.byteLength)
+  body.set(new Uint8Array(materialized.body))
+  return new Response(body, {
+    status: materialized.status,
+    statusText: materialized.statusText,
+    headers: materialized.headers,
+  })
+}
+
+// 去重共享期间，任意调用方各自的 abort signal 只中断它自己，不影响共享请求本身。
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('The operation was aborted.', 'AbortError'))
+    if (signal.aborted) {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort)
+    })
+  })
+}
+
+// 实际执行（含休眠唤醒退避重试）。
+async function performFetch(url: string, init: RequestInit): Promise<Response> {
   // 仅对幂等且不带请求体的请求（GET/HEAD/OPTIONS）自动重试：
   // - 非幂等请求（如 POST 上传）重试可能产生重复副作用；
   // - 带请求体的请求可能是流式/一次性 body，重试时请求体已被消费，无法安全复用同一 RequestInit。
