@@ -87,3 +87,29 @@ jobs:
       # 缺少该标注会立刻因 localStorage / window 未定义而失败，不会静默降级。
       - name: Run the full test suite
         run: npm test
+
+  # `cli/` 是独立 npm 包（自带 package.json + package-lock.json），
+  # 需要单独安装依赖、编译并在它自己的 vitest 配置下跑单测。
+  cli:
+    name: CLI build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install CLI dependencies
+        run: npm ci --prefix cli
+
+      - name: Build CLI
+        run: npm run build --prefix cli
+
+      - name: Run CLI tests
+        run: npm test --prefix cli
