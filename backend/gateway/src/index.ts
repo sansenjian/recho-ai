@@ -22,6 +22,7 @@ import {
   requestObservabilityMiddleware,
 } from './middleware/request-observability.js'
 import { requestBodyErrorMiddleware } from './middleware/request-body-errors.js'
+import { privateNetworkAccessMiddleware } from './middleware/private-network-access.js'
 import { apiErrorBody } from './services/api-error.js'
 
 const app = express()
@@ -45,6 +46,7 @@ app.use((req, res, next) => {
   next()
 })
 
+app.use(privateNetworkAccessMiddleware)
 app.use(cors({
   origin: CORS_ORIGIN.length === 1 ? CORS_ORIGIN[0] : CORS_ORIGIN,
   exposedHeaders: [REQUEST_ID_HEADER],
