@@ -116,7 +116,7 @@ describe('chat 命令', () => {
       .mockResolvedValueOnce(sseResponse(SSE_SAMPLE))
     vi.stubGlobal('fetch', fetchMock)
 
-    await chat({ prompt: 'hi', json: false, verbose: false, baseUrl: 'https://x.com', token: 't', isTTYOverride: false })
+    await chat({ prompt: 'hi', json: false, verbose: false, baseUrl: 'https://x.com', token: 't', isTTYOverride: false, stdout: { write: () => undefined } })
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://x.com/api/config/app', expect.anything())
     const [, init] = fetchMock.mock.calls[1] as [string, RequestInit]

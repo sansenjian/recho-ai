@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readConfigFile, resolveConfig, saveConfig, removeConfig } from '../config.js'
+import { readConfigFile, resolveConfig, saveConfig, removeConfig, updateSession } from '../config.js'
 import { CLIError } from '../types.js'
 
 const ORIG_ENV = { baseUrl: process.env.RECHO_BASE_URL, token: process.env.RECHO_TOKEN }
@@ -21,12 +21,50 @@ async function tempConfigPath() {
 }
 
 describe('saveConfig / readConfigFile', () => {
-  it('保存并读回 baseUrl 与 token', async () => {
+  it('直登模式(token)保存后统一读作 accessToken', async () => {
     const { dir, path } = await tempConfigPath()
     try {
       await saveConfig(path, { baseUrl: 'https://example.com/', token: 'secret' })
       const file = await readConfigFile(path)
-      expect(file).toEqual({ baseUrl: 'https://example.com/', token: 'secret' })
+      expect(file).toMatchObject({ baseUrl: 'https://example.com/', accessToken: 'secret' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('会话模式(accessToken/refreshToken/expiresAt)完整落盘与读回', async () => {
+    const { dir, path } = await tempConfigPath()
+    try {
+      await saveConfig(path, {
+        baseUrl: 'https://example.com',
+        accessToken: 'at',
+        refreshToken: 'rt',
+        expiresAt: 1_800_000_000_000,
+        supabaseUrl: 'https://db.supabase.co',
+        anonKey: 'anon',
+      })
+      const file = await readConfigFile(path)
+      expect(file).toMatchObject({
+        baseUrl: 'https://example.com',
+        accessToken: 'at',
+        refreshToken: 'rt',
+        expiresAt: 1_800_000_000_000,
+        supabaseUrl: 'https://db.supabase.co',
+        anonKey: 'anon',
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('兼容旧格式 {baseUrl, token}', async () => {
+    const { dir, path } = await tempConfigPath()
+    try {
+      await saveConfig(path, { baseUrl: 'https://example.com', token: 'old-token' })
+      const file = await readConfigFile(path)
+      expect(file.accessToken).toBe('old-token')
+      expect(file.refreshToken).toBeUndefined()
+      expect(file.expiresAt).toBeUndefined()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -36,6 +74,39 @@ describe('saveConfig / readConfigFile', () => {
     const { dir, path } = await tempConfigPath()
     expect(await readConfigFile(join(dir, 'nope.json'))).toEqual({})
     await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe('updateSession', () => {
+  it('仅替换令牌段并保留 baseUrl 等字段', async () => {
+    const { dir, path } = await tempConfigPath()
+    try {
+      await saveConfig(path, { baseUrl: 'https://example.com', token: 'old-at', supabaseUrl: 'https://db.supabase.co', anonKey: 'anon' })
+      await updateSession(path, { accessToken: 'new-at', refreshToken: 'new-rt', expiresAt: 111 })
+      const file = await readConfigFile(path)
+      expect(file.accessToken).toBe('new-at')
+      expect(file.refreshToken).toBe('new-rt')
+      expect(file.baseUrl).toBe('https://example.com')
+      expect(file.supabaseUrl).toBe('https://db.supabase.co')
+      const raw = JSON.parse(await readFile(path, 'utf8'))
+      expect(raw.accessToken).toBe('new-at')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('旧格式 {token} 文件经 updateSession 后转为新结构', async () => {
+    const { dir, path } = await tempConfigPath()
+    try {
+      await writeFile(path, `${JSON.stringify({ baseUrl: 'https://example.com', token: 'old-at' })}\n`)
+      await updateSession(path, { accessToken: 'new-at', refreshToken: 'new-rt', expiresAt: 111 })
+      const raw = JSON.parse(await readFile(path, 'utf8'))
+      expect(raw.token).toBeUndefined()
+      expect(raw.accessToken).toBe('new-at')
+      expect(raw.refreshToken).toBe('new-rt')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 

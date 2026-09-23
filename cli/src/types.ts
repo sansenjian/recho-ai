@@ -31,10 +31,25 @@ export function toCLIError(err: unknown): CLIError {
   return new CLIError(EXIT_GENERIC, 'UNEXPECTED', message)
 }
 
-/** ~/.recho/config.json 中存储的配置。 */
+/** ~/.recho/config.json 中存储的配置。兼容旧格式 {baseUrl, token}。 */
 export interface CLIConfigFile {
   baseUrl?: string
+  /** 旧格式的 access token(直登模式),新格式统一存 accessToken */
   token?: string
+  accessToken?: string
+  refreshToken?: string
+  /** access token 过期时间(毫秒时间戳) */
+  expiresAt?: number
+  /** Supabase Auth 直连信息(登录时落盘,供自动刷新使用) */
+  supabaseUrl?: string
+  anonKey?: string
+}
+
+/** 一次有效会话(access + refresh)。 */
+export interface CLISession {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
 }
 
 /** 合并 flag / 环境变量 / 配置文件后的最终解析结果。 */
@@ -42,6 +57,11 @@ export interface ResolvedCLIConfig {
   baseUrl: string
   token: string | null
   configPath: string
+  /** 自动刷新所需的会话信息(仅来自配置文件) */
+  supabaseUrl?: string
+  anonKey?: string
+  refreshToken?: string
+  expiresAt?: number
 }
 
 export interface ChatMessage {

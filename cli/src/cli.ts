@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Command, CommanderError } from 'commander'
 import { defaultConfigPath, readConfigFile, resolveConfig } from './config.js'
-import { toCLIError, CLIError, EXIT_USAGE, type ResolvedCLIConfig } from './types.js'
+import { toCLIError, EXIT_USAGE, type ResolvedCLIConfig } from './types.js'
+import { getAccessToken } from './auth.js'
 import { login, logout } from './commands/login.js'
 import { chat } from './commands/chat.js'
 import { imageGen } from './commands/image.js'
@@ -56,11 +57,10 @@ function jsonIf(global: GlobalOptions): boolean {
   return Boolean(global.json)
 }
 
-function requireToken(cfg: ResolvedCLIConfig): ResolvedCLIConfig {
-  if (!cfg.token) {
-    throw new CLIError(3, 'NOT_LOGGED_IN', '未配置访问 token，请先运行 `recho login` 或设置环境变量 RECHO_TOKEN。')
-  }
-  return cfg
+/** 解析有效 access token(必要时自动刷新),未登录/刷新失败抛对应 CLIError。 */
+async function resolveToken(cfg: ResolvedCLIConfig): Promise<string> {
+  cfg.token = await getAccessToken(cfg)
+  return cfg.token as string
 }
 
 async function main(): Promise<void> {
@@ -79,8 +79,8 @@ async function main(): Promise<void> {
 
   program
     .command('login')
-    .description('保存站点地址与访问 token 到本机配置')
-    .addHelpText('after', '需要全局参数 --base-url <URL> 与 --token <TOKEN>。')
+    .description('登录:浏览器 GitHub OAuth(推荐)或 --token 直登')
+    .addHelpText('after', '浏览器登录只需 --base-url <URL>；也可用 --token <TOKEN> 直接保存 access token。')
     .action(async () => {
       const global = program.opts<GlobalOptions>()
       const json = jsonIf(global)
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
       const json = jsonIf(global)
       await runCommand(json, async () => {
         const cfg = await loadConfig(global)
-        requireToken(cfg)
+        const token = await resolveToken(cfg)
         await chat({
           prompt,
           model: options.model,
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
           json,
           verbose: Boolean(global.verbose),
           baseUrl: cfg.baseUrl,
-          token: cfg.token as string,
+          token,
         })
       })
     })
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
       const json = jsonIf(global)
       await runCommand(json, async () => {
         const cfg = await loadConfig(global)
-        requireToken(cfg)
+        const token = await resolveToken(cfg)
         await imageGen({
           prompt,
           model: options.model,
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
           download: options.download,
           json,
           baseUrl: cfg.baseUrl,
-          token: cfg.token as string,
+          token,
         })
       })
     })
@@ -163,8 +163,8 @@ async function main(): Promise<void> {
       const json = jsonIf(global)
       await runCommand(json, async () => {
         const cfg = await loadConfig(global)
-        requireToken(cfg)
-        await credits({ baseUrl: cfg.baseUrl, token: cfg.token as string, json })
+        const token = await resolveToken(cfg)
+        await credits({ baseUrl: cfg.baseUrl, token, json })
       })
     })
 
