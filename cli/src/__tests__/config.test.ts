@@ -5,13 +5,19 @@ import { join } from 'node:path'
 import { readConfigFile, resolveConfig, saveConfig, removeConfig, updateSession } from '../config.js'
 import { CLIError } from '../types.js'
 
-const ORIG_ENV = { baseUrl: process.env.RECHO_BASE_URL, token: process.env.RECHO_TOKEN }
+const ORIG_ENV = {
+  baseUrl: process.env.RECHO_BASE_URL,
+  token: process.env.RECHO_TOKEN,
+  apiKey: process.env.RECHO_API_KEY,
+}
 
 afterEach(() => {
   if (ORIG_ENV.baseUrl === undefined) delete process.env.RECHO_BASE_URL
   else process.env.RECHO_BASE_URL = ORIG_ENV.baseUrl
   if (ORIG_ENV.token === undefined) delete process.env.RECHO_TOKEN
   else process.env.RECHO_TOKEN = ORIG_ENV.token
+  if (ORIG_ENV.apiKey === undefined) delete process.env.RECHO_API_KEY
+  else process.env.RECHO_API_KEY = ORIG_ENV.apiKey
   vi.restoreAllMocks()
 })
 
@@ -149,6 +155,27 @@ describe('resolveConfig 优先级', () => {
 
   it('非法 baseUrl 被拒绝', () => {
     expect(() => resolveConfig({ baseUrl: 'example.com' })).toThrow(/http/)
+  })
+
+  it('apiKey 优先于 token 与 env,且 token 置空', () => {
+    process.env.RECHO_TOKEN = 'env-token'
+    process.env.RECHO_API_KEY = 'env-rk'
+    const cfg = resolveConfig({ baseUrl: 'https://x.example.com', apiKey: 'flag-rk', token: 'flag-token' }, { apiKey: 'file-rk', token: 'file-token' })
+    expect(cfg.apiKey).toBe('flag-rk')
+    expect(cfg.token).toBeNull()
+  })
+
+  it('apiKey 支持 env > 文件,启用后不解析 token', () => {
+    process.env.RECHO_API_KEY = 'env-rk'
+    const cfg = resolveConfig({ baseUrl: 'https://x.example.com' }, { apiKey: 'file-rk', accessToken: 'file-at' })
+    expect(cfg.apiKey).toBe('env-rk')
+    expect(cfg.token).toBeNull()
+  })
+
+  it('无 apiKey 时仍按原 token 优先级解析', () => {
+    const cfg = resolveConfig({ baseUrl: 'https://x.example.com' }, { accessToken: 'file-at' })
+    expect(cfg.apiKey).toBeUndefined()
+    expect(cfg.token).toBe('file-at')
   })
 })
 

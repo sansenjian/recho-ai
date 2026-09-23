@@ -6,6 +6,7 @@ import { printJson } from '../io.js'
 export interface LoginCommandOptions {
   baseUrl?: string | undefined
   token?: string | undefined
+  apiKey?: string | undefined
   configPath?: string | undefined
   json: boolean
 }
@@ -26,6 +27,19 @@ export async function login(opts: LoginCommandOptions): Promise<void> {
   }
   const configPath = opts.configPath || defaultConfigPath()
   const token = (opts.token || '').trim()
+  const apiKey = (opts.apiKey || '').trim()
+
+  if (apiKey) {
+    await saveConfig(configPath, { baseUrl: normalized, apiKey })
+    if (opts.json) {
+      printJson({ ok: true, baseUrl: normalized, configPath, via: 'apikey' })
+      return
+    }
+    console.log(`已保存配置到 ${configPath}`)
+    console.log(`站点地址: ${normalized}`)
+    console.log('认证方式: API key(长期有效，无需刷新)')
+    return
+  }
 
   if (token) {
     await saveConfig(configPath, { baseUrl: normalized, token })

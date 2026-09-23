@@ -15,6 +15,7 @@ interface GlobalOptions {
   verbose?: boolean
   baseUrl?: string
   token?: string
+  apikey?: string
   json?: boolean
 }
 
@@ -38,7 +39,7 @@ interface ImageOptions {
 async function loadConfig(global: GlobalOptions): Promise<ResolvedCLIConfig> {
   const configPath = global.config ?? defaultConfigPath()
   const file = await readConfigFile(configPath)
-  return resolveConfig({ baseUrl: global.baseUrl, token: global.token, configPath }, file)
+  return resolveConfig({ baseUrl: global.baseUrl, token: global.token, apiKey: global.apikey, configPath }, file)
 }
 
 /** 包装命令执行:统一 CLIError → 输出(尊重 --json)并按退出码退出。 */
@@ -75,16 +76,19 @@ async function main(): Promise<void> {
     .option('-v, --verbose', '输出详细日志(如思考过程)')
     .option('--base-url <url>', '站点地址,覆盖配置文件')
     .option('--token <token>', '访问 token,覆盖配置文件与环境变量')
+    .option('--apikey <key>', '站点 API key(如 rk-*),覆盖配置文件与环境变量 RECHO_API_KEY')
     .option('--json', '以 JSON 输出,便于 AI 解析')
 
   program
     .command('login')
-    .description('登录:浏览器 GitHub OAuth(推荐)或 --token 直登')
-    .addHelpText('after', '浏览器登录只需 --base-url <URL>；也可用 --token <TOKEN> 直接保存 access token。')
+    .description('登录:浏览器 GitHub OAuth(推荐)或 --token/--apikey')
+    .addHelpText('after', '浏览器登录只需 --base-url <URL>；也可用 --token <TOKEN> 或 --apikey <KEY> 直接保存凭据。')
     .action(async () => {
       const global = program.opts<GlobalOptions>()
       const json = jsonIf(global)
-      await runCommand(json, () => login({ baseUrl: global.baseUrl, token: global.token, configPath: global.config, json }))
+      await runCommand(json, () =>
+        login({ baseUrl: global.baseUrl, token: global.token, apiKey: global.apikey, configPath: global.config, json }),
+      )
     })
 
   program

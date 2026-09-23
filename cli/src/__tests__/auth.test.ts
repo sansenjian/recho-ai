@@ -90,6 +90,13 @@ describe('refreshAccessToken', () => {
 })
 
 describe('getAccessToken', () => {
+  it('apiKey 存在时直接返回,不刷新、不发请求', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const result = await getAccessToken(cfg({ token: null, apiKey: 'rk-abc', refreshToken: 'rt', expiresAt: Date.now() - 1000 }))
+    expect(result).toBe('rk-abc')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('无 token → 未登录(3)', async () => {
     await expect(getAccessToken(cfg({ token: null }))).rejects.toMatchObject({ exitCode: 3 })
   })

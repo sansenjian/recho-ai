@@ -53,6 +53,7 @@ func main() {
 		log.Println("Continuing without database connection...")
 	} else {
 		log.Println("Supabase client initialized successfully")
+		middleware.SetDBPool(db.Pool())
 		defer db.Close()
 	}
 

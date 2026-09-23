@@ -43,6 +43,8 @@ export interface CLIConfigFile {
   /** Supabase Auth 直连信息(登录时落盘,供自动刷新使用) */
   supabaseUrl?: string
   anonKey?: string
+  /** 站点签发的长期 API key(如 rk-*),优先于 token 且不刷新 */
+  apiKey?: string
 }
 
 /** 一次有效会话(access + refresh)。 */
@@ -62,6 +64,8 @@ export interface ResolvedCLIConfig {
   anonKey?: string
   refreshToken?: string
   expiresAt?: number
+  /** 站点签发的长期 API key(优先于 token,不刷新) */
+  apiKey?: string
 }
 
 export interface ChatMessage {

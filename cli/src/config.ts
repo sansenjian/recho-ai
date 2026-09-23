@@ -18,6 +18,7 @@ export function defaultConfigPath(): string {
 export interface ConfigInput {
   baseUrl?: string | undefined
   token?: string | undefined
+  apiKey?: string | undefined
   configPath?: string | undefined
 }
 
@@ -39,6 +40,7 @@ export async function readConfigFile(configPath: string): Promise<CLIConfigFile>
       expiresAt: expiresAt && Number.isFinite(expiresAt) ? expiresAt : undefined,
       supabaseUrl: typeof obj.supabaseUrl === 'string' && obj.supabaseUrl ? obj.supabaseUrl : undefined,
       anonKey: typeof obj.anonKey === 'string' && obj.anonKey ? obj.anonKey : undefined,
+      apiKey: typeof obj.apiKey === 'string' && obj.apiKey ? obj.apiKey : undefined,
     }
   } catch (err) {
     const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined
@@ -47,7 +49,7 @@ export async function readConfigFile(configPath: string): Promise<CLIConfigFile>
   }
 }
 
-/** 合并优先级:flag > 环境变量(RECHO_BASE_URL / RECHO_TOKEN)> 配置文件。 */
+/** 合并优先级:flag > 环境变量(RECHO_BASE_URL / RECHO_TOKEN / RECHO_API_KEY)> 配置文件。 */
 export function resolveConfig(input: ConfigInput, file: CLIConfigFile = {}): ResolvedCLIConfig {
   const baseUrl = (
     input.baseUrl ||
@@ -55,7 +57,11 @@ export function resolveConfig(input: ConfigInput, file: CLIConfigFile = {}): Res
     file.baseUrl ||
     ''
   ).trim().replace(/\/+$/, '')
-  const token = (input.token || process.env.RECHO_TOKEN || file.accessToken || file.token || '').trim() || null
+  const apiKey = (input.apiKey || process.env.RECHO_API_KEY || file.apiKey || '').trim() || undefined
+  // apiKey 优先,存在时不解析 token/不启用刷新
+  const token = apiKey
+    ? null
+    : (input.token || process.env.RECHO_TOKEN || file.accessToken || file.token || '').trim() || null
 
   if (!baseUrl) {
     throw new CLIError(
@@ -75,6 +81,7 @@ export function resolveConfig(input: ConfigInput, file: CLIConfigFile = {}): Res
     anonKey: file.anonKey,
     refreshToken: file.refreshToken,
     expiresAt: file.expiresAt,
+    apiKey,
   }
 }
 
@@ -88,6 +95,8 @@ export interface SaveConfigInput {
   expiresAt?: number
   supabaseUrl?: string
   anonKey?: string
+  /** 长期 API key 模式 */
+  apiKey?: string
 }
 
 /** 写入配置文件(目录自动创建,文件权限 0600)。 */
@@ -100,6 +109,7 @@ export async function saveConfig(configPath: string, cfg: SaveConfigInput): Prom
   if (typeof cfg.expiresAt === 'number') payload.expiresAt = cfg.expiresAt
   if (cfg.supabaseUrl) payload.supabaseUrl = cfg.supabaseUrl
   if (cfg.anonKey) payload.anonKey = cfg.anonKey
+  if (cfg.apiKey) payload.apiKey = cfg.apiKey
   await writeConfigFile(configPath, payload)
   return configPath
 }
@@ -114,6 +124,7 @@ export async function updateSession(configPath: string, session: CLISession): Pr
     expiresAt: session.expiresAt,
     supabaseUrl: file.supabaseUrl,
     anonKey: file.anonKey,
+    apiKey: file.apiKey,
   })
 }
 

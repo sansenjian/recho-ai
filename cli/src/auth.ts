@@ -229,6 +229,8 @@ export async function getSupabaseConfig(baseUrl: string): Promise<{ url: string;
  * - 已过期 → 走 Supabase refresh grant 换新并回写配置
  */
 export async function getAccessToken(cfg: ResolvedCLIConfig): Promise<string> {
+  // 长期 API key(如 rk-*):站点签发,不过期,不做任何刷新
+  if (cfg.apiKey) return cfg.apiKey
   if (!cfg.token) {
     throw new CLIError(EXIT_NOT_LOGGED_IN, 'NOT_LOGGED_IN', '未配置访问 token，请先运行 `recho login` 或设置环境变量 RECHO_TOKEN。')
   }
