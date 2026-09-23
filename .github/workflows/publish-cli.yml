@@ -1,0 +1,65 @@
+name: Publish CLI to npm
+
+# 把 `cli/`(recho-cli)发布到 npm。触发方式:
+# - push 一个 `cli-vX.Y.Z` 标签(如 `cli-v0.1.0`),标签版本必须与
+#   cli/package.json 的 "version" 完全一致,否则发布失败(防止误发)。
+# - 或在 GitHub 上手动触发(workflow_dispatch)。
+#
+# 前置要求:仓库需配置名为 NPM_TOKEN 的 secret(值为一个有 publish 权限的
+# npm access token,可在 https://www.npmjs.com/settings/<user>/tokens 创建)。
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build, test and publish recho-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefix cli
+
+      - name: Verify tag matches package version
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./cli/package.json').version")
+          expected="cli-v${version}"
+          if [ "${TAG_REF}" != "${expected}" ]; then
+            echo "::error::tag '${TAG_REF}' 与 cli/package.json 版本 '${expected}' 不匹配，已中止发布。"
+            exit 1
+          fi
+          echo "发布版本: ${version}"
+
+      - name: Build
+        run: npm run build --prefix cli
+
+      - name: Test
+        run: npm test --prefix cli
+
+      - name: Publish
+        run: npm publish --prefix cli --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

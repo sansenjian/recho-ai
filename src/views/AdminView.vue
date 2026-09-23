@@ -9,6 +9,7 @@ import {
   Coins,
   Globe,
   Image,
+  KeyRound,
   LayoutDashboard,
   Megaphone,
   Moon,
@@ -29,10 +30,11 @@ const AdminImagesViewPanel = defineAsyncComponent(() => import('../components/ad
 const AdminAttemptsViewPanel = defineAsyncComponent(() => import('../components/admin/AdminAttemptsViewPanel.vue'))
 const AdminSystemPanel = defineAsyncComponent(() => import('../components/admin/AdminSystemPanel.vue'))
 const AdminAnnouncementsPanel = defineAsyncComponent(() => import('../components/admin/AdminAnnouncementsPanel.vue'))
+const AdminApiKeysPanel = defineAsyncComponent(() => import('../components/admin/AdminApiKeysPanel.vue'))
 const AdminSettingsPanel = defineAsyncComponent(() => import('../components/admin/AdminSettingsPanel.vue'))
 
 type AdminMode = 'visual' | 'manage'
-type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'system' | 'announcements' | 'runtime' | 'providers'
+type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'system' | 'announcements' | 'apiKeys' | 'runtime' | 'providers'
 
 const { t, locale } = useI18n()
 const { user, userEmail, isAuthReady, initAuth } = useAuthSession()
@@ -53,6 +55,7 @@ const navItems: Array<{ id: AdminViewId; labelKey: string; icon: Component }> = 
   { id: 'monitor', labelKey: 'nav.monitor', icon: Activity },
   { id: 'system', labelKey: 'nav.system', icon: Server },
   { id: 'announcements', labelKey: 'nav.announcements', icon: Megaphone },
+  { id: 'apiKeys', labelKey: 'nav.apiKeys', icon: KeyRound },
   { id: 'runtime', labelKey: 'nav.runtime', icon: Settings },
   { id: 'providers', labelKey: 'nav.providers', icon: Server },
 ]
@@ -63,6 +66,7 @@ const panelComponents: Record<AdminViewId, Component> = {
   monitor: AdminAttemptsViewPanel,
   system: AdminSystemPanel,
   announcements: AdminAnnouncementsPanel,
+  apiKeys: AdminApiKeysPanel,
   runtime: AdminSettingsPanel,
   providers: AdminSettingsPanel,
 }

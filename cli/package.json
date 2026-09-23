@@ -1,0 +1,37 @@
+{
+  "name": "recho-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for recho-ai: chat and image generation from the terminal",
+  "type": "module",
+  "bin": {
+    "recho": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "cli",
+    "chat",
+    "ai",
+    "image-generation",
+    "recho"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^15.0.0",
+    "eventsource-parser": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

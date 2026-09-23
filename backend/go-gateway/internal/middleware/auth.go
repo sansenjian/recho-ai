@@ -5,7 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,8 @@ import (
 	"go-gateway/internal/pkg/response"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // User represents the authenticated user
@@ -72,7 +76,65 @@ var (
 	jwksMu        sync.Mutex
 	jwksExpiresAt time.Time
 	jwksKeys      map[string]any
+	dbPool        *pgxpool.Pool
 )
+
+// SetDBPool injects the shared database pool used for API key lookups.
+// Call from main() once the Supabase client is initialized.
+func SetDBPool(pool *pgxpool.Pool) {
+	dbPool = pool
+}
+
+const apiKeyPrefix = "rk-"
+
+var errApiKeyInvalid = errors.New("API key is invalid, disabled or revoked")
+
+func apiKeyHash(plain string) string {
+	sum := sha256.Sum256([]byte(plain))
+	return hex.EncodeToString(sum[:])
+}
+
+// verifyApiKey resolves an external client API key (rk-*) to its bound user.
+// It shares the JWT user model so downstream credits/authorization work unchanged.
+func verifyApiKey(ctx context.Context, plain string) (*User, error) {
+	if dbPool == nil {
+		return nil, errApiKeyInvalid
+	}
+	hash := apiKeyHash(plain)
+	var userID string
+	var enabled bool
+	var revokedAt *time.Time
+	err := dbPool.QueryRow(ctx,
+		`SELECT user_id, enabled, revoked_at FROM api_keys WHERE key_hash = $1`, hash,
+	).Scan(&userID, &enabled, &revokedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errApiKeyInvalid
+		}
+		log.Printf("[auth] API key lookup failed: %v", err)
+		return nil, errApiKeyInvalid
+	}
+	if !enabled || revokedAt != nil {
+		return nil, errApiKeyInvalid
+	}
+
+	user := &User{ID: userID}
+	// Email is best-effort; only the id matters for downstream authz/credits.
+	var email *string
+	if err := dbPool.QueryRow(ctx, `SELECT email FROM auth.users WHERE id = $1`, userID).Scan(&email); err == nil && email != nil {
+		user.Email = *email
+	}
+
+	// Touch last_used_at asynchronously; failures must not block the request.
+	go func() {
+		lctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, uerr := dbPool.Exec(lctx, `UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1`, hash); uerr != nil {
+			log.Printf("[auth] touch api key last_used failed: %v", uerr)
+		}
+	}()
+	return user, nil
+}
 
 // Init initializes Supabase JWT verification from the JWKS discovery endpoint.
 // Call this from main() after config is loaded.
@@ -162,6 +224,11 @@ func AuthMiddleware(next http.Handler) http.Handler {
 }
 
 func verifyBearerToken(ctx context.Context, tokenString string) (*User, error) {
+	// External client API key (rk-*): resolve the bound user from the database.
+	if strings.HasPrefix(tokenString, apiKeyPrefix) {
+		return verifyApiKey(ctx, tokenString)
+	}
+
 	if jwksURL != "" {
 		user, err := verifyTokenWithJWKS(ctx, tokenString)
 		if err == nil {

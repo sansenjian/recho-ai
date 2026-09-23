@@ -1,5 +1,6 @@
 import type { Request } from 'express'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
+import { hashApiKey, lookupKeyUser } from './api-keys.js'
 import { safeErrorDetail } from './safe-error.js'
 
 export interface RequestUser {
@@ -16,6 +17,13 @@ function bearerToken(req: Request) {
 export async function getRequestUser(req: Request): Promise<RequestUser | null> {
   const token = bearerToken(req)
   if (!token) return null
+
+  // 外部客户端 API key(如 recho-cli 的 rk-*):查 api_keys 表解析所属用户
+  if (token.startsWith('rk-')) {
+    const user = await lookupKeyUser(hashApiKey(token))
+    if (!user) console.warn('[auth] ignoring invalid API key')
+    return user
+  }
 
   const client = getSupabaseAdminClient()
   if (!client) return null
