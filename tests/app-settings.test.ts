@@ -260,8 +260,8 @@ describe('app settings service', () => {
         models: ['gpt-image-2', 'flux-pro', 'retired-image'],
         model_catalog: [
           { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true },
-          { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
-          { id: 'retired-image', name: 'Retired', enabled: false },
+          { id: 'flux-pro', name: 'FLUX Pro', enabled: true, supportsTransparent: true },
+          { id: 'retired-image', name: 'Retired', enabled: false, supportsTransparent: true },
         ],
         image_model: 'gpt-image-2',
         enabled: true,
@@ -276,9 +276,10 @@ describe('app settings service', () => {
     const config = await publicAppConfig()
 
     // Disabled catalog rows stay hidden; duplicate ids from app settings collapse.
+    // 透明能力跟着目录行透传，停用行即使勾了也不下发（前端据此灰掉透明选项）。
     expect(config.availableImageModels).toEqual([
-      { id: 'gpt-image-2', name: 'GPT Image 2' },
-      { id: 'flux-pro', name: 'FLUX Pro' },
+      { id: 'gpt-image-2', name: 'GPT Image 2', supportsTransparent: false },
+      { id: 'flux-pro', name: 'FLUX Pro', supportsTransparent: true },
     ])
     // The first enabled catalog entry becomes the default generation model.
     expect(config.defaultImageModel).toBe('gpt-image-2')

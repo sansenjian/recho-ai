@@ -28,6 +28,10 @@ const props = defineProps<{
   resolution?: ImageResolution
   aspectRatio?: ImageAspectRatio
   quality?: ImageQuality
+  /** 是否要求透明背景。 */
+  transparentBackground?: boolean
+  /** 当前模型是否声明支持透明背景；false 时「透明」选项灰掉。 */
+  transparentAvailable?: boolean
   modelOptions?: Array<{ value: string; label: string }>
   resolutionOptions?: Array<{ value: ImageResolution; label: string }>
   aspectRatioOptions?: Array<{ value: ImageAspectRatio; label: string }>
@@ -39,6 +43,7 @@ const emit = defineEmits<{
   'update:resolution': [value: ImageResolution]
   'update:aspect-ratio': [value: ImageAspectRatio]
   'update:quality': [value: ImageQuality]
+  'update:transparent-background': [value: boolean]
 }>()
 
 const promptText = ref('')
@@ -169,6 +174,8 @@ async function handleGenerate() {
     quality: props.quality,
     model: props.imageModel,
     references: pendingReferences.value.map(reference => ({ ...reference })),
+    // 模型不支持透明时不下发该参数，避免后端静默忽略造成「以为透明」的错觉。
+    ...(props.transparentBackground && props.transparentAvailable ? { transparentBackground: true } : {}),
   })
   if (results?.length) {
     pendingReferences.value = []
@@ -306,6 +313,29 @@ async function handleGenerate() {
                 {{ opt.label }}
               </button>
             </div>
+          </div>
+
+          <div class="param-group">
+            <label>背景</label>
+            <div class="param-buttons">
+              <button
+                type="button"
+                :class="{ active: !transparentBackground }"
+                @click="emit('update:transparent-background', false)"
+              >
+                不透明
+              </button>
+              <button
+                type="button"
+                :disabled="!transparentAvailable"
+                :class="{ active: transparentBackground }"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click="emit('update:transparent-background', true)"
+              >
+                透明
+              </button>
+            </div>
+            <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
           </div>
         </div>
 
@@ -558,6 +588,14 @@ async function handleGenerate() {
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
   border-color: hsl(var(--primary));
+}
+
+.param-group .param-hint {
+  margin: 6px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */

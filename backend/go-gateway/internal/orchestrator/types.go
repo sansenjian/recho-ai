@@ -115,6 +115,9 @@ type GenRequest struct {
 	Quality       string         `json:"quality,omitempty"`
 	Count         int            `json:"count,omitempty"`
 	References    []GenReference `json:"references,omitempty"`
+	// TransparentBackground 请求透明背景输出。只有模型在 Provider 目录里声明了
+	// 透明能力时才会真正带给上游（见 transparentBackgroundSupported）。
+	TransparentBackground bool `json:"transparentBackground,omitempty"`
 }
 
 // GenReference 表示一张参考图。
@@ -227,24 +230,25 @@ type imageSource struct {
 }
 
 type imageGenerationMetadata struct {
-	BatchID             string
-	UserID              string
-	DisplayPrompt       string
-	SystemPrompt        string
-	ModelPrompt         string
-	Size                string
-	AspectRatio         string
-	Resolution          string
-	Quality             string
-	ImageModel          string
-	References          []service.ImageHistoryReference
-	ReferenceCount      int
-	Visibility          string
-	FundingSource       string
-	CreditCost          float64
-	CreditTransactionID string
-	TotalCost           float64
-	CreditBalance       *float64
+	BatchID               string
+	UserID                string
+	DisplayPrompt         string
+	SystemPrompt          string
+	ModelPrompt           string
+	Size                  string
+	AspectRatio           string
+	Resolution            string
+	Quality               string
+	ImageModel            string
+	TransparentBackground bool
+	References            []service.ImageHistoryReference
+	ReferenceCount        int
+	Visibility            string
+	FundingSource         string
+	CreditCost            float64
+	CreditTransactionID   string
+	TotalCost             float64
+	CreditBalance         *float64
 }
 
 // imageJobManifest is the durable hand-off payload between the request path

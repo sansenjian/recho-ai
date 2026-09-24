@@ -224,12 +224,16 @@ describe('provider model catalog row layout', () => {
     const addButton = wrapper.findAll('button').find(button => button.text() === '添加模型')
     await addButton!.trigger('click')
 
-    const rowInputIds = wrapper.findAll<HTMLInputElement>('input[id^="provider-model-"]').map(input => input.element.id)
-    expect(rowInputIds).toEqual([
+    const rowInputs = wrapper.findAll<HTMLInputElement>('input[id^="provider-model-"]')
+    expect(rowInputs.map(input => input.element.id)).toEqual([
       'provider-model-id-0',
       'provider-model-edit-0',
       'provider-model-name-0',
+      'provider-model-transparent-0',
     ])
+    // 透明能力是复选开关，缺省不勾选：漏配比「以为能透明」安全。
+    expect(rowInputs[3].element.type).toBe('checkbox')
+    expect(rowInputs[3].element.checked).toBe(false)
   })
 
   it('keeps the two-input layout for chat providers', async () => {
