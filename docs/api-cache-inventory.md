@@ -17,13 +17,16 @@
 
 ## 一、Node 网关（`backend/gateway/src/routes/*`，owner=node）
 
-### 1. 公开/会话接口
+### 1. 公开 / 会话 / 用户接口
 
 | 方法 | 路径 | 文件:行 | 语义 | 打标 |
 |---|---|---|---|---|
 | POST | `/api/chat` | routes/chat.ts:18 | 流式聊天，长连接 | **no-store**（流式，不可缓存） |
 | GET | `/api/skills` | routes/skills.ts:6 | 技能定义 | 可缓存（TTL 60s） |
 | GET | `/api/tools` | routes/tools.ts:6 | MCP 工具列表 | 可缓存（TTL 30s） |
+| GET | `/api/api-keys` | routes/api-keys.ts | 查询本人 API 密钥 | **no-store**（身份敏感，只返回当前用户自己的 key） |
+| POST | `/api/api-keys` | routes/api-keys.ts | 签发本人 API 密钥（绑定当前登录用户） | **no-store**（写） |
+| DELETE | `/api/api-keys/:id` | routes/api-keys.ts | 撤销本人 API 密钥 | **no-store**（写，只能撤销自己的） |
 | GET | `/health` | routes/health.ts:10 | 健康检查 | 不处理（监控专用） |
 
 ### 2. 图片接口（Node 旧实现 / 兼容路径）
@@ -60,6 +63,9 @@
 | GET | `/admin/announcements` | routes/admin-announcements.ts:56 | 公告查询（管理） | **no-store**（管理，身份敏感） |
 | POST | `/admin/announcements` | routes/admin-announcements.ts:71 | 发布公告 | **no-store**（写） |
 | PATCH | `/admin/announcements/:announcementId` | routes/admin-announcements.ts:83 | 更新公告 | **no-store**（写） |
+| GET | `/admin/api-keys` | routes/api-keys.ts | 全站 API 密钥列表（管理） | **no-store**（管理，含归属用户信息） |
+| POST | `/admin/api-keys` | routes/api-keys.ts | 签发密钥（管理入口） | **no-store**（写） |
+| DELETE | `/admin/api-keys/:id` | routes/api-keys.ts | 撤销任意密钥（管理） | **no-store**（写） |
 
 ---
 
@@ -96,9 +102,9 @@
 
 ## 三、执行摘要
 
-- **总接口数**：Node 38 条 + Go 16 条（含健康/实时）。
+- **总接口数**：Node 44 条 + Go 16 条（含健康/实时）。
 - **可缓存（读）**：约 10 条 —— 主推 `scope=public` 历史、`/api/config/*`、`/api/skills`、`/api/tools`、`/announcements`、存储对象代理。
-- **no-store（写 / 身份敏感）**：约 38 条 —— 生图、上传、删除、额度调整、`/api/credits`、`scope=mine` 历史、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
+- **no-store（写 / 身份敏感）**：约 44 条 —— 生图、上传、删除、额度调整、`/api/credits`、`scope=mine` 历史、API 密钥（用户与管理两侧）、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
 - **不处理（监控/实时）**：health、diagnostics。
 
 ## 四、实施注意事项（§2.3 对照）

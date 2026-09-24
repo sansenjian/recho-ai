@@ -4,6 +4,7 @@ import { LogIn, X, Zap, Eye, EyeOff, LogOut } from '@lucide/vue'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useCredits } from '../composables/useCredits'
 import { formatCreditAmount } from '../utils/credit-format'
+import UserApiKeys from './UserApiKeys.vue'
 
 type AuthMode = 'signIn' | 'signUp'
 
@@ -346,6 +347,8 @@ function onKeydown(e: KeyboardEvent) {
               <p v-if="creditNotice" class="form-notice">{{ creditNotice }}</p>
               <p v-if="creditError" class="form-error">{{ creditError }}</p>
             </div>
+
+            <UserApiKeys />
 
             <button type="button" class="btn btn-secondary" :disabled="isAuthLoading" @click="handleSignOut">
               <LogOut :size="14" />

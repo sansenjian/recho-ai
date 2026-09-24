@@ -101,14 +101,16 @@ export async function createApiKey(userId: string, name: string): Promise<{ reco
   return { record: normalizeRow(data as ApiKeyRow), issued }
 }
 
-export async function listApiKeys(): Promise<ApiKeyRecord[]> {
+/** 列出 API key。传入 userId 时只返回该用户自己的 key（用户自助入口）。 */
+export async function listApiKeys(userId?: string): Promise<ApiKeyRecord[]> {
   const client = getSupabaseAdminClient()
   if (!client) return []
-  const { data, error } = await client
+  const base = client
     .from('api_keys')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(100)
+  const { data, error } = userId ? await base.eq('user_id', userId) : await base
   if (error) {
     console.warn('[api-keys] list failed:', safeErrorDetail(error))
     return []
@@ -116,17 +118,16 @@ export async function listApiKeys(): Promise<ApiKeyRecord[]> {
   return (data ?? []).map((row) => normalizeRow(row as ApiKeyRow))
 }
 
-/** 撤销(软删除):置 revoked_at。返回是否确有撤销。 */
-export async function revokeApiKey(id: string): Promise<boolean> {
+/** 撤销(软删除):置 revoked_at。返回是否确有撤销。传入 userId 时只能撤销该用户自己的 key。 */
+export async function revokeApiKey(id: string, userId?: string): Promise<boolean> {
   const client = getSupabaseAdminClient()
   if (!client) return false
-  const { data, error } = await client
+  const base = client
     .from('api_keys')
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', id)
     .is('revoked_at', null)
-    .select('id')
-    .maybeSingle()
+  const { data, error } = await (userId ? base.eq('user_id', userId) : base).select('id').maybeSingle()
   if (error) {
     console.warn('[api-keys] revoke failed:', safeErrorDetail(error))
     return false
