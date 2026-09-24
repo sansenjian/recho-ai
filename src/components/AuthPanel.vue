@@ -4,6 +4,7 @@ import { LogIn, X, Zap, Eye, EyeOff, LogOut } from '@lucide/vue'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useCredits } from '../composables/useCredits'
 import { formatCreditAmount } from '../utils/credit-format'
+import UserApiKeys from './UserApiKeys.vue'
 
 type AuthMode = 'signIn' | 'signUp'
 
@@ -347,6 +348,8 @@ function onKeydown(e: KeyboardEvent) {
               <p v-if="creditError" class="form-error">{{ creditError }}</p>
             </div>
 
+            <UserApiKeys />
+
             <button type="button" class="btn btn-secondary" :disabled="isAuthLoading" @click="handleSignOut">
               <LogOut :size="14" />
               退出登录
@@ -381,6 +384,12 @@ function onKeydown(e: KeyboardEvent) {
   position: relative;
   width: 100%;
   max-width: 400px;
+  /* 账号弹窗内容会随密钥列表增长：限制在视口内并允许内部滚动，
+     避免下方的「退出登录」等按钮落到视口外点不到。 */
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #ffffff;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
@@ -776,6 +785,9 @@ function onKeydown(e: KeyboardEvent) {
 
   .auth-card {
     max-width: none;
+    /* 手机上遮罩内边距为 0.75rem，高度上限同步收紧 */
+    max-height: calc(100vh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
     padding: 1.5rem 1.25rem 1.25rem;
     border-radius: calc(var(--radius) + 0.25rem);
     animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);

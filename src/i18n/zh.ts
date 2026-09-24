@@ -334,6 +334,7 @@ export default {
     revokedNotice: '密钥已撤销。',
     table: {
       name: '名称',
+      owner: '归属用户',
       hint: '对应',
       status: '状态',
       lastUsed: '最近使用',

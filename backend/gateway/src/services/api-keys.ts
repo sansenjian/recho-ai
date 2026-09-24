@@ -34,6 +34,22 @@ interface ApiKeyRow {
 }
 
 const API_KEY_PREFIX = 'rk-'
+/** 列表一次最多返回的条数。 */
+const API_KEY_LIST_LIMIT = 100
+/** 每个用户可保留的「未撤销」key 上限：与列表上限一致，
+ *  保证用户的自助列表一定能看到并撤销自己的全部有效 key。 */
+export const MAX_ACTIVE_KEYS_PER_USER = API_KEY_LIST_LIMIT
+
+/** 超过每用户有效 key 上限：签发被拒（409），提示先撤销不再使用的 key。 */
+export class ApiKeyLimitError extends Error {
+  status = 409
+  publicMessage = `最多只能保留 ${MAX_ACTIVE_KEYS_PER_USER} 个未撤销的密钥，请先撤销不再使用的密钥。`
+
+  constructor() {
+    super('api_key_limit_reached')
+    this.name = 'ApiKeyLimitError'
+  }
+}
 
 /** plain = rk-<32B base64url>;仅返回明文一次,库中只存 hash。 */
 export function generateApiKey(): IssuedApiKey {
@@ -91,6 +107,15 @@ export async function lookupKeyUser(keyHash: string): Promise<RequestUser | null
 export async function createApiKey(userId: string, name: string): Promise<{ record: ApiKeyRecord; issued: IssuedApiKey }> {
   const client = getSupabaseAdminClient()
   if (!client) throw new Error('Supabase admin client is not configured')
+  // 先确认未撤销的 key 数没到上限：否则用户可以不断签发，
+  // 超出列表条数的旧 key 依旧可用却无法在自助列表里被找到并撤销。
+  const { count, error: countError } = await client
+    .from('api_keys')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .is('revoked_at', null)
+  if (countError) throw countError
+  if ((count ?? 0) >= MAX_ACTIVE_KEYS_PER_USER) throw new ApiKeyLimitError()
   const issued = generateApiKey()
   const { data, error } = await client
     .from('api_keys')
@@ -101,14 +126,18 @@ export async function createApiKey(userId: string, name: string): Promise<{ reco
   return { record: normalizeRow(data as ApiKeyRow), issued }
 }
 
-export async function listApiKeys(): Promise<ApiKeyRecord[]> {
+/** 列出 API key。传入 userId 时只返回该用户自己的 key（用户自助入口）。 */
+export async function listApiKeys(userId?: string): Promise<ApiKeyRecord[]> {
   const client = getSupabaseAdminClient()
   if (!client) return []
-  const { data, error } = await client
+  const base = client
     .from('api_keys')
     .select('*')
+    // 未撤销的排前面：撤销过的历史 key 再多，也不会把可用的 key 挤出列表上限。
+    .order('revoked_at', { ascending: true, nullsFirst: true })
     .order('created_at', { ascending: false })
-    .limit(100)
+    .limit(API_KEY_LIST_LIMIT)
+  const { data, error } = userId ? await base.eq('user_id', userId) : await base
   if (error) {
     console.warn('[api-keys] list failed:', safeErrorDetail(error))
     return []
@@ -116,17 +145,16 @@ export async function listApiKeys(): Promise<ApiKeyRecord[]> {
   return (data ?? []).map((row) => normalizeRow(row as ApiKeyRow))
 }
 
-/** 撤销(软删除):置 revoked_at。返回是否确有撤销。 */
-export async function revokeApiKey(id: string): Promise<boolean> {
+/** 撤销(软删除):置 revoked_at。返回是否确有撤销。传入 userId 时只能撤销该用户自己的 key。 */
+export async function revokeApiKey(id: string, userId?: string): Promise<boolean> {
   const client = getSupabaseAdminClient()
   if (!client) return false
-  const { data, error } = await client
+  const base = client
     .from('api_keys')
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', id)
     .is('revoked_at', null)
-    .select('id')
-    .maybeSingle()
+  const { data, error } = await (userId ? base.eq('user_id', userId) : base).select('id').maybeSingle()
   if (error) {
     console.warn('[api-keys] revoke failed:', safeErrorDetail(error))
     return false

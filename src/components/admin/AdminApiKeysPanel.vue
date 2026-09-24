@@ -4,10 +4,11 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
-import { adminErrorMessage, dateTime } from '../../utils/admin-format'
+import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 
 interface ApiKeyItem {
   id: string
+  user_id: string
   name: string
   key_hint: string
   enabled: boolean
@@ -104,12 +105,13 @@ onMounted(refresh)
         <table class="w-full border-collapse text-[13px]">
           <thead>
             <tr>
-              <th v-for="heading in [t('apikeys.table.name'), t('apikeys.table.hint'), t('apikeys.table.status'), t('apikeys.table.lastUsed'), t('apikeys.table.created'), t('apikeys.table.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th>
+              <th v-for="heading in [t('apikeys.table.name'), t('apikeys.table.owner'), t('apikeys.table.hint'), t('apikeys.table.status'), t('apikeys.table.lastUsed'), t('apikeys.table.created'), t('apikeys.table.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="key in keys" :key="key.id" class="border-b border-border">
               <td class="px-3 py-2 font-semibold">{{ key.name || '—' }}</td>
+              <td class="px-3 py-2"><code class="font-mono text-xs" :title="key.user_id">{{ shortId(key.user_id) }}</code></td>
               <td class="px-3 py-2"><code class="font-mono text-xs">{{ key.key_hint }}</code></td>
               <td class="px-3 py-2"><Badge v-if="key.revoked_at" variant="secondary">{{ t('apikeys.table.revoked') }}</Badge><Badge v-else variant="default">{{ t('apikeys.table.enabled') }}</Badge></td>
               <td class="px-3 py-2 text-xs text-[var(--text-muted)]">{{ key.last_used_at ? dateTime(key.last_used_at) : '—' }}</td>
@@ -118,7 +120,7 @@ onMounted(refresh)
                 <Button v-if="!key.revoked_at" variant="ghost" size="sm" :disabled="actionId === key.id" @click="revoke(key)">{{ t('apikeys.table.revoke') }}</Button>
               </td>
             </tr>
-            <tr v-if="!keys.length"><td colspan="6" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('common.noData') }}</td></tr>
+            <tr v-if="!keys.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('common.noData') }}</td></tr>
           </tbody>
         </table>
       </div>

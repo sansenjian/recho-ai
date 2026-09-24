@@ -334,6 +334,7 @@ export default {
     revokedNotice: 'Key revoked.',
     table: {
       name: 'Name',
+      owner: 'Owner',
       hint: 'Key',
       status: 'Status',
       lastUsed: 'Last used',
