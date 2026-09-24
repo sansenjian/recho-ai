@@ -92,7 +92,7 @@ const chatProviderRows = computed(() => providerRows.value.filter(provider => pr
 // historical id + display-name pair. The header row reuses the same template so
 // the labels stay aligned with the inputs.
 const providerModelGridClass = computed(() => providerForm.value.kind === 'image'
-  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto]'
+  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]'
   : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]')
 
 /**
@@ -206,7 +206,7 @@ function resetProviderForm(kind: 'chat' | 'image' = 'image') {
     priority: 100,
     defaultModel: kind === 'chat' ? defaultModel : '',
     models: [defaultModel],
-    modelCatalog: [{ id: defaultModel, name: defaultModel, enabled: true, editModel: null, supportsTransparent: false }],
+    modelCatalog: [{ id: defaultModel, name: defaultModel, enabled: true, editModel: null }],
     imageModel: kind === 'image' ? defaultModel : '',
     editModel: kind === 'image' ? defaultModel : '',
     imageCompatibilityMode: 'auto',
@@ -228,8 +228,8 @@ function providerLegacyModelIds(provider: AdminProviderSetting): string[] {
 
 function providerModelCatalogRows(provider: AdminProviderSetting): AdminProviderModel[] {
   if (provider.modelCatalog?.length) return provider.modelCatalog
-  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
-  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true, editModel: null, supportsTransparent: false }))
+  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true, editModel: null }))
+  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true, editModel: null }))
 }
 
 function editProvider(provider: AdminProviderSetting) {
@@ -257,7 +257,7 @@ function editProvider(provider: AdminProviderSetting) {
 }
 
 function addProviderModel() {
-  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true, editModel: null, supportsTransparent: false })
+  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true, editModel: null })
 }
 
 function removeProviderModel(index: number) {
@@ -362,7 +362,6 @@ async function saveProvider() {
         name: model.name.trim() || model.id.trim(),
         enabled: Boolean(model.enabled),
         editModel: (model.editModel || '').trim() || null,
-        supportsTransparent: Boolean(model.supportsTransparent),
       }))
       .filter(model => model.id)
     providerPayload.models = providerPayload.modelCatalog.map(model => model.id)
@@ -500,7 +499,6 @@ onMounted(refreshSettings)
               <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerColumnChatModel') : t('settings.providerColumnImageModel') }}</span>
               <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnEditModel') }}</span>
               <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnName') }}</span>
-              <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnTransparent') }}</span>
               <span aria-hidden="true"></span>
               <span aria-hidden="true"></span>
             </div>
@@ -508,7 +506,6 @@ onMounted(refreshSettings)
               <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? t('settings.providerModelIdExample', { example: providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2' }) : t('settings.providerModelId')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
               <input v-if="providerForm.kind === 'image'" :id="`provider-model-edit-${index}`" v-model.trim="model.editModel" :placeholder="index === 0 ? t('settings.providerModelEditExample', { example: 'gpt-image-2' }) : t('settings.providerModelEdit')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
               <input :id="`provider-model-name-${index}`" v-model.trim="model.name" :placeholder="index === 0 ? t('settings.providerModelNameExample', { example: providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2' }) : t('settings.providerModelName')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <label v-if="providerForm.kind === 'image'" class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input :id="`provider-model-transparent-${index}`" v-model="model.supportsTransparent" type="checkbox" class="min-h-auto w-auto">{{ t('settings.providerModelTransparent') }}</label>
               <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">{{ t('common.enable') }}</label>
               <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="t('settings.providerRemoveModelAria', { index: index + 1 })" :title="t('settings.providerRemoveModel')" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
             </div>

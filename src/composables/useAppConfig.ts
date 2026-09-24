@@ -4,8 +4,6 @@ import { apiFetch, apiUrl } from '../lib/api-base'
 export interface ImageModelOption {
   id: string
   name: string
-  /** 该模型能否输出透明背景；false/缺省时前端灰掉「透明背景」开关。 */
-  supportsTransparent: boolean
 }
 
 export interface ImageModelCreditCost {
@@ -45,11 +43,7 @@ function normalizeImageModels(value: unknown): ImageModelOption[] {
   return value
     .filter((item): item is Record<string, unknown> => item != null && typeof item === 'object')
     .filter((item) => typeof item.id === 'string')
-    .map((item) => ({
-      id: item.id as string,
-      name: typeof item.name === 'string' ? item.name as string : item.id as string,
-      supportsTransparent: item.supportsTransparent === true,
-    }))
+    .map((item) => ({ id: item.id as string, name: typeof item.name === 'string' ? item.name as string : item.id as string }))
 }
 
 function normalizeImageModelCreditCosts(value: unknown): ImageModelCreditCost[] {

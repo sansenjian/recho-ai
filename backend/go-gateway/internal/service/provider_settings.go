@@ -38,16 +38,12 @@ type ImageProviderConfig struct {
 	// picked) to that row's edit model. It is consulted first for requests that
 	// carry reference images, so a per-row edit model wins over the provider-wide
 	// EditModel fallback.
-	ModelEditModels map[string]string
-	// ModelSupportsTransparent 是 model_catalog 中声明支持透明背景的模型 id 集合。
-	// 生图请求只有命中它才会带 background: transparent——同一上游并非所有模型
-	// 都接了透明输出（例如 sunburst 支持、flare 不支持），配错会静默拿到无 alpha 的图。
-	ModelSupportsTransparent map[string]bool
-	CompatibilityMode        ImageProviderCompatibilityMode
-	Timeout                  time.Duration
-	RetryCount               int
-	SupportsWebpReferences   bool
-	Source                   string
+	ModelEditModels        map[string]string
+	CompatibilityMode      ImageProviderCompatibilityMode
+	Timeout                time.Duration
+	RetryCount             int
+	SupportsWebpReferences bool
+	Source                 string
 }
 
 func NewProviderSettingsService(pool *pgxpool.Pool) *ProviderSettingsService {
@@ -112,7 +108,6 @@ type imageProviderCandidate struct {
 	timeoutMs         int
 	models            []string
 	editModels        map[string]string
-	transparentModels map[string]bool
 }
 
 func (c imageProviderCandidate) defaultCatalogModel() string {
@@ -215,27 +210,7 @@ func scanImageProviderCandidate(rows pgx.Rows) (imageProviderCandidate, error) {
 		return candidate, err
 	}
 	candidate.models, candidate.editModels = catalogModels(catalog)
-	candidate.transparentModels = catalogTransparentModels(catalog)
 	return candidate, nil
-}
-
-// catalogTransparentModels 从 model_catalog 解出声明支持透明背景的启用模型 id。
-// 停用行一律不算：管理员关掉的行不该再让请求带上透明参数。
-func catalogTransparentModels(catalog []byte) map[string]bool {
-	options := parseProviderModelOptions(catalog)
-	transparent := make(map[string]bool, len(options))
-	for _, entry := range options {
-		if !entry.Enabled || !entry.SupportsTransparent {
-			continue
-		}
-		if id := normalizeModelName(entry.ID, ""); id != "" {
-			transparent[id] = true
-		}
-	}
-	if len(transparent) == 0 {
-		return nil
-	}
-	return transparent
 }
 
 // catalogModels 从 model_catalog 的原始 jsonb 解出两部分：
@@ -281,7 +256,6 @@ func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImagePr
 	}
 	cfg.ImageModels = candidate.models
 	cfg.ModelEditModels = candidate.editModels
-	cfg.ModelSupportsTransparent = candidate.transparentModels
 	cfg.ImageModel = firstNonEmptyProviderSetting(cfg.ImageModel, candidate.defaultCatalogModel(), fallback.ImageModel)
 	cfg.EditModel = firstNonEmptyProviderSetting(cfg.EditModel, cfg.ImageModel)
 	cfg.CompatibilityMode = normalizeImageProviderCompatibilityMode(candidate.compatibilityMode)

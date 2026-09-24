@@ -424,8 +424,6 @@ export default {
     providerColumnImageModel: 'Image model',
     providerColumnEditModel: 'Edit model',
     providerColumnName: 'Display model',
-    providerColumnTransparent: 'Transparency',
-    providerModelTransparent: 'Transparent',
     providerRemoveModel: 'Remove model',
     providerRemoveModelAria: 'Remove model {index}',
     providerRemoveModelPriceAria: 'Remove model price #{index}',

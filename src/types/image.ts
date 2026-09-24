@@ -50,8 +50,6 @@ export interface ImageGenRequest {
   count?: ImageGenerationCount
   references?: ImageGenReference[]
   canvasContext?: ImageCanvasContext
-  /** 要求透明背景输出；仅当所选模型声明支持透明时后端才会真正带上 background: transparent。 */
-  transparentBackground?: boolean
 }
 
 export type ImageGenOptions = Omit<ImageGenRequest, 'prompt'>

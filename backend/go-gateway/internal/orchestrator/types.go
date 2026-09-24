@@ -115,9 +115,6 @@ type GenRequest struct {
 	Quality       string         `json:"quality,omitempty"`
 	Count         int            `json:"count,omitempty"`
 	References    []GenReference `json:"references,omitempty"`
-	// TransparentBackground 请求透明背景输出。只有模型在 Provider 目录里声明了
-	// 透明能力时才会真正带给上游（见 transparentBackgroundSupported）。
-	TransparentBackground bool `json:"transparentBackground,omitempty"`
 }
 
 // GenReference 表示一张参考图。

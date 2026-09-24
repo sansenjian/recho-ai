@@ -19,9 +19,6 @@ import (
 type ImageModelOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// SupportsTransparent 表示该模型能否输出带 alpha 的透明背景图。
-	// 前端据此启用/灰掉「透明背景」开关。
-	SupportsTransparent bool `json:"supportsTransparent"`
 }
 
 type ChatModelOption struct {
@@ -39,8 +36,6 @@ type providerModelOption struct {
 	// reference images and is intentionally never surfaced as a selectable
 	// generation model.
 	EditModel string `json:"editModel"`
-	// SupportsTransparent 是该行声明的透明背景能力，会透传到公开展示的模型列表。
-	SupportsTransparent bool `json:"supportsTransparent"`
 }
 
 type PublicAppConfig struct {
@@ -324,7 +319,7 @@ func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {
 		if name == "" {
 			name = id
 		}
-		result = append(result, ImageModelOption{ID: id, Name: name, SupportsTransparent: model.SupportsTransparent})
+		result = append(result, ImageModelOption{ID: id, Name: name})
 	}
 	return result
 }
@@ -353,7 +348,7 @@ func imageModelsForProviderRow(catalog []byte, legacyModel string) []ImageModelO
 			if name == "" {
 				name = id
 			}
-			models = append(models, ImageModelOption{ID: id, Name: name, SupportsTransparent: entry.SupportsTransparent})
+			models = append(models, ImageModelOption{ID: id, Name: name})
 		}
 		return models
 	}

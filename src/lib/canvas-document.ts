@@ -29,10 +29,6 @@ export interface CanvasDocumentNode {
   resolution: ImageResolution
   quality: ImageQuality
   count?: ImageGenerationCount
-  /** 生图节点选用的模型 id；缺省时回落到画布面板当前选择的模型。 */
-  model?: string
-  /** 生图节点是否要求透明背景；仅在该节点模型声明支持时才真正下发。 */
-  transparentBackground?: boolean
   imageUrl?: string
   imageWidth?: number
   imageHeight?: number
@@ -255,8 +251,6 @@ function serializableCanvasNode(node: CanvasRuntimeNode): CanvasDocumentNode {
     resolution: node.resolution,
     quality: node.quality,
     ...(node.type === 'generation' ? { count: normalizeImageGenerationCount(node.count) } : {}),
-    ...(node.type === 'generation' && node.model ? { model: node.model } : {}),
-    ...(node.type === 'generation' && node.transparentBackground ? { transparentBackground: true } : {}),
     ...(exportableImageUrl(node.imageUrl) ? { imageUrl: exportableImageUrl(node.imageUrl) } : {}),
     ...(typeof node.imageWidth === 'number' ? { imageWidth: node.imageWidth } : {}),
     ...(typeof node.imageHeight === 'number' ? { imageHeight: node.imageHeight } : {}),
@@ -292,8 +286,6 @@ function normalizeImportedNode(
     resolution: raw.resolution || 'auto',
     quality: raw.quality || 'auto',
     ...(raw.type === 'generation' ? { count: normalizeImageGenerationCount(raw.count) } : {}),
-    ...(raw.type === 'generation' && typeof raw.model === 'string' && raw.model.trim() ? { model: raw.model.trim() } : {}),
-    ...(raw.type === 'generation' && raw.transparentBackground === true ? { transparentBackground: true } : {}),
     ...(exportableImageUrl(raw.imageUrl) ? { imageUrl: exportableImageUrl(raw.imageUrl) } : {}),
     ...(typeof raw.imageWidth === 'number' ? { imageWidth: raw.imageWidth } : {}),
     ...(typeof raw.imageHeight === 'number' ? { imageHeight: raw.imageHeight } : {}),

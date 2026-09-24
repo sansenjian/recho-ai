@@ -33,10 +33,6 @@ export interface UseImageCanvasGenerationOptions {
   buildReferences: (node: CanvasNode) => Promise<ImageGenReference[]>
   buildPromptParts: (node: CanvasNode) => PromptParts
   buildCanvasContext: (node: CanvasNode, userPrompt: string) => ImageCanvasContext
-  /** 节点自己没选模型时的默认模型（画布参数面板当前选择）。 */
-  defaultModel: () => string
-  /** 判断模型是否声明支持透明背景，与后端能力表保持一致。 */
-  modelSupportsTransparent: (modelId: string) => boolean
   generate: ImageGenerate
 }
 
@@ -84,12 +80,6 @@ export function useImageCanvasGeneration(options: UseImageCanvasGenerationOption
         ? options.buildCanvasContext(node, userPrompt)
         : undefined
       const generationCount = options.canSelectGenerationCount() ? generationCountForNode(node) : 1
-      const model = (node.model || options.defaultModel()).trim()
-      // 透明只在该节点模型声明支持时才下发：模型不支持时后端会忽略该参数，
-      // 照发只会让用户以为拿到了透明图。
-      const transparent = Boolean(node.transparentBackground)
-        && model !== ''
-        && options.modelSupportsTransparent(model)
       node.status = references.length
         ? `正在上传 ${references.length} 张参考图并生成 ${generationCount} 张图片...`
         : `正在生成 ${generationCount} 张图片...`
@@ -102,8 +92,6 @@ export function useImageCanvasGeneration(options: UseImageCanvasGenerationOption
         quality: node.quality,
         count: generationCount,
         references,
-        ...(model ? { model } : {}),
-        ...(transparent ? { transparentBackground: true } : {}),
         ...(canvasContext ? { canvasContext } : {}),
       })
 
