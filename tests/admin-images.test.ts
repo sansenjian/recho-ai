@@ -8,9 +8,18 @@ let storageRemoveError: Error | null = null
 let rpcRows: Array<Record<string, unknown>> = []
 let rpcError: Error | null = null
 let fallbackLimit: number | null = null
+/** 模拟 COS 未配置公开域名:imagePublicUrl 回退成用户侧代理路径。 */
+let proxiedStorageUrl = false
 
 vi.mock('../backend/gateway/src/services/image-storage', () => ({
-  imagePublicUrl: (path?: string | null) => path ? `https://cdn.example.test/${path}` : undefined,
+  imagePublicUrl: (path?: string | null) => {
+    if (!path) return undefined
+    if (proxiedStorageUrl && path.startsWith('cos://')) return `/api/image/storage/${encodeURIComponent(path)}`
+    return `https://cdn.example.test/${path}`
+  },
+  isProxiedImageStorageUrl: (value?: string | null) => (
+    typeof value === 'string' && value.startsWith('/api/image/storage/')
+  ),
   removeImageStoragePaths: vi.fn(async (paths: Array<string | null | undefined>) => {
     removedStoragePaths = paths
     if (storageRemoveError) throw storageRemoveError
@@ -109,6 +118,7 @@ describe('admin image helpers', () => {
     rpcRows = []
     rpcError = null
     fallbackLimit = null
+    proxiedStorageUrl = false
     vi.resetModules()
   })
 
@@ -151,6 +161,62 @@ describe('admin image helpers', () => {
     expect(JSON.stringify(images[0])).not.toContain('data:image/png')
     expect(JSON.stringify(images[0])).not.toContain('127.0.0.1')
     expect(JSON.stringify(images[0])).not.toContain('sk-secret')
+  })
+
+  it('falls back to the admin media route instead of the user storage proxy', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    proxiedStorageUrl = true
+    rows = [{
+      id: 'img_cos',
+      user_id: 'user_1',
+      visibility: 'private',
+      funding_source: 'credit',
+      thumbnail_path: 'cos://img_cos.thumb.webp',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    const images = await listAdminImages({ limit: 5 })
+
+    // 用户侧代理对他人私有图会按归属返回 403,管理台必须走管理媒体路由
+    expect(images[0].thumbnailUrl).toBe('/api/admin/images/img_cos/media?kind=thumbnail')
+    expect(images[0].thumbnailUrl).not.toContain('/api/image/storage/')
+    expect(images[0].previewUrl).toBe('/api/admin/images/img_cos/media?kind=preview')
+  })
+
+  it('prefers a stored public url over the admin media route', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    proxiedStorageUrl = true
+    rows = [{
+      id: 'img_stored',
+      user_id: 'user_1',
+      visibility: 'private',
+      funding_source: 'credit',
+      thumbnail_path: 'cos://img_stored.thumb.webp',
+      thumbnail_url: 'https://cdn.stored.example.test/img_stored.thumb.webp',
+      generated_at: '2026-06-08T12:00:00.000Z',
+    }]
+
+    const images = await listAdminImages({ limit: 5 })
+
+    expect(images[0].thumbnailUrl).toBe('https://cdn.stored.example.test/img_stored.thumb.webp')
+  })
+
+  it('resolves media storage paths by kind with fallbacks', async () => {
+    const { resolveAdminImageMediaPath } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{
+      id: 'img_1',
+      user_id: 'user_1',
+      storage_path: 'originals/img_1.png',
+      preview_path: 'previews/img_1.webp',
+    }]
+
+    // 缩略图缺失时回退到预览图
+    await expect(resolveAdminImageMediaPath('img_1', 'thumbnail')).resolves.toBe('previews/img_1.webp')
+    await expect(resolveAdminImageMediaPath('img_1', 'preview')).resolves.toBe('previews/img_1.webp')
+    await expect(resolveAdminImageMediaPath('img_1', 'original')).resolves.toBe('originals/img_1.png')
+    // 图片不存在返回 null,由路由转 404
+    await expect(resolveAdminImageMediaPath('img_missing', 'thumbnail')).resolves.toBeNull()
+    await expect(resolveAdminImageMediaPath('', 'thumbnail')).rejects.toMatchObject({ message: 'invalid_image_id' })
   })
 
   it('filters by visibility, funding source, user, and sanitized prompt search', async () => {

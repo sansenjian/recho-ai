@@ -15,7 +15,7 @@
 | 图片加载 | Gallery 已用 `loading="lazy"`，无 `decoding="async"` |
 | 构建产物 | 路由级 / 组件级代码分割已生效（ImageCanvas 等为独立异步 chunk） |
 | API 请求去重 | 已实现：apiFetch 对幂等读方法 GET/HEAD/OPTIONS 做 in-flight 去重（`api-base.ts`）；显式 `no-store`、带请求体、带自定义请求头或凭据的请求不去重 |
-| 接口打标 | 已完成：见 `docs/api-cache-inventory.md`，双网关 60 条路由全量打标 |
+| 接口打标 | 已完成：见 `docs/api-cache-inventory.md`，双网关 61 条路由全量打标 |
 | Service Worker | 未注册 |
 
 ---

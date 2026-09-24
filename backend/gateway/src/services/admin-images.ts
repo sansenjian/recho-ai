@@ -1,10 +1,11 @@
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import { cachedAdminUsersById, type AdminUserSummary } from './admin-user-cache.js'
 import { roundCreditAmount } from './image-credit-cost.js'
-import { imagePublicUrl, removeImageStoragePaths } from './image-storage.js'
+import { imagePublicUrl, isProxiedImageStorageUrl, removeImageStoragePaths } from './image-storage.js'
 import { redactSensitiveText } from './safe-error.js'
 
 const IMAGE_HISTORY_TABLE = 'image_generations'
+const ADMIN_IMAGE_MEDIA_PATH = '/api/admin/images'
 const DEFAULT_LIMIT = 24
 const MAX_LIMIT = 60
 const MAX_BULK_IDS = 60
@@ -33,6 +34,14 @@ const ADMIN_IMAGE_COLUMNS = [
 
 export type AdminImageVisibility = 'public' | 'private'
 export type AdminImageFundingSource = 'free' | 'credit'
+export type AdminImageMediaKind = 'thumbnail' | 'preview' | 'original'
+
+/** 每个展示形态的对象优先级:缩略图缺失时回退到预览/原图,避免列表裂图。 */
+const ADMIN_MEDIA_PATH_COLUMNS: Record<AdminImageMediaKind, string[]> = {
+  thumbnail: ['thumbnail_path', 'preview_path', 'storage_path'],
+  preview: ['preview_path', 'thumbnail_path', 'storage_path'],
+  original: ['storage_path', 'preview_path', 'thumbnail_path'],
+}
 
 export interface AdminImageItem {
   id: string
@@ -203,6 +212,7 @@ export function toAdminImageItem(
   row: Record<string, unknown>,
   user?: AdminUserSummary,
 ): AdminImageItem {
+  const id = String(row.id || '')
   const previewPath = stringField(row, 'preview_path')
   const thumbnailPath = stringField(row, 'thumbnail_path')
   const storagePath = stringField(row, 'storage_path')
@@ -210,12 +220,12 @@ export function toAdminImageItem(
   const visibility = sanitizedVisibility(row.visibility) || 'public'
 
   return {
-    id: String(row.id || ''),
+    id,
     userId: stringField(row, 'user_id'),
     email: user?.email || null,
     prompt,
-    previewUrl: imagePublicUrl(previewPath) || publicUrlField(row, 'preview_url') || null,
-    thumbnailUrl: imagePublicUrl(thumbnailPath) || publicUrlField(row, 'thumbnail_url') || null,
+    previewUrl: adminImageUrl(row, id, 'preview', previewPath, 'preview_url'),
+    thumbnailUrl: adminImageUrl(row, id, 'thumbnail', thumbnailPath, 'thumbnail_url'),
     visibility,
     fundingSource: stringField(row, 'funding_source'),
     creditCost: normalizedCreditAmount(row.credit_cost),
@@ -229,6 +239,47 @@ export function toAdminImageItem(
     provider: stringField(row, 'provider'),
     imageModel: stringField(row, 'image_model'),
   }
+}
+
+/**
+ * 无公开地址时不能回退到用户侧代理 /api/image/storage/*:
+ * 该路由对 private 图片按 owner 校验,管理员不是 owner 会拿到 403(列表裂图)。
+ * 因此改走仅管理员可达的媒体路由,由 Node 直接读存储字节。
+ */
+function adminImageUrl(
+  row: Record<string, unknown>,
+  id: string,
+  kind: AdminImageMediaKind,
+  storagePath: string | null,
+  storedUrlField: string,
+) {
+  const publicUrl = imagePublicUrl(storagePath)
+  if (publicUrl && !isProxiedImageStorageUrl(publicUrl)) return publicUrl
+  const storedUrl = publicUrlField(row, storedUrlField)
+  if (storedUrl) return storedUrl
+  return id ? `${ADMIN_IMAGE_MEDIA_PATH}/${encodeURIComponent(id)}/media?kind=${kind}` : null
+}
+
+/** 解析管理媒体路由要读取的对象路径;找不到图片返回 null。 */
+export async function resolveAdminImageMediaPath(id: string, kind: AdminImageMediaKind) {
+  const imageId = sanitizedImageId(id)
+  if (!imageId) throw new AdminImageError('invalid_image_id')
+
+  const client = requireAdminImageClient()
+  const { data, error } = await client
+    .from(IMAGE_HISTORY_TABLE)
+    .select(ADMIN_MEDIA_PATH_COLUMNS[kind].join(','))
+    .eq('id', imageId)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+
+  const row = data as unknown as Record<string, unknown>
+  for (const column of ADMIN_MEDIA_PATH_COLUMNS[kind]) {
+    const path = stringField(row, column)
+    if (path) return path
+  }
+  return null
 }
 
 async function usersById(userIds: string[]) {

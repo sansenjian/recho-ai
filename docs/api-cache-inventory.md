@@ -53,6 +53,7 @@
 | POST | `/admin/credits/users/:userId/adjust`· `/admin/credits/codes` | routes/admin-credits.ts:115,163 | 调额 / 建码 | **no-store**（写） |
 | PATCH | `/admin/credits/codes/:codeId` | routes/admin-credits.ts:175 | 改码 | **no-store**（写） |
 | GET | `/admin/images` · `/admin/images/storage-overview` | routes/admin-images.ts:47,65 | 管理列表 | **no-store**（管理，身份敏感） |
+| GET | `/admin/images/:id/media` | routes/admin-images.ts | 管理台图片字节（公开地址不可用时的兜底，管理员鉴权后由 Node 读存储） | **no-store**（私有图片字节，禁止浏览器/中间层缓存） |
 | PATCH | `/admin/images/bulk/visibility` · `/admin/images/:id/visibility` | routes/admin-images.ts:77,113 | 可见性变更 | **no-store**（写） |
 | POST | `/admin/images/bulk/archive` · `/admin/images/bulk/delete` | routes/admin-images.ts:89,101 | 归档 / 删除 | **no-store**（写） |
 | GET | `/admin/image-attempts` | routes/admin-image-attempts.ts:38 | 尝试记录查询 | **no-store**（管理，身份敏感） |
@@ -102,9 +103,9 @@
 
 ## 三、执行摘要
 
-- **总接口数**：Node 44 条 + Go 16 条（含健康/实时）。
+- **总接口数**：Node 45 条 + Go 16 条（含健康/实时）。
 - **可缓存（读）**：约 10 条 —— 主推 `scope=public` 历史、`/api/config/*`、`/api/skills`、`/api/tools`、`/announcements`、存储对象代理。
-- **no-store（写 / 身份敏感）**：约 44 条 —— 生图、上传、删除、额度调整、`/api/credits`、`scope=mine` 历史、API 密钥（用户与管理两侧）、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
+- **no-store（写 / 身份敏感）**：约 45 条 —— 生图、上传、删除、额度调整、`/api/credits`、`scope=mine` 历史、API 密钥（用户与管理两侧）、全部 admin 接口（含管理 GET 与图片字节，避免跨身份缓存串数据）。
 - **不处理（监控/实时）**：health、diagnostics。
 
 ## 四、实施注意事项（§2.3 对照）
@@ -113,3 +114,4 @@
 2. Admin 写操作成功后，需主动失效同域读缓存（如 `PATCH /admin/settings` 后清 `/api/config/app`）。
 3. 历史接口区分 `public`/`mine` 作用域：`mine` 含私有数据，响应头用 `private`；`public` 可用较短 `public, max-age`。
 4. 前端条件请求（`If-None-Match`）仅对可缓存读接口启用，且保证 304 时必有本地缓存可回退。
+5. 管理台图片不得复用用户侧 `/api/image/storage/*`：该路由对 private 图片按归属校验（非 owner 403），无公开地址时须走 `/api/admin/images/:id/media`（管理员鉴权、Node 直读存储，`no-store`）。
