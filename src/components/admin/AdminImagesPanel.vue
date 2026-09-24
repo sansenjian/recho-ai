@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import AdminImagePreview from './AdminImagePreview.vue'
 import type { AdminImageItem } from '../../types/admin'
 import {
   dateTime,
@@ -189,7 +190,7 @@ function toggleImage(id: string, event: Event) {
               >
             </td>
             <td class="px-2.5 py-2 align-middle">
-              <img v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-border bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="">
+              <AdminImagePreview v-if="imagePreviewSrc(image)" class="block w-16 h-16 object-cover rounded-md border border-border bg-[var(--surface-soft)]" :src="imagePreviewSrc(image)" alt="" />
               <span v-else class="grid place-items-center w-16 h-16 rounded-md border border-border bg-[var(--surface-soft)] text-[var(--text-secondary)] text-xs font-extrabold">{{ t('images.noImage') }}</span>
             </td>
             <td class="px-2.5 py-2 align-middle">{{ dateTime(image.generatedAt) }}</td>

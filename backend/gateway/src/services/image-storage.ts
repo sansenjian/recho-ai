@@ -151,6 +151,11 @@ export function proxiedImageStorageUrl(storagePath?: string | null) {
   return `${IMAGE_PROXY_PATH_PREFIX}${encodeURIComponent(storagePath)}`
 }
 
+/** 判断 URL 是否为用户侧存储代理路径(无公开地址时的回退)。 */
+export function isProxiedImageStorageUrl(value?: string | null) {
+  return typeof value === 'string' && value.startsWith(IMAGE_PROXY_PATH_PREFIX)
+}
+
 function storageProvider(options: StoreImageOptions = {}): ImageStorageProvider {
   return options.provider === 'tencent-cos' ? 'tencent-cos' : 'supabase'
 }
