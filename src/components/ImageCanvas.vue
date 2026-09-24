@@ -114,6 +114,7 @@ function createCanvasWorkspaceId() {
 }
 
 const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
+const imageModel = ref('')
 
 // Model options for Imagio prompt generation panel and canvas generation nodes.
 const imagioModelOptions = computed(() =>
@@ -219,7 +220,6 @@ const activeWorkspace = ref<WorkspaceMode>('canvas')
 const currentImageMode = ref<'imagio' | 'canvas'>('imagio')
 
 // --- Imagio prompt generation parameters (right side settings panel) ---
-const imageModel = ref('')
 const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
