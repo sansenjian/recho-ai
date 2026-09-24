@@ -366,6 +366,14 @@ describe('canvas generation node model and transparency controls', () => {
     expect(wrapper.emitted('update-model')).toEqual([[node, 'gpt-image-2.5-sunburst']])
   })
 
+  it('falls back to the canvas model when a restored node model is unavailable', () => {
+    const node = generationNode('auto', 'auto')
+    node.model = 'removed-model'
+    const wrapper = mountGenerationNode(node)
+
+    expect(controlGroup(wrapper, '模型').find('.linked-count').text()).toBe('Flare')
+  })
+
   it('greys out transparent background for models without the capability', () => {
     const node: CanvasNode = { ...generationNode('auto', 'auto'), model: 'gpt-image-2.5-flare', transparentBackground: true }
     const wrapper = mountGenerationNode(node)

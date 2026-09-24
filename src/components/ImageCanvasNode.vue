@@ -97,7 +97,11 @@ const customAspectRatioError = ref<string | null>(null)
 const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.node.aspectRatio))
 const customAspectRatioSelected = computed(() => customAspectRatioActive.value || customAspectRatioOpen.value)
 // 节点没选模型时跟随画布面板的选择，所以这里算的是「实际生效的模型」。
-const activeModel = computed(() => props.node.model || props.defaultModel)
+const activeModel = computed(() => {
+  const explicitModel = props.node.model
+  if (explicitModel && props.modelOptions.some(option => option.value === explicitModel)) return explicitModel
+  return props.defaultModel
+})
 const activeModelOption = computed(() => props.modelOptions.find(option => option.value === activeModel.value))
 const activeModelLabel = computed(() => activeModelOption.value?.label || activeModel.value || '默认模型')
 const transparentAvailable = computed(() => activeModelOption.value?.supportsTransparent === true)

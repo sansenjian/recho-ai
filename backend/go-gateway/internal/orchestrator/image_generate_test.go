@@ -741,6 +741,40 @@ func TestCallImageAPISendsTransparentBackgroundOnlyForDeclaredModels(t *testing.
 			t.Fatalf("expected no background field unless requested: %#v", payload)
 		}
 	})
+
+	t.Run("edit model capability controls the multipart request", func(t *testing.T) {
+		var background string
+		o := NewImageOrchestrator(nil, nil, nil)
+		o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if err := req.ParseMultipartForm(2 << 20); err != nil {
+				t.Fatalf("parse edit request: %v", err)
+			}
+			background = req.FormValue("background")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/edited.png"}]}`)),
+			}, nil
+		})}
+
+		_, err := o.callImageAPI(context.Background(), GenRequest{
+			Prompt:                "edit",
+			TransparentBackground: true,
+			References:            []GenReference{{DataUrl: "data:image/png;base64,aGVsbG8="}},
+		}, 1, "auto", "auto", "auto", service.ImageProviderConfig{
+			BaseURL:                  "https://provider.example/v1",
+			APIKey:                   "provider-key",
+			ImageModel:               "gpt-image-2.5-sunburst",
+			EditModel:                "gpt-image-2.5-flare",
+			ModelSupportsTransparent: map[string]bool{"gpt-image-2.5-sunburst": true},
+		})
+		if err != nil {
+			t.Fatalf("callImageAPI returned error: %v", err)
+		}
+		if background != "" {
+			t.Fatalf("expected edit model without transparency support to omit background, got %q", background)
+		}
+	})
 }
 
 func TestPNGHasAlphaDetectsTheTransparencyChannel(t *testing.T) {

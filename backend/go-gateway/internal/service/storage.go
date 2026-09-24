@@ -177,6 +177,9 @@ type StagedImage struct {
 	Mime        string
 	Bytes       int
 	SHA256      string
+	// Data is the downloaded/unprocessed payload for callers that need to
+	// inspect the provider response before it is persisted.
+	Data []byte
 }
 
 // ImageHistory represents image history data
@@ -359,6 +362,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 						Mime:        mime,
 						Bytes:       len(payload),
 						SHA256:      hex.EncodeToString(sum[:]),
+						Data:        append([]byte(nil), payload...),
 					}, nil
 				} else {
 					return nil, fmt.Errorf("failed to stage image with provider %q: %w", locator.Provider, errors.Join(err, fallbackErr))
@@ -375,6 +379,7 @@ func (s *StorageService) StageFromBuffer(ctx context.Context, data []byte, mime,
 		Mime:        mime,
 		Bytes:       len(payload),
 		SHA256:      hex.EncodeToString(sum[:]),
+		Data:        append([]byte(nil), payload...),
 	}, nil
 }
 

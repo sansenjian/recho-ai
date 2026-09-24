@@ -134,8 +134,23 @@ function modelSupportsTransparent(modelId: string) {
 const selectedModelSupportsTransparent = computed(() => modelSupportsTransparent(imageModel.value))
 
 watch(selectedModelSupportsTransparent, (supported) => {
-  if (!supported) transparentBackground.value = false
+  if (!supported) {
+    transparentBackground.value = false
+    nodes.value.forEach((node) => {
+      if (!node.model) node.transparentBackground = false
+    })
+  }
 })
+
+watch(availableImageModels, (models) => {
+  const validModelIds = new Set(models.map(model => model.id))
+  nodes.value.forEach((node) => {
+    if (node.model && !validModelIds.has(node.model)) {
+      node.model = undefined
+      node.transparentBackground = false
+    }
+  })
+}, { deep: true })
 
 const {
   isGenerating,

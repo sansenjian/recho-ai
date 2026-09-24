@@ -215,8 +215,8 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeProviderUnavailable, "图片 Provider 尚未配置，请联系管理员。")
 	}
 	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
-	if req.TransparentBackground && !providerModelSupportsTransparent(providerCfg) {
-		o.logger.Printf("[image] transparent background requested but model %q is not declared transparent; generating an opaque image", providerCfg.ImageModel)
+	if req.TransparentBackground && !modelSupportsTransparent(providerCfg, imageModel) {
+		o.logger.Printf("[image] transparent background requested but model %q is not declared transparent; generating an opaque image", imageModel)
 	}
 
 	// --- 计算额度（按实际使用的模型取价）---
@@ -244,22 +244,23 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 
 	batchID := "batch_" + randomID()
 	metadata := imageGenerationMetadata{
-		BatchID:        batchID,
-		UserID:         userID,
-		DisplayPrompt:  displayPrompt,
-		SystemPrompt:   req.SystemPrompt,
-		ModelPrompt:    modelPrompt,
-		Size:           size,
-		AspectRatio:    aspectRatio,
-		Resolution:     resolution,
-		Quality:        quality,
-		ImageModel:     imageModel,
-		References:     references,
-		ReferenceCount: len(references),
-		Visibility:     visibility,
-		FundingSource:  fundingSource,
-		CreditCost:     creditCost,
-		TotalCost:      totalCost,
+		BatchID:               batchID,
+		UserID:                userID,
+		DisplayPrompt:         displayPrompt,
+		SystemPrompt:          req.SystemPrompt,
+		ModelPrompt:           modelPrompt,
+		Size:                  size,
+		AspectRatio:           aspectRatio,
+		Resolution:            resolution,
+		Quality:               quality,
+		ImageModel:            imageModel,
+		TransparentBackground: req.TransparentBackground && modelSupportsTransparent(providerCfg, imageModel),
+		References:            references,
+		ReferenceCount:        len(references),
+		Visibility:            visibility,
+		FundingSource:         fundingSource,
+		CreditCost:            creditCost,
+		TotalCost:             totalCost,
 	}
 
 	// --- 原子预留额度并创建 staging job ---
@@ -659,6 +660,9 @@ func (o *ImageOrchestrator) enqueueImageJob(
 			err := errors.New("storage returned empty staged image")
 			o.logger.Printf("[image] failed to stage image %s: %v", images[index].result.ID, err)
 			return o.handleStagingFailure(job, false, manifestJSON, requestID, reservation, user, idempotencyKey, "staging_failed", err.Error())
+		}
+		if metadata.TransparentBackground && !pngHasAlpha(staged.Data) {
+			o.logger.Printf("[image] transparent background requested but provider returned an image without alpha (model %s, %d bytes)", metadata.ImageModel, len(staged.Data))
 		}
 
 		manifest.Images[index].StagedPath = staged.StoragePath
@@ -1062,7 +1066,7 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	}
 	// 透明背景只认 background 字段，且绝不能同时发 output_format：
 	// 上游一旦收到 output_format 就会退回不透明的出图管线（transparent 被忽略）。
-	transparent := req.TransparentBackground && providerModelSupportsTransparent(provider)
+	transparent := req.TransparentBackground && modelSupportsTransparent(provider, imageModel)
 	if transparent {
 		apiReq["background"] = "transparent"
 	}
@@ -1182,13 +1186,6 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 				},
 			})
 		} else if item.Base64 != "" {
-			if transparent {
-				// 上游偶发把透明请求路由到不支持透明的备用通道（典型表现是怪尺寸的 RGB PNG）。
-				// 这里只做告警：重试有额外成本，且大概率仍落在同一条通道上。
-				if raw, decodeErr := base64.StdEncoding.DecodeString(item.Base64); decodeErr == nil && !pngHasAlpha(raw) {
-					o.logger.Printf("[image] transparent background requested but provider returned an image without alpha (model %s, %d bytes)", imageModel, len(raw))
-				}
-			}
 			result.DataURL = "data:" + imageMime + ";base64," + item.Base64
 			result.URL = result.DataURL
 			result.PreviewURL = result.DataURL
@@ -1601,8 +1598,8 @@ func roundToTwoDecimals(val float64) float64 {
 // 该能力由管理员在模型目录行上勾选（model_catalog[].supportsTransparent），
 // 只在行「启用且勾选」时生效：同一上游并非所有模型都接了透明输出
 // （例如 sunburst 支持、flare 不支持），无脑带 background 只会静默拿到无 alpha 的图。
-func providerModelSupportsTransparent(provider service.ImageProviderConfig) bool {
-	model := strings.TrimSpace(provider.ImageModel)
+func modelSupportsTransparent(provider service.ImageProviderConfig, model string) bool {
+	model = strings.TrimSpace(model)
 	if model == "" {
 		return false
 	}

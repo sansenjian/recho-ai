@@ -230,24 +230,25 @@ type imageSource struct {
 }
 
 type imageGenerationMetadata struct {
-	BatchID             string
-	UserID              string
-	DisplayPrompt       string
-	SystemPrompt        string
-	ModelPrompt         string
-	Size                string
-	AspectRatio         string
-	Resolution          string
-	Quality             string
-	ImageModel          string
-	References          []service.ImageHistoryReference
-	ReferenceCount      int
-	Visibility          string
-	FundingSource       string
-	CreditCost          float64
-	CreditTransactionID string
-	TotalCost           float64
-	CreditBalance       *float64
+	BatchID               string
+	UserID                string
+	DisplayPrompt         string
+	SystemPrompt          string
+	ModelPrompt           string
+	Size                  string
+	AspectRatio           string
+	Resolution            string
+	Quality               string
+	ImageModel            string
+	TransparentBackground bool
+	References            []service.ImageHistoryReference
+	ReferenceCount        int
+	Visibility            string
+	FundingSource         string
+	CreditCost            float64
+	CreditTransactionID   string
+	TotalCost             float64
+	CreditBalance         *float64
 }
 
 // imageJobManifest is the durable hand-off payload between the request path
