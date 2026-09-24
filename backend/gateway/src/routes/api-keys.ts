@@ -3,7 +3,13 @@ import {
   AdminCreditError,
   assertAdminUser,
 } from '../services/admin-credits.js'
-import { createApiKey, listApiKeys, revokeApiKey, type ApiKeyRecord } from '../services/api-keys.js'
+import {
+  ApiKeyLimitError,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  type ApiKeyRecord,
+} from '../services/api-keys.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
@@ -11,6 +17,9 @@ const router = Router()
 
 function adminErrorResponse(err: unknown) {
   if (err instanceof AdminCreditError) {
+    return { status: err.status, error: err.publicMessage }
+  }
+  if (err instanceof ApiKeyLimitError) {
     return { status: err.status, error: err.publicMessage }
   }
   return {
