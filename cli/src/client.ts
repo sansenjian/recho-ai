@@ -8,7 +8,7 @@ import {
   type ChatStreamEvent,
   type ChatStreamResult,
 } from './types.js'
-import { consumeSseStream, parseSseJson } from './sse.js'
+import { consumeSseStream, parseSseJson, sseUnexpectedEnd } from './sse.js'
 
 export interface RequestOptions {
   method?: 'GET' | 'POST'
@@ -72,7 +72,18 @@ export async function apiJson<T>(opts: RequestOptions): Promise<T> {
   }
   if (res.ok) {
     if (res.status === 204) return undefined as T
-    return (await res.json()) as T
+    // baseUrl 可能指向前端 SPA 或反向代理，2xx 也可能返回 HTML。
+    // 直接 res.json() 抛 SyntaxError 会归一为 UNEXPECTED，用户无法定位配置错误。
+    const text = await res.text()
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      throw new CLIError(
+        EXIT_GENERIC,
+        'BAD_RESPONSE',
+        `站点返回的不是 JSON（${res.headers.get('content-type') ?? 'unknown'}），请确认 --base-url 指向 API 站点。`,
+      )
+    }
   }
   throw await toCLIErrorFromResponse(res)
 }
@@ -93,6 +104,7 @@ export async function streamChat(opts: StreamChatOptions): Promise<ChatStreamRes
   let thinking = ''
   let finishReason: string | undefined
   let streamError: string | null = null
+  let sawTerminalEvent = false
 
   let res: Response
   try {
@@ -124,6 +136,10 @@ export async function streamChat(opts: StreamChatOptions): Promise<ChatStreamRes
         streamError = streamError ?? message
         return
       }
+      if (msg.data === '[DONE]') {
+        sawTerminalEvent = true
+        return
+      }
       const data = parseSseJson(msg.data)
       if (!data) return
       events.push(data as ChatStreamEvent)
@@ -135,6 +151,7 @@ export async function streamChat(opts: StreamChatOptions): Promise<ChatStreamRes
           if (typeof data.text === 'string') thinking += data.text
           break
         case 'message_complete':
+          sawTerminalEvent = true
           if (typeof data.finishReason === 'string') finishReason = data.finishReason
           if (data.finishReason === 'error') streamError = streamError ?? '响应中途失败。'
           break
@@ -148,5 +165,7 @@ export async function streamChat(opts: StreamChatOptions): Promise<ChatStreamRes
   if (streamError) {
     throw new CLIError(EXIT_BUSINESS, 'STREAM_ERROR', streamError)
   }
+  // SSE 正常关闭但从未收到终止事件（message_complete / [DONE]）：流不完整，拒绝返回部分结果。
+  if (!sawTerminalEvent) throw sseUnexpectedEnd()
   return { content, thinking, finishReason, events }
 }

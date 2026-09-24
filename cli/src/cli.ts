@@ -1,5 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module'
 import { Command, CommanderError } from 'commander'
+// 运行时读取包版本号；npm_package_version 只在 npm script 环境存在，
+// 用户直接执行 bin（全局安装）时不存在，否则 --version 会一直回退到硬编码值。
+const pkgVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version
 import { defaultConfigPath, readConfigFile, resolveConfig } from './config.js'
 import { toCLIError, EXIT_USAGE, type ResolvedCLIConfig } from './types.js'
 import { getAccessToken } from './auth.js'
@@ -69,7 +73,7 @@ async function main(): Promise<void> {
   program
     .name('recho')
     .description('recho-ai 命令行客户端:通过站点 API 在终端进行聊天与图片生成')
-    .version(process.env.npm_package_version ?? '0.1.0')
+    .version(pkgVersion)
     .showHelpAfterError()
     .exitOverride()
     .option('-c, --config <path>', '配置文件路径(默认 ~/.recho/config.json)')
@@ -198,5 +202,5 @@ async function main(): Promise<void> {
 main().catch((err) => {
   const cliErr = toCLIError(err)
   console.error(`错误 [${cliErr.code}]: ${cliErr.message}`)
-  process.exitCode = EXIT_USAGE
+  process.exitCode = cliErr.exitCode
 })

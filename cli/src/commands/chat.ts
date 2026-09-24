@@ -69,8 +69,11 @@ export async function chat(opts: ChatCommandOptions): Promise<void> {
     return
   }
 
-  if (tty) output('\n')
-  if (result.content) {
+  // TTY 模式下 onEvent 已逐字输出 content_delta，这里只补换行；
+  // 非 TTY 模式（无流式可视输出）才整体打印完整内容，避免同一回复出现两次。
+  if (tty && result.content) {
+    output('\n')
+  } else if (result.content) {
     output(result.content)
     output('\n')
   } else if (result.thinking) {

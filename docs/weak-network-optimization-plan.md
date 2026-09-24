@@ -14,7 +14,7 @@
 | API 缓存 | 历史 / 作品 / 配置接口无 `ETag`、无 `Cache-Control` |
 | 图片加载 | Gallery 已用 `loading="lazy"`，无 `decoding="async"` |
 | 构建产物 | 路由级 / 组件级代码分割已生效（ImageCanvas 等为独立异步 chunk） |
-| API 请求去重 | 已实现：apiFetch 对幂等 GET 做 in-flight 去重（`api-base.ts`），no-store 与写请求不去重 |
+| API 请求去重 | 已实现：apiFetch 对幂等读方法 GET/HEAD/OPTIONS 做 in-flight 去重（`api-base.ts`）；显式 `no-store`、带请求体、带自定义请求头或凭据的请求不去重 |
 | 接口打标 | 已完成：见 `docs/api-cache-inventory.md`，双网关 54 条路由全量打标 |
 | Service Worker | 未注册 |
 
@@ -36,7 +36,7 @@
 | 维度 | 内容 |
 |---|---|
 | 盘点对象 | Node 网关 `backend/gateway/src/routes/*`、Go 网关 `backend/go-gateway/internal/handler/*` 全部路由 |
-| 分类规则 | 按方法（GET/HEAD/OPTIONS 幂等；POST/PUT/DELETE 非幂等）+ 是否改变状态（扣费 / 写库 / 触发任务）双维度判定 |
+| 分类规则 | 按方法（GET/HEAD/OPTIONS/PUT/DELETE 幂等；POST、PATCH 非幂等）+ 是否改变状态（扣费 / 写库 / 触发任务）双维度判定 |
 | 打标结果 | 每接口标注：`no-store`（写） / `private, max-age=N`（读可缓存） / 不处理（实时敏感） |
 | 交付物 | 新增 `docs/api-cache-inventory.md`，双网关全覆盖清单 |
 
@@ -51,8 +51,9 @@
 | 接口 | 策略 | 说明 |
 |---|---|---|
 | `POST /api/image/generate` | `Cache-Control: no-store` | 写接口，必须 no-store |
-| `GET /api/image/history*` | `ETag` + `Cache-Control: private, max-age=30` + 客户端条件请求 | 30s 内直接 304，省流量 |
-| `GET /api/image/history/:id`（详情） | 同上 | 详情可复用 |
+| `GET /api/image/history*` | `scope=public`：`ETag` + `Cache-Control: public, max-age=30` + 条件请求；`scope=mine`：`no-store` | 公开历史 30s 内 304 省流量；私有历史身份敏感不缓存 |
+| `GET /api/image/history/:id`（详情） | 同上（按 scope 区分） | 详情可复用，私有详情不缓存 |
+| `GET /api/credits` | `Cache-Control: no-store` | 按 user.ID 返回余额，身份敏感 |
 | `GET /api/config/*` | `ETag` + `Cache-Control: private, max-age=60` | 配置低频变更 |
 | 图片 / 缩略图 | 维持现状 `max-age=31536000` | 已有，不动 |
 
@@ -81,13 +82,14 @@
 
 | 类别 | 做法 | 适用场景 |
 |---|---|---|
-| 前端 inflight 去重 | 统一 `apiFetch` 内部维护 pending Map：同 key（method+url+query）且未完成时复用同一 Promise | 历史、作品、配置等 GET |
+| 前端 inflight 去重 | 统一 `apiFetch` 内部维护 pending Map：同 key（GET/HEAD/OPTIONS + 无 body + 非 no-store + 无自定义请求头/凭据）且未完成时复用同一 Promise | 历史、作品、配置等幂等读请求 |
 | 后端读合并（可选） | 短时间窗（100ms）把相同读请求合并为一次上游调用 | 历史列表热点接口 |
 | 写接口 | 禁用合并；生图已有幂等键（`createIdempotencyKey`），保持现状 | generate / delete 等 |
 
 ### 3.3 实施要点
 
-- 仅对幂等 GET 生效；`401/403/4xx` 不缓存失败结果，允许重试。
+- 仅对幂等读方法 GET/HEAD/OPTIONS 生效；显式 `no-store` 的请求、带请求体的请求、以及带自定义请求头（如 `Authorization`）或凭据模式的请求不参与去重，避免串数据或响应被复用。
+- `401/403/4xx` 不缓存失败结果，允许重试。
 - pending Map 需在请求完成/失败时清理，避免内存累积（参考 LRU 上限策略）。
 - 后端合并涉及内存中的 pending table，需设置 TTL 与上限。
 
