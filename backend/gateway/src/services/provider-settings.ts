@@ -30,6 +30,9 @@ export interface ProviderModel {
   // Per-row edit model: used when the request carries reference images. It is
   // deliberately not part of the model list clients may select from.
   editModel: string | null
+  // 该模型是否支持透明背景（image provider 专用）：为 true 时前端才允许勾选
+  // 「透明背景」，生图请求才会带上 background: transparent。
+  supportsTransparent: boolean
 }
 
 export interface ProviderSetting {
@@ -165,6 +168,8 @@ function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolea
       name: cleanText(source.name, 120) || id,
       enabled: source.enabled !== false,
       editModel: isValidChatModel(editModel) ? editModel : null,
+      // 缺省视为不支持：要么漏配、要么上游临时失效，都比「以为能透明」安全。
+      supportsTransparent: source.supportsTransparent === true,
     })
   }
   return result.slice(0, 100)
@@ -173,7 +178,7 @@ function normalizeModelCatalog(value: unknown, options: { rejectInvalid?: boolea
 function modelCatalogFromInput(input: Record<string, unknown>): ProviderModel[] {
   const catalog = normalizeModelCatalog(input.modelCatalog, { rejectInvalid: true })
   if (catalog.length > 0) return catalog
-  return normalizeModelList(input.models, { rejectInvalid: true }).map(id => ({ id, name: id, enabled: true, editModel: null }))
+  return normalizeModelList(input.models, { rejectInvalid: true }).map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
 }
 
 function normalizeName(value: unknown) {
@@ -276,7 +281,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_000,
       defaultModel: 'gpt-4o-mini',
       models: ['gpt-4o-mini'],
-      modelCatalog: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true, editModel: null }],
+      modelCatalog: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini', enabled: true, editModel: null, supportsTransparent: false }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -301,7 +306,7 @@ function envProviderRows(): ProviderSetting[] {
       priority: 10_001,
       defaultModel: 'kimi-k2-0711-preview',
       models: ['kimi-k2-0711-preview'],
-      modelCatalog: [{ id: 'kimi-k2-0711-preview', name: 'kimi-k2-0711-preview', enabled: true, editModel: null }],
+      modelCatalog: [{ id: 'kimi-k2-0711-preview', name: 'kimi-k2-0711-preview', enabled: true, editModel: null, supportsTransparent: false }],
       imageModel: null,
       editModel: null,
       imageCompatibilityMode: 'auto',
@@ -337,7 +342,7 @@ function providerFromRow(row: Record<string, unknown>): ProviderSetting {
     models: normalizeModelList(row.models),
     modelCatalog: (() => {
       const catalog = normalizeModelCatalog(row.model_catalog)
-      return catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
+      return catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
     })(),
     imageModel: typeof row.image_model === 'string' && row.image_model ? row.image_model : null,
     editModel: typeof row.edit_model === 'string' && row.edit_model ? row.edit_model : null,
@@ -363,7 +368,7 @@ function runtimeChatProviderFromRow(row: Record<string, unknown>, requestedModel
   const baseUrl = typeof row.base_url === 'string' ? row.base_url.trim().replace(/\/+$/, '') : ''
   if (!apiKey || !baseUrl) return null
   const catalog = normalizeModelCatalog(row.model_catalog)
-  const models = catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null }))
+  const models = catalog.length > 0 ? catalog : normalizeModelList(row.models).map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
   const resolvedModel = models.find(item => item.enabled && (
     item.id === requestedModel ||
     item.name.trim().toLowerCase() === requestedModel?.trim().toLowerCase() ||

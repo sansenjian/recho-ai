@@ -155,6 +155,72 @@ describe('canvas document helpers', () => {
     expect(imported.viewport).toEqual({ x: 10, y: 20, zoom: 1.4 })
   })
 
+  it('round-trips the generation model and transparent background', () => {
+    const document = buildCanvasExportDocument({
+      canvasId: 'canvas_1',
+      title: 'Canvas',
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        baseNode({
+          id: 'generation_1',
+          type: 'generation',
+          model: 'gpt-image-2.5-sunburst',
+          transparentBackground: true,
+        }),
+        // 文本节点即使带着这两个字段也不该被写进导出文件。
+        baseNode({
+          id: 'text_1',
+          type: 'text',
+          model: 'gpt-image-2.5-sunburst',
+          transparentBackground: true,
+        }),
+      ],
+      connections: [],
+    })
+
+    const exportedGeneration = document.canvas.nodes.find(node => node.id === 'generation_1')
+    expect(exportedGeneration?.model).toBe('gpt-image-2.5-sunburst')
+    expect(exportedGeneration?.transparentBackground).toBe(true)
+    const exportedText = document.canvas.nodes.find(node => node.id === 'text_1')
+    expect(exportedText?.model).toBeUndefined()
+    expect(exportedText?.transparentBackground).toBeUndefined()
+
+    const imported = normalizeCanvasImport(document, { mode: 'replace' })
+    const importedGeneration = imported.nodes.find(node => node.id === 'generation_1')
+    expect(importedGeneration?.model).toBe('gpt-image-2.5-sunburst')
+    expect(importedGeneration?.transparentBackground).toBe(true)
+  })
+
+  it('ignores unusable generation model fields on import', () => {
+    const document: CanvasExportDocument = parseCanvasExportDocument({
+      schema: 'recho.canvas',
+      version: 1,
+      exportedAt: '2026-06-06T00:00:00.000Z',
+      canvas: {
+        id: 'canvas_1',
+        title: 'Canvas',
+        version: 1,
+        viewport: { x: 0, y: 0, zoom: 1 },
+        nodes: [
+          baseNode({
+            id: 'generation_1',
+            type: 'generation',
+            model: '   ',
+            transparentBackground: 'yes' as unknown as boolean,
+          }),
+        ],
+        connections: [],
+      },
+      assets: { mode: 'references-only', images: [] },
+    })
+
+    const imported = normalizeCanvasImport(document, { mode: 'replace' })
+
+    // 空白模型回落到画布面板选择；非布尔透明标记不当成「已勾选」。
+    expect(imported.nodes[0].model).toBeUndefined()
+    expect(imported.nodes[0].transparentBackground).toBeUndefined()
+  })
+
   it('rejects duplicate node ids in an imported canvas document', () => {
     const document: CanvasExportDocument = parseCanvasExportDocument({
       schema: 'recho.canvas',

@@ -317,6 +317,62 @@ func TestCatalogModelsSkipsRowsWithoutAnEditModel(t *testing.T) {
 	}
 }
 
+func TestCatalogTransparentModelsRequiresAnEnabledDeclaration(t *testing.T) {
+	catalog := []byte(`[
+		{"id":"gpt-image-2.5-sunburst","name":"Sunburst","enabled":true,"supportsTransparent":true},
+		{"id":"gpt-image-2.5-flare","name":"Flare","enabled":true},
+		{"id":"retired-model","name":"Retired","enabled":false,"supportsTransparent":true}
+	]`)
+
+	transparent := catalogTransparentModels(catalog)
+	if len(transparent) != 1 || !transparent["gpt-image-2.5-sunburst"] {
+		t.Fatalf("unexpected transparent models: %#v", transparent)
+	}
+	// 停用行不能再让请求带上 background: transparent，没勾选的行同理。
+	if transparent["retired-model"] || transparent["gpt-image-2.5-flare"] {
+		t.Fatalf("only enabled declared rows may output transparency: %#v", transparent)
+	}
+	if none := catalogTransparentModels([]byte(`not-json`)); none != nil {
+		t.Fatalf("expected nil transparent models for an unparsable catalog, got %#v", none)
+	}
+}
+
+func TestBuildImageProviderConfigFillsTransparentModels(t *testing.T) {
+	models, editModels := catalogModels([]byte(`[{"id":"model-one","enabled":true}]`))
+	transparentModels := catalogTransparentModels([]byte(`[
+		{"id":"model-one","enabled":true,"supportsTransparent":true},
+		{"id":"model-two","enabled":true}
+	]`))
+	candidate := imageProviderCandidate{
+		config: ImageProviderConfig{
+			Name:       "provider",
+			BaseURL:    "https://provider.example/v1/",
+			ImageModel: "",
+			RetryCount: 3,
+		},
+		legacyAPIKey:      "legacy-key",
+		compatibilityMode: "auto",
+		timeoutMs:         defaultImageProviderTimeoutMS,
+		models:            models,
+		editModels:        editModels,
+		transparentModels: transparentModels,
+	}
+
+	cfg, usable, err := buildImageProviderConfig(candidate, DefaultImageProviderConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !usable {
+		t.Fatal("expected a provider with base URL and API key to be usable")
+	}
+	if !cfg.ModelSupportsTransparent["model-one"] {
+		t.Fatalf("expected the declared transparent model to be carried over, got %#v", cfg.ModelSupportsTransparent)
+	}
+	if cfg.ModelSupportsTransparent["model-two"] {
+		t.Fatalf("rows without the capability must not be carried over: %#v", cfg.ModelSupportsTransparent)
+	}
+}
+
 func TestBuildImageProviderConfigFillsModelEditModels(t *testing.T) {
 	models, editModels := catalogModels([]byte(`[
 		{"id":"model-one","enabled":true,"editModel":"row-edit"},

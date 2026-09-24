@@ -43,6 +43,8 @@ export type AdminRole = 'senior' | 'operator'
 export interface ImageModelEntry {
   id: string
   name: string
+  /** 该模型能否输出透明背景（仅 Provider 目录声明的才为 true）。 */
+  supportsTransparent: boolean
 }
 
 export interface ChatModelEntry {
@@ -200,6 +202,8 @@ function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): I
     result.push({
       id: record.id.trim(),
       name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : record.id.trim(),
+      // app_settings 的旧格式没有能力位，透明能力只由 Provider 模型目录声明。
+      supportsTransparent: false,
     })
   }
   return result.length > 0 ? result : fallback
@@ -615,7 +619,7 @@ export async function publicAppConfig() {
       if (provider.modelCatalog.length > 0) {
         return provider.modelCatalog
           .filter(model => model.enabled)
-          .map(model => ({ id: normalizeModelName(model.id, ''), name: model.name.trim() || model.id }))
+          .map(model => ({ id: normalizeModelName(model.id, ''), name: model.name.trim() || model.id, supportsTransparent: model.supportsTransparent === true }))
           .filter((entry): entry is ImageModelEntry => Boolean(entry.id))
       }
       // Rows without a catalog (legacy image providers and env fallbacks) keep
@@ -626,7 +630,7 @@ export async function publicAppConfig() {
       return legacyModels
         .map(id => normalizeModelName(id, ''))
         .filter((id): id is string => Boolean(id))
-        .map(id => ({ id, name: id }))
+        .map(id => ({ id, name: id, supportsTransparent: false }))
     })
   const availableImageModels = [...providerImageModels, ...settings.availableImageModels]
     .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)

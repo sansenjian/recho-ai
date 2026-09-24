@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import type { CanvasNode } from '../src/lib/image-canvas-model'
+import type { ImageCanvasContext } from '../src/types/image'
+import { useImageCanvasGeneration } from '../src/composables/useImageCanvasGeneration'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
 import ImageCanvasGalleryStage from '../src/components/ImageCanvasGalleryStage.vue'
@@ -189,6 +192,8 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
         qualityOptions: [{ value: 'auto', label: 'Auto' }],
+        modelOptions: [],
+        defaultModel: '',
         isGenerating: false,
         resolveMentionToken: () => null,
       },
@@ -231,6 +236,8 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
         qualityOptions: [{ value: 'auto', label: 'Auto' }],
+        modelOptions: [],
+        defaultModel: '',
         isGenerating: false,
         resolveMentionToken: () => null,
       },
@@ -272,6 +279,8 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
         qualityOptions: [{ value: 'auto', label: 'Auto' }],
+        modelOptions: [],
+        defaultModel: '',
         isGenerating: false,
         resolveMentionToken: () => null,
       },
@@ -292,6 +301,160 @@ describe('image generation Auto resolution controls', () => {
     await editor.find('button').trigger('click')
 
     expect(wrapper.emitted('update-aspect-ratio')).toEqual([[node, '4:5']])
+  })
+})
+
+describe('canvas generation node model and transparency controls', () => {
+  const modelOptions = [
+    { value: 'gpt-image-2.5-sunburst', label: 'Sunburst', supportsTransparent: true },
+    { value: 'gpt-image-2.5-flare', label: 'Flare', supportsTransparent: false },
+  ]
+
+  function mountGenerationNode(node: CanvasNode, defaultModel = 'gpt-image-2.5-flare') {
+    return mount(ImageCanvasNode, {
+      props: {
+        node,
+        selected: true,
+        nodeStyle: {},
+        mentionState: null,
+        mentionOptions: [],
+        textMentionOpen: false,
+        generationMentionOpen: false,
+        connectedHandles: {},
+        isGeneratedImageNode: false,
+        imageAlt: '',
+        imageOutputMeta: '',
+        isDownloading: false,
+        hasPromptLink: false,
+        generationPromptValue: '',
+        referencedImageNodes: [],
+        canSelectGenerationCount: true,
+        generationCount: 1,
+        generationCountOptions: [{ value: 1, label: '1' }],
+        resolutionOptions,
+        aspectRatioOptions,
+        qualityOptions: [{ value: 'auto', label: 'Auto' }],
+        modelOptions,
+        defaultModel,
+        isGenerating: false,
+        resolveMentionToken: () => null,
+      },
+      global: {
+        stubs: { AuthenticatedImage: true },
+      },
+    })
+  }
+
+  function controlGroup(wrapper: ReturnType<typeof mountGenerationNode>, label: string) {
+    const group = wrapper.findAll('.control-group')
+      .find(item => item.find('.control-label').text() === label)
+    if (!group) throw new Error(`missing control group: ${label}`)
+    return group
+  }
+
+  it('shows the canvas model until the node picks its own', async () => {
+    const node = generationNode('auto', 'auto')
+    const wrapper = mountGenerationNode(node)
+
+    // 节点没选模型时跟随画布面板，避免用户以为用的还是默认模型。
+    expect(controlGroup(wrapper, '模型').find('.linked-count').text()).toBe('Flare')
+
+    const sunburst = controlGroup(wrapper, '模型').findAll('button')
+      .find(button => button.text() === 'Sunburst')!
+    await sunburst.trigger('click')
+
+    expect(wrapper.emitted('update-model')).toEqual([[node, 'gpt-image-2.5-sunburst']])
+  })
+
+  it('greys out transparent background for models without the capability', () => {
+    const node: CanvasNode = { ...generationNode('auto', 'auto'), model: 'gpt-image-2.5-flare', transparentBackground: true }
+    const wrapper = mountGenerationNode(node)
+
+    const buttons = controlGroup(wrapper, '背景').findAll('button')
+    const transparent = buttons.find(button => button.text() === '透明')!
+    expect(transparent.attributes('disabled')).toBeDefined()
+    // 残留的透明标记不算已选：按钮回到「不透明」，与实际出图保持一致。
+    expect(transparent.classes()).not.toContain('active')
+    expect(buttons.find(button => button.text() === '不透明')!.classes()).toContain('active')
+    expect(controlGroup(wrapper, '背景').text()).toContain('当前模型不支持透明背景')
+  })
+
+  it('emits the transparent background toggle for capable models', async () => {
+    const node: CanvasNode = { ...generationNode('auto', 'auto'), model: 'gpt-image-2.5-sunburst', transparentBackground: true }
+    const wrapper = mountGenerationNode(node)
+
+    const buttons = controlGroup(wrapper, '背景').findAll('button')
+    const transparent = buttons.find(button => button.text() === '透明')!
+    expect(transparent.attributes('disabled')).toBeUndefined()
+    expect(transparent.classes()).toContain('active')
+
+    const opaque = buttons.find(button => button.text() === '不透明')!
+    await opaque.trigger('click')
+
+    expect(wrapper.emitted('update-transparent-background')).toEqual([[node, false]])
+  })
+})
+
+describe('canvas generation node request parameters', () => {
+  function generationHarness(overrides: Partial<CanvasNode> = {}) {
+    const node: CanvasNode = { ...generationNode('auto', 'auto'), ...overrides }
+    const generate = vi.fn().mockResolvedValue([])
+    const canvas = useImageCanvasGeneration({
+      nodes: ref<CanvasNode[]>([node]),
+      connections: ref([]),
+      isGenerating: ref(false),
+      error: ref<string | null>(null),
+      canSelectGenerationCount: () => true,
+      canvasContextEnabled: () => false,
+      createNode: (type, x, y, data) => ({ ...generationNode('auto', 'auto'), ...data, id: 'output-1', type, x, y }),
+      createConnectionId: () => 'conn-1',
+      getRenderedNodeSize: () => ({ width: 232, height: 326 }),
+      buildReferences: async () => [],
+      buildPromptParts: () => ({ userPrompt: '画一只猫', systemPrompt: '', modelPrompt: '画一只猫' }),
+      buildCanvasContext: () => ({} as ImageCanvasContext),
+      defaultModel: () => 'gpt-image-2.5-flare',
+      modelSupportsTransparent: (modelId: string) => modelId === 'gpt-image-2.5-sunburst',
+      generate,
+    })
+    return { node, generate, canvas }
+  }
+
+  it('sends the node model together with the transparency request', async () => {
+    const { node, generate, canvas } = generationHarness({
+      model: 'gpt-image-2.5-sunburst',
+      transparentBackground: true,
+    })
+
+    await canvas.generateFromNode(node)
+
+    expect(generate).toHaveBeenCalledWith('画一只猫', expect.objectContaining({
+      model: 'gpt-image-2.5-sunburst',
+      transparentBackground: true,
+    }))
+  })
+
+  it('drops the transparency request when the node model does not declare support', async () => {
+    const { node, generate, canvas } = generationHarness({
+      model: 'gpt-image-2.5-flare',
+      transparentBackground: true,
+    })
+
+    await canvas.generateFromNode(node)
+
+    const options = generate.mock.calls[0][1] as Record<string, unknown>
+    expect(options.model).toBe('gpt-image-2.5-flare')
+    // 模型不支持时后端会忽略该参数，照发只会让人以为拿到了透明图。
+    expect(options).not.toHaveProperty('transparentBackground')
+  })
+
+  it('falls back to the canvas panel model when the node has none', async () => {
+    const { node, generate, canvas } = generationHarness({ transparentBackground: true })
+
+    await canvas.generateFromNode(node)
+
+    const options = generate.mock.calls[0][1] as Record<string, unknown>
+    expect(options.model).toBe('gpt-image-2.5-flare')
+    expect(options).not.toHaveProperty('transparentBackground')
   })
 })
 

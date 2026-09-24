@@ -51,6 +51,9 @@ const props = defineProps<{
   resolutionOptions: Array<NodeOption<NodeResolution>>
   aspectRatioOptions: Array<NodeOption<NodeAspectRatio>>
   qualityOptions: Array<NodeOption<NodeQuality>>
+  modelOptions: Array<{ value: string; label: string; supportsTransparent: boolean }>
+  /** 节点未单独选择模型时展示/使用的模型（画布参数面板当前选择）。 */
+  defaultModel: string
   isGenerating: boolean
   resolveMentionToken: MentionTokenResolver
 }>()
@@ -78,6 +81,8 @@ const emit = defineEmits<{
   'update-aspect-ratio': [node: CanvasNode, value: NodeAspectRatio]
   'update-quality': [node: CanvasNode, value: NodeQuality]
   'update-generation-count': [node: CanvasNode, value: NodeGenerationCount]
+  'update-model': [node: CanvasNode, value: string]
+  'update-transparent-background': [node: CanvasNode, value: boolean]
   generate: [node: CanvasNode]
   'start-resize': [event: PointerEvent, node: CanvasNode, corner: ResizeCorner]
   'reset-scale': [node: CanvasNode]
@@ -91,6 +96,13 @@ const customAspectRatioHeight = ref('5')
 const customAspectRatioError = ref<string | null>(null)
 const customAspectRatioActive = computed(() => isCustomImageAspectRatio(props.node.aspectRatio))
 const customAspectRatioSelected = computed(() => customAspectRatioActive.value || customAspectRatioOpen.value)
+// 节点没选模型时跟随画布面板的选择，所以这里算的是「实际生效的模型」。
+const activeModel = computed(() => props.node.model || props.defaultModel)
+const activeModelOption = computed(() => props.modelOptions.find(option => option.value === activeModel.value))
+const activeModelLabel = computed(() => activeModelOption.value?.label || activeModel.value || '默认模型')
+const transparentAvailable = computed(() => activeModelOption.value?.supportsTransparent === true)
+// 模型不支持时即使节点上残留着标记也不算「已选透明」，避免和实际出图不一致。
+const transparentActive = computed(() => transparentAvailable.value && Boolean(props.node.transparentBackground))
 
 watch(() => props.node.aspectRatio, (value) => {
   if (!isCustomImageAspectRatio(value)) return
@@ -404,6 +416,25 @@ function applyCustomAspectRatio() {
             </div>
           </div>
 
+          <div class="control-group">
+            <div class="linked-row">
+              <span class="control-label">模型</span>
+              <span class="linked-count">{{ activeModelLabel }}</span>
+            </div>
+            <div v-if="modelOptions.length" class="segmented model-segmented">
+              <button
+                v-for="option in modelOptions"
+                :key="option.value"
+                type="button"
+                :class="{ active: activeModel === option.value }"
+                @click.stop="emit('update-model', node, option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <span v-else class="control-hint">模型列表加载中...</span>
+          </div>
+
           <div v-if="canSelectGenerationCount" class="control-group count-control">
             <div class="linked-row">
               <span class="control-label">数量</span>
@@ -503,6 +534,29 @@ function applyCustomAspectRatio() {
               </button>
             </div>
             <span class="control-hint">Low 适合快速草图，Medium/High 适合最终资产。</span>
+          </div>
+
+          <div class="control-group">
+            <span class="control-label">背景</span>
+            <div class="segmented background-segmented">
+              <button
+                type="button"
+                :class="{ active: !transparentActive }"
+                @click.stop="emit('update-transparent-background', node, false)"
+              >
+                不透明
+              </button>
+              <button
+                type="button"
+                :disabled="!transparentAvailable"
+                :class="{ active: transparentActive }"
+                class="disabled:cursor-not-allowed disabled:opacity-40"
+                @click.stop="emit('update-transparent-background', node, true)"
+              >
+                透明
+              </button>
+            </div>
+            <span class="control-hint">{{ transparentAvailable ? '透明输出为带 alpha 的 PNG。' : '当前模型不支持透明背景。' }}</span>
           </div>
         </div>
 
@@ -1186,6 +1240,19 @@ function applyCustomAspectRatio() {
 .segmented.count-segmented,
 .segmented.four-option-segmented {
   grid-template-columns: repeat(4, 1fr);
+}
+
+.segmented.model-segmented,
+.segmented.background-segmented {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.segmented.model-segmented button {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .segmented button {

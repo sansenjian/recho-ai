@@ -670,6 +670,100 @@ func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
 	}
 }
 
+func TestCallImageAPISendsTransparentBackgroundOnlyForDeclaredModels(t *testing.T) {
+	callWithProvider := func(t *testing.T, req GenRequest, provider service.ImageProviderConfig) map[string]any {
+		t.Helper()
+		var payload map[string]any
+		o := NewImageOrchestrator(nil, nil, nil)
+		o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode provider request: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/one.png"}]}`)),
+			}, nil
+		})}
+
+		if _, err := o.callImageAPI(context.Background(), req, 1, "auto", "auto", "auto", provider); err != nil {
+			t.Fatalf("callImageAPI returned error: %v", err)
+		}
+		return payload
+	}
+
+	t.Run("declared model asks the provider for a transparent background", func(t *testing.T) {
+		payload := callWithProvider(t,
+			GenRequest{Prompt: "cutout", TransparentBackground: true},
+			service.ImageProviderConfig{
+				BaseURL:                  "https://provider.example/v1",
+				APIKey:                   "provider-key",
+				ImageModel:               "gpt-image-2.5-sunburst",
+				ModelSupportsTransparent: map[string]bool{"gpt-image-2.5-sunburst": true},
+			})
+
+		if payload["background"] != "transparent" {
+			t.Fatalf("expected background=transparent, got %#v", payload)
+		}
+		// output_format 一旦出现，上游就退回不透明出图管线，transparent 会被静默忽略。
+		if _, exists := payload["output_format"]; exists {
+			t.Fatalf("output_format must never accompany a transparent request: %#v", payload)
+		}
+	})
+
+	t.Run("model without the capability stays opaque", func(t *testing.T) {
+		payload := callWithProvider(t,
+			GenRequest{Prompt: "cutout", TransparentBackground: true},
+			service.ImageProviderConfig{
+				BaseURL:                  "https://provider.example/v1",
+				APIKey:                   "provider-key",
+				ImageModel:               "gpt-image-2.5-flare",
+				ModelSupportsTransparent: map[string]bool{"gpt-image-2.5-sunburst": true},
+			})
+
+		// 同一上游只有 sunburst 接了透明输出，flare 带 background 只会拿到无 alpha 的图。
+		if _, exists := payload["background"]; exists {
+			t.Fatalf("expected no background field for a model without the capability: %#v", payload)
+		}
+	})
+
+	t.Run("declared model keeps the opaque pipeline when transparent is not requested", func(t *testing.T) {
+		payload := callWithProvider(t,
+			GenRequest{Prompt: "poster"},
+			service.ImageProviderConfig{
+				BaseURL:                  "https://provider.example/v1",
+				APIKey:                   "provider-key",
+				ImageModel:               "gpt-image-2.5-sunburst",
+				ModelSupportsTransparent: map[string]bool{"gpt-image-2.5-sunburst": true},
+			})
+
+		if _, exists := payload["background"]; exists {
+			t.Fatalf("expected no background field unless requested: %#v", payload)
+		}
+	})
+}
+
+func TestPNGHasAlphaDetectsTheTransparencyChannel(t *testing.T) {
+	// IHDR 布局：签名(8) + 长度(4) + "IHDR"(4) + 宽(4) + 高(4) + 位深(1) + 颜色类型(1)。
+	pngWithColorType := func(colorType byte) []byte {
+		return []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08" + string(colorType) + "\x00\x00\x00")
+	}
+
+	if !pngHasAlpha(pngWithColorType(6)) {
+		t.Fatal("expected color type 6 (RGBA) to be detected as alpha")
+	}
+	if !pngHasAlpha(pngWithColorType(4)) {
+		t.Fatal("expected color type 4 (grayscale + alpha) to be detected as alpha")
+	}
+	// 上游偶发把透明请求路由到不透明备用通道时返回的就是 RGB PNG。
+	if pngHasAlpha(pngWithColorType(2)) {
+		t.Fatal("expected color type 2 (RGB) to be detected as opaque")
+	}
+	if pngHasAlpha([]byte("not a png at all")) {
+		t.Fatal("expected non-PNG data to be reported as opaque")
+	}
+}
+
 func TestGenerateFailsIdempotencyWhenCreditReserveReturnsServiceError(t *testing.T) {
 	idem := &testIdempotencyService{failCh: make(chan string, 1)}
 	o := NewImageOrchestrator(
