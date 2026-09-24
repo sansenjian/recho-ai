@@ -76,7 +76,7 @@
 
 | 方法 | 路径 | 文件 | 语义 | 打标 |
 |---|---|---|---|---|
-| GET | `/api/credits` | handler/credits.go:186 | 余额查询 | 可缓存（短 TTL 15s） |
+| GET | `/api/credits` | handler/credits.go:186 | 余额查询（按 user.ID） | **no-store**（身份敏感；未定义身份分区缓存键与登出失效） |
 | POST | `/api/credits/redeem` | handler/credits.go:187 | 兑换码核销 | **no-store**（写 + 余额变化） |
 
 ### 7. 图片（实际 owner）
@@ -86,8 +86,8 @@
 | POST | `/api/image/generate` | handler/image.go:136 | 生图（写 + 扣费） | **no-store**（写，绝不可缓存） |
 | POST | `/api/image/references` | handler/image.go:211 | 参考图上传 | **no-store**（写 + 上传） |
 | GET | `/api/image/storage/{encodedPath}` | handler/image.go:279 | 存储对象代理 | 可缓存（图片字节，长 TTL） |
-| GET | `/api/image/history` | handler/image.go:348 | 历史列表 | 可缓存（TTL 30s，public/mine 区分） |
-| GET | `/api/image/history/:id` | handler/image.go:422 | 历史详情 | 可缓存（TTL 30s） |
+| GET | `/api/image/history` | handler/image.go:348 | 历史列表 | `scope=public` 可缓存（TTL 30s）；`scope=mine` **no-store**（身份敏感） |
+| GET | `/api/image/history/:id` | handler/image.go:422 | 历史详情 | `scope=public` 可缓存（TTL 30s）；`scope=mine` **no-store**（身份敏感） |
 | DELETE | `/api/image/history/:id` | handler/image.go:457 | 删除单条 | **no-store**（写） |
 | DELETE | `/api/image/history` | handler/image.go:487 | 清空历史 | **no-store**（写） |
 | GET | `/api/image/diagnostics` | handler/image.go:534 | 服务诊断 | 不处理（运维专用，未对外注册） |
@@ -97,8 +97,8 @@
 ## 三、执行摘要
 
 - **总接口数**：Node 38 条 + Go 16 条（含健康/实时）。
-- **可缓存（读）**：约 12 条 —— 主推 `/api/image/history*`、`/api/config/*`、`/api/skills`、`/api/tools`、`/api/credits`、`/announcements`、存储对象代理。
-- **no-store（写 / 身份敏感）**：约 36 条 —— 生图、上传、删除、额度调整、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
+- **可缓存（读）**：约 10 条 —— 主推 `scope=public` 历史、`/api/config/*`、`/api/skills`、`/api/tools`、`/announcements`、存储对象代理。
+- **no-store（写 / 身份敏感）**：约 38 条 —— 生图、上传、删除、额度调整、`/api/credits`、`scope=mine` 历史、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
 - **不处理（监控/实时）**：health、diagnostics。
 
 ## 四、实施注意事项（§2.3 对照）

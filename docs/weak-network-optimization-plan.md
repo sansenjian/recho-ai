@@ -51,8 +51,9 @@
 | 接口 | 策略 | 说明 |
 |---|---|---|
 | `POST /api/image/generate` | `Cache-Control: no-store` | 写接口，必须 no-store |
-| `GET /api/image/history*` | `ETag` + `Cache-Control: private, max-age=30` + 客户端条件请求 | 30s 内直接 304，省流量 |
-| `GET /api/image/history/:id`（详情） | 同上 | 详情可复用 |
+| `GET /api/image/history*` | `scope=public`：`ETag` + `Cache-Control: public, max-age=30` + 条件请求；`scope=mine`：`no-store` | 公开历史 30s 内 304 省流量；私有历史身份敏感不缓存 |
+| `GET /api/image/history/:id`（详情） | 同上（按 scope 区分） | 详情可复用，私有详情不缓存 |
+| `GET /api/credits` | `Cache-Control: no-store` | 按 user.ID 返回余额，身份敏感 |
 | `GET /api/config/*` | `ETag` + `Cache-Control: private, max-age=60` | 配置低频变更 |
 | 图片 / 缩略图 | 维持现状 `max-age=31536000` | 已有，不动 |
 

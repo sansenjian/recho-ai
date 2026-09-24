@@ -90,11 +90,13 @@ interface MaterializedResponse {
 
 const inflightShared = new Map<string, SharedRequest>()
 
-// 返回去重 key；不满足去重条件（写请求、带 body、显式 no-store、带影响响应的选项）返回 null。
+// 返回去重 key；不满足去重条件（写请求、带 body、非默认缓存模式、带影响响应的选项）返回 null。
 function dedupeFetchKey(url: string, init: RequestInit): string | null {
   if (!isIdempotentMethod(init.method)) return null
   if (init.body) return null
-  if (init.cache === 'no-store') return null
+  // 仅默认缓存模式参与去重：no-store / force-cache / reload / no-cache 等对缓存行为
+  // 有显式要求，若与默认请求合并，要求重新加载（reload/no-cache）的调用方会拿到旧缓存结果。
+  if (init.cache !== undefined && init.cache !== 'default') return null
   // 请求头（如 Authorization）或凭据模式会影响响应，不能只按 URL 共享：
   // 否则带 token 的调用可能复用无 token 的响应，切换账号时也可能串数据。
   if (init.headers && [...new Headers(init.headers).keys()].length > 0) return null

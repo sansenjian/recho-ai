@@ -39,6 +39,20 @@ describe('apiFetch in-flight deduplication', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('does not dedupe requests with non-default cache modes (reload/force-cache)', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ n: 1 }), { status: 200 }))
+
+    await Promise.all([
+      apiFetch('/api/config/app', { cache: 'reload' }),
+      apiFetch('/api/config/app', { cache: 'force-cache' }),
+      apiFetch('/api/config/app', { cache: 'no-cache' }),
+    ])
+
+    // reload/force-cache/no-cache 对缓存行为有显式要求，不能与默认请求共享同一支 in-flight。
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
   it('does not dedupe non-idempotent methods or body-carrying requests', async () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({ n: 1 }), { status: 200 }))
