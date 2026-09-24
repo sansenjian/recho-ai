@@ -238,17 +238,6 @@ async function handleGenerate() {
 
         <!-- Inline parameter panel: shown only on narrow viewports (<=960px) -->
         <div class="inline-params">
-          <div v-if="modelOptions && modelOptions.length" class="param-group">
-            <label>模型</label>
-            <ImageModelSelect
-              :model-value="imageModel"
-              :default-model="defaultImageModel"
-              :options="modelOptions"
-              :disabled="isGenerating"
-              @update:model-value="emit('update:image-model', $event)"
-            />
-          </div>
-
           <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
             <label>分辨率</label>
             <div class="param-buttons">
@@ -366,14 +355,25 @@ async function handleGenerate() {
             <span v-else class="count-fixed">×1</span>
           </div>
 
-          <button
-            class="generate-btn"
-            :disabled="!canGenerate"
-            @click="handleGenerate"
-          >
-            <Sparkles :size="18" stroke-width="2" />
-            {{ isGenerating ? '生成中...' : '生成' }}
-          </button>
+          <div class="prompt-actions-end">
+            <div class="prompt-model-select">
+              <ImageModelSelect
+                :model-value="imageModel"
+                :default-model="defaultImageModel"
+                :options="modelOptions"
+                :disabled="isGenerating"
+                @update:model-value="emit('update:image-model', $event)"
+              />
+            </div>
+            <button
+              class="generate-btn"
+              :disabled="!canGenerate"
+              @click="handleGenerate"
+            >
+              <Sparkles :size="18" stroke-width="2" />
+              {{ isGenerating ? '生成中...' : '生成' }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -611,6 +611,19 @@ async function handleGenerate() {
   margin-top: 14px;
 }
 
+.prompt-actions-end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.prompt-model-select {
+  width: min(180px, 35vw);
+  min-width: 0;
+}
+
 .generation-count {
   display: flex;
   align-items: center;
@@ -727,6 +740,15 @@ async function handleGenerate() {
   .generate-btn {
     flex: 1;
     justify-content: center;
+  }
+
+  .prompt-actions-end {
+    width: 100%;
+  }
+
+  .prompt-model-select {
+    flex: 1;
+    width: auto;
   }
 
   .generate-btn {

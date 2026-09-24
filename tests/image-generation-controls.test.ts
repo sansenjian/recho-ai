@@ -137,13 +137,12 @@ describe('image generation Auto resolution controls', () => {
       },
     })
 
-    const modelGroup = wrapper.findAll('.param-group')
-      .find(group => group.find('label').text() === '模型')
-    const trigger = modelGroup?.find('.image-model-trigger')
-    expect(trigger).toBeDefined()
-    expect(trigger!.text()).toContain('GPT Image 2')
+    const actions = wrapper.get('.prompt-actions-end')
+    const trigger = actions.get('.image-model-trigger')
+    expect(wrapper.find('.inline-params .image-model-trigger').exists()).toBe(false)
+    expect(trigger.text()).toContain('GPT Image 2')
 
-    await trigger!.trigger('click')
+    await trigger.trigger('click')
     expect(wrapper.find('.image-model-menu').text()).toContain('默认')
     expect(wrapper.find('.image-model-menu').text()).toContain('推荐模型集')
 

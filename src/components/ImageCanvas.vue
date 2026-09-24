@@ -85,7 +85,6 @@ import ImageCanvasNode from './ImageCanvasNode.vue'
 import ImageCanvasSidebar from './ImageCanvasSidebar.vue'
 import ImageCanvasStageActions from './ImageCanvasStageActions.vue'
 import ImageCanvasGalleryStage from './ImageCanvasGalleryStage.vue'
-import ImageModelSelect from './ImageModelSelect.vue'
 import ImageGalleryDetailModal from './ImageGalleryDetailModal.vue'
 import ImageViewerModal from './ImageViewerModal.vue'
 import ImagioView from './ImagioView.vue'
@@ -1631,18 +1630,6 @@ onUnmounted(() => {
       class="w-[280px] shrink-0 px-6 py-6 border-l border-border/60 bg-background/80 backdrop-blur-[20px] overflow-y-auto min-h-0 max-lg:hidden"
     >
       <h3 class="mb-6 text-base font-semibold text-foreground">图片生成</h3>
-
-      <!-- 模型 -->
-      <div class="mb-5">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">模型</label>
-        <ImageModelSelect
-          v-if="imagioModelOptions.length"
-          v-model="imageModel"
-          :default-model="defaultImageModel"
-          :options="imagioModelOptions"
-        />
-        <span v-else class="text-muted-foreground text-xs font-medium">加载中...</span>
-      </div>
 
       <!-- 分辨率 -->
       <div class="mb-5">
