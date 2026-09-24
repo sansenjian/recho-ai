@@ -189,54 +189,7 @@ async function handleGenerate() {
 <template>
   <div class="imagio-view" @paste="handlePaste">
     <div class="imagio-main">
-      <div class="prompt-area">
-        <textarea
-          v-model="promptText"
-          aria-label="描述你想生成的图片"
-          class="prompt-input"
-          placeholder="描述你想生成的图片，或附加图片进行编辑......"
-          rows="4"
-          :disabled="isGenerating"
-        />
-
-        <div class="reference-row">
-          <button
-            class="reference-add"
-            type="button"
-            :disabled="isGenerating"
-            title="添加参考图"
-            @click="openReferencePicker"
-          >
-            <Plus :size="16" stroke-width="1.7" />
-            <span>参考图</span>
-          </button>
-          <input
-            ref="fileInputRef"
-            class="reference-file-input"
-            aria-label="添加参考图"
-            type="file"
-            accept="image/*"
-            multiple
-            @change="handleReferenceInput"
-          >
-          <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
-            <div
-              v-for="(reference, index) in pendingReferences"
-              :key="reference.id"
-              class="reference-item"
-            >
-              <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-              <button type="button" title="移除参考图" @click="removeReference(index)">
-                <X :size="12" stroke-width="2" />
-              </button>
-            </div>
-          </div>
-          <span v-else class="reference-hint">可粘贴图片作为参考</span>
-        </div>
-        <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
-        <p v-if="error" class="reference-error">{{ error }}</p>
-
-        <!-- Inline parameter panel: shown only on narrow viewports (<=960px) -->
+      <div class="imagio-options">
         <div class="inline-params">
           <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
             <label>分辨率</label>
@@ -325,6 +278,53 @@ async function handleGenerate() {
             <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
           </div>
         </div>
+      </div>
+      <div class="prompt-area">
+        <textarea
+          v-model="promptText"
+          aria-label="描述你想生成的图片"
+          class="prompt-input"
+          placeholder="描述你想生成的图片，或附加图片进行编辑......"
+          rows="4"
+          :disabled="isGenerating"
+        />
+
+        <div class="reference-row">
+          <button
+            class="reference-add"
+            type="button"
+            :disabled="isGenerating"
+            title="添加参考图"
+            @click="openReferencePicker"
+          >
+            <Plus :size="16" stroke-width="1.7" />
+            <span>参考图</span>
+          </button>
+          <input
+            ref="fileInputRef"
+            class="reference-file-input"
+            aria-label="添加参考图"
+            type="file"
+            accept="image/*"
+            multiple
+            @change="handleReferenceInput"
+          >
+          <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+            <div
+              v-for="(reference, index) in pendingReferences"
+              :key="reference.id"
+              class="reference-item"
+            >
+              <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+              <button type="button" title="移除参考图" @click="removeReference(index)">
+                <X :size="12" stroke-width="2" />
+              </button>
+            </div>
+          </div>
+          <span v-else class="reference-hint">可粘贴图片作为参考</span>
+        </div>
+        <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
+        <p v-if="error" class="reference-error">{{ error }}</p>
 
         <div class="prompt-actions">
           <div class="generation-count">
@@ -395,14 +395,19 @@ async function handleGenerate() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 24px 28px;
   min-height: 0;
 }
 
+.imagio-options {
+  display: none;
+}
+
 .prompt-area {
+  flex: none;
   width: min(920px, 100%);
-  margin: 0 auto;
+  margin: auto auto 0;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--card));
@@ -533,8 +538,6 @@ async function handleGenerate() {
 
 /* Inline parameter panel (shown on narrow viewports) */
 .inline-params {
-  display: none;
-  margin-top: 18px;
   padding: 16px;
   background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
@@ -598,8 +601,13 @@ async function handleGenerate() {
 
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */
 @media (max-width: 1180px) {
-  .inline-params {
+  .imagio-options {
     display: block;
+    flex: 1;
+    width: min(920px, 100%);
+    min-height: 0;
+    margin: 0 auto 12px;
+    overflow-y: auto;
   }
 }
 
