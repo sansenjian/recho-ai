@@ -195,9 +195,10 @@ router.post('/image/references', raw({ type: 'image/*', limit: REFERENCE_UPLOAD_
   }
 })
 
-router.get('/image/storage/*', async (req: Request, res: Response) => {
+router.get('/image/storage/*storagePath', async (req: Request, res: Response) => {
   try {
-    const storagePath = safeProxyStoragePath(req.params[0])
+    const pathParts = req.params.storagePath
+    const storagePath = safeProxyStoragePath(Array.isArray(pathParts) ? pathParts.join('/') : pathParts)
     if (!storagePath) {
       res.status(400).json({ error: 'invalid image storage path' })
       return
