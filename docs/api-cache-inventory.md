@@ -1,11 +1,13 @@
 # API 缓存打标清单（双网关）
 
 > 对应 `docs/weak-network-optimization-plan.md` §2.2 阶段一产出物。
-> 用途：缓存策略实施（§2.3）前的接口可缓存性盘点。缓存/去重**只允许作用于标为「可缓存」的幂等读接口**，其余一律 no-store、不做合并。
+> 用途：缓存策略实施（§2.3）前的接口可缓存性盘点。**HTTP 缓存**与**前端 in-flight 去重**是两个独立机制，分开判定：
+> - **HTTP 缓存**（§2.3，后端注入 ETag/Cache-Control）：仅允许作用于标为「可缓存」的幂等读接口，其余一律 `no-store`。
+> - **in-flight 去重**（§3，前端 `apiFetch`）：仅对满足全部条件的请求合并——幂等读方法（实现取 GET/HEAD/OPTIONS）+ **无请求体** + **未显式 `cache: 'no-store'`** + **未携带自定义请求头或凭据**；任一不满足即不去重。
 >
-> 判定规则：方法幂等性（GET/HEAD/OPTIONS 幂等；POST/PUT/PATCH/DELETE 非幂等）× 是否改变状态（扣费 / 写库 / 触发任务），双维度取「非幂等 或 改状态 → 写（no-store）」。
+> 判定规则：方法幂等性（GET/HEAD/OPTIONS/PUT/DELETE 幂等；POST、PATCH 非幂等）× 是否改变状态（扣费 / 写库 / 触发任务），双维度取「非幂等 或 改状态 → 写（no-store）」。
 
-图例：`可缓存` = 可加 ETag + 短 TTL；`no-store` = 禁止缓存；`实时` = 不缓存但可去重；`代理` = 转发标注的目标网关。
+图例：`可缓存` = 可加 ETag + 短 TTL；`no-store` = 禁止缓存（写接口及身份敏感接口）；`代理` = 转发标注的目标网关。
 
 ## 流量入口说明
 
@@ -40,21 +42,22 @@
 | GET | `/api/config/supabase` | routes/config.ts:8 | Supabase 公开配置 | 可缓存（TTL 60s） |
 | GET | `/api/config/app` | routes/config.ts:18 | 应用公开配置 | 可缓存（TTL 60s；写后主动失效） |
 
-### 4. Admin 接口（仅管理员，低并发，均为实时管理操作）
+### 4. Admin 接口（仅管理员，低并发；含管理员/用户敏感数据，一律 no-store）
 
 | 方法 | 路径 | 文件:行 | 语义 | 打标 |
 |---|---|---|---|---|
-| GET | `/admin/credits/me` · `/admin/credits/users` · `/admin/credits/overview` · `/admin/credits/transactions` · `/admin/credits/users/:userId` · `/admin/credits/codes` · `/admin/credits/codes/:codeId/redemptions` | routes/admin-credits.ts | 额度查询 | 可缓存（短 TTL 15s） |
+| GET | `/admin/credits/me` · `/admin/credits/users` · `/admin/credits/overview` · `/admin/credits/transactions` · `/admin/credits/users/:userId` · `/admin/credits/codes` · `/admin/credits/codes/:codeId/redemptions` | routes/admin-credits.ts | 额度查询（管理） | **no-store**（返回当前管理员/用户数据，未定义身份分区缓存键与登出失效，不可缓存） |
 | POST | `/admin/credits/users/:userId/adjust`· `/admin/credits/codes` | routes/admin-credits.ts:115,163 | 调额 / 建码 | **no-store**（写） |
 | PATCH | `/admin/credits/codes/:codeId` | routes/admin-credits.ts:175 | 改码 | **no-store**（写） |
-| GET | `/admin/images` · `/admin/images/storage-overview` | routes/admin-images.ts:47,65 | 管理列表 | 可缓存（短 TTL 15s） |
+| GET | `/admin/images` · `/admin/images/storage-overview` | routes/admin-images.ts:47,65 | 管理列表 | **no-store**（管理，身份敏感） |
 | PATCH | `/admin/images/bulk/visibility` · `/admin/images/:id/visibility` | routes/admin-images.ts:77,113 | 可见性变更 | **no-store**（写） |
 | POST | `/admin/images/bulk/archive` · `/admin/images/bulk/delete` | routes/admin-images.ts:89,101 | 归档 / 删除 | **no-store**（写） |
-| GET | `/admin/image-attempts` | routes/admin-image-attempts.ts:38 | 尝试记录查询 | 可缓存（短 TTL 15s） |
-| GET | `/admin/system` · `/admin/settings` | routes/admin-system.ts:82,94 | 系统/设置查询 | 可缓存（短 TTL 15s） |
+| GET | `/admin/image-attempts` | routes/admin-image-attempts.ts:38 | 尝试记录查询 | **no-store**（管理，身份敏感） |
+| GET | `/admin/system` · `/admin/settings` | routes/admin-system.ts:82,94 | 系统/设置查询 | **no-store**（管理，身份敏感） |
 | PATCH | `/admin/settings` · `/admin/settings/providers/:providerId` · `/admin/settings/admin-users/:ruleId` | routes/admin-system.ts:121,153,190 | 设置 / Provider / 用户规则更新 | **no-store**（写） |
 | POST | `/admin/settings/providers` · `/admin/settings/admin-users` | routes/admin-system.ts:133,173 | 新增 Provider / admin 用户 | **no-store**（写） |
-| GET | `/announcements` · `/admin/announcements` | routes/admin-announcements.ts:45,56 | 公告查询 | 可缓存（TTL 30s） |
+| GET | `/announcements` | routes/admin-announcements.ts:45 | 公告查询（公开） | 可缓存（TTL 30s） |
+| GET | `/admin/announcements` | routes/admin-announcements.ts:56 | 公告查询（管理） | **no-store**（管理，身份敏感） |
 | POST | `/admin/announcements` | routes/admin-announcements.ts:71 | 发布公告 | **no-store**（写） |
 | PATCH | `/admin/announcements/:announcementId` | routes/admin-announcements.ts:83 | 更新公告 | **no-store**（写） |
 
@@ -94,8 +97,8 @@
 ## 三、执行摘要
 
 - **总接口数**：Node 38 条 + Go 16 条（含健康/实时）。
-- **可缓存（读）**：约 22 条 —— 主推 `/api/image/history*`、`/api/config/*`、`/api/skills`、`/api/tools`、`/api/credits`。
-- **no-store（写）**：约 26 条 —— 生图、上传、删除、额度调整、全部 admin 写操作。
+- **可缓存（读）**：约 12 条 —— 主推 `/api/image/history*`、`/api/config/*`、`/api/skills`、`/api/tools`、`/api/credits`、`/announcements`、存储对象代理。
+- **no-store（写 / 身份敏感）**：约 36 条 —— 生图、上传、删除、额度调整、全部 admin 接口（含管理 GET，避免跨身份缓存串数据）。
 - **不处理（监控/实时）**：health、diagnostics。
 
 ## 四、实施注意事项（§2.3 对照）

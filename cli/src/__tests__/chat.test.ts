@@ -122,4 +122,26 @@ describe('chat 命令', () => {
     const [, init] = fetchMock.mock.calls[1] as [string, RequestInit]
     expect(JSON.parse(String(init.body)).model).toBe('kimi-default')
   })
+
+  it('TTY 模式下内容只输出一次(流式已输出,结束后不再整体重复打印)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse(SSE_SAMPLE))
+    vi.stubGlobal('fetch', fetchMock)
+    const written: string[] = []
+    const stdout = { write: (chunk: string) => void written.push(chunk) }
+
+    await chat({
+      prompt: 'hi',
+      model: 'gpt-4o',
+      json: false,
+      verbose: false,
+      baseUrl: 'https://x.com',
+      token: 't',
+      stdout,
+      isTTYOverride: true,
+    })
+
+    const joined = written.join('')
+    expect(joined.includes('你好')).toBe(true)
+    expect(joined.split('你好').length - 1).toBe(1)
+  })
 })

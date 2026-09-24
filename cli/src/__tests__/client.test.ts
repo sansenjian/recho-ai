@@ -60,6 +60,19 @@ describe('apiJson', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed, ECONNREFUSED')))
     await expect(apiJson({ path: '/x', baseUrl: 'https://x.com' })).rejects.toMatchObject({ exitCode: 5 })
   })
+
+  it('2xx 但返回 HTML 时归一为 BAD_RESPONSE 而非 UNEXPECTED', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('<!doctype html><html>SPA</html>', { status: 200, headers: { 'Content-Type': 'text/html' } }),
+      ),
+    )
+    await expect(apiJson({ path: '/api/config/app', baseUrl: 'https://spa.example.com' })).rejects.toMatchObject({
+      exitCode: 1,
+      code: 'BAD_RESPONSE',
+    })
+  })
 })
 
 describe('streamChat', () => {
@@ -123,5 +136,13 @@ describe('streamChat', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(odd))
     const result = await streamChat({ baseUrl: 'https://x.com', token: 't', model: 'm', messages: [{ role: 'user', content: 'x' }] })
     expect(result.content).toBe('一半')
+  })
+
+  it('流在收到终止事件前提前结束则抛 STREAM_ENDED', async () => {
+    const truncated = sseResponse(['data: {"type":"thinking_delta","text":"思考中"}\n\n'])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(truncated))
+    await expect(
+      streamChat({ baseUrl: 'https://x.com', token: 't', model: 'm', messages: [{ role: 'user', content: 'x' }] }),
+    ).rejects.toMatchObject({ exitCode: 1, code: 'STREAM_ENDED' })
   })
 })

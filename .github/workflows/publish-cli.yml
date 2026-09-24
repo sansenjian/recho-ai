@@ -44,7 +44,14 @@ jobs:
       - name: Verify tag matches package version
         env:
           TAG_REF: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
+          # 手动触发(workflow_dispatch)时 github.ref_name 是分支名,可能恰好形如
+          # cli-vX.Y.Z 并通过版本比对;发布只允许 tag ref,避免从分支误发 npm。
+          if [ "${REF_TYPE}" != "tag" ]; then
+            echo "::error::请在 cli-vX.Y.Z 标签上运行此工作流。"
+            exit 1
+          fi
           version=$(node -p "require('./cli/package.json').version")
           expected="cli-v${version}"
           if [ "${TAG_REF}" != "${expected}" ]; then

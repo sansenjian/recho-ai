@@ -78,6 +78,7 @@ export async function apiFetch(url: string, init: RequestInit = {}): Promise<Res
 interface SharedRequest {
   promise: Promise<MaterializedResponse>
   refs: number
+  controller?: AbortController
 }
 
 interface MaterializedResponse {
@@ -89,11 +90,15 @@ interface MaterializedResponse {
 
 const inflightShared = new Map<string, SharedRequest>()
 
-// 返回去重 key；不满足去重条件（写请求、带 body、显式 no-store、非幂等）返回 null。
+// 返回去重 key；不满足去重条件（写请求、带 body、显式 no-store、带影响响应的选项）返回 null。
 function dedupeFetchKey(url: string, init: RequestInit): string | null {
   if (!isIdempotentMethod(init.method)) return null
   if (init.body) return null
   if (init.cache === 'no-store') return null
+  // 请求头（如 Authorization）或凭据模式会影响响应，不能只按 URL 共享：
+  // 否则带 token 的调用可能复用无 token 的响应，切换账号时也可能串数据。
+  if (init.headers && [...new Headers(init.headers).keys()].length > 0) return null
+  if (init.credentials || init.mode || init.redirect || init.integrity) return null
   return `${(init.method || 'GET').toUpperCase()} ${url}`
 }
 
@@ -116,9 +121,12 @@ async function dedupeSharedRequest(
     }
   }
 
+  // 共享请求使用内部 AbortController，而不是复用首个调用方的 signal：
+  // 任一调用方（哪怕第一个）中止，都只中断它自己，不影响其他共享调用方。
+  const controller = new AbortController()
   const entry: SharedRequest = {
     refs: 1,
-    promise: performFetch(url, init).then(async (response) => {
+    promise: performFetch(url, { ...init, signal: controller.signal }).then(async (response) => {
       const body = await response.arrayBuffer()
       return {
         status: response.status,
@@ -127,6 +135,7 @@ async function dedupeSharedRequest(
         body,
       }
     }),
+    controller,
   }
   inflightShared.set(key, entry)
   try {
@@ -139,15 +148,18 @@ async function dedupeSharedRequest(
 
 function releaseSharedRef(key: string, entry: SharedRequest) {
   entry.refs -= 1
-  if (entry.refs <= 0) {
+  if (entry.refs <= 0 && inflightShared.get(key) === entry) {
+    // 全部调用方已结束，中止共享请求并清理，避免泄漏。
+    entry.controller?.abort()
     inflightShared.delete(key)
   }
 }
 
 // 每个调用方拿一份独立 body 副本，避免共享 Response 导致 body 被读两次。
+// 204/205/304 等 null-body 状态码必须传 null body，否则 new Response 抛 TypeError。
 function materializeResponse(materialized: MaterializedResponse): Response {
-  const body = new Uint8Array(materialized.body.byteLength)
-  body.set(new Uint8Array(materialized.body))
+  const nullBodyStatus = [101, 103, 204, 205, 304].includes(materialized.status)
+  const body = nullBodyStatus ? null : materialized.body.slice(0)
   return new Response(body, {
     status: materialized.status,
     statusText: materialized.statusText,

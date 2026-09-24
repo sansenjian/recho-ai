@@ -66,7 +66,12 @@ describe('apiFetch in-flight deduplication', () => {
   it('aborting the caller aborts only that caller, leaving the shared request intact', async () => {
     const fetchMock = vi.mocked(fetch)
     let resolveFetch: (r: Response) => void = () => {}
-    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => { resolveFetch = resolve }))
+    fetchMock.mockImplementation((_url, init) => new Promise<Response>((resolve, reject) => {
+      resolveFetch = resolve
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'))
+      })
+    }))
 
     const controllerA = new AbortController()
     const controllerB = new AbortController()
@@ -76,12 +81,42 @@ describe('apiFetch in-flight deduplication', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
+    // 第一个调用方 abort：共享的底层 fetch 用的是内部 controller，
+    // 不应被 caller A 的 signal 影响，B 仍能拿到完整响应。
     controllerA.abort()
     await expect(aPromise).rejects.toMatchObject({ name: 'AbortError' })
 
     resolveFetch(new Response(JSON.stringify({ ok: true }), { status: 200 }))
     const bResponse = await bPromise
     await expect(bResponse.json()).resolves.toEqual({ ok: true })
+  })
+
+  it('skips dedupe when the request carries headers (identity-specific)', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+    await Promise.all([
+      apiFetch('/api/config/app', { headers: { Authorization: 'Bearer token-a' } }),
+      apiFetch('/api/config/app', { headers: { Authorization: 'Bearer token-b' } }),
+    ])
+
+    // 带 Authentication 的请求不进去重路径，各自独立发起，避免串数据。
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('materializes null-body statuses (204/304) without throwing', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async () => new Response(null, { status: 204 }))
+
+    const responses = await Promise.all([
+      apiFetch('/api/no-content'),
+      apiFetch('/api/no-content'),
+    ])
+    for (const res of responses) {
+      expect(res.status).toBe(204)
+      await expect(res.text()).resolves.toBe('')
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('releases the shared entry after all callers settle', async () => {
