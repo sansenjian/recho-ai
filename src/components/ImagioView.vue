@@ -18,6 +18,7 @@ import type {
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import ImageModelSelect from './ImageModelSelect.vue'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -25,6 +26,7 @@ const props = defineProps<{
   error: string | null
   canSelectGenerationCount?: boolean
   imageModel?: string
+  defaultImageModel?: string
   resolution?: ImageResolution
   aspectRatio?: ImageAspectRatio
   quality?: ImageQuality
@@ -238,17 +240,13 @@ async function handleGenerate() {
         <div class="inline-params">
           <div v-if="modelOptions && modelOptions.length" class="param-group">
             <label>模型</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in modelOptions"
-                :key="opt.value"
-                type="button"
-                :class="{ active: imageModel === opt.value }"
-                @click="emit('update:image-model', opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
+            <ImageModelSelect
+              :model-value="imageModel"
+              :default-model="defaultImageModel"
+              :options="modelOptions"
+              :disabled="isGenerating"
+              @update:model-value="emit('update:image-model', $event)"
+            />
           </div>
 
           <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">

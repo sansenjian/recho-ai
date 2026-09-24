@@ -1468,6 +1468,7 @@ onUnmounted(() => {
               v-model:transparent-background="transparentBackground"
               :transparent-available="selectedModelSupportsTransparent"
               :model-options="imagioModelOptions"
+              :default-image-model="defaultImageModel"
               :resolution-options="imagioResolutionOptions"
               :aspect-ratio-options="imagioAspectRatioOptions"
               :quality-options="imagioQualityOptions"
@@ -1633,22 +1634,12 @@ onUnmounted(() => {
       <!-- 模型 -->
       <div class="mb-5">
         <label class="block mb-2 text-xs font-medium text-muted-foreground">模型</label>
-        <div v-if="imagioModelOptions.length" class="grid grid-cols-2 gap-2">
-          <button
-            v-for="opt in imagioModelOptions"
-            :key="opt.value"
-            type="button"
-            :class="[
-              'h-8 px-2 text-xs font-medium rounded-lg border transition-all duration-200',
-              imageModel === opt.value
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="imageModel = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
+        <ImageModelSelect
+          v-if="imagioModelOptions.length"
+          v-model="imageModel"
+          :default-model="defaultImageModel"
+          :options="imagioModelOptions"
+        />
         <span v-else class="text-muted-foreground text-xs font-medium">加载中...</span>
       </div>
 
