@@ -124,6 +124,36 @@ describe('image generation Auto resolution controls', () => {
     })
   })
 
+  it('selects image models from the Codex-style grouped dropdown', async () => {
+    const wrapper = mount(ImagioView, {
+      props: {
+        ...imagioGenerationProps(),
+        imageModel: 'gpt-image-2',
+        defaultImageModel: 'gpt-image-2',
+        modelOptions: [
+          { value: 'gpt-image-2', label: 'GPT Image 2' },
+          { value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
+        ],
+      },
+    })
+
+    const modelGroup = wrapper.findAll('.param-group')
+      .find(group => group.find('label').text() === '模型')
+    const trigger = modelGroup?.find('.image-model-trigger')
+    expect(trigger).toBeDefined()
+    expect(trigger!.text()).toContain('GPT Image 2')
+
+    await trigger!.trigger('click')
+    expect(wrapper.find('.image-model-menu').text()).toContain('默认')
+    expect(wrapper.find('.image-model-menu').text()).toContain('推荐模型集')
+
+    const flare = wrapper.findAll('.image-model-option')
+      .find(option => option.text() === 'GPT Image 2.5 Flare')
+    expect(flare).toBeDefined()
+    await flare!.trigger('click')
+    expect(wrapper.emitted('update:image-model')).toEqual([['gpt-image-2.5-flare']])
+  })
+
   it('applies a custom Imagio aspect ratio', async () => {
     const wrapper = mount(ImagioView, {
       props: {
