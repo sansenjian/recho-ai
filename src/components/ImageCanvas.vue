@@ -116,10 +116,26 @@ function createCanvasWorkspaceId() {
 const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
 const imageModel = ref('')
 
-// Model options for Imagio prompt generation panel
+// Model options for Imagio prompt generation panel and canvas generation nodes.
 const imagioModelOptions = computed(() =>
-  availableImageModels.value.map((m) => ({ value: m.id, label: m.name })),
+  availableImageModels.value.map((m) => ({
+    value: m.id,
+    label: m.name,
+    supportsTransparent: m.supportsTransparent === true,
+  })),
 )
+
+// 「透明背景」只在模型声明支持时才可选：同一上游并非所有模型都接了透明输出
+// （例如 sunburst 支持、flare 不支持），切换模型时要把已勾选的透明关掉。
+function modelSupportsTransparent(modelId: string) {
+  return availableImageModels.value.find((model) => model.id === modelId)?.supportsTransparent === true
+}
+
+const selectedModelSupportsTransparent = computed(() => modelSupportsTransparent(imageModel.value))
+
+watch(selectedModelSupportsTransparent, (supported) => {
+  if (!supported) transparentBackground.value = false
+})
 
 const {
   isGenerating,
@@ -208,6 +224,7 @@ const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
+const transparentBackground = ref(false)
 const customAspectRatioOpen = ref(false)
 const customAspectRatioWidth = ref('4')
 const customAspectRatioHeight = ref('5')
@@ -603,6 +620,8 @@ const {
   buildReferences,
   buildPromptParts,
   buildCanvasContext,
+  defaultModel: () => imageModel.value,
+  modelSupportsTransparent,
   generate,
 })
 
@@ -627,6 +646,16 @@ function updateNodeAspectRatio(node: CanvasNode, value: NodeAspectRatio) {
 
 function updateNodeQuality(node: CanvasNode, value: NodeQuality) {
   node.quality = value
+}
+
+function updateNodeModel(node: CanvasNode, value: string) {
+  node.model = value
+  // 切到不支持透明的模型时同步取消勾选，别让节点停在会静默失效的参数上。
+  if (!modelSupportsTransparent(value)) node.transparentBackground = false
+}
+
+function updateNodeTransparentBackground(node: CanvasNode, value: boolean) {
+  node.transparentBackground = value
 }
 
 function resetNodeScale(node: CanvasNode) {
@@ -1421,6 +1450,8 @@ onUnmounted(() => {
               v-model:resolution="resolution"
               v-model:aspect-ratio="aspectRatio"
               v-model:quality="quality"
+              v-model:transparent-background="transparentBackground"
+              :transparent-available="selectedModelSupportsTransparent"
               :model-options="imagioModelOptions"
               :resolution-options="imagioResolutionOptions"
               :aspect-ratio-options="imagioAspectRatioOptions"
@@ -1486,6 +1517,8 @@ onUnmounted(() => {
                   :resolution-options="resolutionOptions"
                   :aspect-ratio-options="aspectRatioOptions"
                   :quality-options="qualityOptions"
+                  :model-options="imagioModelOptions"
+                  :default-model="imageModel"
                   :is-generating="isGenerating"
                   :resolve-mention-token="imageNodeForRichToken"
                   @select="selectNode"
@@ -1509,6 +1542,8 @@ onUnmounted(() => {
                   @update-aspect-ratio="updateNodeAspectRatio"
                   @update-quality="updateNodeQuality"
                   @update-generation-count="setGenerationCount"
+                  @update-model="updateNodeModel"
+                  @update-transparent-background="updateNodeTransparentBackground"
                   @generate="generateFromNode"
                   @start-resize="startNodeResize"
                   @reset-scale="resetNodeScale"
@@ -1703,6 +1738,41 @@ onUnmounted(() => {
           </button>
         </div>
         <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Low 用于快速草稿，Medium/High 用于最终出图</p>
+      </div>
+
+      <!-- 背景 -->
+      <div class="mb-6">
+        <label class="block mb-2 text-xs font-medium text-muted-foreground">背景</label>
+        <div class="flex gap-2 flex-wrap">
+          <button
+            type="button"
+            :class="[
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
+              !transparentBackground
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
+            ]"
+            @click="transparentBackground = false"
+          >
+            不透明
+          </button>
+          <button
+            type="button"
+            :disabled="!selectedModelSupportsTransparent"
+            :class="[
+              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
+              transparentBackground
+                ? 'bg-foreground text-primary-foreground border-foreground'
+                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
+            ]"
+            @click="transparentBackground = true"
+          >
+            透明
+          </button>
+        </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {{ selectedModelSupportsTransparent ? '透明背景需要模型支持，出图为带 alpha 的 PNG' : '当前模型不支持透明背景' }}
+        </p>
       </div>
     </aside>
 

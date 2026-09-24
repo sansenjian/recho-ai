@@ -255,6 +255,8 @@ export interface AdminProviderModel {
   name: string
   enabled: boolean
   editModel: string | null
+  /** 该模型是否支持透明背景（仅 image provider 有意义）。 */
+  supportsTransparent: boolean
 }
 
 export interface AdminProviderSetting {

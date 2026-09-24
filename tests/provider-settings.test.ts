@@ -318,13 +318,13 @@ describe('provider settings service', () => {
     }, { id: 'admin-user', email: 'admin@example.test' })
 
     expect(insertedRow?.model_catalog).toEqual([
-      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit', supportsTransparent: false },
       // 空串归一为 null，表示「行内未配置，回落到 Provider 级 edit_model」。
-      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null },
-      { id: 'legacy-edit', name: 'Legacy Edit', enabled: true, editModel: 'e'.repeat(120) },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null, supportsTransparent: false },
+      { id: 'legacy-edit', name: 'Legacy Edit', enabled: true, editModel: 'e'.repeat(120), supportsTransparent: false },
       // 非字符串忽略；字符串行没有行内编辑模型。
-      { id: 'non-string-edit', name: 'Non String', enabled: true, editModel: null },
-      { id: 'string-row-model', name: 'string-row-model', enabled: true, editModel: null },
+      { id: 'non-string-edit', name: 'Non String', enabled: true, editModel: null, supportsTransparent: false },
+      { id: 'string-row-model', name: 'string-row-model', enabled: true, editModel: null, supportsTransparent: false },
     ])
   })
 
@@ -332,7 +332,7 @@ describe('provider settings service', () => {
     providerRows = [{
       ...defaultProviderRow,
       model_catalog: [
-        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
+        { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit', supportsTransparent: true },
         { id: 'flux-pro', name: 'FLUX Pro', enabled: true },
       ],
     }]
@@ -341,8 +341,9 @@ describe('provider settings service', () => {
     const result = await listProviderSettings({ refresh: true })
 
     expect(result.providers[0].modelCatalog).toEqual([
-      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit' },
-      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null },
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'gpt-image-edit', supportsTransparent: true },
+      // 没声明透明能力的行读回来是 false，不会把「没配」当成「支持」。
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: null, supportsTransparent: false },
     ])
   })
 
@@ -393,8 +394,8 @@ describe('provider settings service', () => {
 
     // 宽松读路径把不可用的值归一为 null（而不是原样透传），同时合法值必须原样往返。
     expect(result.providers[0].modelCatalog).toEqual([
-      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: null },
-      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: null, supportsTransparent: false },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit', supportsTransparent: false },
     ])
   })
 
@@ -487,8 +488,8 @@ describe('provider settings service', () => {
     const result = await listProviderSettings({ refresh: true })
 
     expect(result.providers[0].modelCatalog).toEqual([
-      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'a'.repeat(119) },
-      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit' },
+      { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true, editModel: 'a'.repeat(119), supportsTransparent: false },
+      { id: 'flux-pro', name: 'FLUX Pro', enabled: true, editModel: 'gpt-image-edit', supportsTransparent: false },
     ])
   })
 

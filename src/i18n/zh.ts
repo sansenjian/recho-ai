@@ -424,6 +424,8 @@ export default {
     providerColumnImageModel: '生图模型',
     providerColumnEditModel: '编辑模型',
     providerColumnName: '展示模型',
+    providerColumnTransparent: '透明背景',
+    providerModelTransparent: '支持透明',
     providerRemoveModel: '删除模型',
     providerRemoveModelAria: '删除模型 {index}',
     providerRemoveModelPriceAria: '删除第 {index} 条模型价格',

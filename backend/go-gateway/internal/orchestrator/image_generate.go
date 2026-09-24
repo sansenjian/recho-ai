@@ -215,6 +215,9 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		return nil, domainStatusError(http.StatusServiceUnavailable, ErrorCodeProviderUnavailable, "图片 Provider 尚未配置，请联系管理员。")
 	}
 	imageModel := imageModelForRequest(providerCfg, len(req.References) > 0)
+	if req.TransparentBackground && !providerModelSupportsTransparent(providerCfg) {
+		o.logger.Printf("[image] transparent background requested but model %q is not declared transparent; generating an opaque image", providerCfg.ImageModel)
+	}
 
 	// --- 计算额度（按实际使用的模型取价）---
 	costPerImage := config.ImageCreditCostPerImage
@@ -1057,6 +1060,12 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 		apiReq["size"] = size
 		apiReq["quality"] = mapQualityToAPI(quality)
 	}
+	// 透明背景只认 background 字段，且绝不能同时发 output_format：
+	// 上游一旦收到 output_format 就会退回不透明的出图管线（transparent 被忽略）。
+	transparent := req.TransparentBackground && providerModelSupportsTransparent(provider)
+	if transparent {
+		apiReq["background"] = "transparent"
+	}
 
 	client := o.httpClient
 	if client == nil {
@@ -1173,6 +1182,13 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 				},
 			})
 		} else if item.Base64 != "" {
+			if transparent {
+				// 上游偶发把透明请求路由到不支持透明的备用通道（典型表现是怪尺寸的 RGB PNG）。
+				// 这里只做告警：重试有额外成本，且大概率仍落在同一条通道上。
+				if raw, decodeErr := base64.StdEncoding.DecodeString(item.Base64); decodeErr == nil && !pngHasAlpha(raw) {
+					o.logger.Printf("[image] transparent background requested but provider returned an image without alpha (model %s, %d bytes)", imageModel, len(raw))
+				}
+			}
 			result.DataURL = "data:" + imageMime + ";base64," + item.Base64
 			result.URL = result.DataURL
 			result.PreviewURL = result.DataURL
@@ -1578,6 +1594,29 @@ func imageModelForRequest(provider service.ImageProviderConfig, edits bool) stri
 
 func roundToTwoDecimals(val float64) float64 {
 	return math.Round(val*100) / 100
+}
+
+// providerModelSupportsTransparent 判断 Provider 当前生图模型是否声明了透明能力。
+//
+// 该能力由管理员在模型目录行上勾选（model_catalog[].supportsTransparent），
+// 只在行「启用且勾选」时生效：同一上游并非所有模型都接了透明输出
+// （例如 sunburst 支持、flare 不支持），无脑带 background 只会静默拿到无 alpha 的图。
+func providerModelSupportsTransparent(provider service.ImageProviderConfig) bool {
+	model := strings.TrimSpace(provider.ImageModel)
+	if model == "" {
+		return false
+	}
+	return provider.ModelSupportsTransparent[model]
+}
+
+// pngHasAlpha 判断 PNG 是否带 alpha 通道（IHDR 的 color type 为 4 灰度+alpha 或 6 RGBA）。
+// 用于识别上游偶发把透明请求路由到不透明备用通道的情况（返回的是无 alpha 的 RGB PNG）。
+func pngHasAlpha(data []byte) bool {
+	if len(data) < 26 || string(data[:8]) != "\x89PNG\r\n\x1a\n" || string(data[12:16]) != "IHDR" {
+		return false
+	}
+	colorType := data[25]
+	return colorType == 4 || colorType == 6
 }
 
 func randomID() string {
