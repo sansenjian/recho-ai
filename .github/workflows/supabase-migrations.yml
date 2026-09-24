@@ -37,7 +37,19 @@ jobs:
           version: 2.105.0
 
       - name: Start local Postgres
-        run: supabase db start
+        # 镜像仓库（ghcr.io）偶发限流会让 supabase db start 直接失败，导致迁移校验误报红。
+        # 这里做外层重试，并在重试前清理半启动的容器，避免残留状态干扰下一次启动。
+        run: |
+          for attempt in 1 2 3; do
+            if supabase db start; then
+              exit 0
+            fi
+            echo "::warning::supabase db start failed (attempt ${attempt}/3), retrying"
+            supabase stop --no-backup || true
+            sleep 30
+          done
+          echo "::error::supabase db start failed after 3 attempts"
+          exit 1
 
       - name: Apply all migrations
         run: supabase db reset --local --no-seed
