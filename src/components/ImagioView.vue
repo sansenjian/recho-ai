@@ -514,7 +514,13 @@ async function handleGenerate() {
 }
 
 .imagio-options {
-  display: none;
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  width: min(920px, 100%);
+  min-height: 0;
+  margin: 0 auto 12px;
+  overflow-y: auto;
 }
 
 .imagio-conversation {
