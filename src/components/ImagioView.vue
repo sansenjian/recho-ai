@@ -394,7 +394,6 @@ async function handleGenerate() {
                 </button>
               </div>
             </div>
-            <span v-else class="reference-hint">可粘贴图片作为参考</span>
           </div>
 
           <div class="generation-count">
@@ -607,16 +606,17 @@ async function handleGenerate() {
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--card));
-  padding: 20px;
+  padding: 12px 14px;
   box-shadow: var(--shadow-sm);
 }
 
 .prompt-input {
+  display: block;
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--background));
+  min-height: 108px;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
   font-size: 14px;
   line-height: 1.7;
   color: hsl(var(--foreground));
@@ -631,8 +631,12 @@ async function handleGenerate() {
 }
 
 .prompt-input:focus {
+  outline: none;
+}
+
+.prompt-area:focus-within {
   border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.14);
 }
 
 .prompt-input:disabled {
@@ -643,9 +647,9 @@ async function handleGenerate() {
 .prompt-reference {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
-  flex: 1 1 360px;
+  flex: 0 1 auto;
 }
 
 .reference-add {
@@ -653,7 +657,7 @@ async function handleGenerate() {
   align-items: center;
   gap: 7px;
   min-height: 36px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
@@ -680,6 +684,7 @@ async function handleGenerate() {
 .reference-list {
   display: flex;
   min-width: 0;
+  max-width: 96px;
   gap: 8px;
   overflow-x: auto;
   padding: 2px 0;
@@ -717,16 +722,6 @@ async function handleGenerate() {
   background: hsl(var(--foreground) / 0.76);
   color: hsl(var(--background));
   cursor: pointer;
-}
-
-.reference-hint {
-  min-width: 0;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .reference-error {
@@ -819,29 +814,32 @@ async function handleGenerate() {
 .prompt-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
-  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
 }
 
 .prompt-actions-end {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .prompt-model-select {
-  width: min(180px, 35vw);
+  width: min(150px, 100%);
   min-width: 0;
+  flex: 1 1 80px;
 }
 
 .generation-count {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
@@ -849,7 +847,7 @@ async function handleGenerate() {
 
 .generation-count button {
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 8px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
@@ -885,9 +883,11 @@ async function handleGenerate() {
 .generate-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 26px;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   border: 0;
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--primary));
@@ -918,7 +918,7 @@ async function handleGenerate() {
   }
 
   .prompt-area {
-    padding: 14px;
+    padding: 12px;
   }
 
   .imagio-conversation {
@@ -939,44 +939,17 @@ async function handleGenerate() {
     max-width: 100%;
   }
 
-  .prompt-reference {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-    flex-basis: 100%;
-  }
-
-  .reference-add {
-    justify-content: center;
-    min-height: 40px;
-  }
-
-  .reference-list {
-    width: 100%;
-  }
-
   .prompt-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .generation-count {
     flex-wrap: wrap;
   }
 
-  .generation-count span:first-child {
-    width: 100%;
-  }
-
-  .generation-count button,
-  .generation-count .count-fixed,
-  .generate-btn {
-    flex: 1;
-    justify-content: center;
+  .generation-count {
+    margin-left: auto;
   }
 
   .prompt-actions-end {
     width: 100%;
+    flex-basis: 100%;
   }
 
   .prompt-model-select {
@@ -985,7 +958,7 @@ async function handleGenerate() {
   }
 
   .generate-btn {
-    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -999,7 +972,7 @@ async function handleGenerate() {
   }
 
   .prompt-input {
-    min-height: 120px;
+    min-height: 96px;
     font-size: 13px;
   }
 
@@ -1053,17 +1026,6 @@ async function handleGenerate() {
   .reference-add {
     flex: 0 0 auto;
     min-height: 36px;
-  }
-
-  .reference-hint {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .generation-count span:first-child {
-    width: auto;
   }
 
   .prompt-actions {
