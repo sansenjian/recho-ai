@@ -792,4 +792,48 @@ async function handleGenerate() {
     padding: 4px 8px;
   }
 }
+
+@media (max-height: 520px) {
+  .imagio-main {
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .prompt-area {
+    padding: 12px;
+  }
+
+  .prompt-input {
+    height: 72px;
+    min-height: 72px;
+  }
+
+  .reference-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 40px;
+    margin-top: 8px;
+  }
+
+  .reference-add {
+    flex: 0 0 auto;
+    min-height: 36px;
+  }
+
+  .reference-hint {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .generation-count span:first-child {
+    width: auto;
+  }
+
+  .prompt-actions {
+    gap: 8px;
+    margin-top: 8px;
+  }
+}
 </style>
