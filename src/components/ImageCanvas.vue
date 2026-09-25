@@ -17,6 +17,9 @@ import { useImageCanvasViewer } from '../composables/useImageCanvasViewer'
 import { useImageGalleryStage } from '../composables/useImageGalleryStage'
 import { useImageNodeReferences } from '../composables/useImageNodeReferences'
 import { useAppConfig } from '../composables/useAppConfig'
+import { useAuthSession } from '../composables/useAuthSession'
+import { imageWorkspaceId, loadImagioAssignments, loadImagioWorkspaces, saveImagioAssignments, saveImagioWorkspaces } from '../lib/imagio-workspaces'
+import { removeNamedWorkspace } from '../lib/workspace-list'
 import { type CanvasExportDocument } from '../lib/canvas-document'
 import {
   loadCanvasWorkspaceState,
@@ -114,6 +117,61 @@ function createCanvasWorkspaceId() {
 }
 
 const { config: _appConfig, ensureAppConfig, availableImageModels, defaultImageModel } = useAppConfig()
+const { user } = useAuthSession()
+const initialImagioState = loadImagioWorkspaces(localStorage)
+const imagioWorkspaces = ref(initialImagioState.workspaces)
+const activeImagioWorkspaceId = ref(initialImagioState.activeId)
+const imagioAssignments = ref(loadImagioAssignments(localStorage, user.value?.id || null))
+const imagioDefaultWorkspaceId = computed(() => imagioWorkspaces.value[0].id)
+const activeImagioWorkspaceName = computed(() => imagioWorkspaces.value.find(workspace => workspace.id === activeImagioWorkspaceId.value)?.name || '')
+
+watch(() => user.value?.id || null, id => {
+  imagioAssignments.value = loadImagioAssignments(localStorage, id)
+})
+
+function persistImagioState() {
+  saveImagioWorkspaces(localStorage, imagioWorkspaces.value, activeImagioWorkspaceId.value)
+}
+
+function selectImagioWorkspace(id: string) {
+  if (!imagioWorkspaces.value.some(workspace => workspace.id === id)) return
+  activeImagioWorkspaceId.value = id
+  persistImagioState()
+}
+
+function createImagioWorkspace() {
+  const workspace = { id: crypto.randomUUID(), name: `新工作区 ${imagioWorkspaces.value.length + 1}` }
+  imagioWorkspaces.value = [...imagioWorkspaces.value, workspace]
+  activeImagioWorkspaceId.value = workspace.id
+  persistImagioState()
+}
+
+function removeImagioWorkspace(id: string) {
+  const previousDefaultId = imagioDefaultWorkspaceId.value
+  const next = removeNamedWorkspace(imagioWorkspaces.value, activeImagioWorkspaceId.value, id)
+  if (!next) return
+  const destination = next.activeId
+  imagioAssignments.value = Object.fromEntries(
+    Object.entries(imagioAssignments.value).map(([imageId, workspaceId]) => [imageId, workspaceId === id ? destination : workspaceId]),
+  )
+  if (id === previousDefaultId) {
+    for (const image of generatedImages.value) {
+      if (!imagioAssignments.value[image.id]) imagioAssignments.value[image.id] = destination
+    }
+  }
+  imagioWorkspaces.value = next.workspaces
+  activeImagioWorkspaceId.value = next.activeId
+  persistImagioState()
+  saveImagioAssignments(localStorage, user.value?.id || null, imagioAssignments.value)
+}
+
+function clearImagioWorkspaceHistory() {
+  if (!imagioWorkspaceImages.value.length) return
+  const assignments = { ...imagioAssignments.value }
+  for (const image of imagioWorkspaceImages.value) assignments[image.id] = '__hidden__'
+  imagioAssignments.value = assignments
+  saveImagioAssignments(localStorage, user.value?.id || null, assignments)
+}
 const imageModel = ref('')
 
 // Model options for Imagio prompt generation panel and canvas generation nodes.
@@ -171,6 +229,23 @@ const {
   resolveImageDetail,
   generate,
 } = useImageGen()
+
+const imagioWorkspaceImages = computed(() => generatedImages.value.filter(image =>
+  imageWorkspaceId(image, imagioAssignments.value, imagioDefaultWorkspaceId.value) === activeImagioWorkspaceId.value,
+))
+
+async function generateInImagioWorkspace(...args: Parameters<typeof generate>) {
+  const workspaceId = activeImagioWorkspaceId.value
+  const userId = user.value?.id || null
+  const results = await generate(...args)
+  if (results?.length) {
+    const assignments = loadImagioAssignments(localStorage, userId)
+    for (const image of results) assignments[image.id] = workspaceId
+    saveImagioAssignments(localStorage, userId, assignments)
+    if ((user.value?.id || null) === userId) imagioAssignments.value = assignments
+  }
+  return results
+}
 
 const viewportRef = ref<HTMLElement | null>(null)
 const {
@@ -1424,13 +1499,18 @@ onUnmounted(() => {
           <div v-if="currentImageMode === 'imagio'" class="min-h-0">
             <ImagioSidebar
               :image-mode="currentImageMode"
-              :history-images="historyImages"
-              :has-generated-images="Boolean(generatedImages.length)"
+              :workspaces="imagioWorkspaces"
+              :active-workspace-id="activeImagioWorkspaceId"
+              :history-images="imagioWorkspaceImages.slice(0, 6)"
+              :has-generated-images="Boolean(imagioWorkspaceImages.length)"
               :is-loading-history="isLoadingHistory"
+              @select-workspace="selectImagioWorkspace"
+              @create-workspace="createImagioWorkspace"
+              @remove-workspace="removeImagioWorkspace"
               @select-image-mode="handleImageModeChange"
               @select-workspace-tab="selectWorkspace"
               @use-history-image="useHistoryImage"
-              @clear-history="clearHistory"
+              @clear-history="clearImagioWorkspaceHistory"
             />
           </div>
           <div v-else class="min-h-0">
@@ -1457,10 +1537,14 @@ onUnmounted(() => {
         <section v-if="activeWorkspace === 'canvas'" class="relative flex-1 min-w-0 overflow-hidden">
           <template v-if="currentImageMode === 'imagio'">
             <ImagioView
-              :generate="generate"
+              :generate="generateInImagioWorkspace"
               :is-generating="isGenerating"
               :error="error"
-              :generated-images="generatedImages"
+              :generated-images="imagioWorkspaceImages"
+              :workspace-name="activeImagioWorkspaceName"
+              :workspaces="imagioWorkspaces"
+              :active-workspace-id="activeImagioWorkspaceId"
+              @select-workspace="selectImagioWorkspace"
               :can-select-generation-count="props.canSelectGenerationCount"
               v-model:image-model="imageModel"
               v-model:resolution="resolution"
