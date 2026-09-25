@@ -4,8 +4,10 @@ import type { Message, MessageBlock } from '../types'
 import { getRendered, getRenderedText } from '../utils/markdown'
 import { stripThinking } from '../utils/messageText'
 import { relativeTime } from '../utils/time'
+import { extractLinkPreview } from '../utils/linkPreview'
 import ToolActivity from './ToolActivity.vue'
 import ThinkingActivity from './ThinkingActivity.vue'
+import LinkPreviewCard from './LinkPreviewCard.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Copy, Check, RefreshCw } from '@lucide/vue'
@@ -33,6 +35,7 @@ const shouldShowThinkingPlaceholder = computed(() =>
 )
 const renderedMessage = computed(() => getRendered(props.msg))
 const displayTimestamp = computed(() => relativeTime(props.msg.timestamp))
+const linkPreview = computed(() => extractLinkPreview(props.msg.content))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
   return getRenderedText(block.content)
@@ -106,6 +109,8 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
         <div v-else class="msg-text text-[13.5px] leading-[1.7] text-foreground break-words">{{ stripThinking(msg.content) }}</div>
       </template>
 
+      <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
+
       <!-- Action bar -->
       <div class="mt-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
@@ -148,6 +153,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
       <div class="msg-text text-[13.5px] leading-[1.65] text-foreground break-words bg-muted py-2 px-3 rounded-lg border border-border">
         {{ msg.content }}
       </div>
+      <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
       <!-- Actions -->
       <div class="flex items-center gap-0.5">
         <Button
