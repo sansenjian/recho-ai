@@ -128,7 +128,7 @@ refreshCredits()
   <aside
     class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-[980px]:w-[220px] max-[760px]:hidden"
   >
-    <!-- Mode switch: Imagio / 画布 -->
+    <!-- Mode switch: 对话 / 画布 -->
     <div class="flex items-center gap-2 m-[18px_14px_18px] p-1 border border-border rounded-lg bg-muted">
       <button
         type="button"
@@ -138,7 +138,7 @@ refreshCredits()
         ]"
         @click="emit('select-image-mode', 'imagio')"
       >
-        Imagio
+        对话
       </button>
       <button
         type="button"
