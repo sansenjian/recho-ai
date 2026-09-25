@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { LayoutGrid, Image } from '@lucide/vue'
+import { Image } from '@lucide/vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
@@ -1481,32 +1481,6 @@ onUnmounted(() => {
 <template>
   <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
     <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
-      <!-- Top workspace switcher -->
-      <div class="z-20 flex shrink-0 items-center gap-1 px-4 h-10 border-b border-border bg-card max-md:px-2.5 max-sm:px-2">
-        <button
-          type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
-            activeWorkspace === 'canvas' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
-          ]"
-          @click="selectWorkspace('canvas')"
-        >
-          <LayoutGrid :size="14" stroke-width="1.8" />
-          <span>工作台</span>
-        </button>
-        <button
-          type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
-            activeWorkspace === 'gallery' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
-          ]"
-          @click="selectWorkspace('gallery')"
-        >
-          <Image :size="14" stroke-width="1.8" />
-          <span>作品广场</span>
-        </button>
-      </div>
-
       <!-- Content row: sidebar + main content -->
       <div class="flex flex-1 min-h-0 min-w-0">
         <!-- Sidebar: only in canvas workspace mode -->

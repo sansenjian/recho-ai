@@ -19,6 +19,7 @@ const props = defineProps<{
   showSidebar: boolean
   showAgentPanel: boolean
   showImagePanel: boolean
+  imageWorkspace: 'canvas' | 'gallery'
   agentMode: AgentModeOption
   messages: Message[]
   authEmail: string
@@ -52,6 +53,7 @@ const emit = defineEmits<{
   toggleAgentPanel: []
   toggleImagePanel: []
   openImage: []
+  openGallery: []
   newChat: []
   toggleSettings: []
   openAuth: []
@@ -117,15 +119,30 @@ function handleChatButtonClick() {
           size="sm"
           class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
           :class="cn(
-            showImagePanel
+            showImagePanel && imageWorkspace === 'canvas'
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
               : 'text-muted-foreground hover:bg-background hover:text-foreground',
           )"
-          :aria-pressed="showImagePanel"
+          :aria-pressed="showImagePanel && imageWorkspace === 'canvas'"
           @click="$emit('openImage')"
         >
           <Image class="h-3.5 w-3.5" />
           <span>工作台</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
+          :class="cn(
+            showImagePanel && imageWorkspace === 'gallery'
+              ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
+              : 'text-muted-foreground hover:bg-background hover:text-foreground',
+          )"
+          :aria-pressed="showImagePanel && imageWorkspace === 'gallery'"
+          @click="$emit('openGallery')"
+        >
+          <Image class="h-3.5 w-3.5" />
+          <span>作品广场</span>
         </Button>
       </div>
 
