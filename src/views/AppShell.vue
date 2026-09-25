@@ -464,6 +464,7 @@ watch(() => messages.value[messages.value.length - 1]?.content, () => {
 watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
 watch(isLoading, (v) => { scrollSmooth = !v })
 watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
+onMounted(() => { void nextTick(updateActiveRailMessage) })
 watch([() => route.meta.workspace, () => user.value?.id || null, isAuthReady], () => {
   void syncWorkspaceFromRoute()
 }, { immediate: true })
@@ -597,45 +598,47 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 
       <!-- Chat Panel -->
       <template v-else>
-        <main ref="chatAreaRef" class="relative flex-1 overflow-y-auto bg-secondary" @scroll.passive="updateActiveRailMessage">
+        <div class="relative flex-1 min-h-0 overflow-hidden">
+          <main ref="chatAreaRef" class="h-full overflow-y-auto bg-secondary" @scroll.passive="updateActiveRailMessage">
+            <div class="max-w-[880px] mx-auto px-6 pt-7 pb-9 max-md:px-3 max-md:pt-4 max-md:pb-6">
+              <div v-for="msg in messages" :key="msg.id" :ref="element => setMessageElement(msg.id, element as Element | null)" class="mb-4">
+                <ThinkingActivity
+                  v-if="msg.role === 'assistant' && thinkingForMessage(msg)"
+                  :content="thinkingForMessage(msg)"
+                  :active="msg.id === latestAssistantMessageId && isLoading"
+                />
+
+                <ToolActivity
+                  v-if="msg.role === 'assistant' && messageHasTools(msg)"
+                  embedded
+                  :active-tool-calls="toolCallsForMessage(msg).active"
+                  :completed-tool-calls="toolCallsForMessage(msg).completed"
+                />
+
+                <StreamingStatus
+                  v-if="msg.id === latestAssistantMessageId"
+                  :is-loading="isLoading && !msg.content"
+                  :active-tool-calls="activeToolCalls"
+                  :state="runState"
+                  :label="runStatusLabel"
+                />
+
+                <ChatMessage
+                  :msg="msg"
+                  :copy-feedback="copyFeedbackId === msg.id"
+                  :assistant-index="assistantMessageIndex(msg.id)"
+                  @copy="handleCopy(msg)"
+                  @retry="handleRetry(msg)"
+                />
+              </div>
+            </div>
+          </main>
           <ChatMessageRail
             :messages="messages"
             :active-message-id="activeRailMessageId"
             @select="jumpToMessage"
           />
-          <div class="max-w-[880px] mx-auto px-6 pt-7 pb-9 max-md:px-3 max-md:pt-4 max-md:pb-6">
-            <div v-for="msg in messages" :key="msg.id" :ref="element => setMessageElement(msg.id, element as Element | null)" class="mb-4">
-              <ThinkingActivity
-                v-if="msg.role === 'assistant' && thinkingForMessage(msg)"
-                :content="thinkingForMessage(msg)"
-                :active="msg.id === latestAssistantMessageId && isLoading"
-              />
-
-              <ToolActivity
-                v-if="msg.role === 'assistant' && messageHasTools(msg)"
-                embedded
-                :active-tool-calls="toolCallsForMessage(msg).active"
-                :completed-tool-calls="toolCallsForMessage(msg).completed"
-              />
-
-              <StreamingStatus
-                v-if="msg.id === latestAssistantMessageId"
-                :is-loading="isLoading && !msg.content"
-                :active-tool-calls="activeToolCalls"
-                :state="runState"
-                :label="runStatusLabel"
-              />
-
-              <ChatMessage
-                :msg="msg"
-                :copy-feedback="copyFeedbackId === msg.id"
-                :assistant-index="assistantMessageIndex(msg.id)"
-                @copy="handleCopy(msg)"
-                @retry="handleRetry(msg)"
-              />
-            </div>
-          </div>
-        </main>
+        </div>
 
         <ChatInput
           :is-loading="isLoading"
