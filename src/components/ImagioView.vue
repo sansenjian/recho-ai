@@ -358,44 +358,45 @@ async function handleGenerate() {
           :disabled="isGenerating"
         />
 
-        <div class="reference-row">
-          <button
-            class="reference-add"
-            type="button"
-            :disabled="isGenerating"
-            title="添加参考图"
-            @click="openReferencePicker"
-          >
-            <Plus :size="16" stroke-width="1.7" />
-            <span>参考图</span>
-          </button>
-          <input
-            ref="fileInputRef"
-            class="reference-file-input"
-            aria-label="添加参考图"
-            type="file"
-            accept="image/*"
-            multiple
-            @change="handleReferenceInput"
-          >
-          <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
-            <div
-              v-for="(reference, index) in pendingReferences"
-              :key="reference.id"
-              class="reference-item"
-            >
-              <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-              <button type="button" title="移除参考图" @click="removeReference(index)">
-                <X :size="12" stroke-width="2" />
-              </button>
-            </div>
-          </div>
-          <span v-else class="reference-hint">可粘贴图片作为参考</span>
-        </div>
         <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
         <p v-if="error" class="reference-error">{{ error }}</p>
 
         <div class="prompt-actions">
+          <div class="prompt-reference">
+            <button
+              class="reference-add"
+              type="button"
+              :disabled="isGenerating"
+              title="添加参考图"
+              @click="openReferencePicker"
+            >
+              <Plus :size="16" stroke-width="1.7" />
+              <span>参考图</span>
+            </button>
+            <input
+              ref="fileInputRef"
+              class="reference-file-input"
+              aria-label="添加参考图"
+              type="file"
+              accept="image/*"
+              multiple
+              @change="handleReferenceInput"
+            >
+            <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+              <div
+                v-for="(reference, index) in pendingReferences"
+                :key="reference.id"
+                class="reference-item"
+              >
+                <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+                <button type="button" title="移除参考图" @click="removeReference(index)">
+                  <X :size="12" stroke-width="2" />
+                </button>
+              </div>
+            </div>
+            <span v-else class="reference-hint">可粘贴图片作为参考</span>
+          </div>
+
           <div class="generation-count">
             <span>生成数量</span>
             <template v-if="canSelectGenerationCount">
@@ -639,12 +640,12 @@ async function handleGenerate() {
   cursor: not-allowed;
 }
 
-.reference-row {
+.prompt-reference {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 50px;
-  margin-top: 12px;
+  min-width: 0;
+  flex: 1 1 360px;
 }
 
 .reference-add {
@@ -719,9 +720,13 @@ async function handleGenerate() {
 }
 
 .reference-hint {
+  min-width: 0;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reference-error {
@@ -798,10 +803,10 @@ async function handleGenerate() {
 @media (max-width: 1180px) {
   .imagio-options {
     display: block;
-    flex: 1;
-    width: min(920px, 100%);
+    flex: 0 1 auto;
+    width: min(760px, 100%);
     min-height: 0;
-    margin: 0 auto 12px;
+    margin: 0 0 12px auto;
     overflow-y: auto;
   }
 
@@ -817,6 +822,7 @@ async function handleGenerate() {
   justify-content: space-between;
   gap: 12px;
   margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 .prompt-actions-end {
@@ -933,10 +939,11 @@ async function handleGenerate() {
     max-width: 100%;
   }
 
-  .reference-row {
+  .prompt-reference {
     align-items: stretch;
     flex-direction: column;
     gap: 8px;
+    flex-basis: 100%;
   }
 
   .reference-add {
@@ -1036,11 +1043,11 @@ async function handleGenerate() {
     min-height: 72px;
   }
 
-  .reference-row {
+  .prompt-reference {
     flex-direction: row;
     align-items: center;
+    flex-basis: auto;
     min-height: 40px;
-    margin-top: 8px;
   }
 
   .reference-add {
