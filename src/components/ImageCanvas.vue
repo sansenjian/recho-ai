@@ -1460,6 +1460,7 @@ onUnmounted(() => {
               :generate="generate"
               :is-generating="isGenerating"
               :error="error"
+              :generated-images="generatedImages"
               :can-select-generation-count="props.canSelectGenerationCount"
               v-model:image-model="imageModel"
               v-model:resolution="resolution"

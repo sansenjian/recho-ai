@@ -12,6 +12,7 @@ import type {
   ImageGenerate,
   ImageGenerationCount,
   ImageGenReference,
+  GeneratedImage,
   ImageQuality,
   ImageResolution,
 } from '../types/image'
@@ -24,6 +25,7 @@ const props = defineProps<{
   generate: ImageGenerate
   isGenerating: boolean
   error: string | null
+  generatedImages?: GeneratedImage[]
   canSelectGenerationCount?: boolean
   imageModel?: string
   defaultImageModel?: string
@@ -57,6 +59,32 @@ const customAspectRatioOpen = ref(false)
 const customAspectRatioWidth = ref('4')
 const customAspectRatioHeight = ref('5')
 const customAspectRatioError = ref<string | null>(null)
+
+const conversationItems = computed(() => {
+  const groups = new Map<string, { id: string; prompt: string; timestamp: string; references: ImageGenReference[]; images: GeneratedImage[] }>()
+
+  for (const image of [...(props.generatedImages ?? [])].reverse()) {
+    const key = image.generationBatchId || `${image.prompt}|${image.timestamp}`
+    const existing = groups.get(key)
+    if (existing) {
+      existing.images.push(image)
+      continue
+    }
+    groups.set(key, {
+      id: key,
+      prompt: image.userPrompt || image.prompt,
+      timestamp: image.timestamp,
+      references: image.references ?? [],
+      images: [image],
+    })
+  }
+
+  return [...groups.values()]
+})
+
+function generatedImageSource(image: GeneratedImage) {
+  return image.previewUrl || image.thumbnailUrl || image.url || image.temporaryUrl || image.dataUrl || ''
+}
 
 const canGenerate = computed(() => Boolean(promptText.value.trim()) && !props.isGenerating)
 const aspectRatioLocked = computed(() => props.resolution === 'auto')
@@ -187,7 +215,7 @@ async function handleGenerate() {
 </script>
 
 <template>
-  <div class="imagio-view" @paste="handlePaste">
+  <div class="imagio-view" :class="{ 'has-conversation': conversationItems.length }" @paste="handlePaste">
     <div class="imagio-main">
       <div class="imagio-options">
         <div class="inline-params">
@@ -276,6 +304,47 @@ async function handleGenerate() {
               </button>
             </div>
             <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
+          </div>
+        </div>
+      </div>
+      <div v-if="conversationItems.length" class="imagio-conversation" aria-label="图片生成对话记录">
+        <div
+          v-for="item in conversationItems"
+          :key="item.id"
+          class="conversation-turn"
+        >
+          <div class="conversation-ai">
+            <div class="conversation-avatar" aria-hidden="true">AI</div>
+            <div class="conversation-output">
+              <div class="conversation-label">生成结果</div>
+              <div class="conversation-image-grid">
+                <div
+                  v-for="image in item.images"
+                  :key="image.id"
+                  class="conversation-image"
+                  :title="image.prompt"
+                >
+                  <img
+                    v-if="generatedImageSource(image)"
+                    :src="generatedImageSource(image)"
+                    :alt="image.prompt"
+                  >
+                  <span v-else class="conversation-image-placeholder">图片处理中...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="conversation-user">
+            <div v-if="item.references.length" class="conversation-reference-list" aria-label="参考图">
+              <img
+                v-for="reference in item.references"
+                :key="reference.id"
+                :src="reference.previewUrl || reference.thumbnailUrl || reference.dataUrl"
+                :alt="reference.title"
+              >
+            </div>
+            <p>{{ item.prompt }}</p>
           </div>
         </div>
       </div>
@@ -402,6 +471,131 @@ async function handleGenerate() {
 
 .imagio-options {
   display: none;
+}
+
+.imagio-conversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 28px;
+  width: min(920px, 100%);
+  min-height: 0;
+  margin: 0 auto 18px;
+  overflow-y: auto;
+  padding: 12px 8px 4px;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.22) transparent;
+  scrollbar-width: thin;
+}
+
+.conversation-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.conversation-ai {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: min(78%, 680px);
+}
+
+.conversation-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.conversation-output {
+  min-width: 0;
+}
+
+.conversation-label {
+  margin: 2px 0 7px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.conversation-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 560px;
+}
+
+.conversation-image {
+  display: block;
+  min-width: 0;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  background: hsl(var(--card));
+  cursor: pointer;
+}
+
+.conversation-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.conversation-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conversation-user {
+  align-self: flex-end;
+  width: min(72%, 560px);
+  padding: 12px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+
+.conversation-user p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.conversation-reference-list {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+}
+
+.conversation-reference-list img {
+  display: block;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 1px solid hsl(var(--background) / 0.22);
 }
 
 .prompt-area {
@@ -609,6 +803,11 @@ async function handleGenerate() {
     margin: 0 auto 12px;
     overflow-y: auto;
   }
+
+  .has-conversation .imagio-options {
+    flex: 0 1 34%;
+    max-height: 34%;
+  }
 }
 
 .prompt-actions {
@@ -715,6 +914,24 @@ async function handleGenerate() {
     padding: 14px;
   }
 
+  .imagio-conversation {
+    gap: 22px;
+    margin-bottom: 12px;
+    padding: 8px 0 2px;
+  }
+
+  .conversation-ai {
+    max-width: 92%;
+  }
+
+  .conversation-user {
+    width: 86%;
+  }
+
+  .conversation-image-grid {
+    max-width: 100%;
+  }
+
   .reference-row {
     align-items: stretch;
     flex-direction: column;
@@ -801,6 +1018,16 @@ async function handleGenerate() {
 
   .prompt-area {
     padding: 12px;
+  }
+
+  .imagio-conversation {
+    min-height: 120px;
+    margin-bottom: 8px;
+  }
+
+  .has-conversation .imagio-options {
+    flex-basis: 28%;
+    max-height: 28%;
   }
 
   .prompt-input {
