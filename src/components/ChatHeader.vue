@@ -125,7 +125,7 @@ function handleChatButtonClick() {
           @click="$emit('openImage')"
         >
           <Image class="h-3.5 w-3.5" />
-          <span>画布</span>
+          <span>工作台</span>
         </Button>
       </div>
 
