@@ -464,7 +464,8 @@ async function handleGenerate() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 28px;
   min-height: 0;
 }
