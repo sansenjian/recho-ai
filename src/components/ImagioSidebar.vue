@@ -101,6 +101,13 @@ function selectWorkspace(id: string) {
   persistWorkspaces()
 }
 
+function renameWorkspace(id: string, name: string) {
+  const workspace = workspaces.value.find(item => item.id === id)
+  if (!workspace) return
+  workspace.name = name
+  persistWorkspaces()
+}
+
 function requestRemoveWorkspace(id: string) {
   if (workspaces.value.length <= 1 || !workspaces.value.some(workspace => workspace.id === id)) {
     return
@@ -161,6 +168,7 @@ refreshCredits()
       @select="selectWorkspace"
       @create="addWorkspace"
       @remove="requestRemoveWorkspace"
+      @rename="renameWorkspace"
     />
 
     <!-- History section -->

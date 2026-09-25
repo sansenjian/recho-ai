@@ -134,6 +134,22 @@ describe('WorkspaceList', () => {
     expect(wrapper.emitted('remove')).toEqual([['b']])
   })
 
+  it('opens rename from the workspace context menu and emits the new name', async () => {
+    const wrapper = mountList(pair, 'a')
+    const row = wrapper.findAll('.group').find(item => item.text().includes('工作区 B'))
+    expect(row).toBeDefined()
+
+    await row!.trigger('contextmenu')
+    await row!.find('[role="menuitem"]').trigger('click')
+
+    const input = row!.find('input[aria-label="重命名工作区 B"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('新的工作区')
+    await input.trigger('keydown.enter')
+
+    expect(wrapper.emitted('rename')).toEqual([['b', '新的工作区']])
+  })
+
   it('disables removal when a single workspace is left', () => {
     const wrapper = mountList([pair[0]], 'a')
     const removeButton = wrapper.find('button[aria-label="至少保留一个工作区"]')

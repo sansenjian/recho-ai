@@ -1179,6 +1179,13 @@ function createCanvasWorkspace() {
   persistCanvasWorkspaces()
 }
 
+function renameCanvasWorkspace(id: string, name: string) {
+  const workspace = canvasWorkspaces.value.find(item => item.id === id)
+  if (!workspace) return
+  workspace.name = name
+  persistCanvasWorkspaces()
+}
+
 function requestDeleteCanvasWorkspace(id: string) {
   if (canvasWorkspaces.value.length <= 1 || !canvasWorkspaces.value.some(workspace => workspace.id === id)) {
     return
@@ -1446,6 +1453,7 @@ onUnmounted(() => {
               @select-canvas-workspace="activateCanvasWorkspace"
               @create-canvas-workspace="createCanvasWorkspace"
               @delete-canvas-workspace="requestDeleteCanvasWorkspace"
+              @rename-canvas-workspace="renameCanvasWorkspace"
               @select-image-mode="handleImageModeChange"
               @create-node="createNodeNearCenter"
               @use-history-image="useHistoryImage"

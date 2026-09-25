@@ -234,7 +234,7 @@ async function handleGenerate() {
             </div>
           </div>
 
-          <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group">
+          <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group aspect-ratio-group">
             <label>尺寸 / 比例</label>
             <div class="param-buttons">
               <button
@@ -733,6 +733,8 @@ async function handleGenerate() {
 
 /* Inline parameter panel (shown on narrow viewports) */
 .inline-params {
+  width: fit-content;
+  max-width: 100%;
   padding: 16px;
   background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
@@ -759,6 +761,11 @@ async function handleGenerate() {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.aspect-ratio-group .param-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
 }
 
 .param-buttons button {
@@ -797,9 +804,10 @@ async function handleGenerate() {
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */
 @media (max-width: 1180px) {
   .imagio-options {
-    display: block;
+    display: flex;
+    justify-content: flex-end;
     flex: 0 1 auto;
-    width: min(760px, 100%);
+    width: 100%;
     min-height: 0;
     margin: 0 0 12px auto;
     overflow-y: auto;
@@ -977,11 +985,16 @@ async function handleGenerate() {
   }
 
   .inline-params {
+    width: 100%;
     padding: 12px;
   }
 
   .param-buttons {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aspect-ratio-group .param-buttons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

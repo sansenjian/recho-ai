@@ -47,6 +47,7 @@ const emit = defineEmits<{
   'select-canvas-workspace': [id: string]
   'create-canvas-workspace': []
   'delete-canvas-workspace': [id: string]
+  'rename-canvas-workspace': [id: string, name: string]
   'select-image-mode': [mode: 'imagio' | 'canvas']
   'create-node': [type: CanvasNodeType]
   'use-history-image': [image: GeneratedImage]
@@ -61,6 +62,10 @@ function onSelectWorkspace(id: string) {
 
 function onRemoveWorkspace(id: string) {
   emit('delete-canvas-workspace', id)
+}
+
+function onRenameWorkspace(id: string, name: string) {
+  emit('rename-canvas-workspace', id, name)
 }
 </script>
 
@@ -99,6 +104,7 @@ function onRemoveWorkspace(id: string) {
       @select="onSelectWorkspace"
       @create="emit('create-canvas-workspace')"
       @remove="onRemoveWorkspace"
+      @rename="onRenameWorkspace"
     />
 
     <!-- Canvas-specific: mini-map + quick create -->
