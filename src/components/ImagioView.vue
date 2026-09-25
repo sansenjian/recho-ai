@@ -20,12 +20,16 @@ import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-as
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
+import type { NamedWorkspace } from '../lib/workspace-list'
 
 const props = defineProps<{
   generate: ImageGenerate
   isGenerating: boolean
   error: string | null
   generatedImages?: GeneratedImage[]
+  workspaceName?: string
+  workspaces?: NamedWorkspace[]
+  activeWorkspaceId?: string
   canSelectGenerationCount?: boolean
   imageModel?: string
   defaultImageModel?: string
@@ -43,6 +47,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'select-workspace': [id: string]
   'update:image-model': [value: string]
   'update:resolution': [value: ImageResolution]
   'update:aspect-ratio': [value: ImageAspectRatio]
@@ -217,6 +222,21 @@ async function handleGenerate() {
 <template>
   <div class="imagio-view" :class="{ 'has-conversation': conversationItems.length }" @paste="handlePaste">
     <div class="imagio-main">
+      <div class="workspace-heading" aria-label="当前对话工作区">
+        <div class="min-w-0">
+          <span class="text-[11px] font-medium text-muted-foreground">工作区</span>
+          <h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || '新工作区' }}</h2>
+        </div>
+        <select
+          v-if="workspaces?.length"
+          class="workspace-mobile-select"
+          :value="activeWorkspaceId"
+          aria-label="切换对话工作区"
+          @change="emit('select-workspace', ($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
+        </select>
+      </div>
       <div class="imagio-options">
         <div class="inline-params">
           <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
@@ -468,6 +488,29 @@ async function handleGenerate() {
   overflow-x: hidden;
   padding: 24px 28px;
   min-height: 0;
+}
+
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(920px, 100%);
+  margin: 0 auto 12px;
+  padding: 0 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.workspace-mobile-select {
+  display: none;
+  max-width: 55%;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 12px;
 }
 
 .imagio-options {
@@ -907,6 +950,9 @@ async function handleGenerate() {
 }
 
 @media (max-width: 760px) {
+  .workspace-mobile-select {
+    display: block;
+  }
   .imagio-main {
     padding: 12px;
   }

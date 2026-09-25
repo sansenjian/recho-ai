@@ -154,7 +154,7 @@ describe('workspace sidebar parity', () => {
 
   it('renders the shared list in both sidebars', () => {
     const imagio = mount(ImagioSidebar, {
-      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
+      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: pair, activeWorkspaceId: 'a' },
     })
     const canvas = mount(ImageCanvasSidebar, {
       props: {
@@ -173,12 +173,9 @@ describe('workspace sidebar parity', () => {
     expect(canvas.find('button[aria-label="新建画布"]').exists()).toBe(true)
   })
 
-  it('deletes an Imagio workspace and persists the neighbour as active', async () => {
-    localStorage.setItem('imagio-workspaces', JSON.stringify(pair))
-    localStorage.setItem('imagio-active-workspace', 'a')
-
+  it('confirms removal of an Imagio workspace', async () => {
     const wrapper = mount(ImagioSidebar, {
-      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
+      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: pair, activeWorkspaceId: 'a' },
       attachTo: document.body,
     })
 
@@ -191,38 +188,17 @@ describe('workspace sidebar parity', () => {
     confirm!.click()
     await nextTick()
 
-    expect(JSON.parse(localStorage.getItem('imagio-workspaces')!)).toEqual([pair[1]])
-    expect(localStorage.getItem('imagio-active-workspace')).toBe('b')
-    expect(wrapper.findAll('button').some(button => button.text().includes('工作区 A'))).toBe(false)
+    expect(wrapper.emitted('remove-workspace')?.[0]).toEqual(['a'])
   })
 
-  it('drops persisted workspaces with an empty id', () => {
-    localStorage.setItem('imagio-workspaces', JSON.stringify([
-      { id: 'a', name: '工作区 A' },
-      { id: '', name: '坏工作区' },
-    ]))
-    localStorage.setItem('imagio-active-workspace', 'a')
-
+  it('disables removal with a single workspace', () => {
     const wrapper = mount(ImagioSidebar, {
-      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
-    })
-
-    expect(wrapper.text()).not.toContain('坏工作区')
-    expect(wrapper.text()).toContain('工作区 A')
-  })
-
-  it('falls back to a single default workspace when persisted data is all invalid', () => {
-    localStorage.setItem('imagio-workspaces', JSON.stringify([
-      { id: '', name: '坏工作区' },
-    ]))
-
-    const wrapper = mount(ImagioSidebar, {
-      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false },
+      props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: [pair[0]], activeWorkspaceId: 'a' },
     })
 
     const keepOne = wrapper.find('button[aria-label="至少保留一个工作区"]')
     expect(keepOne.exists()).toBe(true)
     expect(keepOne.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('新工作区')
+    expect(wrapper.text()).toContain('工作区 A')
   })
 })
