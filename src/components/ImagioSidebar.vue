@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { hasDisplayImage } from '../lib/image-gallery'
-import { isNamedWorkspace, removeNamedWorkspace, type NamedWorkspace } from '../lib/workspace-list'
+import type { NamedWorkspace } from '../lib/workspace-list'
 import { useCredits } from '../composables/useCredits'
 import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
@@ -12,14 +12,13 @@ import WorkspaceList from './WorkspaceList.vue'
 
 type Workspace = NamedWorkspace
 
-const WORKSPACES_STORAGE_KEY = 'imagio-workspaces'
-const ACTIVE_WORKSPACE_KEY = 'imagio-active-workspace'
-
 const props = defineProps<{
   imageMode?: 'imagio' | 'canvas'
   historyImages: GeneratedImage[]
   hasGeneratedImages: boolean
   isLoadingHistory?: boolean
+  workspaces: Workspace[]
+  activeWorkspaceId: string
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +26,10 @@ const emit = defineEmits<{
   'select-workspace-tab': [tab: 'canvas' | 'gallery']
   'use-history-image': [image: GeneratedImage]
   'clear-history': []
+  'select-workspace': [id: string]
+  'create-workspace': []
+  'remove-workspace': [id: string]
+  'rename-workspace': [id: string, name: string]
 }>()
 
 const { creditBalance, refreshCredits } = useCredits()
@@ -42,38 +45,10 @@ const creditDisplay = computed(() => {
   return creditBalance.value ?? 0
 })
 
-// --- Workspace management ---
-
-function loadWorkspaces(): Workspace[] {
-  try {
-    const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY)
-    if (raw) {
-      // id 为空串会让删除永远点不动、id 重复会让一次删除连带删掉多项，
-      // 所以持久化数据一律在入口过滤。
-      const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        const valid = parsed.filter(isNamedWorkspace)
-        if (valid.length > 0) return valid
-      }
-    }
-  } catch (err) {
-    console.warn('[imagio-sidebar] failed to load workspaces from localStorage', err)
-  }
-  return [{ id: crypto.randomUUID(), name: '新工作区' }]
-}
-
-function loadActiveId(workspaces: Workspace[]): string {
-  const stored = localStorage.getItem(ACTIVE_WORKSPACE_KEY)
-  if (stored && workspaces.some(w => w.id === stored)) return stored
-  return workspaces[0]?.id || ''
-}
-
-const workspaces = ref<Workspace[]>(loadWorkspaces())
-const activeWorkspaceId = ref(loadActiveId(workspaces.value))
 const pendingRemoveWorkspaceId = ref<string | null>(null)
 
 const pendingRemoveWorkspace = computed(() =>
-  workspaces.value.find(workspace => workspace.id === pendingRemoveWorkspaceId.value) ?? null,
+  props.workspaces.find(workspace => workspace.id === pendingRemoveWorkspaceId.value) ?? null,
 )
 
 const removeWorkspaceDialogOpen = computed({
@@ -83,49 +58,20 @@ const removeWorkspaceDialogOpen = computed({
   },
 })
 
-function persistWorkspaces() {
-  localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.value))
-  localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId.value)
-}
-
-function addWorkspace() {
-  const index = workspaces.value.length + 1
-  const ws: Workspace = { id: crypto.randomUUID(), name: `新工作区 ${index}` }
-  workspaces.value.push(ws)
-  activeWorkspaceId.value = ws.id
-  persistWorkspaces()
-}
-
-function selectWorkspace(id: string) {
-  activeWorkspaceId.value = id
-  persistWorkspaces()
-}
-
-function renameWorkspace(id: string, name: string) {
-  const workspace = workspaces.value.find(item => item.id === id)
-  if (!workspace) return
-  workspace.name = name
-  persistWorkspaces()
-}
-
 function requestRemoveWorkspace(id: string) {
-  if (workspaces.value.length <= 1 || !workspaces.value.some(workspace => workspace.id === id)) {
+  if (props.workspaces.length <= 1 || !props.workspaces.some(workspace => workspace.id === id)) {
     return
   }
   pendingRemoveWorkspaceId.value = id
 }
 
 function removeWorkspace(id: string) {
-  const next = removeNamedWorkspace(workspaces.value, activeWorkspaceId.value, id)
-  if (!next) {
-    pendingRemoveWorkspaceId.value = null
-    return
-  }
-
-  workspaces.value = next.workspaces
-  activeWorkspaceId.value = next.activeId
   pendingRemoveWorkspaceId.value = null
-  persistWorkspaces()
+  emit('remove-workspace', id)
+}
+
+function renameWorkspace(id: string, name: string) {
+  emit('rename-workspace', id, name)
 }
 
 refreshCredits()
@@ -135,7 +81,7 @@ refreshCredits()
   <aside
     class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-[980px]:w-[220px] max-[760px]:hidden"
   >
-    <!-- Mode switch: Imagio / 画布 -->
+    <!-- Mode switch: 对话 / 画布 -->
     <div class="flex items-center gap-2 m-[18px_14px_18px] p-1 border border-border rounded-lg bg-muted">
       <button
         type="button"
@@ -145,7 +91,7 @@ refreshCredits()
         ]"
         @click="emit('select-image-mode', 'imagio')"
       >
-        Imagio
+        对话
       </button>
       <button
         type="button"
@@ -165,8 +111,8 @@ refreshCredits()
       :active-id="activeWorkspaceId"
       create-label="新建工作区"
       keep-one-hint="至少保留一个工作区"
-      @select="selectWorkspace"
-      @create="addWorkspace"
+      @select="emit('select-workspace', $event)"
+      @create="emit('create-workspace')"
       @remove="requestRemoveWorkspace"
       @rename="renameWorkspace"
     />
