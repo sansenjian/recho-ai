@@ -17,6 +17,7 @@ import ChatSidebar from '../components/ChatSidebar.vue'
 import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
+import ChatMessageRail from '../components/ChatMessageRail.vue'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
@@ -86,6 +87,35 @@ const messages = computed<Message[]>(() => {
 const latestAssistantMessageId = computed(() => {
   return [...messages.value].reverse().find(msg => msg.role === 'assistant')?.id ?? null
 })
+
+const activeRailMessageId = ref<string | null>(null)
+const messageElements = new Map<string, HTMLElement>()
+
+function setMessageElement(id: string, element: Element | null) {
+  if (element instanceof HTMLElement) messageElements.set(id, element)
+  else messageElements.delete(id)
+}
+
+function updateActiveRailMessage() {
+  const scrollTop = chatAreaRef.value?.scrollTop ?? 0
+  let active: string | null = null
+  let closestOffset = Number.POSITIVE_INFINITY
+  for (const message of messages.value) {
+    const element = messageElements.get(message.id)
+    if (!element) continue
+    const offset = Math.abs(element.offsetTop - scrollTop - 32)
+    if (offset < closestOffset) {
+      closestOffset = offset
+      active = message.id
+    }
+  }
+  activeRailMessageId.value = active || messages.value.at(-1)?.id || null
+}
+
+function jumpToMessage(id: string) {
+  messageElements.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  activeRailMessageId.value = id
+}
 
 function assistantMessageIndex(id: string) {
   const assistantMessages = messages.value.filter(msg => msg.role === 'assistant')
@@ -433,6 +463,8 @@ watch(() => messages.value[messages.value.length - 1]?.content, () => {
 })
 watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
 watch(isLoading, (v) => { scrollSmooth = !v })
+watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
+onMounted(() => { void nextTick(updateActiveRailMessage) })
 watch([() => route.meta.workspace, () => user.value?.id || null, isAuthReady], () => {
   void syncWorkspaceFromRoute()
 }, { immediate: true })
@@ -566,40 +598,47 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
 
       <!-- Chat Panel -->
       <template v-else>
-        <main ref="chatAreaRef" class="flex-1 overflow-y-auto bg-secondary">
-          <div class="max-w-[880px] mx-auto px-6 pt-7 pb-9 max-md:px-3 max-md:pt-4 max-md:pb-6">
-            <div v-for="msg in messages" :key="msg.id" class="mb-4">
-              <ThinkingActivity
-                v-if="msg.role === 'assistant' && thinkingForMessage(msg)"
-                :content="thinkingForMessage(msg)"
-                :active="msg.id === latestAssistantMessageId && isLoading"
-              />
+        <div class="relative flex-1 min-h-0 overflow-hidden">
+          <main ref="chatAreaRef" class="h-full overflow-y-auto bg-secondary" @scroll.passive="updateActiveRailMessage">
+            <div class="max-w-[880px] mx-auto px-6 pt-7 pb-9 max-md:px-3 max-md:pt-4 max-md:pb-6">
+              <div v-for="msg in messages" :key="msg.id" :ref="element => setMessageElement(msg.id, element as Element | null)" class="mb-4">
+                <ThinkingActivity
+                  v-if="msg.role === 'assistant' && thinkingForMessage(msg)"
+                  :content="thinkingForMessage(msg)"
+                  :active="msg.id === latestAssistantMessageId && isLoading"
+                />
 
-              <ToolActivity
-                v-if="msg.role === 'assistant' && messageHasTools(msg)"
-                embedded
-                :active-tool-calls="toolCallsForMessage(msg).active"
-                :completed-tool-calls="toolCallsForMessage(msg).completed"
-              />
+                <ToolActivity
+                  v-if="msg.role === 'assistant' && messageHasTools(msg)"
+                  embedded
+                  :active-tool-calls="toolCallsForMessage(msg).active"
+                  :completed-tool-calls="toolCallsForMessage(msg).completed"
+                />
 
-              <StreamingStatus
-                v-if="msg.id === latestAssistantMessageId"
-                :is-loading="isLoading && !msg.content"
-                :active-tool-calls="activeToolCalls"
-                :state="runState"
-                :label="runStatusLabel"
-              />
+                <StreamingStatus
+                  v-if="msg.id === latestAssistantMessageId"
+                  :is-loading="isLoading && !msg.content"
+                  :active-tool-calls="activeToolCalls"
+                  :state="runState"
+                  :label="runStatusLabel"
+                />
 
-              <ChatMessage
-                :msg="msg"
-                :copy-feedback="copyFeedbackId === msg.id"
-                :assistant-index="assistantMessageIndex(msg.id)"
-                @copy="handleCopy(msg)"
-                @retry="handleRetry(msg)"
-              />
+                <ChatMessage
+                  :msg="msg"
+                  :copy-feedback="copyFeedbackId === msg.id"
+                  :assistant-index="assistantMessageIndex(msg.id)"
+                  @copy="handleCopy(msg)"
+                  @retry="handleRetry(msg)"
+                />
+              </div>
             </div>
-          </div>
-        </main>
+          </main>
+          <ChatMessageRail
+            :messages="messages"
+            :active-message-id="activeRailMessageId"
+            @select="jumpToMessage"
+          />
+        </div>
 
         <ChatInput
           :is-loading="isLoading"
