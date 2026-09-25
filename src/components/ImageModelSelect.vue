@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 36px;
   padding: 0 11px;
-  border: 1px solid hsl(var(--border));
+  border: 0;
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -124,8 +124,12 @@ onBeforeUnmount(() => {
 
 .image-model-trigger:hover:not(:disabled),
 .image-model-trigger[aria-expanded='true'] {
-  border-color: hsl(var(--ring));
   background: hsl(var(--accent));
+}
+
+.image-model-trigger:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .image-model-trigger:disabled {

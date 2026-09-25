@@ -285,6 +285,43 @@ describe('app settings service', () => {
     expect(config.defaultImageModel).toBe('gpt-image-2')
   })
 
+  it('preserves transparent capability from recommended models and merges it across sources', async () => {
+    appSettingRows = [
+      {
+        key: 'available_image_models',
+        value: [
+          { id: 'recommended-transparent', name: 'Recommended Transparent', supportsTransparent: true },
+          { id: 'shared-model', name: 'Shared Model', supportsTransparent: false },
+        ],
+      },
+    ]
+    providerSettingRows = [
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        kind: 'image',
+        name: 'Transparent Image',
+        base_url: 'https://transparent-image.example.test/v1',
+        models: ['shared-model'],
+        model_catalog: [{ id: 'shared-model', name: 'Shared Model', enabled: true, supportsTransparent: true }],
+        image_model: 'shared-model',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [
+        { id: 'shared-model', name: 'Shared Model', supportsTransparent: true },
+        { id: 'recommended-transparent', name: 'Recommended Transparent', supportsTransparent: true },
+      ],
+    })
+  })
+
   it('hides every model when an image provider catalog exists but is fully disabled', async () => {
     appSettingRows = [{ key: 'image_responses_image_model', value: 'env-image-model' }]
     providerSettingRows = [

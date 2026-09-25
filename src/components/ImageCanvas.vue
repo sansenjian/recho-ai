@@ -1460,6 +1460,7 @@ onUnmounted(() => {
               :generate="generate"
               :is-generating="isGenerating"
               :error="error"
+              :generated-images="generatedImages"
               :can-select-generation-count="props.canSelectGenerationCount"
               v-model:image-model="imageModel"
               v-model:resolution="resolution"
@@ -1630,18 +1631,6 @@ onUnmounted(() => {
       class="w-[280px] shrink-0 px-6 py-6 border-l border-border/60 bg-background/80 backdrop-blur-[20px] overflow-y-auto min-h-0 max-lg:hidden"
     >
       <h3 class="mb-6 text-base font-semibold text-foreground">图片生成</h3>
-
-      <!-- 模型 -->
-      <div class="mb-5">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">模型</label>
-        <ImageModelSelect
-          v-if="imagioModelOptions.length"
-          v-model="imageModel"
-          :default-model="defaultImageModel"
-          :options="imagioModelOptions"
-        />
-        <span v-else class="text-muted-foreground text-xs font-medium">加载中...</span>
-      </div>
 
       <!-- 分辨率 -->
       <div class="mb-5">

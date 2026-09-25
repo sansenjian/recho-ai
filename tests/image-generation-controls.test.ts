@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type { CanvasNode } from '../src/lib/image-canvas-model'
 import type { ImageCanvasContext } from '../src/types/image'
+import type { GeneratedImage } from '../src/types/image'
 import { useImageCanvasGeneration } from '../src/composables/useImageCanvasGeneration'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
@@ -137,13 +138,12 @@ describe('image generation Auto resolution controls', () => {
       },
     })
 
-    const modelGroup = wrapper.findAll('.param-group')
-      .find(group => group.find('label').text() === '模型')
-    const trigger = modelGroup?.find('.image-model-trigger')
-    expect(trigger).toBeDefined()
-    expect(trigger!.text()).toContain('GPT Image 2')
+    const actions = wrapper.get('.prompt-actions-end')
+    const trigger = actions.get('.image-model-trigger')
+    expect(wrapper.find('.inline-params .image-model-trigger').exists()).toBe(false)
+    expect(trigger.text()).toContain('GPT Image 2')
 
-    await trigger!.trigger('click')
+    await trigger.trigger('click')
     expect(wrapper.find('.image-model-menu').text()).toContain('默认')
     expect(wrapper.find('.image-model-menu').text()).toContain('推荐模型集')
 
@@ -152,6 +152,26 @@ describe('image generation Auto resolution controls', () => {
     expect(flare).toBeDefined()
     await flare!.trigger('click')
     expect(wrapper.emitted('update:image-model')).toEqual([['gpt-image-2.5-flare']])
+  })
+
+  it('renders generated images as assistant output beside the user prompt', () => {
+    const generatedImage: GeneratedImage = {
+      id: 'generated-1',
+      prompt: '一张夜晚城市海报',
+      dataUrl: 'data:image/png;base64,ZmFrZQ==',
+      size: '1024x1024',
+      timestamp: '2026-09-25T00:00:00.000Z',
+    }
+    const wrapper = mount(ImagioView, {
+      props: {
+        ...imagioGenerationProps(),
+        generatedImages: [generatedImage],
+      },
+    })
+
+    expect(wrapper.find('.imagio-conversation').exists()).toBe(true)
+    expect(wrapper.find('.conversation-ai').find('img').attributes('src')).toBe(generatedImage.dataUrl)
+    expect(wrapper.find('.conversation-user').text()).toContain(generatedImage.prompt)
   })
 
   it('applies a custom Imagio aspect ratio', async () => {

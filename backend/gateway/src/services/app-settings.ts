@@ -43,7 +43,7 @@ export type AdminRole = 'senior' | 'operator'
 export interface ImageModelEntry {
   id: string
   name: string
-  /** 该模型能否输出透明背景（仅 Provider 目录声明的才为 true）。 */
+  /** 该模型能否输出透明背景。 */
   supportsTransparent: boolean
 }
 
@@ -202,8 +202,8 @@ function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): I
     result.push({
       id: record.id.trim(),
       name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : record.id.trim(),
-      // app_settings 的旧格式没有能力位，透明能力只由 Provider 模型目录声明。
-      supportsTransparent: false,
+      // 旧的 app_settings 行没有能力位时自然回退为 false；新配置可直接声明能力。
+      supportsTransparent: record.supportsTransparent === true,
     })
   }
   return result.length > 0 ? result : fallback
@@ -632,8 +632,18 @@ export async function publicAppConfig() {
         .filter((id): id is string => Boolean(id))
         .map(id => ({ id, name: id, supportsTransparent: false }))
     })
+  // 同一模型可能同时出现在多个 Provider 或旧的推荐列表中。能力是模型
+  // 的并集：只要任一启用来源声明支持透明，前端就应该允许选择透明背景。
   const availableImageModels = [...providerImageModels, ...settings.availableImageModels]
-    .filter((model, index, models) => models.findIndex(item => item.id === model.id) === index)
+    .reduce<ImageModelEntry[]>((models, model) => {
+      const existing = models.find(item => item.id === model.id)
+      if (!existing) {
+        models.push(model)
+      } else if (model.supportsTransparent) {
+        existing.supportsTransparent = true
+      }
+      return models
+    }, [])
   return {
     chatModels,
     imageEventsEnabled: settings.imageEventsEnabled,
