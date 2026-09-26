@@ -20,12 +20,16 @@ import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-as
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
+import type { NamedWorkspace } from '../lib/workspace-list'
 
 const props = defineProps<{
   generate: ImageGenerate
   isGenerating: boolean
   error: string | null
   generatedImages?: GeneratedImage[]
+  workspaceName?: string
+  workspaces?: NamedWorkspace[]
+  activeWorkspaceId?: string
   canSelectGenerationCount?: boolean
   imageModel?: string
   defaultImageModel?: string
@@ -43,6 +47,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'select-workspace': [id: string]
   'update:image-model': [value: string]
   'update:resolution': [value: ImageResolution]
   'update:aspect-ratio': [value: ImageAspectRatio]
@@ -216,97 +221,23 @@ async function handleGenerate() {
 
 <template>
   <div class="imagio-view" :class="{ 'has-conversation': conversationItems.length }" @paste="handlePaste">
-    <div class="imagio-main">
-      <div class="imagio-options">
-        <div class="inline-params">
-          <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
-            <label>分辨率</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in resolutionOptions"
-                :key="opt.value"
-                type="button"
-                :class="{ active: resolution === opt.value }"
-                @click="updateResolution(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group">
-            <label>尺寸 / 比例</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in aspectRatioOptions"
-                :key="opt.value"
-                type="button"
-                :disabled="aspectRatioLocked && opt.value !== 'auto'"
-                :class="{ active: aspectRatio === opt.value }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="updateAspectRatio(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-              <button
-                type="button"
-                :disabled="aspectRatioLocked"
-                :class="{ active: customAspectRatioSelected }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="openCustomAspectRatio"
-              >
-                自定义
-              </button>
-            </div>
-            <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
-              <span class="text-xs font-medium text-muted-foreground">比例</span>
-              <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
-              <span aria-hidden="true">:</span>
-              <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
-              <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
-              <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
-            </div>
-          </div>
-
-          <div v-if="qualityOptions && qualityOptions.length" class="param-group">
-            <label>质量</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in qualityOptions"
-                :key="opt.value"
-                type="button"
-                :class="{ active: quality === opt.value }"
-                @click="emit('update:quality', opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div class="param-group">
-            <label>背景</label>
-            <div class="param-buttons">
-              <button
-                type="button"
-                :class="{ active: !transparentBackground }"
-                @click="emit('update:transparent-background', false)"
-              >
-                不透明
-              </button>
-              <button
-                type="button"
-                :disabled="!transparentAvailable"
-                :class="{ active: transparentBackground }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="emit('update:transparent-background', true)"
-              >
-                透明
-              </button>
-            </div>
-            <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
-          </div>
-        </div>
+    <div class="workspace-heading" aria-label="当前对话工作区">
+      <div class="min-w-0">
+        <span class="text-[11px] font-medium text-muted-foreground">工作区</span>
+        <h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || '新工作区' }}</h2>
       </div>
+      <select
+        v-if="workspaces?.length"
+        class="workspace-mobile-select"
+        :value="activeWorkspaceId"
+        aria-label="切换对话工作区"
+        @change="emit('select-workspace', ($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
+      </select>
+    </div>
+    <div class="imagio-body">
+      <div class="imagio-main">
       <div v-if="conversationItems.length" class="imagio-conversation" aria-label="图片生成对话记录">
         <div
           v-for="item in conversationItems"
@@ -349,102 +280,194 @@ async function handleGenerate() {
         </div>
       </div>
       <div class="prompt-area">
-        <textarea
-          v-model="promptText"
-          aria-label="描述你想生成的图片"
-          class="prompt-input"
-          placeholder="描述你想生成的图片，或附加图片进行编辑......"
-          rows="4"
-          :disabled="isGenerating"
-        />
-
-        <div class="reference-row">
-          <button
-            class="reference-add"
-            type="button"
+          <textarea
+            v-model="promptText"
+            aria-label="描述你想生成的图片"
+            class="prompt-input"
+            placeholder="描述你想生成的图片，或附加图片进行编辑......"
+            rows="4"
             :disabled="isGenerating"
-            title="添加参考图"
-            @click="openReferencePicker"
-          >
-            <Plus :size="16" stroke-width="1.7" />
-            <span>参考图</span>
-          </button>
-          <input
-            ref="fileInputRef"
-            class="reference-file-input"
-            aria-label="添加参考图"
-            type="file"
-            accept="image/*"
-            multiple
-            @change="handleReferenceInput"
-          >
-          <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
-            <div
-              v-for="(reference, index) in pendingReferences"
-              :key="reference.id"
-              class="reference-item"
-            >
-              <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-              <button type="button" title="移除参考图" @click="removeReference(index)">
-                <X :size="12" stroke-width="2" />
-              </button>
-            </div>
-          </div>
-          <span v-else class="reference-hint">可粘贴图片作为参考</span>
-        </div>
-        <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
-        <p v-if="error" class="reference-error">{{ error }}</p>
+          />
 
-        <div class="prompt-actions">
-          <div class="generation-count">
-            <span>生成数量</span>
-            <template v-if="canSelectGenerationCount">
-              <button
-                type="button"
-                :class="{ active: generationCount === 1 }"
-                @click="generationCount = 1"
-              >
-                ×1
-              </button>
-              <button
-                type="button"
-                :class="{ active: generationCount === 2 }"
-                @click="generationCount = 2"
-              >
-                ×2
-              </button>
-              <button
-                type="button"
-                :class="{ active: generationCount === 4 }"
-                @click="generationCount = 4"
-              >
-                ×4
-              </button>
-            </template>
-            <span v-else class="count-fixed">×1</span>
-          </div>
+          <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
+          <p v-if="error" class="reference-error">{{ error }}</p>
 
-          <div class="prompt-actions-end">
-            <div class="prompt-model-select">
-              <ImageModelSelect
-                :model-value="imageModel"
-                :default-model="defaultImageModel"
-                :options="modelOptions"
+          <div class="prompt-actions">
+            <div class="prompt-reference">
+              <button
+                class="reference-add"
+                type="button"
                 :disabled="isGenerating"
-                @update:model-value="emit('update:image-model', $event)"
-              />
+                title="添加参考图"
+                @click="openReferencePicker"
+              >
+                <Plus :size="16" stroke-width="1.7" />
+                <span>参考图</span>
+              </button>
+              <input
+                ref="fileInputRef"
+                class="reference-file-input"
+                aria-label="添加参考图"
+                type="file"
+                accept="image/*"
+                multiple
+                @change="handleReferenceInput"
+              >
+              <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+                <div
+                  v-for="(reference, index) in pendingReferences"
+                  :key="reference.id"
+                  class="reference-item"
+                >
+                  <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+                  <button type="button" title="移除参考图" @click="removeReference(index)">
+                    <X :size="12" stroke-width="2" />
+                  </button>
+                </div>
+              </div>
             </div>
-            <button
-              class="generate-btn"
-              :disabled="!canGenerate"
-              @click="handleGenerate"
-            >
-              <Sparkles :size="18" stroke-width="2" />
-              {{ isGenerating ? '生成中...' : '生成' }}
-            </button>
+
+            <div class="generation-count">
+              <span>生成数量</span>
+              <template v-if="canSelectGenerationCount">
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 1 }"
+                  @click="generationCount = 1"
+                >
+                  ×1
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 2 }"
+                  @click="generationCount = 2"
+                >
+                  ×2
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 4 }"
+                  @click="generationCount = 4"
+                >
+                  ×4
+                </button>
+              </template>
+              <span v-else class="count-fixed">×1</span>
+            </div>
+
+            <div class="prompt-actions-end">
+              <div class="prompt-model-select">
+                <ImageModelSelect
+                  :model-value="imageModel"
+                  :default-model="defaultImageModel"
+                  :options="modelOptions"
+                  :disabled="isGenerating"
+                  @update:model-value="emit('update:image-model', $event)"
+                />
+              </div>
+              <button
+                class="generate-btn"
+                :disabled="!canGenerate"
+                @click="handleGenerate"
+              >
+                <Sparkles :size="18" stroke-width="2" />
+                {{ isGenerating ? '生成中...' : '生成' }}
+              </button>
+            </div>
           </div>
-        </div>
       </div>
+      </div>
+
+    <div class="imagio-options">
+          <div class="inline-params">
+            <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
+              <label>分辨率</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in resolutionOptions"
+                  :key="opt.value"
+                  type="button"
+                  :class="{ active: resolution === opt.value }"
+                  @click="updateResolution(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group aspect-ratio-group">
+              <label>尺寸 / 比例</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in aspectRatioOptions"
+                  :key="opt.value"
+                  type="button"
+                  :disabled="aspectRatioLocked && opt.value !== 'auto'"
+                  :class="{ active: aspectRatio === opt.value }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="updateAspectRatio(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+                <button
+                  type="button"
+                  :disabled="aspectRatioLocked"
+                  :class="{ active: customAspectRatioSelected }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="openCustomAspectRatio"
+                >
+                  自定义
+                </button>
+              </div>
+              <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
+                <span class="text-xs font-medium text-muted-foreground">比例</span>
+                <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+                <span aria-hidden="true">:</span>
+                <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+                <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
+                <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
+              </div>
+            </div>
+
+            <div v-if="qualityOptions && qualityOptions.length" class="param-group">
+              <label>质量</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in qualityOptions"
+                  :key="opt.value"
+                  type="button"
+                  :class="{ active: quality === opt.value }"
+                  @click="emit('update:quality', opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="param-group">
+              <label>背景</label>
+              <div class="param-buttons">
+                <button
+                  type="button"
+                  :class="{ active: !transparentBackground }"
+                  @click="emit('update:transparent-background', false)"
+                >
+                  不透明
+                </button>
+                <button
+                  type="button"
+                  :disabled="!transparentAvailable"
+                  :class="{ active: transparentBackground }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="emit('update:transparent-background', true)"
+                >
+                  透明
+                </button>
+              </div>
+              <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
+            </div>
+          </div>
+    </div>
     </div>
   </div>
 </template>
@@ -456,11 +479,19 @@ async function handleGenerate() {
   flex: 1;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   background: hsl(var(--secondary));
 }
 
+.imagio-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
 .imagio-main {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -470,8 +501,43 @@ async function handleGenerate() {
   min-height: 0;
 }
 
-.imagio-options {
+.workspace-heading {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 28px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: #ffffff;
+}
+
+.workspace-mobile-select {
   display: none;
+  max-width: 55%;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
+.imagio-options {
+  display: flex;
+  flex: 0 0 320px;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 320px;
+  min-height: 0;
+  order: 2;
+  padding: 24px 20px;
+  border-left: 1px solid hsl(var(--border) / 0.6);
+  background: #fafafa;
+  backdrop-filter: blur(20px);
+  overflow-y: auto;
 }
 
 .imagio-conversation {
@@ -606,16 +672,17 @@ async function handleGenerate() {
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--card));
-  padding: 20px;
+  padding: 12px 14px;
   box-shadow: var(--shadow-sm);
 }
 
 .prompt-input {
+  display: block;
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--background));
+  min-height: 108px;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
   font-size: 14px;
   line-height: 1.7;
   color: hsl(var(--foreground));
@@ -630,8 +697,12 @@ async function handleGenerate() {
 }
 
 .prompt-input:focus {
+  outline: none;
+}
+
+.prompt-area:focus-within {
   border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.14);
 }
 
 .prompt-input:disabled {
@@ -639,12 +710,12 @@ async function handleGenerate() {
   cursor: not-allowed;
 }
 
-.reference-row {
+.prompt-reference {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 50px;
-  margin-top: 12px;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .reference-add {
@@ -652,7 +723,7 @@ async function handleGenerate() {
   align-items: center;
   gap: 7px;
   min-height: 36px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
@@ -679,6 +750,7 @@ async function handleGenerate() {
 .reference-list {
   display: flex;
   min-width: 0;
+  max-width: 96px;
   gap: 8px;
   overflow-x: auto;
   padding: 2px 0;
@@ -718,12 +790,6 @@ async function handleGenerate() {
   cursor: pointer;
 }
 
-.reference-hint {
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .reference-error {
   margin: 0 0 4px;
   color: hsl(var(--destructive));
@@ -733,6 +799,8 @@ async function handleGenerate() {
 
 /* Inline parameter panel (shown on narrow viewports) */
 .inline-params {
+  width: 100%;
+  max-width: 100%;
   padding: 16px;
   background: hsl(var(--background));
   border: 1px solid hsl(var(--border));
@@ -759,6 +827,11 @@ async function handleGenerate() {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.aspect-ratio-group .param-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
 }
 
 .param-buttons button {
@@ -796,46 +869,60 @@ async function handleGenerate() {
 
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */
 @media (max-width: 1180px) {
-  .imagio-options {
-    display: block;
-    flex: 1;
-    width: min(920px, 100%);
-    min-height: 0;
-    margin: 0 auto 12px;
-    overflow-y: auto;
+  .imagio-body {
+    flex-direction: column;
   }
 
-  .has-conversation .imagio-options {
-    flex: 0 1 34%;
-    max-height: 34%;
+  .imagio-options {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: row;
+    width: 100%;
+    order: -1;
+    padding: 12px 16px;
+    border-left: 0;
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    background: #fafafa;
+    backdrop-filter: none;
+    overflow: visible;
+  }
+
+  .imagio-options .inline-params {
+    width: fit-content;
+    margin-left: auto;
   }
 }
 
 .prompt-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
 }
 
 .prompt-actions-end {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
+  margin-left: auto;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .prompt-model-select {
-  width: min(180px, 35vw);
+  width: min(150px, 100%);
   min-width: 0;
+  flex: 1 1 80px;
 }
 
 .generation-count {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 700;
@@ -843,7 +930,7 @@ async function handleGenerate() {
 
 .generation-count button {
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 8px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
@@ -879,9 +966,11 @@ async function handleGenerate() {
 .generate-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 26px;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   border: 0;
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--primary));
@@ -907,12 +996,19 @@ async function handleGenerate() {
 }
 
 @media (max-width: 760px) {
+  .workspace-heading {
+    padding: 12px;
+  }
+
+  .workspace-mobile-select {
+    display: block;
+  }
   .imagio-main {
     padding: 12px;
   }
 
   .prompt-area {
-    padding: 14px;
+    padding: 12px;
   }
 
   .imagio-conversation {
@@ -933,43 +1029,17 @@ async function handleGenerate() {
     max-width: 100%;
   }
 
-  .reference-row {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .reference-add {
-    justify-content: center;
-    min-height: 40px;
-  }
-
-  .reference-list {
-    width: 100%;
-  }
-
   .prompt-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .generation-count {
     flex-wrap: wrap;
   }
 
-  .generation-count span:first-child {
-    width: 100%;
-  }
-
-  .generation-count button,
-  .generation-count .count-fixed,
-  .generate-btn {
-    flex: 1;
-    justify-content: center;
+  .generation-count {
+    margin-left: auto;
   }
 
   .prompt-actions-end {
     width: 100%;
+    flex-basis: 100%;
   }
 
   .prompt-model-select {
@@ -978,11 +1048,15 @@ async function handleGenerate() {
   }
 
   .generate-btn {
-    width: 100%;
+    justify-content: center;
   }
 }
 
 @media (max-width: 460px) {
+  .workspace-heading {
+    padding: 8px;
+  }
+
   .imagio-main {
     padding: 8px;
   }
@@ -992,16 +1066,21 @@ async function handleGenerate() {
   }
 
   .prompt-input {
-    min-height: 120px;
+    min-height: 96px;
     font-size: 13px;
   }
 
   .inline-params {
+    width: 100%;
     padding: 12px;
   }
 
   .param-buttons {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aspect-ratio-group .param-buttons {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1026,21 +1105,16 @@ async function handleGenerate() {
     margin-bottom: 8px;
   }
 
-  .has-conversation .imagio-options {
-    flex-basis: 28%;
-    max-height: 28%;
-  }
-
   .prompt-input {
     height: 72px;
     min-height: 72px;
   }
 
-  .reference-row {
+  .prompt-reference {
     flex-direction: row;
     align-items: center;
+    flex-basis: auto;
     min-height: 40px;
-    margin-top: 8px;
   }
 
   .reference-add {
@@ -1048,20 +1122,15 @@ async function handleGenerate() {
     min-height: 36px;
   }
 
-  .reference-hint {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .generation-count span:first-child {
-    width: auto;
-  }
-
   .prompt-actions {
     gap: 8px;
     margin-top: 8px;
+  }
+}
+
+@media (max-height: 520px) and (max-width: 1180px) {
+  .imagio-options {
+    max-height: 28%;
   }
 }
 </style>

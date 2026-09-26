@@ -47,6 +47,7 @@ const emit = defineEmits<{
   'select-canvas-workspace': [id: string]
   'create-canvas-workspace': []
   'delete-canvas-workspace': [id: string]
+  'rename-canvas-workspace': [id: string, name: string]
   'select-image-mode': [mode: 'imagio' | 'canvas']
   'create-node': [type: CanvasNodeType]
   'use-history-image': [image: GeneratedImage]
@@ -62,11 +63,15 @@ function onSelectWorkspace(id: string) {
 function onRemoveWorkspace(id: string) {
   emit('delete-canvas-workspace', id)
 }
+
+function onRenameWorkspace(id: string, name: string) {
+  emit('rename-canvas-workspace', id, name)
+}
 </script>
 
 <template>
   <aside class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-lg:w-[220px] max-md:hidden">
-    <!-- Mode switch: Imagio / 画布 -->
+    <!-- Mode switch: 对话 / 画布 -->
     <div class="flex items-center gap-2 mx-3.5 my-[18px] p-1 border border-border rounded-lg bg-muted">
       <button
         type="button"
@@ -76,7 +81,7 @@ function onRemoveWorkspace(id: string) {
         ]"
         @click="emit('select-image-mode', 'imagio')"
       >
-        Imagio
+        对话
       </button>
       <button
         type="button"
@@ -99,6 +104,7 @@ function onRemoveWorkspace(id: string) {
       @select="onSelectWorkspace"
       @create="emit('create-canvas-workspace')"
       @remove="onRemoveWorkspace"
+      @rename="onRenameWorkspace"
     />
 
     <!-- Canvas-specific: mini-map + quick create -->
