@@ -510,6 +510,7 @@ async function handleGenerate() {
   width: 100%;
   padding: 16px 28px 12px;
   border-bottom: 1px solid hsl(var(--border));
+  background: #ffffff;
 }
 
 .workspace-mobile-select {
@@ -534,7 +535,7 @@ async function handleGenerate() {
   order: 2;
   padding: 24px 20px;
   border-left: 1px solid hsl(var(--border) / 0.6);
-  background: hsl(var(--background) / 0.8);
+  background: #fafafa;
   backdrop-filter: blur(20px);
   overflow-y: auto;
 }
@@ -881,7 +882,7 @@ async function handleGenerate() {
     padding: 12px 16px;
     border-left: 0;
     border-bottom: 1px solid hsl(var(--border) / 0.6);
-    background: hsl(var(--secondary));
+    background: #fafafa;
     backdrop-filter: none;
     overflow: visible;
   }
