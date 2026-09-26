@@ -877,14 +877,13 @@ async function handleGenerate() {
     flex: 0 0 auto;
     flex-direction: row;
     width: 100%;
-    max-height: 34%;
     order: -1;
     padding: 12px 16px;
     border-left: 0;
     border-bottom: 1px solid hsl(var(--border) / 0.6);
     background: hsl(var(--secondary));
     backdrop-filter: none;
-    overflow-y: auto;
+    overflow: visible;
   }
 
   .imagio-options .inline-params {
