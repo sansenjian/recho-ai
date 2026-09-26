@@ -39,7 +39,7 @@ This is a **Vue 3 + Vite** single-page AI chat application with a **dual-gateway
 - `backend/gateway/src/index.ts` — Express gateway entrypoint.
 - `backend/gateway/src/routes/chat.ts` — `/api/chat` route with model selection, skill prompt handling, retry behavior, and streaming response.
 - `backend/gateway/src/routes/image.ts` — Node fallback image routes. Reference upload/storage proxy remain for compatibility, while `/api/image/generate` returns a 503 migration message when Go sidecar proxy is not enabled.
-- `backend/gateway/src/routes/go-sidecar.ts` — Proxies Go-owned routes (`/api/image/*`, `/api/credits*`, selected `/api/config/*`) to the Go gateway with timeout cleanup and client-disconnect abort handling.
+- `backend/gateway/src/routes/go-sidecar.ts` — Proxies Go-owned routes (`/api/image/*`, `/api/credits*`, and `/api/config/app`) to the Go gateway with timeout cleanup and client-disconnect abort handling. Supabase public configuration remains a Node-owned route at `/api/config/supabase`.
 - `backend/gateway/src/services/chat-loop.ts` — Streaming tool-call loop that normalizes SSE events for the frontend.
 - `backend/gateway/src/mcp/manager.ts` — MCP connection manager and OpenAI-compatible tool schema adapter.
 - `backend/gateway/skills/index.json` — Built-in skill definitions surfaced to the frontend.

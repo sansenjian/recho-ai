@@ -42,6 +42,10 @@ describe('go-owned API contract', () => {
       requestKind: 'json',
       headers: expect.arrayContaining(['Idempotency-Key']),
     }))
+    expect(contract.routes).toContainEqual(expect.objectContaining({
+      id: 'config-supabase',
+      proxyViaNode: false,
+    }))
     expect(contract.liveScenarios.map(scenario => scenario.id)).toEqual([
       'config-app',
       'config-supabase',

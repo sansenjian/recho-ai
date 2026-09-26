@@ -24,6 +24,7 @@
       "id": "config-supabase",
       "method": "GET",
       "path": "/api/config/supabase",
+      "proxyViaNode": false,
       "requestKind": "none",
       "headers": [],
       "successStatuses": [200]
