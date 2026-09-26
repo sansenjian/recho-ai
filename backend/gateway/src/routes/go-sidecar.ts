@@ -31,8 +31,6 @@ const proxiedRoutes = [
   /^\/image\/generate(?:\/|$)/,
   /^\/image\/history(?:\/|$)/,
   /^\/credits(?:\/|$)/,
-  /^\/config\/app(?:\/|$)/,
-  /^\/config\/supabase(?:\/|$)/,
 ]
 
 function goGatewayBaseUrl() {

@@ -115,7 +115,8 @@ describe('go sidecar shared contract', () => {
     servers.push(proxy.server)
 
     const contract = await loadGoOwnedContract()
-    for (const route of contract.routes) {
+    const proxiedRoutes = contract.routes.filter(route => route.proxyViaNode)
+    for (const route of proxiedRoutes) {
       const requestId = `req_contract_${route.id}`
       const path = materializeContractPath(route.path)
       const response = await fetch(`${proxy.url}${path}?contract=query`, {
@@ -143,6 +144,62 @@ describe('go sidecar shared contract', () => {
       expect(request?.body, route.id).toBe(routeBody(route) || '')
     }
 
-    expect(captured).toHaveLength(contract.routes.length)
+    expect(captured).toHaveLength(proxiedRoutes.length)
   }, 20_000)
+
+  it('does not proxy the Node-owned Supabase public config route', async () => {
+    const captured: CapturedRequest[] = []
+    const upstream = await listen(http.createServer(async (req, res) => {
+      captured.push({
+        method: req.method || '',
+        path: new URL(req.url || '/', 'http://upstream').pathname,
+        query: new URL(req.url || '/', 'http://upstream').search,
+        headers: req.headers,
+        body: '',
+      })
+      res.writeHead(200)
+      res.end(JSON.stringify({ forwarded: true }))
+    }))
+    servers.push(upstream.server)
+    process.env.GO_GATEWAY_BASE_URL = upstream.url
+
+    const app = express()
+    app.use(requestObservabilityMiddleware)
+    app.use('/api', goSidecarRouter)
+    const proxy = await listen(http.createServer(app))
+    servers.push(proxy.server)
+
+    const response = await fetch(`${proxy.url}/api/config/supabase`)
+
+    expect(response.status).toBe(404)
+    expect(captured).toHaveLength(0)
+  })
+
+  it('does not proxy the Node-owned application config route', async () => {
+    const captured: CapturedRequest[] = []
+    const upstream = await listen(http.createServer(async (req, res) => {
+      captured.push({
+        method: req.method || '',
+        path: new URL(req.url || '/', 'http://upstream').pathname,
+        query: new URL(req.url || '/', 'http://upstream').search,
+        headers: req.headers,
+        body: '',
+      })
+      res.writeHead(200)
+      res.end(JSON.stringify({ forwarded: true }))
+    }))
+    servers.push(upstream.server)
+    process.env.GO_GATEWAY_BASE_URL = upstream.url
+
+    const app = express()
+    app.use(requestObservabilityMiddleware)
+    app.use('/api', goSidecarRouter)
+    const proxy = await listen(http.createServer(app))
+    servers.push(proxy.server)
+
+    const response = await fetch(`${proxy.url}/api/config/app`)
+
+    expect(response.status).toBe(404)
+    expect(captured).toHaveLength(0)
+  })
 })

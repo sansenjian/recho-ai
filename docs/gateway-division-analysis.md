@@ -37,8 +37,8 @@ Node.js `go-sidecar.ts` 根据 `GO_GATEWAY_BASE_URL` 环境变量决定是否将
 |---|---|---|
 | `/api/image/*` | ImageHandler | 已代理（生产运行中） |
 | `/api/credits*` | CreditsHandler | 已代理（生产运行中） |
-| `/api/config/app` | ConfigHandler | 已代理（生产运行中） |
-| `/api/config/supabase` | ConfigHandler | 已代理（生产运行中） |
+| `/api/config/app` | Node `configRouter` | Node 直接提供，不依赖 Go sidecar |
+| `/api/config/supabase` | Node `configRouter` | Node 直接提供，不依赖 Go sidecar |
 | `/api/chat` | 无 | Go 侧已删除，Chat 仅归 Node |
 
 ---
@@ -51,7 +51,7 @@ Node.js `go-sidecar.ts` 根据 `GO_GATEWAY_BASE_URL` 环境变量决定是否将
 | 图片生成 | ✅（但已代理到 Go） | ✅ 完整（libvips 处理、COS/S3 上传、幂等、重试） |
 | 图片历史 CRUD | ✅（但已代理到 Go） | ✅ 完整 |
 | 额度管理 | ✅（但已代理到 Go） | ✅ 完整（含幂等） |
-| 应用配置 | ✅（但已代理到 Go） | ✅ 完整 |
+| 应用配置 | ✅ `/api/config/app` 与 Supabase 公共配置均由 Node 直接提供 | ✅ `/api/config/app`（供 Go 独立运行） |
 | Skill 系统 | ✅ | ❌ |
 | MCP 工具管理 | ✅ | ❌ |
 | 管理后台（5 模块） | ✅ | ❌ |

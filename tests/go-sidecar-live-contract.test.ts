@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import express from 'express'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { requestObservabilityMiddleware } from '../backend/gateway/src/middleware/request-observability'
+import configRouter from '../backend/gateway/src/routes/config'
 import goSidecarRouter from '../backend/gateway/src/routes/go-sidecar'
 import { loadGoOwnedContract } from './helpers/go-owned-contract'
 
@@ -155,6 +156,7 @@ async function startLiveContractStack(): Promise<LiveContractStack> {
     const app = express()
     app.use(requestObservabilityMiddleware)
     app.use('/api', goSidecarRouter)
+    app.use('/api', configRouter)
     nodeServer = http.createServer(app)
     const nodeUrl = await listen(nodeServer)
 

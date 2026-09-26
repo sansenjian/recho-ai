@@ -16,6 +16,7 @@
       "id": "config-app",
       "method": "GET",
       "path": "/api/config/app",
+      "proxyViaNode": false,
       "requestKind": "none",
       "headers": [],
       "successStatuses": [200]
@@ -24,6 +25,7 @@
       "id": "config-supabase",
       "method": "GET",
       "path": "/api/config/supabase",
+      "proxyViaNode": false,
       "requestKind": "none",
       "headers": [],
       "successStatuses": [200]

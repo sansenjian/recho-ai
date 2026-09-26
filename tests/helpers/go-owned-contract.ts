@@ -7,6 +7,7 @@ export type GoOwnedContractRoute = {
   id: string
   method: string
   path: string
+  proxyViaNode: boolean
   requestKind: ContractRequestKind
   headers: string[]
   successStatuses: number[]
@@ -70,6 +71,10 @@ function validateRoute(value: unknown, index: number, forwarded: Set<string>): G
   if (!requestKinds.has(requestKind as ContractRequestKind)) {
     throw new Error(`routes[${index}].requestKind is invalid: ${requestKind}`)
   }
+  const proxyViaNode = route.proxyViaNode
+  if (proxyViaNode !== undefined && typeof proxyViaNode !== 'boolean') {
+    throw new Error(`routes[${index}].proxyViaNode must be a boolean`)
+  }
   const headers = stringArray(route.headers, `routes[${index}].headers`)
   for (const header of headers) {
     if (!forwarded.has(header)) throw new Error(`routes[${index}].headers contains undeclared header: ${header}`)
@@ -79,6 +84,7 @@ function validateRoute(value: unknown, index: number, forwarded: Set<string>): G
     id: stringValue(route.id, `routes[${index}].id`),
     method: stringValue(route.method, `routes[${index}].method`).toUpperCase(),
     path,
+    proxyViaNode: proxyViaNode !== false,
     requestKind: requestKind as ContractRequestKind,
     headers,
     successStatuses: statusArray(route.successStatuses, `routes[${index}].successStatuses`),
