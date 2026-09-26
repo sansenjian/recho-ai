@@ -906,6 +906,7 @@ async function handleGenerate() {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  margin-left: auto;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -1104,10 +1105,6 @@ async function handleGenerate() {
     margin-bottom: 8px;
   }
 
-  .imagio-options {
-    max-height: 28%;
-  }
-
   .prompt-input {
     height: 72px;
     min-height: 72px;
@@ -1128,6 +1125,12 @@ async function handleGenerate() {
   .prompt-actions {
     gap: 8px;
     margin-top: 8px;
+  }
+}
+
+@media (max-height: 520px) and (max-width: 1180px) {
+  .imagio-options {
+    max-height: 28%;
   }
 }
 </style>

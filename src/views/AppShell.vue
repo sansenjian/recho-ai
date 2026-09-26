@@ -214,9 +214,10 @@ async function syncWorkspaceFromRoute() {
 
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
-  imageWorkspace.value = 'canvas'
   if (workspace === 'image') {
     imageMode.value = 'imagio'
+  } else {
+    imageWorkspace.value = 'canvas'
   }
   if (workspace !== 'chat') {
     showSystemEditor.value = false

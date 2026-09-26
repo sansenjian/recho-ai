@@ -73,7 +73,7 @@ function handleChatButtonClick() {
 
 <template>
   <header
-    class="sticky top-0 z-30 flex h-14 w-full max-w-[100vw] shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border bg-background/95 px-2 backdrop-blur-xl sm:gap-4 sm:px-4 lg:px-6"
+    class="sticky top-0 z-30 flex h-14 w-full max-w-[100vw] shrink-0 items-center justify-between gap-2 overflow-x-auto overflow-y-hidden border-b border-border bg-background/95 px-2 backdrop-blur-xl sm:gap-4 sm:px-4 lg:px-6"
   >
     <div class="flex min-w-0 flex-auto items-center gap-2 sm:gap-3">
       <Button
@@ -94,13 +94,13 @@ function handleChatButtonClick() {
       </div>
 
       <div
-        class="flex shrink-0 items-center gap-1 rounded-[var(--radius-lg,8px)] border border-border bg-muted/70 p-1 shadow-sm"
+        class="flex shrink-0 items-center gap-1 rounded-[var(--radius-lg,8px)] border border-border bg-muted/70 p-1 shadow-sm max-[420px]:gap-0"
         aria-label="工作区切换"
       >
         <Button
           variant="ghost"
           size="sm"
-          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
           :class="cn(
             !showImagePanel
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
@@ -117,7 +117,7 @@ function handleChatButtonClick() {
         <Button
           variant="ghost"
           size="sm"
-          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
           :class="cn(
             showImagePanel && imageWorkspace === 'canvas'
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
@@ -132,7 +132,7 @@ function handleChatButtonClick() {
         <Button
           variant="ghost"
           size="sm"
-          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none"
+          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
           :class="cn(
             showImagePanel && imageWorkspace === 'gallery'
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
@@ -190,7 +190,7 @@ function handleChatButtonClick() {
       <Button
         variant="outline"
         size="sm"
-        class="w-[132px] shrink-0 justify-start gap-[7px] overflow-hidden px-2.5 lg:w-[132px] md:w-[112px] sm:w-[104px] max-[420px]:w-24 max-[640px]:w-[104px]"
+        class="w-[132px] shrink-0 justify-start gap-[7px] overflow-hidden px-2.5 lg:w-[132px] md:w-[112px] sm:w-[104px] max-[420px]:w-20 max-[640px]:w-[104px]"
         :disabled="authLoading"
         :title="authEmail || '登录'"
         @click="$emit('openAuth')"

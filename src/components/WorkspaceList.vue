@@ -58,7 +58,8 @@ function finishRename(save: boolean) {
 }
 
 function closeOnOutsidePointer(event: PointerEvent) {
-  if (!listRoot.value?.contains(event.target as Node)) contextWorkspaceId.value = null
+  const target = event.target as HTMLElement | null
+  if (!target?.closest('[role="menu"]')) contextWorkspaceId.value = null
 }
 
 function closeOnEscape(event: KeyboardEvent) {
@@ -113,6 +114,7 @@ function removeHint(workspace: NamedWorkspace): string {
           @keydown.enter.prevent="finishRename(true)"
           @keydown.esc.prevent="finishRename(false)"
           @blur="finishRename(true)"
+          @contextmenu.stop
         >
         <button
           v-else
