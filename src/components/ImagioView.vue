@@ -221,22 +221,23 @@ async function handleGenerate() {
 
 <template>
   <div class="imagio-view" :class="{ 'has-conversation': conversationItems.length }" @paste="handlePaste">
-    <div class="imagio-main">
-      <div class="workspace-heading" aria-label="当前对话工作区">
-        <div class="min-w-0">
-          <span class="text-[11px] font-medium text-muted-foreground">工作区</span>
-          <h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || '新工作区' }}</h2>
-        </div>
-        <select
-          v-if="workspaces?.length"
-          class="workspace-mobile-select"
-          :value="activeWorkspaceId"
-          aria-label="切换对话工作区"
-          @change="emit('select-workspace', ($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
-        </select>
+    <div class="workspace-heading" aria-label="当前对话工作区">
+      <div class="min-w-0">
+        <span class="text-[11px] font-medium text-muted-foreground">工作区</span>
+        <h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || '新工作区' }}</h2>
       </div>
+      <select
+        v-if="workspaces?.length"
+        class="workspace-mobile-select"
+        :value="activeWorkspaceId"
+        aria-label="切换对话工作区"
+        @change="emit('select-workspace', ($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
+      </select>
+    </div>
+    <div class="imagio-body">
+      <div class="imagio-main">
       <div v-if="conversationItems.length" class="imagio-conversation" aria-label="图片生成对话记录">
         <div
           v-for="item in conversationItems"
@@ -375,7 +376,7 @@ async function handleGenerate() {
             </div>
           </div>
       </div>
-    </div>
+      </div>
 
     <div class="imagio-options">
           <div class="inline-params">
@@ -467,18 +468,26 @@ async function handleGenerate() {
             </div>
           </div>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .imagio-view {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   flex: 1;
   height: 100%;
   min-height: 0;
   min-width: 0;
   background: hsl(var(--secondary));
+}
+
+.imagio-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .imagio-main {
@@ -494,12 +503,12 @@ async function handleGenerate() {
 
 .workspace-heading {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  width: min(920px, 100%);
-  margin: 0 auto 12px;
-  padding: 0 8px 12px;
+  width: 100%;
+  padding: 16px 28px 12px;
   border-bottom: 1px solid hsl(var(--border));
 }
 
@@ -859,7 +868,7 @@ async function handleGenerate() {
 
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */
 @media (max-width: 1180px) {
-  .imagio-view {
+  .imagio-body {
     flex-direction: column;
   }
 
@@ -986,6 +995,10 @@ async function handleGenerate() {
 }
 
 @media (max-width: 760px) {
+  .workspace-heading {
+    padding: 12px;
+  }
+
   .workspace-mobile-select {
     display: block;
   }
@@ -1039,6 +1052,10 @@ async function handleGenerate() {
 }
 
 @media (max-width: 460px) {
+  .workspace-heading {
+    padding: 8px;
+  }
+
   .imagio-main {
     padding: 8px;
   }
