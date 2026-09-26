@@ -237,96 +237,6 @@ async function handleGenerate() {
           <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
         </select>
       </div>
-      <div class="imagio-options">
-        <div class="inline-params">
-          <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
-            <label>分辨率</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in resolutionOptions"
-                :key="opt.value"
-                type="button"
-                :class="{ active: resolution === opt.value }"
-                @click="updateResolution(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group aspect-ratio-group">
-            <label>尺寸 / 比例</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in aspectRatioOptions"
-                :key="opt.value"
-                type="button"
-                :disabled="aspectRatioLocked && opt.value !== 'auto'"
-                :class="{ active: aspectRatio === opt.value }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="updateAspectRatio(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-              <button
-                type="button"
-                :disabled="aspectRatioLocked"
-                :class="{ active: customAspectRatioSelected }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="openCustomAspectRatio"
-              >
-                自定义
-              </button>
-            </div>
-            <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
-              <span class="text-xs font-medium text-muted-foreground">比例</span>
-              <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
-              <span aria-hidden="true">:</span>
-              <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
-              <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
-              <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
-            </div>
-          </div>
-
-          <div v-if="qualityOptions && qualityOptions.length" class="param-group">
-            <label>质量</label>
-            <div class="param-buttons">
-              <button
-                v-for="opt in qualityOptions"
-                :key="opt.value"
-                type="button"
-                :class="{ active: quality === opt.value }"
-                @click="emit('update:quality', opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
-
-          <div class="param-group">
-            <label>背景</label>
-            <div class="param-buttons">
-              <button
-                type="button"
-                :class="{ active: !transparentBackground }"
-                @click="emit('update:transparent-background', false)"
-              >
-                不透明
-              </button>
-              <button
-                type="button"
-                :disabled="!transparentAvailable"
-                :class="{ active: transparentBackground }"
-                class="disabled:cursor-not-allowed disabled:opacity-40"
-                @click="emit('update:transparent-background', true)"
-              >
-                透明
-              </button>
-            </div>
-            <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
-          </div>
-        </div>
-      </div>
       <div v-if="conversationItems.length" class="imagio-conversation" aria-label="图片生成对话记录">
         <div
           v-for="item in conversationItems"
@@ -369,102 +279,193 @@ async function handleGenerate() {
         </div>
       </div>
       <div class="prompt-area">
-        <textarea
-          v-model="promptText"
-          aria-label="描述你想生成的图片"
-          class="prompt-input"
-          placeholder="描述你想生成的图片，或附加图片进行编辑......"
-          rows="4"
-          :disabled="isGenerating"
-        />
+          <textarea
+            v-model="promptText"
+            aria-label="描述你想生成的图片"
+            class="prompt-input"
+            placeholder="描述你想生成的图片，或附加图片进行编辑......"
+            rows="4"
+            :disabled="isGenerating"
+          />
 
-        <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
-        <p v-if="error" class="reference-error">{{ error }}</p>
+          <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
+          <p v-if="error" class="reference-error">{{ error }}</p>
 
-        <div class="prompt-actions">
-          <div class="prompt-reference">
-            <button
-              class="reference-add"
-              type="button"
-              :disabled="isGenerating"
-              title="添加参考图"
-              @click="openReferencePicker"
-            >
-              <Plus :size="16" stroke-width="1.7" />
-              <span>参考图</span>
-            </button>
-            <input
-              ref="fileInputRef"
-              class="reference-file-input"
-              aria-label="添加参考图"
-              type="file"
-              accept="image/*"
-              multiple
-              @change="handleReferenceInput"
-            >
-            <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
-              <div
-                v-for="(reference, index) in pendingReferences"
-                :key="reference.id"
-                class="reference-item"
+          <div class="prompt-actions">
+            <div class="prompt-reference">
+              <button
+                class="reference-add"
+                type="button"
+                :disabled="isGenerating"
+                title="添加参考图"
+                @click="openReferencePicker"
               >
-                <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-                <button type="button" title="移除参考图" @click="removeReference(index)">
-                  <X :size="12" stroke-width="2" />
+                <Plus :size="16" stroke-width="1.7" />
+                <span>参考图</span>
+              </button>
+              <input
+                ref="fileInputRef"
+                class="reference-file-input"
+                aria-label="添加参考图"
+                type="file"
+                accept="image/*"
+                multiple
+                @change="handleReferenceInput"
+              >
+              <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+                <div
+                  v-for="(reference, index) in pendingReferences"
+                  :key="reference.id"
+                  class="reference-item"
+                >
+                  <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+                  <button type="button" title="移除参考图" @click="removeReference(index)">
+                    <X :size="12" stroke-width="2" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="generation-count">
+              <span>生成数量</span>
+              <template v-if="canSelectGenerationCount">
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 1 }"
+                  @click="generationCount = 1"
+                >
+                  ×1
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 2 }"
+                  @click="generationCount = 2"
+                >
+                  ×2
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: generationCount === 4 }"
+                  @click="generationCount = 4"
+                >
+                  ×4
+                </button>
+              </template>
+              <span v-else class="count-fixed">×1</span>
+            </div>
+
+            <div class="prompt-actions-end">
+              <div class="prompt-model-select">
+                <ImageModelSelect
+                  :model-value="imageModel"
+                  :default-model="defaultImageModel"
+                  :options="modelOptions"
+                  :disabled="isGenerating"
+                  @update:model-value="emit('update:image-model', $event)"
+                />
+              </div>
+              <button
+                class="generate-btn"
+                :disabled="!canGenerate"
+                @click="handleGenerate"
+              >
+                <Sparkles :size="18" stroke-width="2" />
+                {{ isGenerating ? '生成中...' : '生成' }}
+              </button>
+            </div>
+          </div>
+      </div>
+    </div>
+
+    <div class="imagio-options">
+          <div class="inline-params">
+            <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
+              <label>分辨率</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in resolutionOptions"
+                  :key="opt.value"
+                  type="button"
+                  :class="{ active: resolution === opt.value }"
+                  @click="updateResolution(opt.value)"
+                >
+                  {{ opt.label }}
                 </button>
               </div>
             </div>
-          </div>
 
-          <div class="generation-count">
-            <span>生成数量</span>
-            <template v-if="canSelectGenerationCount">
-              <button
-                type="button"
-                :class="{ active: generationCount === 1 }"
-                @click="generationCount = 1"
-              >
-                ×1
-              </button>
-              <button
-                type="button"
-                :class="{ active: generationCount === 2 }"
-                @click="generationCount = 2"
-              >
-                ×2
-              </button>
-              <button
-                type="button"
-                :class="{ active: generationCount === 4 }"
-                @click="generationCount = 4"
-              >
-                ×4
-              </button>
-            </template>
-            <span v-else class="count-fixed">×1</span>
-          </div>
-
-          <div class="prompt-actions-end">
-            <div class="prompt-model-select">
-              <ImageModelSelect
-                :model-value="imageModel"
-                :default-model="defaultImageModel"
-                :options="modelOptions"
-                :disabled="isGenerating"
-                @update:model-value="emit('update:image-model', $event)"
-              />
+            <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group aspect-ratio-group">
+              <label>尺寸 / 比例</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in aspectRatioOptions"
+                  :key="opt.value"
+                  type="button"
+                  :disabled="aspectRatioLocked && opt.value !== 'auto'"
+                  :class="{ active: aspectRatio === opt.value }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="updateAspectRatio(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+                <button
+                  type="button"
+                  :disabled="aspectRatioLocked"
+                  :class="{ active: customAspectRatioSelected }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="openCustomAspectRatio"
+                >
+                  自定义
+                </button>
+              </div>
+              <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
+                <span class="text-xs font-medium text-muted-foreground">比例</span>
+                <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+                <span aria-hidden="true">:</span>
+                <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+                <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
+                <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
+              </div>
             </div>
-            <button
-              class="generate-btn"
-              :disabled="!canGenerate"
-              @click="handleGenerate"
-            >
-              <Sparkles :size="18" stroke-width="2" />
-              {{ isGenerating ? '生成中...' : '生成' }}
-            </button>
+
+            <div v-if="qualityOptions && qualityOptions.length" class="param-group">
+              <label>质量</label>
+              <div class="param-buttons">
+                <button
+                  v-for="opt in qualityOptions"
+                  :key="opt.value"
+                  type="button"
+                  :class="{ active: quality === opt.value }"
+                  @click="emit('update:quality', opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="param-group">
+              <label>背景</label>
+              <div class="param-buttons">
+                <button
+                  type="button"
+                  :class="{ active: !transparentBackground }"
+                  @click="emit('update:transparent-background', false)"
+                >
+                  不透明
+                </button>
+                <button
+                  type="button"
+                  :disabled="!transparentAvailable"
+                  :class="{ active: transparentBackground }"
+                  class="disabled:cursor-not-allowed disabled:opacity-40"
+                  @click="emit('update:transparent-background', true)"
+                >
+                  透明
+                </button>
+              </div>
+              <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
+            </div>
           </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -472,15 +473,16 @@ async function handleGenerate() {
 <style scoped>
 .imagio-view {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex: 1;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   background: hsl(var(--secondary));
 }
 
 .imagio-main {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -515,11 +517,16 @@ async function handleGenerate() {
 
 .imagio-options {
   display: flex;
-  justify-content: flex-end;
-  flex: 0 1 auto;
-  width: min(920px, 100%);
+  flex: 0 0 320px;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 320px;
   min-height: 0;
-  margin: 0 auto 12px;
+  order: 2;
+  padding: 24px 20px;
+  border-left: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--background) / 0.8);
+  backdrop-filter: blur(20px);
   overflow-y: auto;
 }
 
@@ -782,7 +789,7 @@ async function handleGenerate() {
 
 /* Inline parameter panel (shown on narrow viewports) */
 .inline-params {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   padding: 16px;
   background: hsl(var(--background));
@@ -852,19 +859,28 @@ async function handleGenerate() {
 
 /* Match ImageCanvas settings-sidebar collapse breakpoint. */
 @media (max-width: 1180px) {
+  .imagio-view {
+    flex-direction: column;
+  }
+
   .imagio-options {
     display: flex;
-    justify-content: flex-end;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    flex-direction: row;
     width: 100%;
-    min-height: 0;
-    margin: 0 0 12px auto;
+    max-height: 34%;
+    order: -1;
+    padding: 12px 16px;
+    border-left: 0;
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--secondary));
+    backdrop-filter: none;
     overflow-y: auto;
   }
 
-  .has-conversation .imagio-options {
-    flex: 0 1 34%;
-    max-height: 34%;
+  .imagio-options .inline-params {
+    width: fit-content;
+    margin-left: auto;
   }
 }
 
@@ -1071,8 +1087,7 @@ async function handleGenerate() {
     margin-bottom: 8px;
   }
 
-  .has-conversation .imagio-options {
-    flex-basis: 28%;
+  .imagio-options {
     max-height: 28%;
   }
 
