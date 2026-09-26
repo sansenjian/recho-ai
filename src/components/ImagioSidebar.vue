@@ -29,6 +29,7 @@ const emit = defineEmits<{
   'select-workspace': [id: string]
   'create-workspace': []
   'remove-workspace': [id: string]
+  'rename-workspace': [id: string, name: string]
 }>()
 
 const { creditBalance, refreshCredits } = useCredits()
@@ -67,6 +68,10 @@ function requestRemoveWorkspace(id: string) {
 function removeWorkspace(id: string) {
   pendingRemoveWorkspaceId.value = null
   emit('remove-workspace', id)
+}
+
+function renameWorkspace(id: string, name: string) {
+  emit('rename-workspace', id, name)
 }
 
 refreshCredits()
@@ -109,6 +114,7 @@ refreshCredits()
       @select="emit('select-workspace', $event)"
       @create="emit('create-workspace')"
       @remove="requestRemoveWorkspace"
+      @rename="renameWorkspace"
     />
 
     <!-- History section -->

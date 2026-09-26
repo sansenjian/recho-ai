@@ -96,7 +96,7 @@ describe('isNamedWorkspace', () => {
 })
 
 describe('WorkspaceList', () => {
-  function mountList(workspaces: NamedWorkspace[], activeId: string) {
+  function mountList(workspaces: NamedWorkspace[], activeId: string, attachTo?: HTMLElement) {
     return mount(WorkspaceList, {
       props: {
         workspaces,
@@ -104,6 +104,7 @@ describe('WorkspaceList', () => {
         createLabel: '新建工作区',
         keepOneHint: '至少保留一个工作区',
       },
+      attachTo,
     })
   }
 
@@ -132,6 +133,47 @@ describe('WorkspaceList', () => {
     const wrapper = mountList(pair, 'a')
     await wrapper.find('button[aria-label="删除工作区 B"]').trigger('click')
     expect(wrapper.emitted('remove')).toEqual([['b']])
+  })
+
+  it('opens rename from the workspace context menu and emits the new name', async () => {
+    const wrapper = mountList(pair, 'a')
+    const row = wrapper.findAll('.group').find(item => item.text().includes('工作区 B'))
+    expect(row).toBeDefined()
+
+    await row!.trigger('contextmenu')
+    await row!.find('[role="menuitem"]').trigger('click')
+
+    const input = row!.find('input[aria-label="重命名工作区 B"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('新的工作区')
+    await input.trigger('keydown.enter')
+
+    expect(wrapper.emitted('rename')).toEqual([['b', '新的工作区']])
+  })
+
+  it('closes an open workspace menu when another workspace is clicked', async () => {
+    const wrapper = mountList(pair, 'a', document.body)
+    const rows = wrapper.findAll('.group')
+
+    await rows[1].trigger('contextmenu')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(true)
+
+    await rows[0].trigger('pointerdown')
+    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+  })
+
+  it('keeps the rename draft open when the input context menu is opened', async () => {
+    const wrapper = mountList(pair, 'a')
+    const row = wrapper.findAll('.group').find(item => item.text().includes('工作区 B'))
+
+    await row!.trigger('contextmenu')
+    await row!.find('[role="menuitem"]').trigger('click')
+    const input = row!.find('input[aria-label="重命名工作区 B"]')
+    await input.setValue('草稿名称')
+    await input.trigger('contextmenu')
+
+    expect(row!.find('input').exists()).toBe(true)
+    expect(wrapper.emitted('rename')).toBeUndefined()
   })
 
   it('disables removal when a single workspace is left', () => {

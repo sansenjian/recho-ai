@@ -214,9 +214,10 @@ async function syncWorkspaceFromRoute() {
 
   showImagePanel.value = workspace !== 'chat'
   showAgentPanel.value = false
-  imageWorkspace.value = 'canvas'
   if (workspace === 'image') {
     imageMode.value = 'imagio'
+  } else {
+    imageWorkspace.value = 'canvas'
   }
   if (workspace !== 'chat') {
     showSystemEditor.value = false
@@ -510,6 +511,16 @@ function handleImageWorkspaceChange(mode: ImageWorkspace) {
   }
 }
 
+function handleOpenImage() {
+  imageWorkspace.value = 'canvas'
+  void router.push('/image')
+}
+
+function handleOpenGallery() {
+  imageWorkspace.value = 'gallery'
+  void router.push('/image')
+}
+
 function handleImageModeChange(mode: 'imagio' | 'canvas') {
   imageMode.value = mode
 }
@@ -544,6 +555,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         :show-sidebar="showSidebar"
         :show-agent-panel="showAgentPanel"
         :show-image-panel="showImagePanel"
+        :image-workspace="imageWorkspace"
         :agent-mode="currentAgentMode"
         :messages="messages"
         :auth-email="userEmail"
@@ -554,7 +566,8 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         @toggle-sidebar="toggleSidebar"
         @toggle-agent-panel="toggleAgentPanel"
         @toggle-image-panel="toggleImagePanel"
-        @open-image="router.push('/image')"
+        @open-image="handleOpenImage"
+        @open-gallery="handleOpenGallery"
         @new-chat="handleNewChat"
         @toggle-settings="toggleSystemEditor"
         @open-auth="openAuthDialog()"

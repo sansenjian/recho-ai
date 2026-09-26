@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { LayoutGrid, Image } from '@lucide/vue'
+import { Image } from '@lucide/vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
@@ -80,7 +80,6 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
-import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
 import type { GeneratedImage, ImageAspectRatio, ImageGenerationCount, ImageQuality, ImageResolution } from '../types/image'
 import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
 import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
@@ -94,7 +93,6 @@ import ImagioView from './ImagioView.vue'
 import ImagioSidebar from './ImagioSidebar.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const props = defineProps<{
@@ -143,6 +141,14 @@ function createImagioWorkspace() {
   const workspace = { id: crypto.randomUUID(), name: `新工作区 ${imagioWorkspaces.value.length + 1}` }
   imagioWorkspaces.value = [...imagioWorkspaces.value, workspace]
   activeImagioWorkspaceId.value = workspace.id
+  persistImagioState()
+}
+
+function renameImagioWorkspace(id: string, name: string) {
+  if (!imagioWorkspaces.value.some(workspace => workspace.id === id)) return
+  imagioWorkspaces.value = imagioWorkspaces.value.map(workspace =>
+    workspace.id === id ? { ...workspace, name } : workspace,
+  )
   persistImagioState()
 }
 
@@ -309,35 +315,12 @@ const viewportZoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100
 const activeWorkspace = ref<WorkspaceMode>('canvas')
 const currentImageMode = ref<'imagio' | 'canvas'>('imagio')
 
-// --- Imagio prompt generation parameters (right side settings panel) ---
+// --- Imagio prompt generation parameters ---
 const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
 const transparentBackground = ref(false)
-const customAspectRatioOpen = ref(false)
-const customAspectRatioWidth = ref('4')
-const customAspectRatioHeight = ref('5')
-const customAspectRatioError = ref<string | null>(null)
-const customAspectRatioActive = computed(() => isCustomImageAspectRatio(aspectRatio.value))
-const customAspectRatioSelected = computed(() => customAspectRatioActive.value || customAspectRatioOpen.value)
-
-watch(resolution, (value) => {
-  if (value === 'auto') {
-    customAspectRatioOpen.value = false
-    aspectRatio.value = 'auto'
-  }
-})
-
-watch(aspectRatio, (value) => {
-  if (!isCustomImageAspectRatio(value)) return
-  const parts = parseImageAspectRatio(value)
-  if (parts) {
-    customAspectRatioWidth.value = String(parts.width)
-    customAspectRatioHeight.value = String(parts.height)
-    customAspectRatioOpen.value = true
-  }
-}, { immediate: true })
 
 // Initialize model when config loads; re-validate if config changes
 watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
@@ -365,25 +348,6 @@ const imagioAspectRatioOptions: Array<{ value: ImageAspectRatio; label: string }
   { value: '16:9', label: '16:9' },
   { value: '9:16', label: '9:16' },
 ]
-
-function openCustomAspectRatio() {
-  if (resolution.value === 'auto') return
-  customAspectRatioOpen.value = true
-  customAspectRatioError.value = null
-}
-
-function applyCustomAspectRatio() {
-  if (resolution.value === 'auto') return
-  const parts = parseImageAspectRatio(`${customAspectRatioWidth.value}:${customAspectRatioHeight.value}`)
-  if (!parts) {
-    customAspectRatioError.value = '请输入 1:3 到 3:1 范围内的正整数比例。'
-    return
-  }
-  customAspectRatioError.value = null
-  customAspectRatioWidth.value = String(parts.width)
-  customAspectRatioHeight.value = String(parts.height)
-  if (aspectRatio.value !== parts.value) aspectRatio.value = parts.value
-}
 
 const imagioQualityOptions: Array<{ value: ImageQuality; label: string }> = [
   { value: 'auto', label: 'Auto' },
@@ -1254,6 +1218,13 @@ function createCanvasWorkspace() {
   persistCanvasWorkspaces()
 }
 
+function renameCanvasWorkspace(id: string, name: string) {
+  const workspace = canvasWorkspaces.value.find(item => item.id === id)
+  if (!workspace) return
+  workspace.name = name
+  persistCanvasWorkspaces()
+}
+
 function requestDeleteCanvasWorkspace(id: string) {
   if (canvasWorkspaces.value.length <= 1 || !canvasWorkspaces.value.some(workspace => workspace.id === id)) {
     return
@@ -1466,32 +1437,6 @@ onUnmounted(() => {
 <template>
   <div class="flex flex-row flex-1 min-h-0 min-w-0 overflow-hidden bg-background max-md:flex-col">
     <div class="relative flex flex-col flex-1 min-h-0 min-w-0">
-      <!-- Top workspace switcher -->
-      <div class="z-20 flex shrink-0 items-center gap-1 px-4 h-10 border-b border-border bg-card max-md:px-2.5 max-sm:px-2">
-        <button
-          type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
-            activeWorkspace === 'canvas' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
-          ]"
-          @click="selectWorkspace('canvas')"
-        >
-          <LayoutGrid :size="14" stroke-width="1.8" />
-          <span>工作台</span>
-        </button>
-        <button
-          type="button"
-          :class="[
-            'inline-flex items-center gap-1.5 px-3 py-1 border-0 rounded-md text-xs font-medium cursor-pointer transition-colors max-md:flex-1 max-md:justify-center max-md:min-h-9 max-sm:gap-[5px] max-sm:px-2 max-sm:py-1.5',
-            activeWorkspace === 'gallery' ? 'bg-foreground text-primary-foreground' : 'bg-transparent text-muted-foreground hover:text-foreground',
-          ]"
-          @click="selectWorkspace('gallery')"
-        >
-          <Image :size="14" stroke-width="1.8" />
-          <span>作品广场</span>
-        </button>
-      </div>
-
       <!-- Content row: sidebar + main content -->
       <div class="flex flex-1 min-h-0 min-w-0">
         <!-- Sidebar: only in canvas workspace mode -->
@@ -1507,6 +1452,7 @@ onUnmounted(() => {
               @select-workspace="selectImagioWorkspace"
               @create-workspace="createImagioWorkspace"
               @remove-workspace="removeImagioWorkspace"
+              @rename-workspace="renameImagioWorkspace"
               @select-image-mode="handleImageModeChange"
               @select-workspace-tab="selectWorkspace"
               @use-history-image="useHistoryImage"
@@ -1526,6 +1472,7 @@ onUnmounted(() => {
               @select-canvas-workspace="activateCanvasWorkspace"
               @create-canvas-workspace="createCanvasWorkspace"
               @delete-canvas-workspace="requestDeleteCanvasWorkspace"
+              @rename-canvas-workspace="renameCanvasWorkspace"
               @select-image-mode="handleImageModeChange"
               @create-node="createNodeNearCenter"
               @use-history-image="useHistoryImage"
@@ -1708,152 +1655,6 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-
-    <!-- Right side: settings panel (only in imagio mode) -->
-    <aside
-      v-if="activeWorkspace === 'canvas' && currentImageMode === 'imagio'"
-      class="w-[280px] shrink-0 px-6 py-6 border-l border-border/60 bg-background/80 backdrop-blur-[20px] overflow-y-auto min-h-0 max-lg:hidden"
-    >
-      <h3 class="mb-6 text-base font-semibold text-foreground">图片生成</h3>
-
-      <!-- 分辨率 -->
-      <div class="mb-5">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">分辨率</label>
-        <div class="flex gap-2 flex-wrap">
-          <button
-            v-for="opt in imagioResolutionOptions"
-            :key="opt.value"
-            type="button"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
-              resolution === opt.value
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="resolution = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Auto 交由模型选择；1K/2K/4K 按比例缩放</p>
-      </div>
-
-      <!-- 尺寸 / 比例 -->
-      <div class="mb-5">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">尺寸 / 比例</label>
-        <div class="flex gap-2 flex-wrap">
-          <button
-            v-for="opt in imagioAspectRatioOptions"
-            :key="opt.value"
-            type="button"
-            :disabled="resolution === 'auto' && opt.value !== 'auto'"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
-              aspectRatio === opt.value
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="customAspectRatioOpen = false; aspectRatio = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-          <button
-            type="button"
-            :disabled="resolution === 'auto'"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
-                customAspectRatioSelected
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="openCustomAspectRatio"
-          >
-            自定义
-          </button>
-        </div>
-        <div v-if="customAspectRatioOpen && resolution !== 'auto'" class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span class="font-medium">比例</span>
-          <Input
-            v-model="customAspectRatioWidth"
-            type="number"
-            min="1"
-            max="1000"
-            inputmode="numeric"
-            aria-label="自定义比例宽度"
-            class="h-8 w-16 bg-background px-2 text-center text-foreground"
-          />
-          <span aria-hidden="true">:</span>
-          <Input
-            v-model="customAspectRatioHeight"
-            type="number"
-            min="1"
-            max="1000"
-            inputmode="numeric"
-            aria-label="自定义比例高度"
-            class="h-8 w-16 bg-background px-2 text-center text-foreground"
-          />
-          <Button type="button" variant="outline" size="sm" class="h-8" @click="applyCustomAspectRatio">应用</Button>
-          <p v-if="customAspectRatioError" class="basis-full text-[11px] text-destructive">{{ customAspectRatioError }}</p>
-        </div>
-      </div>
-
-      <!-- 质量 -->
-      <div class="mb-6">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">质量</label>
-        <div class="flex gap-2 flex-wrap">
-          <button
-            v-for="opt in imagioQualityOptions"
-            :key="opt.value"
-            type="button"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
-              quality === opt.value
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="quality = opt.value"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Low 用于快速草稿，Medium/High 用于最终出图</p>
-      </div>
-
-      <!-- 背景 -->
-      <div class="mb-6">
-        <label class="block mb-2 text-xs font-medium text-muted-foreground">背景</label>
-        <div class="flex gap-2 flex-wrap">
-          <button
-            type="button"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200',
-              !transparentBackground
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="transparentBackground = false"
-          >
-            不透明
-          </button>
-          <button
-            type="button"
-            :disabled="!selectedModelSupportsTransparent"
-            :class="[
-              'h-8 px-3 text-xs font-medium rounded-lg border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40',
-              transparentBackground
-                ? 'bg-foreground text-primary-foreground border-foreground'
-                : 'bg-background text-foreground border-border hover:border-foreground/30 hover:bg-muted',
-            ]"
-            @click="transparentBackground = true"
-          >
-            透明
-          </button>
-        </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          {{ selectedModelSupportsTransparent ? '透明背景需要模型支持，出图为带 alpha 的 PNG' : '当前模型不支持透明背景' }}
-        </p>
-      </div>
-    </aside>
 
     <ImageGalleryDetailModal
       v-if="galleryDetail"
