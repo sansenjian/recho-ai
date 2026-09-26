@@ -338,7 +338,7 @@ metadata: {
 | `/api/tools` | Node | Node |
 | `/api/admin/*` | Node | Node BFF |
 | `/api/admin/settings/providers` | Node | Node BFF，管理员 only |
-| `/api/config/app` | sidecar 模式下代理到 Go | 按领域确定 owner，必要时保留 Node facade |
+| `/api/config/app` | Node 直接提供，不依赖 sidecar | Node |
 | `/api/config/supabase` | Node 直接提供 | Node |
 | `/api/image/generate` | sidecar 配置存在时 Node 代理到 Go | Go |
 | `/api/image/references` | sidecar 配置存在时 Node 代理到 Go | Go |

@@ -46,6 +46,10 @@ describe('go-owned API contract', () => {
       id: 'config-supabase',
       proxyViaNode: false,
     }))
+    expect(contract.routes).toContainEqual(expect.objectContaining({
+      id: 'config-app',
+      proxyViaNode: false,
+    }))
     expect(contract.liveScenarios.map(scenario => scenario.id)).toEqual([
       'config-app',
       'config-supabase',

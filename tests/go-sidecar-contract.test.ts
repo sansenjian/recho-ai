@@ -174,4 +174,32 @@ describe('go sidecar shared contract', () => {
     expect(response.status).toBe(404)
     expect(captured).toHaveLength(0)
   })
+
+  it('does not proxy the Node-owned application config route', async () => {
+    const captured: CapturedRequest[] = []
+    const upstream = await listen(http.createServer(async (req, res) => {
+      captured.push({
+        method: req.method || '',
+        path: new URL(req.url || '/', 'http://upstream').pathname,
+        query: new URL(req.url || '/', 'http://upstream').search,
+        headers: req.headers,
+        body: '',
+      })
+      res.writeHead(200)
+      res.end(JSON.stringify({ forwarded: true }))
+    }))
+    servers.push(upstream.server)
+    process.env.GO_GATEWAY_BASE_URL = upstream.url
+
+    const app = express()
+    app.use(requestObservabilityMiddleware)
+    app.use('/api', goSidecarRouter)
+    const proxy = await listen(http.createServer(app))
+    servers.push(proxy.server)
+
+    const response = await fetch(`${proxy.url}/api/config/app`)
+
+    expect(response.status).toBe(404)
+    expect(captured).toHaveLength(0)
+  })
 })
