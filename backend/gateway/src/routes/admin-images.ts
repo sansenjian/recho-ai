@@ -18,7 +18,10 @@ import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 const router = Router()
 const MEDIA_KINDS: AdminImageMediaKind[] = ['thumbnail', 'preview', 'original']
 
-function adminImageErrorResponse(err: unknown) {
+/** 管理接口统一错误响应体。 */
+type AdminImageErrorPayload = { status: number; error: string; code?: string }
+
+function adminImageErrorResponse(err: unknown): AdminImageErrorPayload {
   if (err instanceof AdminCreditError) {
     return {
       status: err.status,
@@ -83,7 +86,7 @@ router.get('/admin/images/:id/media', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-images] media read failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -102,7 +105,7 @@ router.get('/admin/images', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-images] list failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -114,7 +117,7 @@ router.get('/admin/images/storage-overview', async (req: Request, res: Response)
   } catch (err) {
     console.error('[admin-images] storage overview failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -126,7 +129,7 @@ router.patch('/admin/images/bulk/visibility', async (req: Request, res: Response
   } catch (err) {
     console.error('[admin-images] bulk visibility update failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -138,7 +141,7 @@ router.post('/admin/images/bulk/archive', async (req: Request, res: Response) =>
   } catch (err) {
     console.error('[admin-images] bulk archive failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -150,7 +153,7 @@ router.post('/admin/images/bulk/delete', async (req: Request, res: Response) => 
   } catch (err) {
     console.error('[admin-images] bulk delete failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -162,7 +165,7 @@ router.patch('/admin/images/:id/visibility', async (req: Request, res: Response)
   } catch (err) {
     console.error('[admin-images] visibility update failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 

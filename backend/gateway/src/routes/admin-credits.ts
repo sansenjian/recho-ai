@@ -19,7 +19,10 @@ import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
 
 const router = Router()
 
-function adminErrorResponse(err: unknown) {
+/** 管理接口统一错误响应体。 */
+type AdminErrorPayload = { status: number; error: string; code?: string }
+
+function adminErrorResponse(err: unknown): AdminErrorPayload {
   if (err instanceof AdminCreditError) {
     return {
       status: err.status,
@@ -52,7 +55,7 @@ router.get('/admin/credits/me', async (req: Request, res: Response) => {
   } catch (err) {
     console.warn('[admin-credits] auth failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -67,7 +70,7 @@ router.get('/admin/credits/users', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-credits] list users failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -79,7 +82,7 @@ router.get('/admin/credits/overview', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-credits] overview failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -96,7 +99,7 @@ router.get('/admin/credits/transactions', async (req: Request, res: Response) =>
   } catch (err) {
     console.error('[admin-credits] ledger failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -110,7 +113,7 @@ router.get('/admin/credits/users/:userId', async (req: Request, res: Response) =
   } catch (err) {
     console.error('[admin-credits] user detail failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -130,7 +133,7 @@ router.post('/admin/credits/users/:userId/adjust', async (req: Request, res: Res
   } catch (err) {
     console.error('[admin-credits] adjust failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -146,7 +149,7 @@ router.get('/admin/credits/codes', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-credits] list codes failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -158,7 +161,7 @@ router.get('/admin/credits/codes/:codeId/redemptions', async (req: Request, res:
   } catch (err) {
     console.error('[admin-credits] list code redemptions failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -170,7 +173,7 @@ router.post('/admin/credits/codes', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[admin-credits] create codes failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
@@ -182,7 +185,7 @@ router.patch('/admin/credits/codes/:codeId', async (req: Request, res: Response)
   } catch (err) {
     console.error('[admin-credits] update code failed:', safeErrorDetail(err))
     const response = adminErrorResponse(err)
-    res.status(response.status).json({ error: response.error })
+    res.status(response.status).json({ error: response.error, code: response.code })
   }
 })
 
