@@ -39,4 +39,61 @@ describe('ImageCanvas model selector', () => {
 
     wrapper.unmount()
   })
+
+  it('keeps the default image model selectable while app config is still loading', async () => {
+    resetAppConfigForTests()
+    vi.stubGlobal('requestAnimationFrame', vi.fn())
+    let resolveConfig!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      resolveConfig = resolve
+    })))
+
+    const wrapper = shallowMount(ImageCanvas, {
+      props: { workspaceMode: 'canvas', imageMode: 'imagio' },
+      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+    })
+
+    const selector = wrapper.findComponent(ImageModelSelect)
+    const trigger = selector.get('.image-model-trigger')
+    expect((trigger.element as HTMLButtonElement).disabled).toBe(false)
+    expect(trigger.text()).toContain('gpt-image-2')
+    await trigger.trigger('click')
+    expect(selector.find('[role="option"]').text()).toContain('gpt-image-2')
+
+    resolveConfig(new Response(JSON.stringify({
+      availableImageModels: [
+        { id: 'recommended-image', name: 'Recommended image', supportsTransparent: true },
+      ],
+      defaultImageModel: 'recommended-image',
+    }), { status: 200 }))
+    await flushPromises()
+
+    expect(selector.get('.image-model-trigger').text()).toContain('Recommended image')
+    expect(selector.findAll('[role="option"]').map(option => option.text())).toContain('Recommended image')
+    wrapper.unmount()
+  })
+
+  it('adds the configured default when the server returns an empty model catalog', async () => {
+    resetAppConfigForTests()
+    vi.stubGlobal('requestAnimationFrame', vi.fn())
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      availableImageModels: [],
+      defaultImageModel: 'server-image-default',
+    }), { status: 200 })))
+
+    const wrapper = shallowMount(ImageCanvas, {
+      props: { workspaceMode: 'canvas', imageMode: 'imagio' },
+      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+    })
+    await flushPromises()
+
+    const selector = wrapper.findComponent(ImageModelSelect)
+    const trigger = selector.get('.image-model-trigger')
+    expect((trigger.element as HTMLButtonElement).disabled).toBe(false)
+    expect(trigger.text()).toContain('server-image-default')
+    await trigger.trigger('click')
+    expect(selector.findAll('[role="option"]').map(option => option.text())).toContain('server-image-default')
+
+    wrapper.unmount()
+  })
 })

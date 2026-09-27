@@ -181,13 +181,18 @@ function clearImagioWorkspaceHistory() {
 const imageModel = ref('')
 
 // Model options for Imagio prompt generation panel and canvas generation nodes.
-const imagioModelOptions = computed(() =>
-  availableImageModels.value.map((m) => ({
+const imagioModelOptions = computed(() => {
+  const options = availableImageModels.value.map((m) => ({
     value: m.id,
     label: m.name,
     supportsTransparent: m.supportsTransparent === true,
-  })),
-)
+  }))
+  const configuredDefault = defaultImageModel.value
+  if (configuredDefault && !options.some(option => option.value === configuredDefault)) {
+    options.unshift({ value: configuredDefault, label: configuredDefault, supportsTransparent: false })
+  }
+  return options
+})
 
 // 「透明背景」只在模型声明支持时才可选：同一上游并非所有模型都接了透明输出
 // （例如 sunburst 支持、flare 不支持），切换模型时要把已勾选的透明关掉。
