@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Lock, Unlock } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,10 @@ const storageLoading = ref(false)
 const bulkLoading = ref(false)
 const actionId = ref<string | null>(null)
 const selectedIds = ref<string[]>([])
+/** 服务端列表默认 24 条；这里显式声明，翻页步长与请求参数必须同源。 */
+const PAGE_SIZE = 24
+const offset = ref(0)
+const total = ref(0)
 const visibilityFilter = ref('')
 const fundingFilter = ref('')
 const userFilter = ref('')
@@ -57,17 +61,41 @@ async function refreshImages() {
   imagesLoading.value = true
   errorMessage.value = ''
   try {
-    const params = new URLSearchParams({ limit: '24' })
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset.value) })
     if (visibilityFilter.value) params.set('visibility', visibilityFilter.value)
     if (fundingFilter.value) params.set('fundingSource', fundingFilter.value)
     if (userFilter.value.trim()) params.set('userId', userFilter.value.trim())
     if (query.value.trim()) params.set('query', query.value.trim())
-    const data = await adminApiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${params}`)
+    const data = await adminApiJson<{ images: AdminImageItem[]; total: number }>(`/api/admin/images?${params}`)
     images.value = data.images
-    const visibleIds = new Set(data.images.map(image => image.id))
-    selectedIds.value = selectedIds.value.filter(id => visibleIds.has(id))
+    total.value = data.total
+    // 换页后上一页的勾选不再属于当前可视范围，直接清空避免跨页误操作。
+    selectedIds.value = []
   } catch (error) { setError(error) } finally { imagesLoading.value = false }
 }
+/** 任何筛选变化都回到第一页:否则在第 3 页加筛选很容易落到空页,看起来像查无结果。 */
+function resetToFirstPage() {
+  offset.value = 0
+  void refreshImages()
+}
+function goToPreviousPage() {
+  if (offset.value <= 0) return
+  offset.value = Math.max(0, offset.value - PAGE_SIZE)
+  void refreshImages()
+}
+function goToNextPage() {
+  if (offset.value + PAGE_SIZE >= total.value) return
+  offset.value += PAGE_SIZE
+  void refreshImages()
+}
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const currentPage = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
+const canGoPrevious = computed(() => offset.value > 0)
+const canGoNext = computed(() => offset.value + PAGE_SIZE < total.value)
+/** 列表区间文案:总数与当前页都来自服务端,不再拿 images.length 冒充总数。 */
+const rangeStart = computed(() => (total.value === 0 ? 0 : offset.value + 1))
+const rangeEnd = computed(() => offset.value + images.value.length)
+
 async function refreshStorage() {
   if (storageLoading.value) return
   storageLoading.value = true
@@ -117,6 +145,8 @@ async function applyBulkArchive(requestedIds: string[]) {
     const data = await adminApiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', { method: 'POST', body: JSON.stringify({ ids: requestedIds }) })
     applyUpdates(data.images)
     noticeMessage.value = `${t('images.archived')} ${data.images.length}`
+    // 归档后当前筛选下可能少了几行,重新取一页保证 total 与列表同步。
+    await refreshImages()
     emit('dataChanged', 'images')
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
@@ -135,7 +165,9 @@ async function applyBulkDelete(requestedIds: string[]) {
     images.value = images.value.filter(image => !deleted.has(image.id))
     selectedIds.value = []
     noticeMessage.value = `${t('images.deleted')} ${data.deletedCount}`
-    await refreshStorage()
+    // 删光当前页时回退一页,否则用户会停在一片空白列表上。
+    if (images.value.length === 0 && offset.value > 0) offset.value = Math.max(0, offset.value - PAGE_SIZE)
+    await Promise.all([refreshImages(), refreshStorage()])
     emit('dataChanged', 'images')
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
@@ -170,7 +202,19 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
       </Button>
     </div>
 
-    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" :allow-write="allowWrite" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
+    <!-- 分页控件：offset/total 由服务端返回，这里只做展示与翻页。 -->
+    <div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-[var(--surface)] px-4 py-2.5 shadow-sm" data-slot="admin-images-pagination">
+      <span class="text-xs text-[var(--text-secondary)]" data-slot="admin-images-range">
+        {{ total === 0 ? t('images.rangeEmpty') : t('images.rangeLabel', { start: rangeStart, end: rangeEnd, total }) }}
+      </span>
+      <div class="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" :disabled="!canGoPrevious || imagesLoading" data-slot="admin-images-previous" @click="goToPreviousPage">{{ t('images.previousPage') }}</Button>
+        <span class="text-xs text-[var(--text-secondary)]" data-slot="admin-images-page-number">{{ t('images.pageOf', { page: currentPage, pages: pageCount }) }}</span>
+        <Button type="button" variant="outline" size="sm" :disabled="!canGoNext || imagesLoading" data-slot="admin-images-next" @click="goToNextPage">{{ t('images.nextPage') }}</Button>
+      </div>
+    </div>
+
+    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :total="total" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" :allow-write="allowWrite" @refresh="resetToFirstPage" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('images.storageOverview') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span></div><Button variant="outline" size="sm" :disabled="storageLoading" @click="refreshStorage">{{ t('common.refresh') }}</Button></div>
       <div v-if="storageLoading" class="p-6 text-center text-[var(--text-muted)]">{{ t('images.statistics') }}</div>

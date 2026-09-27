@@ -224,6 +224,11 @@ export default {
     selectImage: '选择 {id}',
     noImage: '无图',
     noWorks: '暂无作品',
+    rangeLabel: '第 {start}-{end} 张，共 {total} 张',
+    rangeEmpty: '共 0 张',
+    previousPage: '上一页',
+    nextPage: '下一页',
+    pageOf: '第 {page} / {pages} 页',
     table: {
       preview: '预览',
       time: '时间',

@@ -20,6 +20,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   images: AdminImageItem[]
+  /** 服务端返回的筛选后总数；列表已分页，images.length 只是当前页条数，不能当总数用。 */
+  total?: number
   loading: boolean
   bulkLoading: boolean
   actionId: string | null
@@ -101,7 +103,7 @@ function toggleImage(id: string, event: Event) {
     <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
         <span class="block text-sm">{{ t('images.title') }}</span>
-        <strong class="block mt-0.5 text-lg">{{ images.length }}</strong>
+        <strong class="block mt-0.5 text-lg" data-slot="admin-images-total">{{ props.total ?? images.length }}</strong>
       </div>
       <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
         <select

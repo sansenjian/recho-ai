@@ -224,6 +224,11 @@ export default {
     selectImage: 'Select {id}',
     noImage: 'No image',
     noWorks: 'No works',
+    rangeLabel: '{start}-{end} of {total}',
+    rangeEmpty: '0 total',
+    previousPage: 'Previous',
+    nextPage: 'Next',
+    pageOf: 'Page {page} of {pages}',
     table: {
       preview: 'Preview',
       time: 'Time',

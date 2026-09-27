@@ -8,6 +8,9 @@ const IMAGE_HISTORY_TABLE = 'image_generations'
 const ADMIN_IMAGE_MEDIA_PATH = '/api/admin/images'
 const DEFAULT_LIMIT = 24
 const MAX_LIMIT = 60
+const DEFAULT_OFFSET = 0
+/** 偏移上限:超过这个值基本是异常入参或爬取,没必要向数据库发那么深的 OFFSET 查询。 */
+const MAX_OFFSET = 100_000
 const MAX_BULK_IDS = 60
 const STORAGE_OVERVIEW_FALLBACK_LIMIT = 10_000
 const ADMIN_IMAGE_COLUMNS = [
@@ -120,6 +123,12 @@ function sanitizedLimit(value: unknown) {
   const number = Number(value)
   if (!Number.isFinite(number)) return DEFAULT_LIMIT
   return Math.min(MAX_LIMIT, Math.max(1, Math.round(number)))
+}
+
+function sanitizedOffset(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return DEFAULT_OFFSET
+  return Math.min(MAX_OFFSET, Math.max(0, Math.round(number)))
 }
 
 function sanitizedVisibility(value: unknown): AdminImageVisibility | null {
@@ -290,8 +299,26 @@ async function usersById(userIds: string[]) {
   return await cachedAdminUsersById(client, userIds)
 }
 
+/** 列表页与总数查询共用同一套筛选,避免两边条件漂移导致总数和列表对不上。 */
+function applyAdminImageFilters(query: any, filters: {
+  visibility: AdminImageVisibility | null
+  fundingSource: AdminImageFundingSource | null
+  userId: string | null
+  queryText: string | null
+}) {
+  let next = query
+  if (filters.visibility) next = next.eq('visibility', filters.visibility)
+  if (filters.fundingSource) next = next.eq('funding_source', filters.fundingSource)
+  if (filters.userId) next = next.eq('user_id', filters.userId)
+  if (filters.queryText) {
+    next = next.or(`user_prompt.ilike.%${filters.queryText}%,prompt.ilike.%${filters.queryText}%`)
+  }
+  return next
+}
+
 export async function listAdminImages(options: {
   limit?: unknown
+  offset?: unknown
   visibility?: unknown
   fundingSource?: unknown
   userId?: unknown
@@ -299,25 +326,22 @@ export async function listAdminImages(options: {
 } = {}) {
   const client = requireAdminImageClient()
   const limit = sanitizedLimit(options.limit)
-  const visibility = sanitizedVisibility(options.visibility)
-  const fundingSource = sanitizedFundingSource(options.fundingSource)
-  const userId = sanitizedFilterText(options.userId, 80)
-  const queryText = sanitizedFilterText(options.query, 80)
-
-  let query = client
-    .from(IMAGE_HISTORY_TABLE)
-    .select(ADMIN_IMAGE_COLUMNS)
-
-  if (visibility) query = query.eq('visibility', visibility)
-  if (fundingSource) query = query.eq('funding_source', fundingSource)
-  if (userId) query = query.eq('user_id', userId)
-  if (queryText) {
-    query = query.or(`user_prompt.ilike.%${queryText}%,prompt.ilike.%${queryText}%`)
+  const offset = sanitizedOffset(options.offset)
+  const filters = {
+    visibility: sanitizedVisibility(options.visibility),
+    fundingSource: sanitizedFundingSource(options.fundingSource),
+    userId: sanitizedFilterText(options.userId, 80),
+    queryText: sanitizedFilterText(options.query, 80),
   }
 
-  const { data, error } = await query
+  const base = applyAdminImageFilters(
+    client.from(IMAGE_HISTORY_TABLE).select(ADMIN_IMAGE_COLUMNS),
+    filters,
+  )
+
+  const { data, error } = await base
     .order('generated_at', { ascending: false })
-    .limit(limit)
+    .range(offset, offset + limit - 1)
   if (error) throw error
 
   const rows = (data || []) as unknown as Array<Record<string, unknown>>
@@ -327,8 +351,33 @@ export async function listAdminImages(options: {
       .filter((userId): userId is string => Boolean(userId)),
   ))
   const users = await usersById(userIds)
+  const images = rows.map(row => toAdminImageItem(row, users.get(String(row.user_id || ''))))
+  const total = await countAdminImages(options)
 
-  return rows.map(row => toAdminImageItem(row, users.get(String(row.user_id || ''))))
+  return { images, total, limit, offset }
+}
+
+/** 与列表共用筛选条件的总数,用于分页控件;count 查询不拉行,开销远小于列表本身。 */
+export async function countAdminImages(options: {
+  visibility?: unknown
+  fundingSource?: unknown
+  userId?: unknown
+  query?: unknown
+} = {}) {
+  const client = requireAdminImageClient()
+  const filters = {
+    visibility: sanitizedVisibility(options.visibility),
+    fundingSource: sanitizedFundingSource(options.fundingSource),
+    userId: sanitizedFilterText(options.userId, 80),
+    queryText: sanitizedFilterText(options.query, 80),
+  }
+
+  const { count, error } = await applyAdminImageFilters(
+    client.from(IMAGE_HISTORY_TABLE).select('id', { count: 'exact', head: true }),
+    filters,
+  )
+  if (error) throw error
+  return typeof count === 'number' && count >= 0 ? count : 0
 }
 
 export async function setAdminImageVisibility(id: string, visibilityValue: unknown) {

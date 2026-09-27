@@ -88,14 +88,15 @@ router.get('/admin/images/:id/media', async (req: Request, res: Response) => {
 router.get('/admin/images', async (req: Request, res: Response) => {
   try {
     await requireAdmin(req)
-    const images = await listAdminImages({
+    const page = await listAdminImages({
       limit: req.query.limit,
+      offset: req.query.offset,
       visibility: req.query.visibility,
       fundingSource: req.query.fundingSource,
       userId: req.query.userId,
       query: req.query.query,
     })
-    res.json({ images })
+    res.json(page)
   } catch (err) {
     console.error('[admin-images] list failed:', safeErrorDetail(err))
     const response = adminImageErrorResponse(err)
