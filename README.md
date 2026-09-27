@@ -37,7 +37,7 @@ npm run dev
 
 ## 本地请求路径
 
-开发模式下，Vite 把 `/api` 代理到 Node Gateway（`3000`）。`npm run dev` 会给 Node 注入 `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001`，因此 `/api/image/*`、`/api/credits*`、`/api/config/app`、`/api/config/supabase` 会由 Node 代理到 Go sidecar（`3001`）。前端不需要设置 `VITE_IMAGE_API_BASE_URL`；该变量只保留给独立图片服务或专项验证使用。
+开发模式下，Vite 把 `/api` 代理到 Node Gateway（`3000`）。`npm run dev` 会给 Node 注入 `GO_GATEWAY_BASE_URL=http://127.0.0.1:3001`，因此 `/api/image/*` 和 `/api/credits*` 会由 Node 代理到 Go sidecar（`3001`）；`/api/config/app` 与 `/api/config/supabase` 由 Node Gateway 直接提供，不依赖 Go sidecar。前端不需要设置 `VITE_IMAGE_API_BASE_URL`；该变量只保留给独立图片服务或专项验证使用。
 
 ## 文档入口
 

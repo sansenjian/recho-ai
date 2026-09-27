@@ -19,6 +19,7 @@ coverage
 .workbuddy/
 skills-lock.json
 output/
+graphflow-out/
 
 # Local browser/design exports and generated API test media
 .playwright-mcp/

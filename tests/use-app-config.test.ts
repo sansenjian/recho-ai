@@ -33,8 +33,8 @@ describe('useAppConfig', () => {
       guestGenerationEnabled: true,
       imageCreditCostPerImage: 1,
       imageModelCreditCosts: [],
-      availableImageModels: [],
-      defaultImageModel: '',
+      availableImageModels: [{ id: 'gpt-image-2', name: 'gpt-image-2', supportsTransparent: false }],
+      defaultImageModel: 'gpt-image-2',
     })
     await expect(ensureAppConfig()).resolves.toEqual({
       chatModels: [{ id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', provider: 'Custom Chat' }],
@@ -44,7 +44,7 @@ describe('useAppConfig', () => {
       imageCreditCostPerImage: 0.75,
       imageModelCreditCosts: [],
       availableImageModels: [],
-      defaultImageModel: '',
+      defaultImageModel: 'gpt-image-2',
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
@@ -99,5 +99,18 @@ describe('useAppConfig', () => {
     await ensureAppConfig()
 
     expect(useAppConfig().isLoaded.value).toBe(false)
+  })
+
+  it('provides the configured default image model before the model catalog loads', async () => {
+    const { useAppConfig, resetAppConfigForTests } = await import('../src/composables/useAppConfig')
+    resetAppConfigForTests()
+
+    const { availableImageModels, defaultImageModel, isLoaded } = useAppConfig()
+
+    expect(isLoaded.value).toBe(false)
+    expect(defaultImageModel.value).toBe('gpt-image-2')
+    expect(availableImageModels.value).toEqual([
+      { id: 'gpt-image-2', name: 'gpt-image-2', supportsTransparent: false },
+    ])
   })
 })

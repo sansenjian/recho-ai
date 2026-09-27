@@ -24,6 +24,8 @@ var CorsOrigin = parseEnvString("CORS_ORIGIN", "http://localhost:5173")
 
 // Supabase config
 var SupabaseURL = os.Getenv("SUPABASE_URL")
+var SupabaseHTTPProxy = os.Getenv("SUPABASE_HTTP_PROXY")
+var DatabaseSocks5Proxy = os.Getenv("DATABASE_SOCKS5_PROXY")
 var SupabasePublishableKey = supabasePublishableKeyFromEnv()
 var SupabaseServiceRoleKey = os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 var SupabaseJWKSURL = FirstNonEmpty(

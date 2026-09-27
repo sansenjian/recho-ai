@@ -46,6 +46,10 @@ export const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY ||
   ''
 export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 export const SUPABASE_IMAGE_BUCKET = process.env.SUPABASE_IMAGE_BUCKET || 'recho-images'
+// Node's fetch does not inherit the Windows system proxy. Keep this opt-in so
+// production deployments remain direct unless their environment requires a
+// proxy explicitly.
+export const SUPABASE_HTTP_PROXY = process.env.SUPABASE_HTTP_PROXY || ''
 
 export const TENCENT_COS_SECRET_ID = process.env.TENCENT_COS_SECRET_ID || ''
 export const TENCENT_COS_SECRET_KEY = process.env.TENCENT_COS_SECRET_KEY || ''

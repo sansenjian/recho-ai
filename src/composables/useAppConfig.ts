@@ -25,6 +25,12 @@ export interface PublicAppConfig {
   defaultImageModel: string
 }
 
+const fallbackImageModel: ImageModelOption = {
+  id: 'gpt-image-2',
+  name: 'gpt-image-2',
+  supportsTransparent: false,
+}
+
 const fallbackConfig: PublicAppConfig = {
   chatModels: [],
   imageEventsEnabled: false,
@@ -32,8 +38,8 @@ const fallbackConfig: PublicAppConfig = {
   guestGenerationEnabled: true,
   imageCreditCostPerImage: 1,
   imageModelCreditCosts: [],
-  availableImageModels: [],
-  defaultImageModel: '',
+  availableImageModels: [fallbackImageModel],
+  defaultImageModel: fallbackImageModel.id,
 }
 
 const config = ref<PublicAppConfig>({ ...fallbackConfig })

@@ -179,15 +179,29 @@ function clearImagioWorkspaceHistory() {
   saveImagioAssignments(localStorage, user.value?.id || null, assignments)
 }
 const imageModel = ref('')
+const hasUserSelectedImageModel = ref(false)
+
+function updateImageModel(value: string) {
+  hasUserSelectedImageModel.value = true
+  imageModel.value = value
+}
 
 // Model options for Imagio prompt generation panel and canvas generation nodes.
-const imagioModelOptions = computed(() =>
-  availableImageModels.value.map((m) => ({
+const imagioModelOptions = computed(() => {
+  const options = availableImageModels.value.map((m) => ({
     value: m.id,
     label: m.name,
     supportsTransparent: m.supportsTransparent === true,
-  })),
-)
+  }))
+  const configuredDefault = defaultImageModel.value
+  if (configuredDefault && !options.some(option => option.value === configuredDefault)) {
+    options.unshift({ value: configuredDefault, label: configuredDefault, supportsTransparent: false })
+  }
+  if (imageModel.value && !options.some(option => option.value === imageModel.value)) {
+    options.unshift({ value: imageModel.value, label: imageModel.value, supportsTransparent: false })
+  }
+  return options
+})
 
 // 「透明背景」只在模型声明支持时才可选：同一上游并非所有模型都接了透明输出
 // （例如 sunburst 支持、flare 不支持），切换模型时要把已勾选的透明关掉。
@@ -324,11 +338,9 @@ const transparentBackground = ref(false)
 
 // Initialize model when config loads; re-validate if config changes
 watch([defaultImageModel, availableImageModels], ([defaultModel, models]) => {
+  if (hasUserSelectedImageModel.value) return
   const modelIds = models.map((m) => m.id)
-  if (imageModel.value && !modelIds.includes(imageModel.value)) {
-    imageModel.value = defaultModel || ''
-  }
-  if (!imageModel.value && defaultModel) {
+  if (defaultModel && (!imageModel.value || !modelIds.includes(imageModel.value))) {
     imageModel.value = defaultModel
   }
 }, { immediate: true })
@@ -1493,7 +1505,8 @@ onUnmounted(() => {
               :active-workspace-id="activeImagioWorkspaceId"
               @select-workspace="selectImagioWorkspace"
               :can-select-generation-count="props.canSelectGenerationCount"
-              v-model:image-model="imageModel"
+              :image-model="imageModel"
+              @update:image-model="updateImageModel"
               v-model:resolution="resolution"
               v-model:aspect-ratio="aspectRatio"
               v-model:quality="quality"
