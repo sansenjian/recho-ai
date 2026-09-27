@@ -81,11 +81,14 @@ export interface AdminImageStorageOverview {
 }
 
 export class AdminImageError extends Error {
+  /** 机器可读的错误码，用于前端做本地化映射（message 里也存着同一个值）。 */
+  code: string
   status: number
   publicMessage: string
 
   constructor(code: string, options: { status?: number; publicMessage?: string } = {}) {
     super(code)
+    this.code = code
     this.status = options.status ?? statusForAdminImageError(code)
     this.publicMessage = options.publicMessage ?? publicMessageForAdminImageError(code)
   }

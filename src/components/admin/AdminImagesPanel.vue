@@ -233,7 +233,12 @@ function toggleImage(id: string, event: Event) {
               >
                 {{ t('images.public') }}
               </Button>
-              <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.private') }}</span>
+              <span
+                v-else
+                class="text-xs font-extrabold text-[var(--text-secondary)]"
+                data-slot="credit-image-locked"
+                :title="t('images.creditCannotPublish')"
+              >{{ t('images.private') }}</span>
             </td>
           </tr>
           <tr v-if="!images.length">

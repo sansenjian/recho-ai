@@ -24,6 +24,8 @@ function adminErrorResponse(err: unknown) {
     return {
       status: err.status,
       error: err.publicMessage,
+      // 附带错误码，前端据此显示本地化文案，而不是直接渲染后端中文。
+      code: err.code,
     }
   }
 

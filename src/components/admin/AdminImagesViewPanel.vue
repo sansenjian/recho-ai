@@ -78,7 +78,14 @@ async function refreshStorage() {
   } catch (error) { setError(error) } finally { storageLoading.value = false }
 }
 async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
-  if (!props.allowWrite || (visibility === 'public' && image.fundingSource === 'credit')) return
+  if (!props.allowWrite) return
+  // 只拦「公开」方向，与服务端 admin-images.ts:347 保持一致；
+  // 隐藏一张额度图片后端是允许的，这里不能连它一起挡掉。
+  if (visibility === 'public' && image.fundingSource === 'credit') {
+    errorMessage.value = ''
+    noticeMessage.value = t('images.creditCannotPublish')
+    return
+  }
   // 隐藏会让图片立刻对用户不可见，先弹就地确认。
   if (visibility === 'private') {
     hideConfirm.request(() => applyVisibility(image, visibility))
