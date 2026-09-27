@@ -1,11 +1,12 @@
 import { getAuthAccessToken } from './useAuthSession'
 import { apiUrl } from '../lib/api-base'
+import i18n from '../i18n'
 
 const ADMIN_REQUEST_TIMEOUT_MS = 15_000
 
 export async function adminApiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAuthAccessToken()
-  if (!token) throw new Error('请先登录。')
+  if (!token) throw new Error(i18n.global.t('feedback.loginRequired'))
 
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${token}`)
@@ -18,7 +19,7 @@ export async function adminApiJson<T>(path: string, init: RequestInit = {}): Pro
   const response = await fetch(apiUrl(path), { ...init, headers, signal })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(typeof data?.error === 'string' ? data.error : '请求失败')
+    throw new Error(typeof data?.error === 'string' ? data.error : i18n.global.t('feedback.requestFailed'))
   }
   return data as T
 }

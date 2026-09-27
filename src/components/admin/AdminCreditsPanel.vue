@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { adminApiJson } from '../../composables/useAdminApi'
+import AdminStatusBanner from './AdminStatusBanner.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import type { AdminCode, AdminCodeRedemption, AdminTransaction, AdminUser } from '../../types/admin'
 import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
 import { formatCreditAmount, formatSignedCreditAmount } from '../../utils/credit-format'
@@ -28,6 +31,7 @@ const adjustNote = ref('')
 const codeForm = ref({ prefix: 'RECHO', credits: 100, count: 10, maxRedemptions: 1, days: 30, note: '' })
 let usersController: AbortController | null = null
 let userDetailController: AbortController | null = null
+const disableConfirm = useConfirmAction<Promise<void>>()
 
 const selectedUserTitle = computed(() => selectedUser.value?.email || (selectedUser.value ? shortId(selectedUser.value.userId) : t('credits.noUserSelected')))
 const createdCsv = computed(() => {
@@ -173,7 +177,15 @@ async function viewCodeRedemptions(code: AdminCode) {
 }
 
 async function setCodeDisabled(code: AdminCode, disabled: boolean) {
-  if (disabled && !window.confirm(t('feedback.confirmDisableCode'))) return
+  // 停用是不可逆的对外动作，先弹就地确认；恢复则直接执行。
+  if (disabled) {
+    disableConfirm.request(() => applyCodeDisabled(code, true))
+    return
+  }
+  await applyCodeDisabled(code, false)
+}
+
+async function applyCodeDisabled(code: AdminCode, disabled: boolean) {
   actionLoading.value = true
   errorMessage.value = ''
   try {
@@ -219,10 +231,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="flex flex-col gap-4">
-    <div class="min-h-0" aria-live="polite">
-      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p>
-    </div>
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <div class="grid grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-4 max-lg:grid-cols-1">
       <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('credits.users') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ users.length }}</span></div><Button variant="outline" size="sm" :disabled="loading" @click="refreshUsers">{{ t('common.refresh') }}</Button></div>
@@ -249,5 +258,14 @@ onBeforeUnmount(() => {
         <div v-if="selectedCode" class="mt-4 border-t border-border pt-4"><div class="mb-2.5 flex items-center gap-2"><strong>{{ t('credits.codeRedemptions') }}</strong><span>{{ selectedCode.redeemedCount }} / {{ selectedCode.maxRedemptions }}</span><Button variant="ghost" size="sm" @click="viewCodeRedemptions(selectedCode)">{{ t('common.refresh') }}</Button></div><div class="overflow-x-auto rounded-md border border-border"><table class="w-full text-[13px]"><tbody><tr v-for="redemption in codeRedemptions" :key="redemption.id" class="border-b border-border"><td class="px-3 py-2">{{ dateTime(redemption.redeemedAt) }}</td><td class="px-3 py-2">{{ redemption.email || shortId(redemption.userId) }}</td><td class="px-3 py-2">{{ redemption.credits }}</td><td class="px-3 py-2">{{ redemption.balanceAfter ?? '-' }}</td></tr><tr v-if="!codeRedemptions.length"><td colspan="4" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ codeRedemptionsLoading ? t('common.loading') : t('common.noData') }}</td></tr></tbody></table></div></div>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-model:open="disableConfirm.open.value"
+      :title="t('feedback.confirmDisableCodeTitle')"
+      :description="t('feedback.confirmDisableCodeDetail')"
+      :confirm-label="t('feedback.confirmDisableCodeAction')"
+      destructive
+      @confirm="disableConfirm.confirm()"
+    />
   </section>
 </template>

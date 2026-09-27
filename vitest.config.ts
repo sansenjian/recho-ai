@@ -21,6 +21,11 @@ export default defineConfig({
     // 判据取 exit code 而非断言结果（漏标可能断言全过、却因 unhandled rejection 退出码非 0）。
     environment: 'node',
     globals: true,
+    // .dcu-study/ 是外部仓库的浅克隆（只读参考，已在 .gitignore 中），
+    // 但它自带 tests/ 且用 React + jsdom，默认 include 会把它们一起收进来：
+    // 实测 27 个文件 / 38 条用例失败，全是这套无关测试，污染本仓库的测试信号。
+    exclude: ['**/node_modules/**', '**/dist/**', '.dcu-study/**'],
+    include: ['tests/**/*.{test,spec}.{ts,tsx}'],
     // 覆盖率基线此前完全缺失（只有 vitest，没有 coverage provider）。
     // 生成：`npx vitest run --coverage`；json-summary 便于按目录聚合出决策用的数字，
     // html 供人工下钻。coverage/ 已在 .gitignore 中。

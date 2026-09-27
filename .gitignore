@@ -20,6 +20,14 @@ coverage
 skills-lock.json
 output/
 graphflow-out/
+.graphflow/
+.graphflow-cache/
+
+# External repository study clones (read-only reference, never committed)
+.dcu-study/
+
+# Windows path placeholder directory accidentally created by a shell expansion
+%SystemDrive%/
 
 # Local browser/design exports and generated API test media
 .playwright-mcp/

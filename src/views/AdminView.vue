@@ -19,6 +19,7 @@ import {
   Zap,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import AdminIdentityCard from '../components/admin/AdminIdentityCard.vue'
 import { adminApiJson } from '../composables/useAdminApi'
 import { useAuthSession } from '../composables/useAuthSession'
 import { adminErrorMessage } from '../utils/admin-format'
@@ -48,17 +49,34 @@ const currentAdminRole = ref<AdminRole>('operator')
 const errorMessage = ref('')
 const refreshVersions = ref({ overview: 0, system: 0 })
 
-const navItems: Array<{ id: AdminViewId; labelKey: string; icon: Component }> = [
-  { id: 'overview', labelKey: 'nav.overview', icon: LayoutDashboard },
-  { id: 'credits', labelKey: 'nav.credits', icon: Coins },
-  { id: 'images', labelKey: 'nav.images', icon: Image },
-  { id: 'monitor', labelKey: 'nav.monitor', icon: Activity },
-  { id: 'system', labelKey: 'nav.system', icon: Server },
-  { id: 'announcements', labelKey: 'nav.announcements', icon: Megaphone },
-  { id: 'apiKeys', labelKey: 'nav.apiKeys', icon: KeyRound },
-  { id: 'runtime', labelKey: 'nav.runtime', icon: Settings },
-  { id: 'providers', labelKey: 'nav.providers', icon: Server },
+type NavGroupId = 'operations' | 'platform'
+
+const navItems: Array<{ id: AdminViewId; labelKey: string; group: NavGroupId; icon: Component }> = [
+  { id: 'overview', labelKey: 'nav.overview', group: 'operations', icon: LayoutDashboard },
+  { id: 'credits', labelKey: 'nav.credits', group: 'operations', icon: Coins },
+  { id: 'images', labelKey: 'nav.images', group: 'operations', icon: Image },
+  { id: 'monitor', labelKey: 'nav.monitor', group: 'operations', icon: Activity },
+  { id: 'announcements', labelKey: 'nav.announcements', group: 'operations', icon: Megaphone },
+  { id: 'apiKeys', labelKey: 'nav.apiKeys', group: 'operations', icon: KeyRound },
+  { id: 'system', labelKey: 'nav.system', group: 'platform', icon: Server },
+  { id: 'runtime', labelKey: 'nav.runtime', group: 'platform', icon: Settings },
+  { id: 'providers', labelKey: 'nav.providers', group: 'platform', icon: Server },
 ]
+
+const navGroups: Array<{ id: NavGroupId; labelKey: string }> = [
+  { id: 'operations', labelKey: 'nav.groupOperations' },
+  { id: 'platform', labelKey: 'nav.groupPlatform' },
+]
+
+/** 按 navGroups 的顺序切分 navItems；空分组不下发标题，避免侧栏出现孤立的小节。 */
+const navSections = computed(() => navGroups
+  .map(group => ({
+    id: group.id,
+    labelKey: group.labelKey,
+    items: navItems.filter(item => item.group === group.id),
+  }))
+  .filter(section => section.items.length > 0))
+
 const panelComponents: Record<AdminViewId, Component> = {
   overview: AdminOverviewPanel,
   credits: AdminCreditsPanel,
@@ -129,14 +147,17 @@ onMounted(async () => {
       </div>
 
       <nav class="flex-1 overflow-y-auto p-2">
-        <button v-for="item in navItems" :key="item.id" class="flex min-h-9 w-full items-center gap-2.5 whitespace-nowrap rounded-md border-0 bg-transparent px-2.5 text-left text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]" :class="{ 'bg-[var(--hover-bg)] text-[var(--text-primary)] font-semibold': activeView === item.id }" @click="activeView = item.id"><component :is="item.icon" class="h-5 w-5 shrink-0" stroke-width="1.5" /><span v-show="!sidebarCollapsed" class="overflow-hidden text-ellipsis max-lg:hidden">{{ t(item.labelKey) }}</span></button>
+        <div v-for="(section, index) in navSections" :key="section.id" class="flex flex-col gap-0.5" :class="index > 0 ? 'mt-3' : ''">
+          <span v-show="!sidebarCollapsed" class="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] max-lg:hidden" data-slot="nav-group-heading">{{ t(section.labelKey) }}</span>
+          <button v-for="item in section.items" :key="item.id" class="flex min-h-9 w-full items-center gap-2.5 whitespace-nowrap rounded-md border-0 bg-transparent px-2.5 text-left text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]" :class="{ 'bg-[var(--hover-bg)] text-[var(--text-primary)] font-semibold': activeView === item.id }" @click="activeView = item.id"><component :is="item.icon" class="h-5 w-5 shrink-0" stroke-width="1.5" /><span v-show="!sidebarCollapsed" class="overflow-hidden text-ellipsis max-lg:hidden">{{ t(item.labelKey) }}</span></button>
+        </div>
       </nav>
 
       <div class="flex shrink-0 flex-col gap-0.5 border-t border-border p-2">
         <button class="flex min-h-8 w-full items-center gap-2.5 rounded-md bg-transparent px-2.5 text-left text-xs text-[var(--text-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]" @click="toggleLocale"><Globe class="h-4 w-4" /><span v-show="!sidebarCollapsed" class="max-lg:hidden">{{ locale === 'zh' ? '中文' : 'EN' }}</span></button>
         <button class="flex min-h-8 w-full items-center gap-2.5 rounded-md bg-transparent px-2.5 text-left text-xs text-[var(--text-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]" @click="toggleTheme"><Moon v-if="!isDark" class="h-4 w-4" /><Sun v-else class="h-4 w-4" /><span v-show="!sidebarCollapsed" class="max-lg:hidden">{{ isDark ? t('common.lightMode') : t('common.darkMode') }}</span></button>
         <div v-show="!sidebarCollapsed" class="flex gap-2 px-2.5 py-1.5 max-lg:hidden"><RouterLink to="/image" class="text-xs text-[var(--text-muted)] no-underline hover:text-[var(--text-primary)]">{{ t('nav.canvas') }}</RouterLink><RouterLink to="/works" class="text-xs text-[var(--text-muted)] no-underline hover:text-[var(--text-primary)]">{{ t('nav.works') }}</RouterLink></div>
-        <div v-if="user && !sidebarCollapsed" class="mt-1 flex items-center gap-2.5 border-t border-border p-2 max-lg:hidden"><div class="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-[var(--bubble-bg)] text-xs font-semibold">{{ (userEmail || 'A').charAt(0).toUpperCase() }}</div><div class="flex min-w-0 flex-col"><span class="overflow-hidden text-ellipsis whitespace-nowrap text-xs font-medium">{{ userEmail || 'Admin' }}</span><span class="text-[11px] text-[var(--text-muted)]">{{ currentAdminRole === 'senior' ? t('settings.seniorAdmin') : t('settings.operator') }}</span></div></div>
+        <AdminIdentityCard v-if="user" :email="userEmail" :role="currentAdminRole" :collapsed="sidebarCollapsed" />
       </div>
     </aside>
 

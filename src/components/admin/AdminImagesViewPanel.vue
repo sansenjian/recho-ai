@@ -3,6 +3,9 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import AdminImagesPanel from './AdminImagesPanel.vue'
+import AdminStatusBanner from './AdminStatusBanner.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import { adminApiJson } from '../../composables/useAdminApi'
 import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageItem, AdminImageStorageOverview, AdminImageStorageStat } from '../../types/admin'
@@ -24,6 +27,9 @@ const userFilter = ref('')
 const query = ref('')
 const errorMessage = ref('')
 const noticeMessage = ref('')
+const hideConfirm = useConfirmAction()
+const archiveConfirm = useConfirmAction()
+const deleteConfirm = useConfirmAction()
 
 function setError(error: unknown) { errorMessage.value = adminErrorMessage(error, t('feedback.worksFailed')) }
 function formatByteSize(bytes: number) {
@@ -72,7 +78,14 @@ async function refreshStorage() {
 }
 async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
   if (props.adminMode !== 'manage' || (visibility === 'public' && image.fundingSource === 'credit')) return
-  if (visibility === 'private' && !window.confirm(t('images.confirmHide'))) return
+  // 隐藏会让图片立刻对用户不可见，先弹就地确认。
+  if (visibility === 'private') {
+    hideConfirm.request(() => applyVisibility(image, visibility))
+    return
+  }
+  await applyVisibility(image, visibility)
+}
+async function applyVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
   actionId.value = image.id
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -82,8 +95,11 @@ async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['
     noticeMessage.value = visibility === 'private' ? t('images.hidden') : t('images.restored')
   } catch (error) { setError(error) } finally { actionId.value = null }
 }
-async function bulkArchive() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length || !window.confirm(t('images.confirmArchive', { count: selectedIds.value.length }))) return
+function bulkArchive() {
+  if (props.adminMode !== 'manage' || !selectedIds.value.length) return
+  archiveConfirm.request(() => applyBulkArchive())
+}
+async function applyBulkArchive() {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -94,8 +110,11 @@ async function bulkArchive() {
     emit('dataChanged', 'images')
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
-async function bulkDelete() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length || !window.confirm(t('images.confirmDelete', { count: selectedIds.value.length }))) return
+function bulkDelete() {
+  if (props.adminMode !== 'manage' || !selectedIds.value.length) return
+  deleteConfirm.request(() => applyBulkDelete())
+}
+async function applyBulkDelete() {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -116,12 +135,36 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
 
 <template>
   <section class="flex flex-col gap-4">
-    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p></div>
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('images.storageOverview') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span></div><Button variant="outline" size="sm" :disabled="storageLoading" @click="refreshStorage">{{ t('common.refresh') }}</Button></div>
       <div v-if="storageLoading" class="p-6 text-center text-[var(--text-muted)]">{{ t('images.statistics') }}</div>
       <div v-else-if="storageOverview" class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('images.storageLocation'),t('images.imageCount'),t('images.totalSize'),t('images.avgSize'),t('images.totalCredits'),t('images.sizePercent')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="stat in storageOverview.byLocation" :key="stat.location" class="border-b border-border"><td class="px-3 py-2">{{ storageLocationLabel(stat.location) }}</td><td class="px-3 py-2 font-mono">{{ stat.imageCount }}</td><td class="px-3 py-2 font-mono">{{ formatByteSize(stat.totalBytes) }}</td><td class="px-3 py-2 font-mono">{{ formatByteSize(stat.averageBytes) }}</td><td class="px-3 py-2 font-mono">{{ formatCreditAmount(stat.totalCreditCost) }}</td><td class="px-3 py-2">{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td></tr></tbody></table></div>
     </div>
+
+    <ConfirmDialog
+      v-model:open="hideConfirm.open.value"
+      :title="t('images.confirmHideTitle')"
+      :description="t('images.confirmHideDetail')"
+      :confirm-label="t('images.confirmHideAction')"
+      destructive
+      @confirm="hideConfirm.confirm()"
+    />
+    <ConfirmDialog
+      v-model:open="archiveConfirm.open.value"
+      :title="t('images.confirmArchiveTitle')"
+      :description="t('images.confirmArchiveDetail', { count: selectedIds.length })"
+      :confirm-label="t('images.confirmArchiveAction')"
+      @confirm="archiveConfirm.confirm()"
+    />
+    <ConfirmDialog
+      v-model:open="deleteConfirm.open.value"
+      :title="t('images.confirmDeleteTitle')"
+      :description="t('images.confirmDeleteDetail', { count: selectedIds.length })"
+      :confirm-label="t('images.confirmDeleteAction')"
+      destructive
+      @confirm="deleteConfirm.confirm()"
+    />
   </section>
 </template>

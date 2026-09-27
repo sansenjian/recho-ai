@@ -8,6 +8,11 @@ import type {
 
 const t = i18n.global.t
 
+/** 跟随当前语言的日期格式；写死 zh-CN 会让英文后台仍然显示中文日期顺序。 */
+function localeTag() {
+  return i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US'
+}
+
 export function shortId(value: string) {
   return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
 }
@@ -16,7 +21,7 @@ export function dateTime(value: string | null) {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(localeTag(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

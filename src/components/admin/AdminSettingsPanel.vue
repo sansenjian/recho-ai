@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
+import AdminStatusBanner from './AdminStatusBanner.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import type {
   AdminAccessSummary,
   AdminAppSettings,
@@ -35,6 +38,7 @@ const settingsSaving = ref(false)
 const actionLoading = ref(false)
 const providerActionId = ref<string | null>(null)
 const adminRuleActionId = ref<string | null>(null)
+const ruleConfirm = useConfirmAction()
 const errorMessage = ref('')
 const noticeMessage = ref('')
 const appSettings = ref<AdminAppSettings | null>(null)
@@ -411,9 +415,16 @@ async function createAdminRule() {
   }
 }
 
-async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
+function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   if (rule.source !== 'database' || !canManageAdminUsers.value) return
-  if (!enabled && !window.confirm(t('settings.confirmDisableRule'))) return
+  // 停用规则会立即收回后台访问权限，先弹就地确认。
+  if (!enabled) {
+    ruleConfirm.request(() => applyAdminRuleEnabled(rule, false))
+    return
+  }
+  return applyAdminRuleEnabled(rule, true)
+}
+async function applyAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   adminRuleActionId.value = rule.id
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -438,10 +449,7 @@ onMounted(refreshSettings)
 
 <template>
   <section class="flex flex-col gap-4">
-    <div class="min-h-0" aria-live="polite">
-      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p>
-    </div>
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
       <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3">
@@ -535,5 +543,14 @@ onMounted(refreshSettings)
         <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.adminTable.account'),t('settings.adminTable.level'),t('settings.adminTable.source'),t('settings.adminTable.status'),t('settings.adminTable.updated'),t('settings.adminTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="rule in adminUserRules" :key="rule.id" class="border-b border-border"><td class="px-3 py-2">{{ adminRuleIdentity(rule) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ adminRuleRoleLabel(rule) }}</Badge></td><td class="px-3 py-2 text-xs">{{ adminRuleSource(rule) }}</td><td class="px-3 py-2" :class="rule.enabled ? 'text-success' : 'text-danger'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td><td class="px-3 py-2 text-xs">{{ dateTime(rule.updatedAt) }}</td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id" @click="setAdminRuleEnabled(rule, !rule.enabled)">{{ rule.enabled ? t('common.disable') : t('common.enable') }}</Button></td></tr><tr v-if="!adminUserRules.length"><td colspan="6" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.noRules') }}</td></tr></tbody></table></div>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-model:open="ruleConfirm.open.value"
+      :title="t('settings.confirmDisableRuleTitle')"
+      :description="t('settings.confirmDisableRuleDetail')"
+      :confirm-label="t('settings.confirmDisableRuleAction')"
+      destructive
+      @confirm="ruleConfirm.confirm()"
+    />
   </section>
 </template>
