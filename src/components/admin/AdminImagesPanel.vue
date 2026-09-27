@@ -28,6 +28,8 @@ const props = defineProps<{
   fundingFilter: string
   userFilter: string
   query: string
+  /** 写权限由父级 AdminImagesViewPanel 的开关控制；只读时禁用所有破坏性操作。 */
+  allowWrite?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,6 +45,8 @@ const emit = defineEmits<{
 }>()
 
 const selectedSet = computed(() => new Set(props.selectedIds))
+/** 只读时行内隐藏/公开按钮保持可见但禁用，避免按钮凭空消失造成的困惑。 */
+const writeDisabled = computed(() => props.allowWrite === false)
 const visibleIds = computed(() => props.images.map(image => image.id))
 const selectedCount = computed(() => props.selectedIds.length)
 const allVisibleSelected = computed(() => (
@@ -147,8 +151,8 @@ function toggleImage(id: string, event: Event) {
 
     <div class="flex items-center justify-start gap-2 flex-wrap mb-2.5">
       <span class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.selectedCount', { count: selectedCount }) }}</span>
-      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">{{ t('images.bulkArchive') }}</Button>
-      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">{{ t('images.bulkDelete') }}</Button>
+      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0 || writeDisabled" @click="emit('bulkArchive')">{{ t('images.bulkArchive') }}</Button>
+      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0 || writeDisabled" @click="emit('bulkDelete')">{{ t('images.bulkDelete') }}</Button>
     </div>
 
     <div class="w-full overflow-auto rounded-md border border-border max-h-[560px]">
@@ -214,7 +218,7 @@ function toggleImage(id: string, event: Event) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="actionId === image.id"
+                :disabled="actionId === image.id || writeDisabled"
                 @click="emit('setVisibility', image, 'private')"
               >
                 {{ t('common.hide') }}
@@ -224,7 +228,7 @@ function toggleImage(id: string, event: Event) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="actionId === image.id"
+                :disabled="actionId === image.id || writeDisabled"
                 @click="emit('setVisibility', image, 'public')"
               >
                 {{ t('images.public') }}

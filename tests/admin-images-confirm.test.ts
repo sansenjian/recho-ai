@@ -45,7 +45,7 @@ const mounted: Array<{ unmount: () => void }> = []
 
 function mountPanel() {
   const wrapper = mount(AdminImagesViewPanel as never, {
-    props: { adminMode: 'manage' },
+    props: { allowWrite: true },
     global: {
       plugins: [createI18n({ legacy: false, locale: 'zh', fallbackLocale: 'en', messages: { en, zh } })],
     },
@@ -69,6 +69,18 @@ function clickButton(label: string) {
 function writeCalls() {
   return adminApiJsonMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH'
     || (init as RequestInit | undefined)?.method === 'POST')
+}
+
+function mountPanelReadOnly() {
+  const wrapper = mount(AdminImagesViewPanel as never, {
+    props: { allowWrite: false },
+    global: {
+      plugins: [createI18n({ legacy: false, locale: 'zh', fallbackLocale: 'en', messages: { en, zh } })],
+    },
+    attachTo: document.body,
+  })
+  mounted.push(wrapper)
+  return wrapper
 }
 
 describe('admin image panel destructive actions ask first', () => {
@@ -104,6 +116,41 @@ describe('admin image panel destructive actions ask first', () => {
     await vi.waitFor(() => expect(writeCalls()).toHaveLength(1))
     expect(String(adminApiJsonMock.mock.calls.find(call => String(call[0]).endsWith('/visibility'))?.[0]))
       .toBe('/api/admin/images/img-1/visibility')
+  })
+
+  it('never reaches a write endpoint while write access is off', async () => {
+    const wrapper = mountPanelReadOnly()
+    await vi.waitFor(() => expect(adminApiJsonMock).toHaveBeenCalled())
+    await nextTick()
+
+    const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
+    panel.vm.$emit('setVisibility', image(), 'private')
+    panel.vm.$emit('bulkArchive')
+    panel.vm.$emit('bulkDelete')
+    await nextTick()
+
+    // 只读：既不弹确认框，也不发写请求。
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(writeCalls()).toHaveLength(0)
+
+    const toggle = wrapper.find('[data-slot="admin-write-gate-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    expect(toggle.text()).toContain('只读')
+
+    // 开关本身不直接改权限：它把新值交给父级，由父级回灌 allowWrite。
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:allowWrite')?.at(-1)).toEqual([true])
+  })
+
+  it('shows the write gate as open once write access is on', async () => {
+    const wrapper = mountPanel()
+    await vi.waitFor(() => expect(adminApiJsonMock).toHaveBeenCalled())
+    await nextTick()
+
+    const toggle = wrapper.find('[data-slot="admin-write-gate-toggle"]')
+    expect(toggle.attributes('aria-pressed')).toBe('true')
+    expect(toggle.text()).toContain('已开启')
   })
 
   it('leaves the image untouched when the confirmation is dismissed', async () => {

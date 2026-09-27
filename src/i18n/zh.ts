@@ -65,10 +65,6 @@ export default {
     noAccess: '当前账号没有后台权限。',
     loginLink: '返回登录',
   },
-  mode: {
-    visual: '可视化后台',
-    manage: '管理后台',
-  },
   overview: {
     title: '概览',
     totalBalance: '总余额',
@@ -176,6 +172,10 @@ export default {
   },
   images: {
     title: '图片管理',
+    writeGateTitle: '写权限',
+    writeGateHint: '关闭时隐藏、归档、删除等操作会被禁用。刷新页面后恢复为只读。',
+    writeEnabled: '已开启',
+    writeDisabled: '只读',
     bulkArchive: '批量归档',
     bulkDelete: '批量删除',
     confirmArchive: '确认归档 {count} 张图片？',

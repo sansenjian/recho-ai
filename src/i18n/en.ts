@@ -65,10 +65,6 @@ export default {
     noAccess: 'This account does not have admin access.',
     loginLink: 'Back to login',
   },
-  mode: {
-    visual: 'Visual Dashboard',
-    manage: 'Admin Panel',
-  },
   overview: {
     title: 'Overview',
     totalBalance: 'Total Balance',
@@ -176,6 +172,10 @@ export default {
   },
   images: {
     title: 'Image Management',
+    writeGateTitle: 'Write access',
+    writeGateHint: 'When off, hide, archive and delete actions are disabled. Refreshing the page restores read-only.',
+    writeEnabled: 'Enabled',
+    writeDisabled: 'Read only',
     bulkArchive: 'Bulk Archive',
     bulkDelete: 'Bulk Delete',
     confirmArchive: 'Archive {count} images?',

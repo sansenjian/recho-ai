@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Lock, Unlock } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import AdminImagesPanel from './AdminImagesPanel.vue'
 import AdminStatusBanner from './AdminStatusBanner.vue'
@@ -11,8 +12,8 @@ import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageItem, AdminImageStorageOverview, AdminImageStorageStat } from '../../types/admin'
 import { formatCreditAmount } from '../../utils/credit-format'
 
-const props = defineProps<{ adminMode: 'visual' | 'manage' }>()
-const emit = defineEmits<{ dataChanged: [source: 'images'] }>()
+const props = defineProps<{ allowWrite: boolean }>()
+const emit = defineEmits<{ dataChanged: [source: 'images']; 'update:allowWrite': [value: boolean] }>()
 const { t } = useI18n()
 const images = ref<AdminImageItem[]>([])
 const storageOverview = ref<AdminImageStorageOverview | null>(null)
@@ -77,7 +78,7 @@ async function refreshStorage() {
   } catch (error) { setError(error) } finally { storageLoading.value = false }
 }
 async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
-  if (props.adminMode !== 'manage' || (visibility === 'public' && image.fundingSource === 'credit')) return
+  if (!props.allowWrite || (visibility === 'public' && image.fundingSource === 'credit')) return
   // 隐藏会让图片立刻对用户不可见，先弹就地确认。
   if (visibility === 'private') {
     hideConfirm.request(() => applyVisibility(image, visibility))
@@ -96,7 +97,7 @@ async function applyVisibility(image: AdminImageItem, visibility: AdminImageItem
   } catch (error) { setError(error) } finally { actionId.value = null }
 }
 function bulkArchive() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length) return
+  if (!props.allowWrite || !selectedIds.value.length) return
   archiveConfirm.request(() => applyBulkArchive())
 }
 async function applyBulkArchive() {
@@ -111,7 +112,7 @@ async function applyBulkArchive() {
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
 function bulkDelete() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length) return
+  if (!props.allowWrite || !selectedIds.value.length) return
   deleteConfirm.request(() => applyBulkDelete())
 }
 async function applyBulkDelete() {
@@ -136,7 +137,31 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
 <template>
   <section class="flex flex-col gap-4">
     <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
-    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
+    <!-- 写权限开关放在它真正生效的地方：下面这些批量操作和行内隐藏都受它约束。 -->
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-[var(--surface)] px-4 py-3 shadow-sm"
+      data-slot="admin-write-gate"
+    >
+      <div class="flex min-w-0 flex-col">
+        <span class="text-sm font-medium text-[var(--text-primary)]">{{ t('images.writeGateTitle') }}</span>
+        <span class="text-xs text-[var(--text-muted)]">{{ t('images.writeGateHint') }}</span>
+      </div>
+      <Button
+        type="button"
+        :variant="allowWrite ? 'default' : 'outline'"
+        size="sm"
+        class="shrink-0"
+        :aria-pressed="allowWrite"
+        data-slot="admin-write-gate-toggle"
+        @click="emit('update:allowWrite', !allowWrite)"
+      >
+        <Unlock v-if="allowWrite" class="h-4 w-4" />
+        <Lock v-else class="h-4 w-4" />
+        {{ allowWrite ? t('images.writeEnabled') : t('images.writeDisabled') }}
+      </Button>
+    </div>
+
+    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" :allow-write="allowWrite" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('images.storageOverview') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span></div><Button variant="outline" size="sm" :disabled="storageLoading" @click="refreshStorage">{{ t('common.refresh') }}</Button></div>
       <div v-if="storageLoading" class="p-6 text-center text-[var(--text-muted)]">{{ t('images.statistics') }}</div>

@@ -21,27 +21,28 @@ const roleLabel = computed(() => (props.role === 'senior' ? t('settings.seniorAd
 </script>
 
 <template>
+  <!-- 与上方菜单行同一节奏：36px 行高、20px 图标列、8px 圆角。 -->
   <div
     v-if="!collapsed"
     data-slot="admin-identity-card"
-    class="mt-1 flex items-center gap-2.5 border-t border-border p-2 max-lg:hidden"
+    class="mt-1 flex min-h-9 items-center gap-2 rounded-lg px-1 py-1.5 max-lg:hidden"
   >
-    <div class="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-border bg-[var(--bubble-bg)] text-xs font-semibold">
-      {{ initial }}
-    </div>
-    <div class="flex min-w-0 flex-1 flex-col">
-      <span class="flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs font-medium">
+    <span class="grid h-5 w-5 shrink-0 place-items-center [place-items:center_start]">
+      <span class="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-border bg-[var(--bubble-bg)] text-[10px] font-semibold leading-none">{{ initial }}</span>
+    </span>
+    <span class="flex min-w-0 flex-1 flex-col">
+      <span class="flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm leading-5 font-medium text-[var(--text-primary)]">
         <User class="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" aria-hidden="true" />
         {{ email || t('settings.adminAccount') }}
       </span>
       <span
-        class="flex items-center gap-1 text-[11px] text-[var(--text-muted)]"
+        class="flex items-center gap-1 text-[12px] leading-4 text-[var(--text-muted)]"
         :title="roleLabel"
         data-slot="admin-identity-role"
       >
         <ShieldCheck class="h-3 w-3 shrink-0" aria-hidden="true" />
         {{ roleLabel }}
       </span>
-    </div>
+    </span>
   </div>
 </template>
