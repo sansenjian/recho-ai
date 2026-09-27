@@ -10,8 +10,7 @@ export default {
     settings: 'Settings',
     runtime: 'Runtime Config',
     providers: 'Provider Config',
-    canvas: 'Canvas',
-    works: 'Works',
+    backToApp: 'Back to workspace',
     // Sidebar group headings (AdminView navGroups)
     groupOperations: 'Operations',
     groupPlatform: 'Platform',

@@ -10,8 +10,7 @@ export default {
     settings: '系统设置',
     runtime: '运行时配置',
     providers: 'Provider 配置',
-    canvas: '画布',
-    works: '作品',
+    backToApp: '返回工作台',
     // 侧栏分组标题（AdminView 的 navGroups）
     groupOperations: '运营',
     groupPlatform: '平台',
