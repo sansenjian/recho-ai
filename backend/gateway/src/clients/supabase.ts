@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { fetch as undiciFetch, ProxyAgent } from 'undici'
+import { ProxyAgent } from 'undici'
 import {
   SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_SERVICE_ROLE_KEY,
@@ -29,13 +29,13 @@ function createSupabaseDispatcher() {
 const supabaseDispatcher = createSupabaseDispatcher()
 
 const supabaseFetch: typeof fetch = ((input, init) => (
-  undiciFetch(
-    input as never,
+  globalThis.fetch(
+    input,
     {
       ...(init ?? {}),
       ...(supabaseDispatcher ? { dispatcher: supabaseDispatcher } : {}),
-    } as Parameters<typeof undiciFetch>[1],
-  ) as unknown as Promise<Response>
+    } as RequestInit & { dispatcher?: unknown },
+  )
 )) as typeof fetch
 
 const supabaseGlobalOptions = supabaseDispatcher

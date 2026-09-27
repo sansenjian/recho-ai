@@ -87,7 +87,7 @@ func newSupabaseHTTPClient() *http.Client {
 	}
 
 	proxyURL, err := url.Parse(proxyValue)
-	if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+	if err != nil || proxyURL.Host == "" || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https") {
 		log.Printf("[auth] ignoring invalid SUPABASE_HTTP_PROXY configuration")
 		return &http.Client{Timeout: jwksHTTPTimeout}
 	}

@@ -126,6 +126,11 @@ func configureSocks5Proxy(poolConfig *pgxpool.Config, proxyValue string) error {
 		}
 		return dialer.Dial(network, address)
 	}
+	if proxyURL.Scheme == "socks5h" {
+		poolConfig.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
+			return []string{host}, nil
+		}
+	}
 	log.Printf("[supabase] PostgreSQL connections configured through SOCKS5 proxy %s", proxyURL.Host)
 	return nil
 }

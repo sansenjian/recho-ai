@@ -96,4 +96,33 @@ describe('ImageCanvas model selector', () => {
 
     wrapper.unmount()
   })
+
+  it('preserves an actively selected fallback model when the server default changes', async () => {
+    resetAppConfigForTests()
+    vi.stubGlobal('requestAnimationFrame', vi.fn())
+    let resolveConfig!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      resolveConfig = resolve
+    })))
+
+    const wrapper = shallowMount(ImageCanvas, {
+      props: { workspaceMode: 'canvas', imageMode: 'imagio' },
+      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+    })
+
+    const selector = wrapper.findComponent(ImageModelSelect)
+    await selector.get('.image-model-trigger').trigger('click')
+    await selector.get('[role="option"]').trigger('click')
+
+    resolveConfig(new Response(JSON.stringify({
+      availableImageModels: [
+        { id: 'recommended-image', name: 'Recommended image' },
+      ],
+      defaultImageModel: 'recommended-image',
+    }), { status: 200 }))
+    await flushPromises()
+
+    expect(selector.get('.image-model-trigger').text()).toContain('gpt-image-2')
+    wrapper.unmount()
+  })
 })
