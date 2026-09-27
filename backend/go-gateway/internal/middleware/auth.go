@@ -14,6 +14,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -72,12 +73,29 @@ var (
 	jwksURL       string
 	authUserURL   string
 	authAPIKey    string
-	authHTTP      = &http.Client{Timeout: jwksHTTPTimeout}
+	authHTTP      = newSupabaseHTTPClient()
 	jwksMu        sync.Mutex
 	jwksExpiresAt time.Time
 	jwksKeys      map[string]any
 	dbPool        *pgxpool.Pool
 )
+
+func newSupabaseHTTPClient() *http.Client {
+	proxyValue := strings.TrimSpace(config.SupabaseHTTPProxy)
+	if proxyValue == "" {
+		return &http.Client{Timeout: jwksHTTPTimeout}
+	}
+
+	proxyURL, err := url.Parse(proxyValue)
+	if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+		log.Printf("[auth] ignoring invalid SUPABASE_HTTP_PROXY configuration")
+		return &http.Client{Timeout: jwksHTTPTimeout}
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	return &http.Client{Timeout: jwksHTTPTimeout, Transport: transport}
+}
 
 // SetDBPool injects the shared database pool used for API key lookups.
 // Call from main() once the Supabase client is initialized.

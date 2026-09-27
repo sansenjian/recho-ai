@@ -58,6 +58,12 @@ SUPABASE_URL=https://[PROJECT].supabase.co
 SUPABASE_SERVICE_ROLE_KEY=[SERVICE_ROLE_KEY]
 # Optional: defaults to SUPABASE_URL/auth/v1/.well-known/jwks.json
 SUPABASE_JWKS_URL=
+# Optional HTTP proxy for Supabase Auth/JWKS HTTPS requests, for example
+# http://127.0.0.1:7890 when local direct TLS is reset by the network.
+SUPABASE_HTTP_PROXY=
+# Optional SOCKS5 proxy for PostgreSQL, for example
+# socks5://127.0.0.1:7891 when direct pooler TCP is unavailable.
+DATABASE_SOCKS5_PROXY=
 
 # Supabase Storage fallback.
 # Without the optional S3 settings below, the gateway automatically uses

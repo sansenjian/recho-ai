@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/net/proxy"
+
+	"go-gateway/internal/config"
 )
 
 // Client wraps a PostgreSQL connection pool for Supabase
@@ -42,6 +47,10 @@ func NewClient() (*Client, error) {
 	// extended protocol (Exec) that skips the prepare step.
 	if isPgBouncerURL(connString) {
 		poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	}
+
+	if err := configureSocks5Proxy(poolConfig, config.DatabaseSocks5Proxy); err != nil {
+		return nil, err
 	}
 
 	// Connection pool settings optimized for serverless
@@ -87,6 +96,38 @@ func NewClient() (*Client, error) {
 	}
 
 	return nil, lastErr
+}
+
+func configureSocks5Proxy(poolConfig *pgxpool.Config, proxyValue string) error {
+	proxyValue = strings.TrimSpace(proxyValue)
+	if proxyValue == "" {
+		return nil
+	}
+
+	proxyURL, err := url.Parse(proxyValue)
+	if err != nil || proxyURL.Host == "" || (proxyURL.Scheme != "socks5" && proxyURL.Scheme != "socks5h") {
+		return fmt.Errorf("invalid DATABASE_SOCKS5_PROXY configuration")
+	}
+
+	var auth *proxy.Auth
+	if username := proxyURL.User.Username(); username != "" {
+		password, _ := proxyURL.User.Password()
+		auth = &proxy.Auth{User: username, Password: password}
+	}
+
+	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
+	if err != nil {
+		return fmt.Errorf("failed to configure DATABASE_SOCKS5_PROXY: %w", err)
+	}
+
+	poolConfig.ConnConfig.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
+			return contextDialer.DialContext(ctx, network, address)
+		}
+		return dialer.Dial(network, address)
+	}
+	log.Printf("[supabase] PostgreSQL connections configured through SOCKS5 proxy %s", proxyURL.Host)
+	return nil
 }
 
 // Close closes the connection pool
