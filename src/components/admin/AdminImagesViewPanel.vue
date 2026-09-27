@@ -98,14 +98,16 @@ async function applyVisibility(image: AdminImageItem, visibility: AdminImageItem
 }
 function bulkArchive() {
   if (!props.allowWrite || !selectedIds.value.length) return
-  archiveConfirm.request(() => applyBulkArchive())
+  // 弹窗打开后选区仍可被键盘改动，先固定一份快照，确认时只处理当时选中的图片。
+  const requestedIds = [...selectedIds.value]
+  archiveConfirm.request(() => applyBulkArchive(requestedIds))
 }
-async function applyBulkArchive() {
+async function applyBulkArchive(requestedIds: string[]) {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
   try {
-    const data = await adminApiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', { method: 'POST', body: JSON.stringify({ ids: selectedIds.value }) })
+    const data = await adminApiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', { method: 'POST', body: JSON.stringify({ ids: requestedIds }) })
     applyUpdates(data.images)
     noticeMessage.value = `${t('images.archived')} ${data.images.length}`
     emit('dataChanged', 'images')
@@ -113,13 +115,13 @@ async function applyBulkArchive() {
 }
 function bulkDelete() {
   if (!props.allowWrite || !selectedIds.value.length) return
-  deleteConfirm.request(() => applyBulkDelete())
+  const requestedIds = [...selectedIds.value]
+  deleteConfirm.request(() => applyBulkDelete(requestedIds))
 }
-async function applyBulkDelete() {
+async function applyBulkDelete(requestedIds: string[]) {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
-  const requestedIds = [...selectedIds.value]
   try {
     const data = await adminApiJson<{ deletedIds: string[]; deletedCount: number }>('/api/admin/images/bulk/delete', { method: 'POST', body: JSON.stringify({ ids: requestedIds }) })
     const deleted = new Set(data.deletedIds.length ? data.deletedIds : requestedIds)
@@ -180,14 +182,14 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
       v-model:open="archiveConfirm.open.value"
       :title="t('images.confirmArchiveTitle')"
       :description="t('images.confirmArchiveDetail', { count: selectedIds.length })"
-      :confirm-label="t('images.confirmArchiveAction')"
+      :confirm-label="t('images.confirmArchiveAction', { count: selectedIds.length })"
       @confirm="archiveConfirm.confirm()"
     />
     <ConfirmDialog
       v-model:open="deleteConfirm.open.value"
       :title="t('images.confirmDeleteTitle')"
       :description="t('images.confirmDeleteDetail', { count: selectedIds.length })"
-      :confirm-label="t('images.confirmDeleteAction')"
+      :confirm-label="t('images.confirmDeleteAction', { count: selectedIds.length })"
       destructive
       @confirm="deleteConfirm.confirm()"
     />
