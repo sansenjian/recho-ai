@@ -26,6 +26,8 @@ const selectedIds = ref<string[]>([])
 const PAGE_SIZE = 24
 const offset = ref(0)
 const total = ref(0)
+/** 列表请求代次:筛选/翻页可能并发触发,晚到的旧响应不能覆盖新结果。 */
+let imagesRequestId = 0
 const visibilityFilter = ref('')
 const fundingFilter = ref('')
 const userFilter = ref('')
@@ -57,7 +59,9 @@ function applyUpdates(updated: AdminImageItem[]) {
   selectedIds.value = selectedIds.value.filter(id => visibleIds.has(id))
 }
 async function refreshImages() {
-  if (imagesLoading.value) return
+  // 每次刷新领一个代次号,不再用 imagesLoading 把并发请求挡在门外:
+  // 否则旧请求返回时会覆盖新筛选的结果,用户还可能对着旧数据执行批量操作。
+  const requestId = ++imagesRequestId
   imagesLoading.value = true
   errorMessage.value = ''
   try {
@@ -67,11 +71,18 @@ async function refreshImages() {
     if (userFilter.value.trim()) params.set('userId', userFilter.value.trim())
     if (query.value.trim()) params.set('query', query.value.trim())
     const data = await adminApiJson<{ images: AdminImageItem[]; total: number }>(`/api/admin/images?${params}`)
+    // 已被更新的请求取代:直接丢弃,不写列表、不清勾选、不报错。
+    if (requestId !== imagesRequestId) return
     images.value = data.images
     total.value = data.total
     // 换页后上一页的勾选不再属于当前可视范围，直接清空避免跨页误操作。
     selectedIds.value = []
-  } catch (error) { setError(error) } finally { imagesLoading.value = false }
+  } catch (error) {
+    if (requestId === imagesRequestId) setError(error)
+  } finally {
+    // 只有最新一次请求有权结束加载态,否则旧响应会把新请求的 loading 提前掐掉。
+    if (requestId === imagesRequestId) imagesLoading.value = false
+  }
 }
 /** 任何筛选变化都回到第一页:否则在第 3 页加筛选很容易落到空页,看起来像查无结果。 */
 function resetToFirstPage() {

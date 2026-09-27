@@ -43,6 +43,7 @@ export default {
     lightMode: '浅色模式',
     expand: '展开侧边栏',
     collapse: '收起侧边栏',
+    switchLanguage: '切换语言',
     notifications: '通知',
     updatedAt: '更新时间',
     createdAt: '创建时间',

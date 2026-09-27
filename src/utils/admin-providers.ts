@@ -9,8 +9,20 @@ export function providerLegacyModelIds(provider: AdminProviderSetting): string[]
   return provider.defaultModel ? [provider.defaultModel] : []
 }
 
+function modelRow(id: string): AdminProviderModel {
+  return { id, name: id, enabled: true, editModel: null, supportsTransparent: false }
+}
+
 export function providerModelCatalogRows(provider: AdminProviderSetting): AdminProviderModel[] {
   if (provider.modelCatalog?.length) return provider.modelCatalog
-  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
-  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true, editModel: null, supportsTransparent: false }))
+  const legacy = providerLegacyModelIds(provider)
+  if (provider.kind === 'image' && provider.imageModel) {
+    // Saving an image provider derives image_model from the first *enabled* catalog row,
+    // so row order decides the default model. Surface the configured image_model first:
+    // otherwise editing an un-migrated row would silently repoint image_model at
+    // whichever id happened to be first in the legacy `models` array.
+    return [provider.imageModel, ...legacy.filter(id => id !== provider.imageModel)].map(modelRow)
+  }
+  if (provider.models?.length) return provider.models.map(modelRow)
+  return legacy.map(modelRow)
 }

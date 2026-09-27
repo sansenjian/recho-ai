@@ -43,6 +43,7 @@ export default {
     lightMode: 'Light Mode',
     expand: 'Expand sidebar',
     collapse: 'Collapse sidebar',
+    switchLanguage: 'Switch language',
     notifications: 'Notifications',
     updatedAt: 'Updated',
     createdAt: 'Created',

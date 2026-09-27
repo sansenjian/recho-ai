@@ -23,6 +23,8 @@ function adminImageErrorResponse(err: unknown) {
     return {
       status: err.status,
       error: err.publicMessage,
+      // 与 admin-credits 路由保持一致：带上机器可读错误码，前端据此渲染本地化文案。
+      code: err.code,
     }
   }
 

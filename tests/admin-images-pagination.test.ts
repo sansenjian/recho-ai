@@ -161,3 +161,53 @@ describe('admin image list paginates instead of hiding rows past the first page'
     expect(wrapper.findComponent({ name: 'AdminImagesPanel' }).props('selectedIds')).toEqual([])
   })
 })
+
+
+/**
+ * 旧请求晚于新请求返回时必须被丢弃:否则切换筛选后界面会显示上一组数据,
+ * 用户还可能对着这些行执行批量归档/删除。
+ */
+describe('admin image list drops responses superseded by a newer request', () => {
+  type ListResult = { images: AdminImageItem[]; total: number }
+  const pendingRequests: Array<{ promise: Promise<ListResult>; resolve: (value: ListResult) => void }> = []
+
+  beforeEach(() => {
+    while (mounted.length) mounted.pop()!.unmount()
+    document.body.innerHTML = ''
+    pendingRequests.length = 0
+    adminApiJsonMock.mockReset()
+    // 列表请求挂起不返回,由用例决定谁先 resolve;其余请求照常应答。
+    adminApiJsonMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/admin/images?')) {
+        let resolve!: (value: ListResult) => void
+        const promise = new Promise<ListResult>(r => { resolve = r })
+        pendingRequests.push({ promise, resolve })
+        return promise
+      }
+      if (url === '/api/admin/images/storage-overview') return Promise.resolve({ overview: storageOverview })
+      return Promise.reject(new Error(`unexpected request: ${url}`))
+    })
+  })
+
+  it('ignores an older response that resolves after a newer one', async () => {
+    const wrapper = mountPanel()
+    await flush()
+
+    const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
+    // 第一次筛选请求还挂着,第二次刷新就发出了;修复前这里会被 imagesLoading 守卫挡掉,只发一次请求。
+    panel.vm.$emit('update:visibilityFilter', 'private')
+    panel.vm.$emit('refresh')
+    await vi.waitFor(() => expect(pendingRequests.length).toBe(2))
+
+    // 新请求先返回,旧请求后返回:列表必须保持新请求的结果。
+    pendingRequests[1].resolve({ images: [image('fresh')], total: 1 })
+    await nextTick()
+    await nextTick()
+    pendingRequests[0].resolve({ images: [image('stale-1'), image('stale-2')], total: TOTAL })
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('[data-slot="admin-images-total"]').text()).toBe('1')
+    expect(panel.props('images')).toEqual([image('fresh')])
+  })
+})
