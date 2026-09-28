@@ -483,7 +483,7 @@ async function handleGenerate() {
   height: 100%;
   min-height: 0;
   min-width: 0;
-  background: hsl(var(--secondary));
+  background: transparent;
 }
 
 .imagio-body {
@@ -513,7 +513,7 @@ async function handleGenerate() {
   width: 100%;
   padding: 16px 28px 12px;
   border-bottom: 1px solid hsl(var(--border));
-  background: #ffffff;
+  background: transparent;
 }
 
 .workspace-mobile-select {
@@ -538,7 +538,7 @@ async function handleGenerate() {
   order: 2;
   padding: 24px 20px;
   border-left: 1px solid hsl(var(--border) / 0.6);
-  background: #fafafa;
+  background: hsl(var(--background) / 0.72);
   backdrop-filter: blur(20px);
   overflow-y: auto;
 }
@@ -885,8 +885,8 @@ async function handleGenerate() {
     padding: 12px 16px;
     border-left: 0;
     border-bottom: 1px solid hsl(var(--border) / 0.6);
-    background: #fafafa;
-    backdrop-filter: none;
+    background: hsl(var(--background) / 0.72);
+    backdrop-filter: blur(20px);
     overflow: visible;
   }
 
