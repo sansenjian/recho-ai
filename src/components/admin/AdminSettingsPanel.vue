@@ -5,6 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
+import AdminStatusBanner from './AdminStatusBanner.vue'
+import AdminProviderSettingsPanel from './AdminProviderSettingsPanel.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import type {
   AdminAccessSummary,
   AdminAppSettings,
@@ -17,6 +21,7 @@ import type {
   ImageProviderCompatibilityMode,
 } from '../../types/admin'
 import { adminErrorMessage, dateTime, shortId } from '../../utils/admin-format'
+import { providerModelCatalogRows } from '../../utils/admin-providers'
 import { normalizeCreditBalance } from '../../utils/credit-format'
 
 const emit = defineEmits<{
@@ -33,8 +38,8 @@ const settingsLoading = ref(false)
 const settingsLoaded = ref(false)
 const settingsSaving = ref(false)
 const actionLoading = ref(false)
-const providerActionId = ref<string | null>(null)
 const adminRuleActionId = ref<string | null>(null)
+const ruleConfirm = useConfirmAction()
 const errorMessage = ref('')
 const noticeMessage = ref('')
 const appSettings = ref<AdminAppSettings | null>(null)
@@ -55,26 +60,6 @@ const settingsForm = ref<AdminAppSettings>({
   guestGenerationEnabled: true,
   availableImageModels: [],
 })
-const providerForm = ref({
-  id: '',
-  kind: 'image' as 'chat' | 'image',
-  name: '',
-  baseUrl: '',
-  apiKey: '',
-  clearApiKey: false,
-  enabled: true,
-  priority: 100,
-  defaultModel: '',
-  models: [] as string[],
-  modelCatalog: [] as AdminProviderModel[],
-  imageModel: 'gpt-image-2',
-  editModel: 'gpt-image-2',
-  imageCompatibilityMode: 'auto' as ImageProviderCompatibilityMode,
-  timeoutMs: 360000,
-  retryCount: 3,
-  supportsWebpReferences: true,
-  notes: '',
-})
 const adminUserForm = ref({ userId: '', email: '', note: '' })
 
 const settingsPricePerImage = computed(() => {
@@ -87,13 +72,6 @@ const settingsPricePreview = computed(() => [1, 4, 8].map(count => ({
 })))
 const providerRows = computed(() => providerSettings.value?.providers || [])
 const imageProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'image'))
-const chatProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'chat'))
-// Image rows grow a third input (the per-row edit model); chat rows keep the
-// historical id + display-name pair. The header row reuses the same template so
-// the labels stay aligned with the inputs.
-const providerModelGridClass = computed(() => providerForm.value.kind === 'image'
-  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto]'
-  : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]')
 
 /**
  * 可能被计费的模型清单，用于「按模型定价」的取值候选。
@@ -176,9 +154,6 @@ function normalizeModelPriceRows(rows: AdminImageModelCreditCost[]): AdminImageM
   return result
 }
 
-const editingProvider = computed(() => providerForm.value.id
-  ? providerRows.value.find(provider => provider.id === providerForm.value.id) || null
-  : null)
 const adminRuleTotal = computed(() => adminAccess.value
   ? adminAccess.value.databaseCount + adminAccess.value.envUserIdCount + adminAccess.value.envEmailCount
   : adminUserRules.value.length)
@@ -186,6 +161,16 @@ const canManageAdminUsers = computed(() => currentAdminRole.value === 'senior')
 
 function setError(error: unknown, fallback = t('feedback.operationFailed')) {
   errorMessage.value = adminErrorMessage(error, fallback)
+}
+
+// Provider 区块已抽成子组件：它在自己的作用域里清空并格式化消息，父组件只负责接住。
+function clearProviderMessages() {
+  errorMessage.value = ''
+  noticeMessage.value = ''
+}
+
+function providerError(message: string) {
+  errorMessage.value = message
 }
 
 function syncSettingsForm(settings: AdminAppSettings) {
@@ -197,84 +182,6 @@ function syncSettingsForm(settings: AdminAppSettings) {
     imageModelCreditCosts: (settings.imageModelCreditCosts || []).map(row => ({ ...row })),
   }
   settingsLoaded.value = true
-}
-
-function resetProviderForm(kind: 'chat' | 'image' = 'image') {
-  const defaultModel = kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2'
-  providerForm.value = {
-    id: '', kind, name: '', baseUrl: '', apiKey: '', clearApiKey: false, enabled: true,
-    priority: 100,
-    defaultModel: kind === 'chat' ? defaultModel : '',
-    models: [defaultModel],
-    modelCatalog: [{ id: defaultModel, name: defaultModel, enabled: true, editModel: null, supportsTransparent: false }],
-    imageModel: kind === 'image' ? defaultModel : '',
-    editModel: kind === 'image' ? defaultModel : '',
-    imageCompatibilityMode: 'auto',
-    timeoutMs: kind === 'image' ? 360000 : 60000,
-    retryCount: 3,
-    supportsWebpReferences: kind === 'image',
-    notes: '',
-  }
-}
-
-// Image providers historically stored a single image_model; fall back to it so
-// editing an un-migrated row does not silently lose its configured model.
-function providerLegacyModelIds(provider: AdminProviderSetting): string[] {
-  if (provider.kind === 'image') return provider.imageModel ? [provider.imageModel] : []
-  const models = (provider.models || []).filter(model => Boolean(model && model.trim()))
-  if (models.length) return models
-  return provider.defaultModel ? [provider.defaultModel] : []
-}
-
-function providerModelCatalogRows(provider: AdminProviderSetting): AdminProviderModel[] {
-  if (provider.modelCatalog?.length) return provider.modelCatalog
-  if (provider.models?.length) return provider.models.map(id => ({ id, name: id, enabled: true, editModel: null, supportsTransparent: false }))
-  return providerLegacyModelIds(provider).map(model => ({ id: model, name: model, enabled: true, editModel: null, supportsTransparent: false }))
-}
-
-function editProvider(provider: AdminProviderSetting) {
-  const modelCatalog = providerModelCatalogRows(provider).map(model => ({ ...model }))
-  providerForm.value = {
-    id: provider.source === 'database' ? provider.id : '',
-    kind: provider.kind,
-    name: provider.name,
-    baseUrl: provider.baseUrl,
-    apiKey: '',
-    clearApiKey: false,
-    enabled: provider.enabled,
-    priority: provider.priority,
-    defaultModel: provider.defaultModel || '',
-    models: modelCatalog.map(model => model.id),
-    modelCatalog,
-    imageModel: provider.imageModel || '',
-    editModel: provider.editModel || '',
-    imageCompatibilityMode: provider.imageCompatibilityMode,
-    timeoutMs: provider.timeoutMs,
-    retryCount: provider.retryCount,
-    supportsWebpReferences: provider.supportsWebpReferences,
-    notes: provider.notes || '',
-  }
-}
-
-function addProviderModel() {
-  providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true, editModel: null, supportsTransparent: false })
-}
-
-function removeProviderModel(index: number) {
-  providerForm.value.modelCatalog.splice(index, 1)
-}
-
-function providerStatusLabel(provider: AdminProviderSetting) {
-  if (provider.enabled && provider.apiKeyConfigured) return t('settings.providerStatusEnabled')
-  if (provider.enabled) return t('settings.providerStatusMissingKey')
-  return t('settings.providerStatusDisabled')
-}
-
-function providerCompatibilityLabel(provider: AdminProviderSetting) {
-  if (provider.kind !== 'image') return '-'
-  if (provider.imageCompatibilityMode === 'openai') return t('settings.providerCompatOpenai')
-  if (provider.imageCompatibilityMode === 'lucen') return 'Lucen / sub2api'
-  return t('settings.providerCompatAuto')
 }
 
 function adminRuleIdentity(rule: AdminUserRule) {
@@ -348,46 +255,6 @@ async function saveSettings() {
   }
 }
 
-async function saveProvider() {
-  if (!canManageAdminUsers.value) return setError(t('settings.onlySeniorCanManage'))
-  providerActionId.value = providerForm.value.id || 'new'
-  errorMessage.value = ''
-  noticeMessage.value = ''
-  try {
-    const isUpdate = Boolean(providerForm.value.id)
-    const { id: _id, ...providerPayload } = providerForm.value
-    providerPayload.modelCatalog = providerPayload.modelCatalog
-      .map(model => ({
-        id: model.id.trim(),
-        name: model.name.trim() || model.id.trim(),
-        enabled: Boolean(model.enabled),
-        editModel: (model.editModel || '').trim() || null,
-        supportsTransparent: Boolean(model.supportsTransparent),
-      }))
-      .filter(model => model.id)
-    providerPayload.models = providerPayload.modelCatalog.map(model => model.id)
-    const defaultCatalogModel = providerPayload.modelCatalog.find(model => model.enabled)?.id
-    if (providerPayload.kind === 'chat') {
-      providerPayload.defaultModel = defaultCatalogModel || providerPayload.defaultModel.trim()
-    } else {
-      // 第一个启用项即默认生图模型；编辑模型仍由 editModel 显式指定。
-      providerPayload.imageModel = defaultCatalogModel || providerPayload.imageModel.trim()
-    }
-    const data = await adminApiJson<{ provider: AdminProviderSetting; providerSettings: AdminProviderSettingsState }>(
-      isUpdate ? `/api/admin/settings/providers/${encodeURIComponent(providerForm.value.id)}` : '/api/admin/settings/providers',
-      { method: isUpdate ? 'PATCH' : 'POST', body: JSON.stringify(providerPayload) },
-    )
-    providerSettings.value = data.providerSettings
-    resetProviderForm(providerForm.value.kind)
-    noticeMessage.value = t('settings.providerSaved', { name: data.provider.name })
-    emit('dataChanged', 'settings')
-  } catch (error) {
-    setError(error, t('feedback.providerSaveFailed'))
-  } finally {
-    providerActionId.value = null
-  }
-}
-
 async function createAdminRule() {
   if (!canManageAdminUsers.value) return setError(t('settings.onlySeniorCanManage'))
   if (!adminUserForm.value.userId.trim() && !adminUserForm.value.email.trim()) return setError(t('feedback.enterUserIdOrEmail'))
@@ -411,9 +278,16 @@ async function createAdminRule() {
   }
 }
 
-async function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
+function setAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   if (rule.source !== 'database' || !canManageAdminUsers.value) return
-  if (!enabled && !window.confirm(t('settings.confirmDisableRule'))) return
+  // 停用规则会立即收回后台访问权限，先弹就地确认。
+  if (!enabled) {
+    ruleConfirm.request(() => applyAdminRuleEnabled(rule, false))
+    return
+  }
+  return applyAdminRuleEnabled(rule, true)
+}
+async function applyAdminRuleEnabled(rule: AdminUserRule, enabled: boolean) {
   adminRuleActionId.value = rule.id
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -438,10 +312,7 @@ onMounted(refreshSettings)
 
 <template>
   <section class="flex flex-col gap-4">
-    <div class="min-h-0" aria-live="polite">
-      <p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p>
-    </div>
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
       <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3">
@@ -485,48 +356,18 @@ onMounted(refreshSettings)
         </form>
       </div>
 
-      <div v-if="props.section !== 'runtime'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
-        <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.providerSection') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ providerSettings?.tableAvailable ? t('settings.providerSourceDb') : t('settings.providerSourceEnv') }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
-        <form v-if="canManageAdminUsers" class="flex flex-col gap-3" @submit.prevent="saveProvider">
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerKind') }}</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id)" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerName') }}</span><input id="provider-name" v-model.trim="providerForm.name" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">Base URL</span><input id="provider-base-url" v-model.trim="providerForm.baseUrl" type="url" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerApiKey') }}</span><input id="provider-api-key" v-model.trim="providerForm.apiKey" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? t('settings.providerApiKeyKeep', { preview: editingProvider.apiKeyPreview || '' }) : t('settings.providerApiKeyPlaceholder')" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label v-if="editingProvider?.apiKeyConfigured" class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-clear-api-key" v-model="providerForm.clearApiKey" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerClearApiKey') }}</span></label>
-          <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? t('settings.providerPriority') : field === 'timeoutMs' ? t('settings.providerTimeoutMs') : t('settings.providerRetry') }}</span><input :id="`provider-${field}`" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
-          <div class="flex flex-col gap-2">
-            <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerChatModels') : t('settings.providerImageModels') }}</span><Button type="button" variant="outline" size="sm" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button></div>
-            <div v-if="providerForm.modelCatalog.length" class="grid gap-2" :class="providerModelGridClass">
-              <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerColumnChatModel') : t('settings.providerColumnImageModel') }}</span>
-              <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnEditModel') }}</span>
-              <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnName') }}</span>
-              <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnTransparent') }}</span>
-              <span aria-hidden="true"></span>
-              <span aria-hidden="true"></span>
-            </div>
-            <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid items-center gap-2" :class="providerModelGridClass">
-              <input :id="`provider-model-id-${index}`" v-model.trim="model.id" :placeholder="index === 0 ? t('settings.providerModelIdExample', { example: providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2' }) : t('settings.providerModelId')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <input v-if="providerForm.kind === 'image'" :id="`provider-model-edit-${index}`" v-model.trim="model.editModel" :placeholder="index === 0 ? t('settings.providerModelEditExample', { example: 'gpt-image-2' }) : t('settings.providerModelEdit')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <input :id="`provider-model-name-${index}`" v-model.trim="model.name" :placeholder="index === 0 ? t('settings.providerModelNameExample', { example: providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2' }) : t('settings.providerModelName')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
-              <label v-if="providerForm.kind === 'image'" class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input :id="`provider-model-transparent-${index}`" v-model="model.supportsTransparent" type="checkbox" class="min-h-auto w-auto">{{ t('settings.providerModelTransparent') }}</label>
-              <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">{{ t('common.enable') }}</label>
-              <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1" :aria-label="t('settings.providerRemoveModelAria', { index: index + 1 })" :title="t('settings.providerRemoveModel')" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
-            </div>
-            <span class="text-[11px] text-[var(--text-muted)]">{{ t('settings.providerModelHint') }}{{ providerForm.kind === 'image' ? t('settings.providerImageDefaultHint') : '' }}</span>
-          </div>
-          <template v-if="providerForm.kind === 'image'">
-            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerEditModel') }}</span><input id="provider-edit-model" v-model.trim="providerForm.editModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-            <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerCompatMode') }}</span><select id="provider-compat-mode" v-model="providerForm.imageCompatibilityMode" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"><option value="auto">{{ t('settings.providerCompatAuto') }}</option><option value="openai">{{ t('settings.providerCompatOpenai') }}</option><option value="lucen">Lucen / sub2api OAuth</option></select></label>
-            <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-webp-refs" v-model="providerForm.supportsWebpReferences" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerWebpRefs') }}</span></label>
-          </template>
-          <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('common.note') }}</span><input id="provider-notes" v-model.trim="providerForm.notes" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-          <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-enabled" v-model="providerForm.enabled" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('common.enable') }}</span></label>
-          <div class="flex flex-wrap gap-2"><Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? t('settings.providerSave') : t('settings.providerCreate') }}</Button><Button variant="outline" type="button" @click="resetProviderForm(providerForm.kind)">{{ t('settings.providerReset') }}</Button></div>
-        </form>
-        <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
-        <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.providerTable.kind'),t('settings.providerTable.name'),t('settings.providerTable.models'),t('settings.providerTable.compat'),t('settings.providerTable.key'),t('settings.providerTable.status'),t('settings.providerTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ t('settings.providerPriority') }} {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || t('settings.providerApiKeyConfigured') : t('settings.providerApiKeyUnconfigured') }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !canManageAdminUsers" @click="editProvider(provider)">{{ t('common.edit') }}</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.providerNoRows') }}</td></tr></tbody></table></div>
-        <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border"><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Image Providers</span><strong class="block text-xl">{{ imageProviderRows.length }}</strong></div><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Chat Providers</span><strong class="block text-xl">{{ chatProviderRows.length }}</strong></div></div>
-      </div>
+      <AdminProviderSettingsPanel
+        v-if="props.section !== 'runtime'"
+        :provider-settings="providerSettings"
+        :can-manage="canManageAdminUsers"
+        :loading="settingsLoading"
+        @refresh="refreshSettings"
+        @clear="clearProviderMessages"
+        @saved="providerSettings = $event"
+        @notice="noticeMessage = $event"
+        @error="providerError"
+        @data-changed="emit('dataChanged', 'settings')"
+      />
 
       <div v-if="props.section === 'all'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
         <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.adminUsers') }}</h2><span class="text-xs text-[var(--text-muted)]">{{ adminRuleTotal }}</span></div><Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button></div>
@@ -535,5 +376,14 @@ onMounted(refreshSettings)
         <div class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.adminTable.account'),t('settings.adminTable.level'),t('settings.adminTable.source'),t('settings.adminTable.status'),t('settings.adminTable.updated'),t('settings.adminTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="rule in adminUserRules" :key="rule.id" class="border-b border-border"><td class="px-3 py-2">{{ adminRuleIdentity(rule) }}</td><td class="px-3 py-2"><Badge variant="secondary">{{ adminRuleRoleLabel(rule) }}</Badge></td><td class="px-3 py-2 text-xs">{{ adminRuleSource(rule) }}</td><td class="px-3 py-2" :class="rule.enabled ? 'text-success' : 'text-danger'">{{ rule.enabled ? t('settings.statusEnabled') : t('settings.statusDisabled') }}</td><td class="px-3 py-2 text-xs">{{ dateTime(rule.updatedAt) }}</td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="!canManageAdminUsers || rule.source !== 'database' || adminRuleActionId === rule.id" @click="setAdminRuleEnabled(rule, !rule.enabled)">{{ rule.enabled ? t('common.disable') : t('common.enable') }}</Button></td></tr><tr v-if="!adminUserRules.length"><td colspan="6" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.noRules') }}</td></tr></tbody></table></div>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-model:open="ruleConfirm.open.value"
+      :title="t('settings.confirmDisableRuleTitle')"
+      :description="t('settings.confirmDisableRuleDetail')"
+      :confirm-label="t('settings.confirmDisableRuleAction')"
+      destructive
+      @confirm="ruleConfirm.confirm()"
+    />
   </section>
 </template>

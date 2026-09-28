@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
+import i18n from '../i18n'
 import { apiFetch, apiUrl } from '../lib/api-base'
-import { publicClientErrorMessage } from '../lib/safe-error'
+import { adminErrorMessage } from '../utils/admin-format'
 import { getAuthAccessToken } from './useAuthSession'
 
 const isAdminReady = ref(false)
@@ -33,7 +34,7 @@ async function checkAdminAccess() {
     return isAdmin.value
   } catch (error) {
     isAdmin.value = false
-    adminAccessError.value = publicClientErrorMessage(error, '当前账号没有 Chat 权限。')
+    adminAccessError.value = adminErrorMessage(error, i18n.global.t('settings.noChatAccess'))
     return false
   } finally {
     isAdminReady.value = true

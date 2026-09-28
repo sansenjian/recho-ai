@@ -57,8 +57,19 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         resultRows = matched
       }
       const query = {
-        select: vi.fn(() => query),
+        // 分页列表用 range(offset, offset+limit-1);计数查询用 select(..., { count, head })。
+        countOnly: false,
+        select: vi.fn((_columns?: string, options?: { count?: string; head?: boolean }) => {
+          query.countOnly = Boolean(options?.count)
+          return query
+        }),
         order: vi.fn(() => query),
+        range: vi.fn((from: number, to: number) => {
+          if (query.countOnly) {
+            return Promise.resolve({ data: null, count: resultRows.length, error: null })
+          }
+          return Promise.resolve({ data: resultRows.slice(from, to + 1), error: null })
+        }),
         limit: vi.fn((value?: number) => {
           fallbackLimit = typeof value === 'number' ? value : fallbackLimit
           return Promise.resolve({ data: resultRows, error: null })
@@ -99,8 +110,14 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
           return query
         }),
         maybeSingle: vi.fn(() => Promise.resolve({ data: resultRows[0] || null, error: null })),
-        then: (resolve: (value: { data: Array<Record<string, unknown>>; error: null }) => unknown, reject?: (reason: unknown) => unknown) => (
-          Promise.resolve({ data: resultRows, error: null }).then(resolve, reject)
+        // 计数查询(head:true)直接 await,不会经过 range;这里必须把 count 一并返回,
+        // 否则总数永远是 0 —— 那是 mock 的缺陷,不是服务端行为。
+        then: (resolve: (value: { data: Array<Record<string, unknown>> | null; count?: number; error: null }) => unknown, reject?: (reason: unknown) => unknown) => (
+          Promise.resolve(
+            query.countOnly
+              ? { data: null, count: resultRows.length, error: null }
+              : { data: resultRows, error: null },
+          ).then(resolve, reject)
         ),
       }
       return query
@@ -142,8 +159,9 @@ describe('admin image helpers', () => {
       generated_at: '2026-06-08T12:00:00.000Z',
     }]
 
-    const images = await listAdminImages({ limit: 10 })
+    const { images, total } = await listAdminImages({ limit: 10 })
 
+    expect(total).toBe(1)
     expect(images).toHaveLength(1)
     expect(images[0]).toMatchObject({
       id: 'img_1',
@@ -175,7 +193,7 @@ describe('admin image helpers', () => {
       generated_at: '2026-06-08T12:00:00.000Z',
     }]
 
-    const images = await listAdminImages({ limit: 5 })
+    const { images } = await listAdminImages({ limit: 5 })
 
     // 用户侧代理对他人私有图会按归属返回 403,管理台必须走管理媒体路由
     expect(images[0].thumbnailUrl).toBe('/api/admin/images/img_cos/media?kind=thumbnail')
@@ -196,7 +214,7 @@ describe('admin image helpers', () => {
       generated_at: '2026-06-08T12:00:00.000Z',
     }]
 
-    const images = await listAdminImages({ limit: 5 })
+    const { images } = await listAdminImages({ limit: 5 })
 
     expect(images[0].thumbnailUrl).toBe('https://cdn.stored.example.test/img_stored.thumb.webp')
   })
@@ -248,7 +266,7 @@ describe('admin image helpers', () => {
       },
     ]
 
-    const images = await listAdminImages({
+    const { images } = await listAdminImages({
       visibility: 'private',
       fundingSource: 'credit',
       userId: 'user_keep',
@@ -259,6 +277,57 @@ describe('admin image helpers', () => {
     expect(orFilter).toContain('quiet mountain')
     expect(orFilter).not.toContain('quiet,%()mountain')
     expect(orFilter).not.toContain('%()')
+  })
+
+  it('paginates with offset and reports the filtered total', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = Array.from({ length: 30 }, (_, index) => ({
+      id: `img_${index}`,
+      user_id: 'user_1',
+      visibility: 'public',
+      funding_source: 'free',
+      generated_at: `2026-06-08T12:${String(index).padStart(2, '0')}:00.000Z`,
+    }))
+
+    const firstPage = await listAdminImages({ limit: 24, offset: 0 })
+    const secondPage = await listAdminImages({ limit: 24, offset: 24 })
+
+    // 第二页必须拿得到第 25 行起的记录,这正是修复前够不到的部分。
+    expect(firstPage.images).toHaveLength(24)
+    expect(secondPage.images).toHaveLength(6)
+    expect(secondPage.images.map(image => image.id)).toEqual(['img_24', 'img_25', 'img_26', 'img_27', 'img_28', 'img_29'])
+    // 总数是筛选后的总数,不是当前页条数。
+    expect(firstPage.total).toBe(30)
+    expect(secondPage.total).toBe(30)
+    expect(firstPage.limit).toBe(24)
+    expect(secondPage.offset).toBe(24)
+  })
+
+  it('counts only the rows matching the active filters', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [
+      { id: 'img_a', user_id: 'user_1', visibility: 'private', funding_source: 'credit', generated_at: '2026-06-08T12:00:00.000Z' },
+      { id: 'img_b', user_id: 'user_1', visibility: 'public', funding_source: 'free', generated_at: '2026-06-08T12:01:00.000Z' },
+      { id: 'img_c', user_id: 'user_1', visibility: 'private', funding_source: 'free', generated_at: '2026-06-08T12:02:00.000Z' },
+    ]
+
+    const filtered = await listAdminImages({ visibility: 'private' })
+
+    // 若总数复用未筛选的 storage overview,这里会得到 3 —— 正是要避免的谎报。
+    expect(filtered.images.map(image => image.id)).toEqual(['img_a', 'img_c'])
+    expect(filtered.total).toBe(2)
+  })
+
+  it('clamps offset and limit to safe bounds', async () => {
+    const { listAdminImages } = await import('../backend/gateway/src/services/admin-images')
+    rows = [{ id: 'img_1', user_id: 'user_1', visibility: 'public', funding_source: 'free', generated_at: '2026-06-08T12:00:00.000Z' }]
+
+    const negative = await listAdminImages({ limit: 10, offset: -5 })
+    const huge = await listAdminImages({ limit: 10, offset: 999_999_999 })
+
+    expect(negative.offset).toBe(0)
+    expect(huge.offset).toBe(100_000)
+    expect(huge.images).toEqual([])
   })
 
   it('prevents credit-funded private images from being published', async () => {

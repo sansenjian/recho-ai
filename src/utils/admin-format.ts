@@ -8,6 +8,11 @@ import type {
 
 const t = i18n.global.t
 
+/** 跟随当前语言的日期格式；写死 zh-CN 会让英文后台仍然显示中文日期顺序。 */
+function localeTag() {
+  return i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US'
+}
+
 export function shortId(value: string) {
   return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value
 }
@@ -16,7 +21,7 @@ export function dateTime(value: string | null) {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(localeTag(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -104,7 +109,28 @@ export function tableStatusLabel(status: AdminSystemTableStatus['status']) {
  * 5xx / provider error, not just the image pipeline, so "image service" would be
  * wrong for an admin API.
  */
+/**
+ * 后端错误码到本地化文案的映射。
+ *
+ * 后端（admin-images.ts / admin-credits.ts）返回的 `error` 字段是中文硬编码，
+ * 而响应里同时带着机器可读的 `code`。这里按 code 取本地化文案，让英文后台
+ * 不再显示中文；未收录的 code 继续走原有分类逻辑。
+ */
+const ADMIN_ERROR_CODE_KEYS: Record<string, string> = {
+  invalid_image_id: 'feedback.imageInvalidId',
+  invalid_image_ids: 'feedback.imageInvalidIds',
+  invalid_visibility: 'feedback.imageInvalidVisibility',
+  credit_image_must_stay_private: 'images.creditCannotPublish',
+  image_not_found: 'feedback.imageNotFound',
+  image_service_unavailable: 'feedback.imageServiceUnavailable',
+}
+
 export function adminErrorMessage(error: unknown, fallback: string) {
+  const code = (error as { code?: unknown } | null)?.code
+  if (typeof code === 'string') {
+    const key = ADMIN_ERROR_CODE_KEYS[code]
+    if (key) return t(key)
+  }
   const category = classifyClientError(error)
   if (category === 'timeout') return t('feedback.timeout')
   if (category === 'network') return t('feedback.network')

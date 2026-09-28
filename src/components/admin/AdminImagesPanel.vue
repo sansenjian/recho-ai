@@ -20,6 +20,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   images: AdminImageItem[]
+  /** 服务端返回的筛选后总数；列表已分页，images.length 只是当前页条数，不能当总数用。 */
+  total?: number
   loading: boolean
   bulkLoading: boolean
   actionId: string | null
@@ -28,6 +30,8 @@ const props = defineProps<{
   fundingFilter: string
   userFilter: string
   query: string
+  /** 写权限由父级 AdminImagesViewPanel 的开关控制；只读时禁用所有破坏性操作。 */
+  allowWrite?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -43,6 +47,8 @@ const emit = defineEmits<{
 }>()
 
 const selectedSet = computed(() => new Set(props.selectedIds))
+/** 只读时行内隐藏/公开按钮保持可见但禁用，避免按钮凭空消失造成的困惑。 */
+const writeDisabled = computed(() => props.allowWrite === false)
 const visibleIds = computed(() => props.images.map(image => image.id))
 const selectedCount = computed(() => props.selectedIds.length)
 const allVisibleSelected = computed(() => (
@@ -97,7 +103,7 @@ function toggleImage(id: string, event: Event) {
     <div class="flex items-start justify-between gap-2.5 mb-3 max-[680px]:flex-col max-[680px]:items-start">
       <div>
         <span class="block text-sm">{{ t('images.title') }}</span>
-        <strong class="block mt-0.5 text-lg">{{ images.length }}</strong>
+        <strong class="block mt-0.5 text-lg" data-slot="admin-images-total">{{ props.total ?? images.length }}</strong>
       </div>
       <form class="flex items-center justify-end gap-2 flex-wrap max-[680px]:justify-start max-[680px]:w-full" @submit.prevent="emit('refresh')">
         <select
@@ -147,8 +153,8 @@ function toggleImage(id: string, event: Event) {
 
     <div class="flex items-center justify-start gap-2 flex-wrap mb-2.5">
       <span class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.selectedCount', { count: selectedCount }) }}</span>
-      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkArchive')">{{ t('images.bulkArchive') }}</Button>
-      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0" @click="emit('bulkDelete')">{{ t('images.bulkDelete') }}</Button>
+      <Button type="button" variant="outline" size="sm" :disabled="bulkLoading || selectedCount === 0 || writeDisabled" @click="emit('bulkArchive')">{{ t('images.bulkArchive') }}</Button>
+      <Button type="button" variant="destructive" size="sm" :disabled="bulkLoading || selectedCount === 0 || writeDisabled" @click="emit('bulkDelete')">{{ t('images.bulkDelete') }}</Button>
     </div>
 
     <div class="w-full overflow-auto rounded-md border border-border max-h-[560px]">
@@ -214,7 +220,7 @@ function toggleImage(id: string, event: Event) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="actionId === image.id"
+                :disabled="actionId === image.id || writeDisabled"
                 @click="emit('setVisibility', image, 'private')"
               >
                 {{ t('common.hide') }}
@@ -224,12 +230,17 @@ function toggleImage(id: string, event: Event) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="actionId === image.id"
+                :disabled="actionId === image.id || writeDisabled"
                 @click="emit('setVisibility', image, 'public')"
               >
                 {{ t('images.public') }}
               </Button>
-              <span v-else class="text-xs font-extrabold text-[var(--text-secondary)]">{{ t('images.private') }}</span>
+              <span
+                v-else
+                class="text-xs font-extrabold text-[var(--text-secondary)]"
+                data-slot="credit-image-locked"
+                :title="t('images.creditCannotPublish')"
+              >{{ t('images.private') }}</span>
             </td>
           </tr>
           <tr v-if="!images.length">

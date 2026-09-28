@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Lock, Unlock } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import AdminImagesPanel from './AdminImagesPanel.vue'
+import AdminStatusBanner from './AdminStatusBanner.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import { adminApiJson } from '../../composables/useAdminApi'
 import { adminErrorMessage } from '../../utils/admin-format'
 import type { AdminImageItem, AdminImageStorageOverview, AdminImageStorageStat } from '../../types/admin'
 import { formatCreditAmount } from '../../utils/credit-format'
 
-const props = defineProps<{ adminMode: 'visual' | 'manage' }>()
-const emit = defineEmits<{ dataChanged: [source: 'images'] }>()
+const props = defineProps<{ allowWrite: boolean }>()
+const emit = defineEmits<{ dataChanged: [source: 'images']; 'update:allowWrite': [value: boolean] }>()
 const { t } = useI18n()
 const images = ref<AdminImageItem[]>([])
 const storageOverview = ref<AdminImageStorageOverview | null>(null)
@@ -18,12 +22,21 @@ const storageLoading = ref(false)
 const bulkLoading = ref(false)
 const actionId = ref<string | null>(null)
 const selectedIds = ref<string[]>([])
+/** 服务端列表默认 24 条；这里显式声明，翻页步长与请求参数必须同源。 */
+const PAGE_SIZE = 24
+const offset = ref(0)
+const total = ref(0)
+/** 列表请求代次:筛选/翻页可能并发触发,晚到的旧响应不能覆盖新结果。 */
+let imagesRequestId = 0
 const visibilityFilter = ref('')
 const fundingFilter = ref('')
 const userFilter = ref('')
 const query = ref('')
 const errorMessage = ref('')
 const noticeMessage = ref('')
+const hideConfirm = useConfirmAction()
+const archiveConfirm = useConfirmAction()
+const deleteConfirm = useConfirmAction()
 
 function setError(error: unknown) { errorMessage.value = adminErrorMessage(error, t('feedback.worksFailed')) }
 function formatByteSize(bytes: number) {
@@ -46,21 +59,54 @@ function applyUpdates(updated: AdminImageItem[]) {
   selectedIds.value = selectedIds.value.filter(id => visibleIds.has(id))
 }
 async function refreshImages() {
-  if (imagesLoading.value) return
+  // 每次刷新领一个代次号,不再用 imagesLoading 把并发请求挡在门外:
+  // 否则旧请求返回时会覆盖新筛选的结果,用户还可能对着旧数据执行批量操作。
+  const requestId = ++imagesRequestId
   imagesLoading.value = true
   errorMessage.value = ''
   try {
-    const params = new URLSearchParams({ limit: '24' })
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset.value) })
     if (visibilityFilter.value) params.set('visibility', visibilityFilter.value)
     if (fundingFilter.value) params.set('fundingSource', fundingFilter.value)
     if (userFilter.value.trim()) params.set('userId', userFilter.value.trim())
     if (query.value.trim()) params.set('query', query.value.trim())
-    const data = await adminApiJson<{ images: AdminImageItem[] }>(`/api/admin/images?${params}`)
+    const data = await adminApiJson<{ images: AdminImageItem[]; total: number }>(`/api/admin/images?${params}`)
+    // 已被更新的请求取代:直接丢弃,不写列表、不清勾选、不报错。
+    if (requestId !== imagesRequestId) return
     images.value = data.images
-    const visibleIds = new Set(data.images.map(image => image.id))
-    selectedIds.value = selectedIds.value.filter(id => visibleIds.has(id))
-  } catch (error) { setError(error) } finally { imagesLoading.value = false }
+    total.value = data.total
+    // 换页后上一页的勾选不再属于当前可视范围，直接清空避免跨页误操作。
+    selectedIds.value = []
+  } catch (error) {
+    if (requestId === imagesRequestId) setError(error)
+  } finally {
+    // 只有最新一次请求有权结束加载态,否则旧响应会把新请求的 loading 提前掐掉。
+    if (requestId === imagesRequestId) imagesLoading.value = false
+  }
 }
+/** 任何筛选变化都回到第一页:否则在第 3 页加筛选很容易落到空页,看起来像查无结果。 */
+function resetToFirstPage() {
+  offset.value = 0
+  void refreshImages()
+}
+function goToPreviousPage() {
+  if (offset.value <= 0) return
+  offset.value = Math.max(0, offset.value - PAGE_SIZE)
+  void refreshImages()
+}
+function goToNextPage() {
+  if (offset.value + PAGE_SIZE >= total.value) return
+  offset.value += PAGE_SIZE
+  void refreshImages()
+}
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const currentPage = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
+const canGoPrevious = computed(() => offset.value > 0)
+const canGoNext = computed(() => offset.value + PAGE_SIZE < total.value)
+/** 列表区间文案:总数与当前页都来自服务端,不再拿 images.length 冒充总数。 */
+const rangeStart = computed(() => (total.value === 0 ? 0 : offset.value + 1))
+const rangeEnd = computed(() => offset.value + images.value.length)
+
 async function refreshStorage() {
   if (storageLoading.value) return
   storageLoading.value = true
@@ -71,8 +117,22 @@ async function refreshStorage() {
   } catch (error) { setError(error) } finally { storageLoading.value = false }
 }
 async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
-  if (props.adminMode !== 'manage' || (visibility === 'public' && image.fundingSource === 'credit')) return
-  if (visibility === 'private' && !window.confirm(t('images.confirmHide'))) return
+  if (!props.allowWrite) return
+  // 只拦「公开」方向，与服务端 admin-images.ts:347 保持一致；
+  // 隐藏一张额度图片后端是允许的，这里不能连它一起挡掉。
+  if (visibility === 'public' && image.fundingSource === 'credit') {
+    errorMessage.value = ''
+    noticeMessage.value = t('images.creditCannotPublish')
+    return
+  }
+  // 隐藏会让图片立刻对用户不可见，先弹就地确认。
+  if (visibility === 'private') {
+    hideConfirm.request(() => applyVisibility(image, visibility))
+    return
+  }
+  await applyVisibility(image, visibility)
+}
+async function applyVisibility(image: AdminImageItem, visibility: AdminImageItem['visibility']) {
   actionId.value = image.id
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -82,31 +142,43 @@ async function setVisibility(image: AdminImageItem, visibility: AdminImageItem['
     noticeMessage.value = visibility === 'private' ? t('images.hidden') : t('images.restored')
   } catch (error) { setError(error) } finally { actionId.value = null }
 }
-async function bulkArchive() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length || !window.confirm(t('images.confirmArchive', { count: selectedIds.value.length }))) return
+function bulkArchive() {
+  if (!props.allowWrite || !selectedIds.value.length) return
+  // 弹窗打开后选区仍可被键盘改动，先固定一份快照，确认时只处理当时选中的图片。
+  const requestedIds = [...selectedIds.value]
+  archiveConfirm.request(() => applyBulkArchive(requestedIds))
+}
+async function applyBulkArchive(requestedIds: string[]) {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
   try {
-    const data = await adminApiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', { method: 'POST', body: JSON.stringify({ ids: selectedIds.value }) })
+    const data = await adminApiJson<{ images: AdminImageItem[] }>('/api/admin/images/bulk/archive', { method: 'POST', body: JSON.stringify({ ids: requestedIds }) })
     applyUpdates(data.images)
     noticeMessage.value = `${t('images.archived')} ${data.images.length}`
+    // 归档后当前筛选下可能少了几行,重新取一页保证 total 与列表同步。
+    await refreshImages()
     emit('dataChanged', 'images')
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
-async function bulkDelete() {
-  if (props.adminMode !== 'manage' || !selectedIds.value.length || !window.confirm(t('images.confirmDelete', { count: selectedIds.value.length }))) return
+function bulkDelete() {
+  if (!props.allowWrite || !selectedIds.value.length) return
+  const requestedIds = [...selectedIds.value]
+  deleteConfirm.request(() => applyBulkDelete(requestedIds))
+}
+async function applyBulkDelete(requestedIds: string[]) {
   bulkLoading.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
-  const requestedIds = [...selectedIds.value]
   try {
     const data = await adminApiJson<{ deletedIds: string[]; deletedCount: number }>('/api/admin/images/bulk/delete', { method: 'POST', body: JSON.stringify({ ids: requestedIds }) })
     const deleted = new Set(data.deletedIds.length ? data.deletedIds : requestedIds)
     images.value = images.value.filter(image => !deleted.has(image.id))
     selectedIds.value = []
     noticeMessage.value = `${t('images.deleted')} ${data.deletedCount}`
-    await refreshStorage()
+    // 删光当前页时回退一页,否则用户会停在一片空白列表上。
+    if (images.value.length === 0 && offset.value > 0) offset.value = Math.max(0, offset.value - PAGE_SIZE)
+    await Promise.all([refreshImages(), refreshStorage()])
     emit('dataChanged', 'images')
   } catch (error) { setError(error) } finally { bulkLoading.value = false }
 }
@@ -116,12 +188,72 @@ onMounted(() => Promise.all([refreshImages(), refreshStorage()]))
 
 <template>
   <section class="flex flex-col gap-4">
-    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p></div>
-    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" @refresh="refreshImages" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
+    <!-- 写权限开关放在它真正生效的地方：下面这些批量操作和行内隐藏都受它约束。 -->
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-[var(--surface)] px-4 py-3 shadow-sm"
+      data-slot="admin-write-gate"
+    >
+      <div class="flex min-w-0 flex-col">
+        <span class="text-sm font-medium text-[var(--text-primary)]">{{ t('images.writeGateTitle') }}</span>
+        <span class="text-xs text-[var(--text-muted)]">{{ t('images.writeGateHint') }}</span>
+      </div>
+      <Button
+        type="button"
+        :variant="allowWrite ? 'default' : 'outline'"
+        size="sm"
+        class="shrink-0"
+        :aria-pressed="allowWrite"
+        data-slot="admin-write-gate-toggle"
+        @click="emit('update:allowWrite', !allowWrite)"
+      >
+        <Unlock v-if="allowWrite" class="h-4 w-4" />
+        <Lock v-else class="h-4 w-4" />
+        {{ allowWrite ? t('images.writeEnabled') : t('images.writeDisabled') }}
+      </Button>
+    </div>
+
+    <!-- 分页控件：offset/total 由服务端返回，这里只做展示与翻页。 -->
+    <div class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-[var(--surface)] px-4 py-2.5 shadow-sm" data-slot="admin-images-pagination">
+      <span class="text-xs text-[var(--text-secondary)]" data-slot="admin-images-range">
+        {{ total === 0 ? t('images.rangeEmpty') : t('images.rangeLabel', { start: rangeStart, end: rangeEnd, total }) }}
+      </span>
+      <div class="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" :disabled="!canGoPrevious || imagesLoading" data-slot="admin-images-previous" @click="goToPreviousPage">{{ t('images.previousPage') }}</Button>
+        <span class="text-xs text-[var(--text-secondary)]" data-slot="admin-images-page-number">{{ t('images.pageOf', { page: currentPage, pages: pageCount }) }}</span>
+        <Button type="button" variant="outline" size="sm" :disabled="!canGoNext || imagesLoading" data-slot="admin-images-next" @click="goToNextPage">{{ t('images.nextPage') }}</Button>
+      </div>
+    </div>
+
+    <AdminImagesPanel v-model:selected-ids="selectedIds" v-model:visibility-filter="visibilityFilter" v-model:funding-filter="fundingFilter" v-model:user-filter="userFilter" v-model:query="query" :images="images" :total="total" :loading="imagesLoading" :bulk-loading="bulkLoading" :action-id="actionId" :allow-write="allowWrite" @refresh="resetToFirstPage" @set-visibility="setVisibility" @bulk-archive="bulkArchive" @bulk-delete="bulkDelete" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('images.storageOverview') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ storageOverview ? `${storageOverview.totalImages} ${t('images.imageCount')} / ${formatByteSize(storageOverview.totalBytes)}` : t('common.loading') }}</span></div><Button variant="outline" size="sm" :disabled="storageLoading" @click="refreshStorage">{{ t('common.refresh') }}</Button></div>
       <div v-if="storageLoading" class="p-6 text-center text-[var(--text-muted)]">{{ t('images.statistics') }}</div>
       <div v-else-if="storageOverview" class="w-full overflow-x-auto rounded-md border border-border"><table class="w-full border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('images.storageLocation'),t('images.imageCount'),t('images.totalSize'),t('images.avgSize'),t('images.totalCredits'),t('images.sizePercent')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="stat in storageOverview.byLocation" :key="stat.location" class="border-b border-border"><td class="px-3 py-2">{{ storageLocationLabel(stat.location) }}</td><td class="px-3 py-2 font-mono">{{ stat.imageCount }}</td><td class="px-3 py-2 font-mono">{{ formatByteSize(stat.totalBytes) }}</td><td class="px-3 py-2 font-mono">{{ formatByteSize(stat.averageBytes) }}</td><td class="px-3 py-2 font-mono">{{ formatCreditAmount(stat.totalCreditCost) }}</td><td class="px-3 py-2">{{ storageOverview.totalBytes > 0 ? `${(stat.totalBytes / storageOverview.totalBytes * 100).toFixed(1)}%` : '0%' }}</td></tr></tbody></table></div>
     </div>
+
+    <ConfirmDialog
+      v-model:open="hideConfirm.open.value"
+      :title="t('images.confirmHideTitle')"
+      :description="t('images.confirmHideDetail')"
+      :confirm-label="t('images.confirmHideAction')"
+      destructive
+      @confirm="hideConfirm.confirm()"
+    />
+    <ConfirmDialog
+      v-model:open="archiveConfirm.open.value"
+      :title="t('images.confirmArchiveTitle')"
+      :description="t('images.confirmArchiveDetail', { count: selectedIds.length })"
+      :confirm-label="t('images.confirmArchiveAction', { count: selectedIds.length })"
+      @confirm="archiveConfirm.confirm()"
+    />
+    <ConfirmDialog
+      v-model:open="deleteConfirm.open.value"
+      :title="t('images.confirmDeleteTitle')"
+      :description="t('images.confirmDeleteDetail', { count: selectedIds.length })"
+      :confirm-label="t('images.confirmDeleteAction', { count: selectedIds.length })"
+      destructive
+      @confirm="deleteConfirm.confirm()"
+    />
   </section>
 </template>

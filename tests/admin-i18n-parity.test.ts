@@ -26,6 +26,14 @@ const root = process.cwd()
 const adminDir = resolve(root, 'src/components/admin')
 const adminViewPath = resolve(root, 'src/views/AdminView.vue')
 const adminFormatPath = resolve(root, 'src/utils/admin-format.ts')
+/**
+ * Composable 层曾经是这个门禁的盲区：useAdminAccess 用原始 publicClientErrorMessage
+ * 配硬编码中文兜底，却因为不在扫描范围内而一路通过。这里把它们纳入检查。
+ */
+const adminComposablePaths = [
+  resolve(root, 'src/composables/useAdminAccess.ts'),
+  resolve(root, 'src/composables/useAdminApi.ts'),
+]
 
 type MessageTree = { [key: string]: string | MessageTree }
 
@@ -48,7 +56,7 @@ function adminSourceFiles(): string[] {
   const panels = readdirSync(adminDir)
     .filter(name => name.endsWith('.vue'))
     .map(name => join(adminDir, name))
-  return [...panels, adminViewPath, adminFormatPath]
+  return [...panels, adminViewPath, adminFormatPath, ...adminComposablePaths]
 }
 
 /**

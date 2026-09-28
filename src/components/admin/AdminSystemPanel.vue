@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
+import AdminStatusBanner from './AdminStatusBanner.vue'
 import type { AdminOverview, AdminSystemStatus } from '../../types/admin'
 import { adminErrorMessage, dateTime, tableStatusLabel } from '../../utils/admin-format'
 
@@ -59,7 +60,7 @@ onActivated(() => {
 
 <template>
   <section class="flex flex-col gap-4">
-    <p v-if="errorMessage" class="inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger" aria-live="polite">{{ errorMessage }}</p>
+    <AdminStatusBanner :error="errorMessage" flush />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3">
         <div><h2 class="text-sm font-semibold">{{ t('system.title') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ generatedAt }}</span></div>

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { adminApiJson } from '../../composables/useAdminApi'
+import AdminStatusBanner from './AdminStatusBanner.vue'
 import type { AdminAnnouncement } from '../../types/admin'
 import { adminErrorMessage, dateTime } from '../../utils/admin-format'
 
@@ -67,7 +68,7 @@ onMounted(refresh)
 
 <template>
   <section class="flex flex-col gap-4">
-    <div aria-live="polite"><p v-if="errorMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger">{{ errorMessage }}</p><p v-else-if="noticeMessage" class="mb-2 inline-flex min-h-8 items-center rounded-md bg-success/10 px-3 text-[13px] font-medium text-success">{{ noticeMessage }}</p></div>
+    <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
       <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('announcements.title') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ announcements.length }}</span></div><Button variant="outline" size="sm" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</Button></div>
       <form class="mb-4 flex flex-col gap-2.5 border-b border-border pb-4" @submit.prevent="createAnnouncement"><label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.titleLabel') }}</span><input v-model.trim="form.title" maxlength="120" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label><label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('announcements.bodyLabel') }}</span><textarea v-model.trim="form.body" rows="4" maxlength="4000" required class="rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-xs font-mono" /></label><Button type="submit" :disabled="actionLoading">{{ t('announcements.publishBtn') }}</Button></form>
