@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ToolCall } from '../types/tools'
 import type { RunState } from '../types/tools'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +11,8 @@ const props = defineProps<{
   state?: RunState
   label?: string
 }>()
+
+const { t } = useI18n()
 
 const startedAt = ref<number | null>(null)
 const now = ref(Date.now())
@@ -24,13 +27,13 @@ const elapsed = computed(() => {
 
 const label = computed(() => {
   if (props.label) return props.label
-  if (props.state === 'thinking') return '思考中'
-  if (props.state === 'streaming') return '生成回复'
+  if (props.state === 'thinking') return t('chat.thinking')
+  if (props.state === 'streaming') return t('chat.generating')
   if (props.activeToolCalls.length > 0) {
     const latest = props.activeToolCalls[props.activeToolCalls.length - 1]
-    return latest ? `运行云端工具 ${latest.name}` : '运行云端工具'
+    return latest ? t('chat.runningCloudTool', { name: latest.name }) : t('chat.runningCloudToolGeneric')
   }
-  return '生成回复'
+  return t('chat.generating')
 })
 
 watch(() => props.isLoading, (loading) => {

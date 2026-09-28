@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   conversations,
   groups,
@@ -22,6 +23,8 @@ import { Plus, Search, X, ChevronRight, Trash2, Pencil, Palette } from '@lucide/
 const emit = defineEmits<{
   close: []
 }>()
+
+const { t } = useI18n()
 
 const searchQuery = ref('')
 const expandedGroups = ref<Set<string>>(new Set(groups.value.map(g => g.id)))
@@ -63,7 +66,7 @@ const groupedSections = computed<GroupedSection[]>(() => {
 
   // Ungrouped
   const ungrouped = filtered.filter(c => !c.groupId)
-  sections.push({ groupId: '__ungrouped__', groupName: '未分组', groupColor: null, convs: ungrouped })
+  sections.push({ groupId: '__ungrouped__', groupName: t('chat.ungrouped'), groupColor: null, convs: ungrouped })
 
   return sections
 })
@@ -179,12 +182,12 @@ function onContextMenuBackdrop() {
   <aside class="relative flex h-full w-[240px] shrink-0 flex-col border-r border-border bg-background">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-border px-4 py-3">
-      <span class="text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground">History</span>
+      <span class="text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground">{{ t('chat.history') }}</span>
       <Button
         variant="outline"
         size="icon"
         class="h-[26px] w-[26px] text-muted-foreground shadow-sm"
-        title="New Chat"
+        :title="t('chat.newChat')"
         @click="createConversation()"
       >
         <Plus class="h-[15px] w-[15px]" />
@@ -196,9 +199,9 @@ function onContextMenuBackdrop() {
       <Search class="h-[13px] w-[13px] shrink-0 text-muted-foreground" />
       <Input
         v-model="searchQuery"
-        aria-label="搜索会话"
+        :aria-label="t('chat.searchConversations')"
         class="h-auto border-0 bg-transparent p-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:ring-offset-0"
-        placeholder="搜索会话..."
+        :placeholder="t('chat.searchConversationsPlaceholder')"
         @keydown.escape="searchQuery = ''"
       />
       <Button
@@ -246,7 +249,7 @@ function onContextMenuBackdrop() {
           <span v-if="renamingGroup === section.groupId" class="min-w-0 flex-1" @click.stop>
             <Input
               v-model="renameValue"
-              aria-label="重命名分组"
+              :aria-label="t('chat.renameGroup')"
               class="h-auto rounded bg-card px-1.5 py-0.5 text-[10px] font-semibold shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
               @keydown.enter.stop="confirmRename()"
               @keydown.escape.stop="renamingGroup = null"
@@ -285,7 +288,7 @@ function onContextMenuBackdrop() {
               variant="ghost"
               size="icon"
               class="hidden h-[18px] w-[18px] text-muted-foreground group-hover:flex"
-              title="Delete"
+              :title="t('common.delete')"
               @click.stop="deleteConversation(conv.id)"
               @keydown.enter.stop
               @keydown.space.stop
@@ -294,7 +297,7 @@ function onContextMenuBackdrop() {
             </Button>
           </div>
           <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="my-1 rounded-md border border-dashed border-border px-2 py-2.5 text-center text-[11px] text-muted-foreground">
-            拖拽会话到此处
+            {{ t('chat.dragConversationHere') }}
           </div>
         </div>
       </div>
@@ -307,13 +310,13 @@ function onContextMenuBackdrop() {
         @click="creatingGroup = true"
       >
         <Plus class="h-[13px] w-[13px]" />
-        <span>新建分组</span>
+        <span>{{ t('chat.newGroup') }}</span>
       </button>
       <div v-else class="flex items-center gap-1 px-2 py-1">
         <Input
           v-model="newGroupName"
           class="h-auto rounded-md bg-card px-2 py-1 text-[11px] shadow-none outline-none ring-1 ring-primary focus-visible:ring-1 focus-visible:ring-offset-0"
-          placeholder="分组名称"
+          :placeholder="t('chat.groupNamePlaceholder')"
           @keydown.enter="confirmCreateGroup()"
           @keydown.escape="cancelCreateGroup()"
           autofocus
@@ -323,7 +326,7 @@ function onContextMenuBackdrop() {
           class="h-auto rounded-md px-2.5 py-1 text-[11px] font-semibold"
           @click="confirmCreateGroup"
         >
-          确定
+          {{ t('chat.confirm') }}
         </Button>
         <Button
           variant="ghost"
@@ -352,7 +355,7 @@ function onContextMenuBackdrop() {
         @click="startRename(contextMenu.groupId)"
       >
         <Pencil class="mr-2 h-3 w-3" />
-        重命名
+        {{ t('chat.rename') }}
       </Button>
       <div class="flex flex-wrap gap-1 px-2.5 py-1.5">
         <button
@@ -366,11 +369,11 @@ function onContextMenuBackdrop() {
       <Button
         variant="ghost"
         size="sm"
-        class="h-auto w-full justify-start px-2.5 py-[5px] text-xs text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20"
+        class="h-auto w-full justify-start px-2.5 py-[5px] text-xs text-danger hover:bg-danger/10 hover:text-danger"
         @click="handleDeleteGroup(contextMenu.groupId)"
       >
         <Trash2 class="mr-2 h-3 w-3" />
-        删除分组
+        {{ t('chat.deleteGroup') }}
       </Button>
     </div>
   </aside>

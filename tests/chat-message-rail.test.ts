@@ -2,10 +2,12 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ChatMessageRail from '../src/components/ChatMessageRail.vue'
+import i18n from '../src/i18n'
 
 describe('ChatMessageRail', () => {
   it('renders one shortcut for each message and marks the active message', () => {
     const wrapper = mount(ChatMessageRail, {
+      global: { plugins: [i18n] },
       props: {
         messages: [
           { id: 'user-1', role: 'user', content: 'hello', timestamp: 'now' },
@@ -21,6 +23,7 @@ describe('ChatMessageRail', () => {
 
   it('emits the selected message id', async () => {
     const wrapper = mount(ChatMessageRail, {
+      global: { plugins: [i18n] },
       props: { messages: [{ id: 'user-1', role: 'user', content: 'hello', timestamp: 'now' }], activeMessageId: null },
     })
 

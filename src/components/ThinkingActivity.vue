@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChevronDown, ChevronRight } from '@lucide/vue'
@@ -12,6 +13,8 @@ const props = defineProps<{
   placeholder?: boolean
 }>()
 
+const { t } = useI18n()
+
 const normalized = computed(() => (props.content || '').trim())
 const isWaitingForThinking = computed(() => props.status === 'running' && !normalized.value)
 const hasPlaceholder = computed(() => props.placeholder && !normalized.value)
@@ -21,9 +24,9 @@ const contentEl = ref<HTMLElement | null>(null)
 const contentId = `thinking-content-${Math.random().toString(36).slice(2)}`
 const lines = computed(() => normalized.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
 const statusLabel = computed(() => {
-  if (props.status === 'running') return '思考中'
-  if (props.status === 'cancelled') return '思考已停止'
-  return '思考已完成'
+  if (props.status === 'running') return t('chat.thinking')
+  if (props.status === 'cancelled') return t('chat.thinkingStopped')
+  return t('chat.thinkingDone')
 })
 const preview = computed(() => {
   const first = lines.value[0] || ''
@@ -64,7 +67,7 @@ watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], asyn
           :class="{
             'bg-muted-foreground': !active && status !== 'cancelled',
             'animate-pulse bg-primary': active,
-            'bg-amber-500': status === 'cancelled',
+            'bg-warning': status === 'cancelled',
           }"
         />
       </span>
@@ -76,16 +79,16 @@ watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], asyn
           <Badge
             v-if="status === 'cancelled'"
             variant="outline"
-            class="h-auto shrink-0 border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] font-semibold text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400"
+            class="h-auto shrink-0 border-warning/30 bg-warning/10 px-1.5 py-px text-[10px] font-semibold text-warning"
           >
-            已停止
+            {{ t('chat.stopped') }}
           </Badge>
         </span>
         <span
           v-if="!expanded"
           class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground"
         >
-          {{ hasPlaceholder ? '模型未返回可展示的思考文本' : isWaitingForThinking ? '正在等待模型返回可展示思考内容' : preview }}
+          {{ hasPlaceholder ? t('chat.noThinkingText') : isWaitingForThinking ? t('chat.waitingThinking') : preview }}
         </span>
       </span>
       <component :is="expanded ? ChevronDown : ChevronRight" class="mt-0.5 h-[14px] w-[14px] shrink-0 text-muted-foreground/60" />
@@ -96,10 +99,10 @@ watch([shouldAutoExpand, normalized, hasPlaceholder, isWaitingForThinking], asyn
         <div class="absolute bottom-0 left-0 top-0 border-l border-dashed border-border" />
 
         <div v-if="isWaitingForThinking" class="pt-2 text-[11px] leading-relaxed text-muted-foreground">
-          正在等待模型返回可展示思考内容。
+          {{ t('chat.waitingThinkingDetail') }}
         </div>
         <div v-else-if="hasPlaceholder" class="pt-2 text-[11px] leading-relaxed text-muted-foreground">
-          模型本轮执行了思考流程，但没有返回可展示的思考文本。
+          {{ t('chat.noThinkingTextDetail') }}
         </div>
         <div
           v-else

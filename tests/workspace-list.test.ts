@@ -12,6 +12,7 @@ vi.mock('../src/composables/useCredits', () => ({
   useCredits: () => ({ creditBalance: { value: 0 }, refreshCredits: () => {} }),
 }))
 
+import i18n from '../src/i18n'
 import ImagioSidebar from '../src/components/ImagioSidebar.vue'
 import WorkspaceList from '../src/components/WorkspaceList.vue'
 import ImageCanvasSidebar from '../src/components/ImageCanvasSidebar.vue'
@@ -104,6 +105,7 @@ describe('WorkspaceList', () => {
         createLabel: '新建工作区',
         keepOneHint: '至少保留一个工作区',
       },
+      global: { plugins: [i18n] },
       attachTo,
     })
   }
@@ -197,6 +199,7 @@ describe('workspace sidebar parity', () => {
   it('renders the shared list in both sidebars', () => {
     const imagio = mount(ImagioSidebar, {
       props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: pair, activeWorkspaceId: 'a' },
+      global: { plugins: [i18n] },
     })
     const canvas = mount(ImageCanvasSidebar, {
       props: {
@@ -208,6 +211,7 @@ describe('workspace sidebar parity', () => {
         historyImages: [],
         hasGeneratedImages: false,
       },
+      global: { plugins: [i18n] },
     })
     expect(imagio.findComponent(WorkspaceList).exists()).toBe(true)
     expect(canvas.findComponent(WorkspaceList).exists()).toBe(true)
@@ -218,6 +222,7 @@ describe('workspace sidebar parity', () => {
   it('confirms removal of an Imagio workspace', async () => {
     const wrapper = mount(ImagioSidebar, {
       props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: pair, activeWorkspaceId: 'a' },
+      global: { plugins: [i18n] },
       attachTo: document.body,
     })
 
@@ -236,6 +241,7 @@ describe('workspace sidebar parity', () => {
   it('disables removal with a single workspace', () => {
     const wrapper = mount(ImagioSidebar, {
       props: { imageMode: 'imagio', historyImages: [], hasGeneratedImages: false, workspaces: [pair[0]], activeWorkspaceId: 'a' },
+      global: { plugins: [i18n] },
     })
 
     const keepOne = wrapper.find('button[aria-label="至少保留一个工作区"]')

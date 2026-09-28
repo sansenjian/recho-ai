@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Message } from '../types'
 
 const props = defineProps<{
@@ -10,6 +11,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string]
 }>()
+
+const { t } = useI18n()
 
 const markerElements = new Map<string, HTMLButtonElement>()
 
@@ -30,6 +33,13 @@ watch(() => props.activeMessageId, () => {
   void nextTick(scrollActiveMarkerIntoView)
 })
 
+function jumpLabel(message: Message) {
+  return t('chat.jumpToMessage', {
+    target: message.role === 'assistant' ? t('chat.jumpToAssistant') : t('chat.jumpToMine'),
+    index: props.messages.indexOf(message) + 1,
+  })
+}
+
 function lineClass(message: Message) {
   return [
     'h-[3px] rounded-full transition-all duration-200',
@@ -45,7 +55,7 @@ function lineClass(message: Message) {
 <template>
   <nav
     v-if="messages.length"
-    aria-label="对话快捷导航"
+    :aria-label="t('chat.quickNav')"
     class="pointer-events-auto absolute left-3 top-7 z-10 hidden max-h-[calc(100%-56px)] w-10 flex-col items-start gap-3 overflow-y-auto py-1 lg:flex"
   >
     <button
@@ -54,8 +64,8 @@ function lineClass(message: Message) {
       :ref="element => setMarkerElement(message.id, element as Element | null)"
       type="button"
       class="flex h-3 w-10 items-center border-0 bg-transparent p-0 text-left"
-      :aria-label="`${message.role === 'assistant' ? '跳转到 AI 回复' : '跳转到我的消息'}第 ${messages.indexOf(message) + 1} 条`"
-      :title="`${message.role === 'assistant' ? '跳转到 AI 回复' : '跳转到我的消息'}第 ${messages.indexOf(message) + 1} 条`"
+      :aria-label="jumpLabel(message)"
+      :title="jumpLabel(message)"
       @click="emit('select', message.id)"
     >
       <span :class="lineClass(message)" />

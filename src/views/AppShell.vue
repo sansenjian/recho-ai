@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import type { Message, ModelOption } from '../types'
 import { AGENT_MODES, AVAILABLE_MODELS } from '../types'
 import {
@@ -68,12 +69,14 @@ useMemory()
 const route = useRoute()
 const router = useRouter()
 
+const { t } = useI18n()
+
 // --- Model ---
 const { chatModels, isLoaded: isAppConfigLoaded, ensureAppConfig } = useAppConfig()
 const currentModel = ref<ModelOption | undefined>(AVAILABLE_MODELS[0])
 const modelOptions = computed<ModelOption[]>(() => !isAppConfigLoaded.value
   ? AVAILABLE_MODELS
-  : chatModels.value.map(model => ({ id: model.id, provider: model.provider, providers: model.providers, label: model.name, level: '可用', status: 'available' as const })))
+  : chatModels.value.map(model => ({ id: model.id, provider: model.provider, providers: model.providers, label: model.name, level: t('chat.available'), status: 'available' as const })))
 watch(modelOptions, (models) => {
   currentModel.value = models.find(model => model.id === currentModel.value?.id) ?? models[0]
 }, { immediate: true })
@@ -181,7 +184,7 @@ async function requireChatAccess(nextPath = '/chat') {
   } else {
     const allowed = isAdminReady.value ? isAdmin.value : await ensureAdminAccess()
     if (allowed) return true
-    window.alert('只有管理员可以进入 Chat。')
+    window.alert(t('chat.adminOnlyAlert'))
   }
   return false
 }
@@ -206,7 +209,7 @@ async function syncWorkspaceFromRoute() {
     if (isAuthReady.value) {
       pendingAuthPath.value = '/chat'
       if (!user.value) openAuthDialog('signIn')
-      else window.alert('只有管理员可以进入 Chat。')
+      else window.alert(t('chat.adminOnlyAlert'))
       void router.replace('/image')
     }
     return
@@ -541,7 +544,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
     >
       <div class="flex flex-col items-center gap-3 text-primary text-[15px] font-semibold tracking-tight bg-card p-7 px-10 rounded-lg shadow-lg">
         <ImageIcon :size="40" stroke-width="1.5" />
-        <span>拖放图片到此处</span>
+        <span>{{ t('chat.dragImageHere') }}</span>
       </div>
     </div>
 
@@ -579,21 +582,21 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         class="w-[min(780px,calc(100%-48px))] mx-auto mt-3 p-4 bg-card rounded-lg shadow-sm max-md:w-[calc(100%-24px)]"
       >
         <div class="flex items-center justify-between mb-2.5">
-          <span class="text-[11px] font-semibold text-foreground uppercase tracking-wider">系统提示词</span>
+          <span class="text-[11px] font-semibold text-foreground uppercase tracking-wider">{{ t('chat.systemPrompt') }}</span>
           <Button variant="ghost" size="icon-xs" class="text-muted-foreground hover:text-foreground" @click="closeSystemEditor">
             <X :size="14" />
           </Button>
         </div>
         <Textarea
           v-model="systemPromptDraft"
-          placeholder="输入系统提示词..."
+          :placeholder="t('chat.systemPromptPlaceholder')"
           :rows="4"
           class="min-h-24 text-[13px] font-mono leading-relaxed resize-y"
           @keydown.escape="closeSystemEditor"
         />
         <div class="flex justify-end gap-2 mt-2.5">
-          <Button variant="outline" size="sm" @click="showSystemEditor = false">取消</Button>
-          <Button size="sm" @click="saveSystemPrompt">保存</Button>
+          <Button variant="outline" size="sm" @click="showSystemEditor = false">{{ t('chat.cancel') }}</Button>
+          <Button size="sm" @click="saveSystemPrompt">{{ t('chat.save') }}</Button>
         </div>
       </div>
 

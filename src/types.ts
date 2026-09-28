@@ -65,8 +65,8 @@ export interface ModelOption {
   id: string
   provider: string
   label: string
-  level: string
-  hint?: string
+  levelKey?: string
+  hintKey?: string
   status?: 'recommended' | 'available' | 'slow'
   providers?: string[]
 }
@@ -76,7 +76,7 @@ export type AgentModeId = 'chat' | 'code' | 'plan'
 export interface AgentModeOption {
   id: AgentModeId
   label: string
-  hint: string
+  hintKey: string
   systemHint: string
 }
 
@@ -94,40 +94,40 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     id: 'deepseek-ai/deepseek-v4-flash',
     provider: 'NVIDIA',
     label: 'DeepSeek V4 Flash',
-    level: '快',
-    hint: '响应最快，适合日常问答',
+    levelKey: 'chat.levelFast',
+    hintKey: 'chat.modelHintDeepseekFlash',
     status: 'recommended',
   },
   {
     id: 'deepseek-ai/deepseek-v4-pro',
     provider: 'NVIDIA',
     label: 'DeepSeek V4 Pro',
-    level: '稳',
-    hint: '质量更稳，适合复杂问题',
+    levelKey: 'chat.levelSteady',
+    hintKey: 'chat.modelHintDeepseekPro',
     status: 'available',
   },
   {
     id: 'moonshotai/kimi-k2.6',
     provider: 'NVIDIA',
     label: 'Kimi-K2.6',
-    level: '慢',
-    hint: '当前首包较慢，可作为备用',
+    levelKey: 'chat.levelSlow',
+    hintKey: 'chat.modelHintKimi',
     status: 'slow',
   },
   {
     id: 'gpt-4o-mini',
     provider: 'OpenAI',
     label: 'GPT-4o-mini',
-    level: '轻',
-    hint: '需要 OpenAI 配置可用',
+    levelKey: 'chat.levelLight',
+    hintKey: 'chat.modelHintGpt4oMini',
     status: 'available',
   },
   {
     id: 'gpt-4o',
     provider: 'OpenAI',
     label: 'GPT-4o',
-    level: '高',
-    hint: '需要 OpenAI 配置可用',
+    levelKey: 'chat.levelHigh',
+    hintKey: 'chat.modelHintGpt4o',
     status: 'available',
   },
 ]
@@ -136,19 +136,19 @@ export const AGENT_MODES: AgentModeOption[] = [
   {
     id: 'chat',
     label: 'Chat',
-    hint: '问答与资料整理',
+    hintKey: 'chat.modeChatHint',
     systemHint: '当前处于 Chat 模式。优先给出清晰答案和可执行建议；需要最新信息时使用搜索工具；除非用户要求，不要主动展开代码改动步骤。',
   },
   {
     id: 'code',
     label: 'Code',
-    hint: '实现、调试、审查',
+    hintKey: 'chat.modeCodeHint',
     systemHint: '当前处于 Code 模式。像云端编程 Agent 一样工作：先理解目标，再给出可执行步骤、文件级改动建议、命令和验证方式；不能声称可以直接操作用户电脑或任意编辑服务器文件；涉及风险操作时明确说明。',
   },
   {
     id: 'plan',
     label: 'Plan',
-    hint: '拆解任务与方案',
+    hintKey: 'chat.modePlanHint',
     systemHint: '当前处于 Plan 模式。先拆解目标、列出假设、风险、里程碑和下一步执行清单；信息足够时给出推荐方案，不要把计划模式变成连续追问。',
   },
 ]

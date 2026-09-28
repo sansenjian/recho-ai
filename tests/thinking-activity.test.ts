@@ -2,10 +2,12 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ThinkingActivity from '../src/components/ThinkingActivity.vue'
+import i18n from '../src/i18n'
 
 describe('ThinkingActivity', () => {
   it('shows a running placeholder before the first thinking delta arrives', () => {
     const wrapper = mount(ThinkingActivity, {
+      global: { plugins: [i18n] },
       props: {
         content: '',
         status: 'running',
@@ -21,6 +23,7 @@ describe('ThinkingActivity', () => {
 
   it('shows running thinking content immediately and keeps streaming updates visible', async () => {
     const wrapper = mount(ThinkingActivity, {
+      global: { plugins: [i18n] },
       props: {
         content: '正在拆解用户目标',
         status: 'running',
@@ -42,6 +45,7 @@ describe('ThinkingActivity', () => {
 
   it('shows an explicit cancelled status label', () => {
     const wrapper = mount(ThinkingActivity, {
+      global: { plugins: [i18n] },
       props: {
         content: '用户停止了本轮输出',
         status: 'cancelled',

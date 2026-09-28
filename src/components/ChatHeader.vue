@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentModeOption, Message } from '../types'
 import ContextMeter from './ContextMeter.vue'
 import { Button } from '@/components/ui/button'
@@ -29,17 +30,19 @@ const props = defineProps<{
   isCheckingChatAccess: boolean
 }>()
 
+const { t } = useI18n()
+
 const authLabel = computed(() => {
-  if (!props.authEmail) return '登录'
+  if (!props.authEmail) return t('chat.login')
   return props.authEmail.split('@')[0] || props.authEmail
 })
 
 const chatButtonTitle = computed(() => {
-  if (!props.showImagePanel) return '对话'
-  if (!props.authEmail) return '登录管理员账号后进入 Chat'
-  if (props.isCheckingChatAccess) return '正在检查 Chat 权限'
-  if (!props.canUseChat) return '仅管理员可进入 Chat'
-  return '对话'
+  if (!props.showImagePanel) return t('chat.chat')
+  if (!props.authEmail) return t('chat.loginRequiredForChat')
+  if (props.isCheckingChatAccess) return t('chat.checkingChatAccess')
+  if (!props.canUseChat) return t('chat.adminOnlyChat')
+  return t('chat.chat')
 })
 
 const chatButtonDisabled = computed(() => (
@@ -81,7 +84,7 @@ function handleChatButtonClick() {
         variant="ghost"
         size="icon"
         class="h-8 w-8 shrink-0"
-        title="历史"
+        :title="t('chat.history')"
         @click="$emit('toggleSidebar')"
       >
         <X v-if="showSidebar" class="h-4 w-4" />
@@ -95,7 +98,7 @@ function handleChatButtonClick() {
 
       <div
         class="flex shrink-0 items-center gap-1 rounded-[var(--radius-lg,8px)] border border-border bg-muted/70 p-1 shadow-sm max-[420px]:gap-0"
-        aria-label="工作区切换"
+        :aria-label="t('chat.workspaceSwitch')"
       >
         <Button
           variant="ghost"
@@ -112,7 +115,7 @@ function handleChatButtonClick() {
           @click="handleChatButtonClick"
         >
           <MessageSquare class="h-3.5 w-3.5" />
-          <span>{{ showImagePanel && authEmail && isCheckingChatAccess ? '检查中' : '对话' }}</span>
+          <span>{{ showImagePanel && authEmail && isCheckingChatAccess ? t('chat.checking') : t('chat.chat') }}</span>
         </Button>
         <Button
           variant="ghost"
@@ -127,7 +130,7 @@ function handleChatButtonClick() {
           @click="$emit('openImage')"
         >
           <Image class="h-3.5 w-3.5" />
-          <span>工作台</span>
+          <span>{{ t('chat.canvas') }}</span>
         </Button>
         <Button
           variant="ghost"
@@ -142,7 +145,7 @@ function handleChatButtonClick() {
           @click="$emit('openGallery')"
         >
           <Image class="h-3.5 w-3.5" />
-          <span>作品广场</span>
+          <span>{{ t('chat.gallery') }}</span>
         </Button>
       </div>
 
@@ -157,11 +160,11 @@ function handleChatButtonClick() {
         variant="outline"
         size="sm"
         class="h-8 shrink-0 gap-1.5 px-2.5 text-xs font-medium max-[900px]:w-8 max-[900px]:px-0 max-[380px]:hidden"
-        title="新对话"
+        :title="t('chat.newChat')"
         @click="$emit('newChat')"
       >
         <Plus class="h-3.5 w-3.5" />
-        <span class="max-[900px]:hidden">新对话</span>
+        <span class="max-[900px]:hidden">{{ t('chat.newChat') }}</span>
       </Button>
 
       <Button
@@ -169,7 +172,7 @@ function handleChatButtonClick() {
         variant="ghost"
         size="icon"
         class="h-8 w-8 shrink-0"
-        title="代理面板"
+        :title="t('chat.agentPanel')"
         :class="cn(showAgentPanel && 'bg-accent text-accent-foreground')"
         @click="$emit('toggleAgentPanel')"
       >
@@ -181,7 +184,7 @@ function handleChatButtonClick() {
         variant="ghost"
         size="icon"
         class="h-8 w-8 shrink-0"
-        title="系统提示词"
+        :title="t('chat.systemPrompt')"
         @click="$emit('toggleSettings')"
       >
         <Settings class="h-4 w-4" />
@@ -192,7 +195,7 @@ function handleChatButtonClick() {
         size="sm"
         class="w-[132px] shrink-0 justify-start gap-[7px] overflow-hidden px-2.5 lg:w-[132px] md:w-[112px] sm:w-[104px] max-[420px]:w-20 max-[640px]:w-[104px]"
         :disabled="authLoading"
-        :title="authEmail || '登录'"
+        :title="authEmail || t('chat.login')"
         @click="$emit('openAuth')"
       >
         <span
@@ -200,7 +203,7 @@ function handleChatButtonClick() {
           :class="{
             'bg-muted-foreground': !authEmail && authReady && !authLoading,
             'bg-foreground': !!authEmail,
-            'bg-amber-500': (!authReady || authLoading),
+            'bg-warning': (!authReady || authLoading),
           }"
         />
         <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ authLabel }}</span>
