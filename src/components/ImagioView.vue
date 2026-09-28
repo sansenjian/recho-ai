@@ -611,7 +611,7 @@ async function handleGenerate() {
   overflow: hidden;
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-lg, 8px);
-  background: hsl(var(--card));
+  background: transparent;
   cursor: pointer;
 }
 
@@ -876,23 +876,43 @@ async function handleGenerate() {
     flex-direction: column;
   }
 
+  /* The parameter panel used to be a full-width block that pushed the
+     conversation halfway down. On narrow viewports it collapses into a single
+     wrapped row of parameters with no card chrome and no background at all, so
+     the transcript keeps the full height and nothing opaque is painted. */
   .imagio-options {
     display: flex;
     flex: 0 0 auto;
     flex-direction: row;
+    align-items: flex-start;
     width: 100%;
     order: -1;
-    padding: 12px 16px;
+    padding: 8px 16px;
     border-left: 0;
     border-bottom: 1px solid hsl(var(--border) / 0.6);
-    background: hsl(var(--background) / 0.72);
-    backdrop-filter: blur(20px);
+    background: transparent;
     overflow: visible;
   }
 
   .imagio-options .inline-params {
-    width: fit-content;
-    margin-left: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    width: 100%;
+    margin-left: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .imagio-options .param-group {
+    flex: 0 1 auto;
+    margin-bottom: 0;
+  }
+
+  .imagio-options .param-group label {
+    margin-bottom: 6px;
+    font-size: 11px;
   }
 }
 
