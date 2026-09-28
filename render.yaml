@@ -55,7 +55,9 @@ services:
       - key: ADMIN_USER_EMAILS
         sync: false
       - key: CORS_ORIGIN
-        value: https://recho-ai.onrender.com,https://recho.sansenjian.asia,http://localhost:5173,http://localhost:5174
+        # Vercel 给每次预览/部署分配全新主机名，无法逐一枚举，因此最后一条用 re: 正则
+        # 只放行本 team 下 recho-* 的项目（正则语法见 backend/gateway/src/cors-origin.ts）。
+        value: 'https://recho-ai.onrender.com,https://recho.sansenjian.asia,https://recho-ai.vercel.app,http://localhost:5173,http://localhost:5174,re:^https://recho-[a-z0-9-]+-sansenjians-projects\.vercel\.app$'
 
   # ── 前端静态站点 ──
   - type: web

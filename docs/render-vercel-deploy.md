@@ -135,18 +135,26 @@ VITE_API_BASE_URL = https://recho-gateway.onrender.com  （后端部署后填）
 
 ## 三、CORS 说明
 
-`CORS_ORIGIN` 设为前端 Static Site 的域名 `https://recho-ai.onrender.com`。如果绑了自定义域名，记得更新这个值支持两个域名：
+`CORS_ORIGIN` 是逗号分隔的白名单，每一段可以是三种写法之一（实现见 `backend/gateway/src/cors-origin.ts`）：
 
-```js
-// 后端 index.js 可改多点
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'https://recho-ai.onrender.com',
-    'https://你的自定义域名.com',
-  ]
-}))
+| 写法 | 例子 | 说明 |
+| :--- | :--- | :--- |
+| 精确域名 | `https://recho.sansenjian.asia` | 完全相等才放行 |
+| 通配 | `https://*.example.com` | `*` 只跨一个主机名标签，不会跨 `.`，因此无法被 `https://x.example.com.evil.test` 绕过 |
+| 正则 | `re:^https://recho-[a-z0-9-]+-team\.vercel\.app$` | `re:` 前缀，其余部分作为正则源码 |
+
+线上当前的值（`render.yaml`）：
+
+```yaml
+- key: CORS_ORIGIN
+  value: 'https://recho-ai.onrender.com,https://recho.sansenjian.asia,https://recho-ai.vercel.app,http://localhost:5173,http://localhost:5174,re:^https://recho-[a-z0-9-]+-sansenjians-projects\.vercel\.app$'
 ```
+
+最后一条正则用来覆盖 **Vercel 预览/部署域名**：Vercel 每次部署都会生成一个全新主机名（例如 `recho-ai-git-feat-workspace-chat-pa-4b55ff-sansenjians-projects.vercel.app`，其中分支名被截断到 63 字符 DNS 标签上限、还带一段随机 hash），**无法用固定域名逐一枚举**，只能按模式放行。该正则只匹配本 team（`sansenjians-projects`）下 `recho-` 前缀的项目，不会放开整个 `*.vercel.app`。
+
+> ⚠️ 不要把 Vercel 的 `/api` 反代到网关（即不要在 `vercel.json` 里写 `/api/:path*` → 网关）。`/api/chat` 是 `text/event-stream` 流式响应，Vercel 的 rewrite 代理会缓冲 SSE 并约 30 秒切断连接，对话打字机会卡死。正确做法是让浏览器用 `VITE_API_BASE_URL` **直连**网关，因此 CORS 白名单必须包含前端域名。
+
+绑定自定义域名后记得把新域名也加进这个值并重新部署后端。
 
 ---
 
