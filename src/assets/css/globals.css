@@ -51,6 +51,19 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+
+  /* 轮次导航（src/components/ChatMessageRail.vue）：当前标记的呼吸光圈。 */
+  --animate-turn-marker-pulse: turn-marker-pulse 2.4s cubic-bezier(0.22, 0.75, 0.18, 1) infinite;
+
+  @keyframes turn-marker-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 hsl(var(--foreground) / 0.3);
+    }
+    50% {
+      box-shadow: 0 0 0 4px hsl(var(--foreground) / 0);
+    }
+  }
 }
 
 @layer base {
