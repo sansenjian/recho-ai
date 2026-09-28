@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { LogIn, X, Zap, Eye, EyeOff, LogOut } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useCredits } from '../composables/useCredits'
 import { formatCreditAmount } from '../utils/credit-format'
@@ -18,6 +23,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   close: []
 }>()
+
+const { t } = useI18n()
 
 const {
   user,
@@ -58,22 +65,22 @@ const creditBalanceLabel = computed(() => (
 const emailError = computed(() => {
   if (!touched.value.email && !emailDraft.value) return ''
   const value = emailDraft.value.trim()
-  if (!value) return '请输入邮箱'
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return '请输入有效的邮箱地址'
+  if (!value) return t('account.validation.emailRequired')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return t('account.validation.emailInvalid')
   return ''
 })
 
 const passwordError = computed(() => {
   if (!touched.value.password && !passwordDraft.value) return ''
   const value = passwordDraft.value
-  if (!value) return '请输入密码'
-  if (authMode.value === 'signUp' && value.length < 6) return '密码至少需要 6 位'
+  if (!value) return t('account.validation.passwordRequired')
+  if (authMode.value === 'signUp' && value.length < 6) return t('account.validation.passwordTooShort')
   return ''
 })
 
 const redeemError = computed(() => {
   if (!touched.value.redeem && !redeemCodeDraft.value) return ''
-  if (!redeemCodeDraft.value.trim()) return '请输入兑换码'
+  if (!redeemCodeDraft.value.trim()) return t('account.validation.redeemRequired')
   return ''
 })
 
@@ -86,10 +93,33 @@ const canSubmitRedeem = computed(() => {
 })
 
 const isAuthView = computed(() => !user.value)
-const authTitle = computed(() => user.value ? '账号' : (authMode.value === 'signIn' ? '登录' : '创建账号'))
-const authSubtitle = computed(() => user.value
-  ? '管理你的 Recho 账号'
-  : (authMode.value === 'signIn' ? '继续使用 Recho，开始你的 AI 创作之旅' : '创建一个 Recho 账号'))
+const authTitle = computed(() => (
+  user.value ? t('account.title') : (authMode.value === 'signIn' ? t('account.signIn') : t('account.signUp'))
+))
+const authSubtitle = computed(() => {
+  if (user.value) return t('account.profileSubtitle')
+  return authMode.value === 'signIn' ? t('account.signInSubtitle') : t('account.signUpSubtitle')
+})
+const submitLabel = computed(() => {
+  if (isAuthLoading.value) return t('account.signingIn')
+  return authMode.value === 'signIn' ? t('account.signIn') : t('account.signUp')
+})
+
+/** 优先用 OAuth/注册时写入的显示名,其次邮箱,最后回落到本地化的默认名。 */
+const displayName = computed(() => {
+  const meta = user.value?.user_metadata as Record<string, unknown> | undefined
+  // full_name 可能是空串或纯空白,?? 会把它当成有效值选中,资料页因此显示默认名。
+  // 逐个字段确认是非空白字符串,再决定是否回落到本地化默认名。
+  for (const candidate of [meta?.full_name, meta?.name]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return t('account.displayName')
+})
+
+const avatarInitial = computed(() => {
+  const source = user.value ? displayName.value || userEmail.value : userEmail.value
+  return source?.charAt(0)?.toUpperCase() || 'R'
+})
 
 watch(userEmail, (next) => {
   if (next && emailDraft.value !== next) emailDraft.value = next
@@ -115,7 +145,22 @@ watch(() => props.modelValue, (open) => {
 watch(user, (next, prev) => {
   if (!next && prev) {
     authMode.value = 'signIn'
+    passwordDraft.value = ''
   }
+})
+
+/**
+ * 认证视图与资料视图互换时,被卸载的节点会带走焦点,而 <Transition mode="out-in">
+ * 期间新旧节点不会同时存在;焦点一旦掉到 body,挂在遮罩上的 Tab 陷印就收不到按键。
+ * 先把焦点收在始终存在的弹窗容器上,新视图渲染出来后再落到它的第一个可操作元素。
+ */
+watch(isAuthView, () => {
+  if (!props.modelValue) return
+  dialogRef.value?.focus()
+  nextTick(() => {
+    const first = dialogRef.value?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled]), [href], textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    if (first && document.activeElement !== first) first.focus()
+  })
 })
 
 function switchMode(mode: AuthMode) {
@@ -139,9 +184,10 @@ function close() {
 async function handleAuthSubmit() {
   touched.value = { ...touched.value, email: true, password: true }
   if (!canSubmitAuth.value) return
-
   const ok = await submitAuth(authMode.value, emailDraft.value.trim(), passwordDraft.value)
-  if (ok && authMode.value === 'signIn') {
+  // 注册成功时 submitAuth 会把 user 置空(isAuthView 仍为 true),但凭据已经提交,
+  // 没有理由继续留在输入框里;登录与注册统一清空。
+  if (ok) {
     passwordDraft.value = ''
   }
 }
@@ -165,19 +211,23 @@ async function handleRedeem() {
   }
 }
 
+/**
+ * 键盘语义:Esc 关闭,Tab 在弹窗内部循环,避免焦点跑到遮罩层后面。
+ */
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
+    e.preventDefault()
     close()
     return
   }
-  if (e.key !== 'Tab' || !dialogRef.value) {
-    return
-  }
+  if (e.key !== 'Tab' || !dialogRef.value) return
 
-  const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+  const candidates = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
     'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  )).filter(element => !element.hasAttribute('disabled') && element.offsetParent !== null)
-
+  )).filter(element => !element.hasAttribute('disabled'))
+  // jsdom 没有布局引擎,offsetParent 恒为 null;只在有布局信息时用它排除隐藏元素。
+  const laidOut = candidates.filter(element => element.offsetParent !== null)
+  const focusable = laidOut.length ? laidOut : candidates
   if (!focusable.length) {
     e.preventDefault()
     dialogRef.value.focus()
@@ -186,11 +236,17 @@ function onKeydown(e: KeyboardEvent) {
 
   const first = focusable[0]
   const last = focusable[focusable.length - 1]
-  const active = document.activeElement
-  if (e.shiftKey && (active === first || active === dialogRef.value)) {
-    e.preventDefault()
-    last.focus()
-  } else if (!e.shiftKey && active === last) {
+  const active = document.activeElement as HTMLElement | null
+  const inside = active ? dialogRef.value.contains(active) : false
+
+  if (e.shiftKey) {
+    if (!inside || active === first) {
+      e.preventDefault()
+      last.focus()
+    }
+    return
+  }
+  if (!inside || active === last) {
     e.preventDefault()
     first.focus()
   }
@@ -198,631 +254,199 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div
-    class="auth-overlay"
-    @click.self="close"
-    @keydown="onKeydown"
+  <Transition
+    appear
+    enter-active-class="transition-opacity duration-200 ease-out"
+    enter-from-class="opacity-0"
+    appear-active-class="transition-opacity duration-200 ease-out"
+    appear-from-class="opacity-0"
   >
-    <section ref="dialogRef" class="auth-card" role="dialog" aria-modal="true" :aria-label="authTitle" tabindex="-1">
-      <!-- Close button -->
-      <button
-        ref="closeButtonRef"
-        class="close-btn"
-        type="button"
-        aria-label="关闭"
-        @click="close"
+    <div
+      class="fixed inset-0 z-[220] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[16px] max-sm:items-end max-sm:bg-black/55 max-sm:p-3 max-sm:backdrop-blur-none"
+      @click.self="close"
+      @keydown="onKeydown"
+    >
+      <Transition
+        appear
+        enter-active-class="transition-[opacity,transform] duration-[250ms] ease-out"
+        enter-from-class="opacity-0 translate-y-2 scale-[0.985]"
+        appear-active-class="transition-[opacity,transform] duration-[250ms] ease-out"
+        appear-from-class="opacity-0 translate-y-2 scale-[0.985]"
       >
-        <X :size="16" />
-      </button>
+        <section
+          ref="dialogRef"
+          class="relative max-h-[calc(100dvh-2rem)] w-full max-w-[400px] overflow-y-auto overscroll-contain rounded-lg border border-border bg-card px-8 pt-8 pb-6 text-card-foreground shadow-[0_24px_48px_-12px_rgba(0,0,0,0.12)] outline-none max-sm:max-h-[calc(100dvh-1.5rem)] max-sm:max-w-none max-sm:rounded-[calc(var(--radius)+0.25rem)] max-sm:px-5 max-sm:pt-6 max-sm:pb-5"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="authTitle"
+          tabindex="-1"
+        >
+          <!-- Close button -->
+          <button
+            ref="closeButtonRef"
+            class="absolute top-3 right-3 flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            type="button"
+            :aria-label="t('common.close')"
+            @click="close"
+          >
+            <X :size="16" />
+          </button>
 
-      <!-- Header -->
-      <div class="auth-header">
-        <div class="brand-mark">
-          <Zap :size="16" class="brand-icon" />
-        </div>
-        <div class="brand-text">
-          <h1 class="auth-title">{{ authTitle }}</h1>
-          <p class="auth-subtitle">{{ authSubtitle }}</p>
-        </div>
-      </div>
-
-      <!-- Auth panel -->
-      <Transition name="panel" mode="out-in">
-        <div v-if="isAuthView" key="auth" class="panel">
-          <form class="auth-form" @submit.prevent="handleAuthSubmit">
-            <label class="field-group">
-              <span class="field-label">邮箱</span>
-              <input
-                v-model="emailDraft"
-                type="email"
-                autocomplete="email"
-                placeholder="you@example.com"
-                class="field-input"
-                :class="{ error: emailError }"
-                @blur="touched.email = true"
-              />
-              <span v-if="emailError" class="field-error">{{ emailError }}</span>
-            </label>
-
-            <label class="field-group">
-              <span id="auth-password-label" class="field-label">密码</span>
-              <div class="pw-wrapper">
-                <input
-                  id="auth-password"
-                  aria-labelledby="auth-password-label"
-                  v-model="passwordDraft"
-                  :type="showPassword ? 'text' : 'password'"
-                  :autocomplete="authMode === 'signIn' ? 'current-password' : 'new-password'"
-                  :placeholder="authMode === 'signIn' ? '输入密码' : '至少 6 位'"
-                  class="field-input"
-                  :class="{ error: passwordError }"
-                  @blur="touched.password = true"
-                />
-                <button
-                  type="button"
-                  class="pw-toggle"
-                  aria-label="切换密码可见性"
-                  @click="showPassword = !showPassword"
-                >
-                  <EyeOff v-if="showPassword" :size="16" />
-                  <Eye v-else :size="16" />
-                </button>
-              </div>
-              <span v-if="passwordError" class="field-error">{{ passwordError }}</span>
-            </label>
-
-            <p v-if="authError && (touched.email || touched.password || isAuthLoading)" class="form-error">{{ authError }}</p>
-            <p v-else-if="authNotice && (touched.email || touched.password || isAuthLoading)" class="form-notice">{{ authNotice }}</p>
-
-            <button type="submit" class="btn btn-primary" :disabled="isAuthLoading">
-              {{ isAuthLoading ? '处理中...' : (authMode === 'signIn' ? '登录' : '创建账号') }}
-            </button>
-
-            <div class="divider"><span>或</span></div>
-
-            <button
-              type="button"
-              class="btn btn-secondary"
-              :disabled="isAuthLoading"
-              @click="handleGitHubAuth"
-            >
-              <LogIn :size="16" />
-              {{ authMode === 'signIn' ? '使用 GitHub 登录' : '使用 GitHub 注册' }}
-            </button>
-
-            <p class="footer-link">
-              {{ authMode === 'signIn' ? '没有账号？' : '已有账号？' }}
-              <button type="button" class="link" @click="switchMode(authMode === 'signIn' ? 'signUp' : 'signIn')">
-                {{ authMode === 'signIn' ? '创建一个' : '去登录' }}
-              </button>
-            </p>
-          </form>
-        </div>
-
-        <!-- Profile panel -->
-        <div v-else key="profile" class="panel">
-          <div class="profile-stack">
-            <div class="profile-card">
-              <div class="profile-info">
-                <div class="profile-avatar">
-                  {{ userEmail?.charAt(0)?.toUpperCase() || 'R' }}
-                </div>
-                <div class="profile-meta">
-                  <div class="profile-name">Recho User</div>
-                  <div class="profile-email">{{ userEmail }}</div>
-                </div>
-              </div>
-              <div class="credit-row">
-                <span class="credit-label">余额</span>
-                <span class="credit-value">{{ creditBalanceLabel }}</span>
-              </div>
+          <!-- Header -->
+          <div class="mb-6 flex items-center gap-3 max-sm:gap-2.5">
+            <div class="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-foreground max-sm:size-9">
+              <Zap :size="16" class="text-primary-foreground" />
             </div>
-
-            <div class="redeem-group">
-              <label class="field-label" for="redeem-code">兑换码</label>
-              <div class="redeem-row">
-                <input
-                  id="redeem-code"
-                  v-model="redeemCodeDraft"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="输入兑换码"
-                  class="field-input"
-                  :class="{ error: redeemError }"
-                  :disabled="isRedeemingCredits"
-                  @blur="touched.redeem = true"
-                  @keydown.enter="handleRedeem"
-                />
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="isRedeemingCredits || !canSubmitRedeem"
-                  @click="handleRedeem"
-                >
-                  {{ isRedeemingCredits ? '兑换中' : '兑换' }}
-                </button>
-              </div>
-              <span v-if="redeemError" class="field-error">{{ redeemError }}</span>
-              <p v-if="creditNotice" class="form-notice">{{ creditNotice }}</p>
-              <p v-if="creditError" class="form-error">{{ creditError }}</p>
+            <div class="min-w-0">
+              <h1 class="mb-0.5 truncate text-xl font-semibold tracking-tight text-foreground max-sm:text-lg">{{ authTitle }}</h1>
+              <p class="m-0 text-[0.8125rem] text-muted-foreground">{{ authSubtitle }}</p>
             </div>
-
-            <UserApiKeys />
-
-            <button type="button" class="btn btn-secondary" :disabled="isAuthLoading" @click="handleSignOut">
-              <LogOut :size="14" />
-              退出登录
-            </button>
           </div>
-        </div>
+
+          <!-- Auth panel -->
+          <Transition
+            mode="out-in"
+            enter-active-class="transition-[opacity,transform] duration-[180ms] ease-out"
+            leave-active-class="transition-[opacity,transform] duration-[180ms] ease-in"
+            enter-from-class="opacity-0 translate-y-1"
+            leave-to-class="opacity-0 -translate-y-0.5"
+          >
+            <div v-if="isAuthView" key="auth" class="w-full">
+              <form class="grid gap-4" @submit.prevent="handleAuthSubmit">
+                <label class="grid gap-1.5">
+                  <span class="block text-[0.8125rem] font-medium tracking-tight text-foreground">{{ t('account.email') }}</span>
+                  <Input
+                    v-model="emailDraft"
+                    type="email"
+                    autocomplete="email"
+                    :placeholder="t('account.emailPlaceholder')"
+                    class="h-10 rounded-lg bg-muted px-3.5 text-[0.8125rem]"
+                    :aria-invalid="emailError ? 'true' : undefined"
+                    @blur="touched.email = true"
+                  />
+                  <span v-if="emailError" class="text-xs text-destructive">{{ emailError }}</span>
+                </label>
+
+                <label class="grid gap-1.5">
+                  <span id="auth-password-label" class="block text-[0.8125rem] font-medium tracking-tight text-foreground">{{ t('account.password') }}</span>
+                  <div class="relative">
+                    <Input
+                      id="auth-password"
+                      aria-labelledby="auth-password-label"
+                      v-model="passwordDraft"
+                      :type="showPassword ? 'text' : 'password'"
+                      :autocomplete="authMode === 'signIn' ? 'current-password' : 'new-password'"
+                      :placeholder="authMode === 'signIn' ? t('account.passwordPlaceholderSignIn') : t('account.passwordPlaceholderSignUp')"
+                      class="h-10 rounded-lg bg-muted px-3.5 pr-11 text-[0.8125rem]"
+                      :aria-invalid="passwordError ? 'true' : undefined"
+                      @blur="touched.password = true"
+                    />
+                    <button
+                      type="button"
+                      class="absolute top-1/2 right-2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+                      :aria-label="t('account.togglePasswordVisibility')"
+                      @click="showPassword = !showPassword"
+                    >
+                      <EyeOff v-if="showPassword" :size="16" />
+                      <Eye v-else :size="16" />
+                    </button>
+                  </div>
+                  <span v-if="passwordError" class="text-xs text-destructive">{{ passwordError }}</span>
+                </label>
+
+                <p v-if="authError && (touched.email || touched.password || isAuthLoading)" class="m-0 text-[0.8125rem] leading-snug text-destructive">{{ authError }}</p>
+                <p v-else-if="authNotice && (touched.email || touched.password || isAuthLoading)" class="m-0 text-[0.8125rem] leading-snug text-muted-foreground">{{ authNotice }}</p>
+
+                <Button type="submit" class="h-10 w-full rounded-lg text-[0.8125rem] font-medium max-sm:h-11" :disabled="isAuthLoading">
+                  {{ submitLabel }}
+                </Button>
+
+                <div class="my-1 flex items-center gap-4">
+                  <Separator class="flex-1" />
+                  <span class="shrink-0 text-xs text-muted-foreground">{{ t('account.or') }}</span>
+                  <Separator class="flex-1" />
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  class="h-10 w-full rounded-lg text-[0.8125rem] font-medium max-sm:h-11"
+                  :disabled="isAuthLoading"
+                  @click="handleGitHubAuth"
+                >
+                  <LogIn :size="16" />
+                  {{ authMode === 'signIn' ? t('account.githubSignIn') : t('account.githubSignUp') }}
+                </Button>
+
+                <p class="mt-1 text-center text-[0.8125rem] text-muted-foreground">
+                  {{ authMode === 'signIn' ? t('account.noAccount') : t('account.hasAccount') }}
+                  <button type="button" class="cursor-pointer border-0 bg-none p-0 font-medium text-foreground hover:opacity-70" @click="switchMode(authMode === 'signIn' ? 'signUp' : 'signIn')">
+                    {{ authMode === 'signIn' ? t('account.toSignUp') : t('account.toSignIn') }}
+                  </button>
+                </p>
+              </form>
+            </div>
+
+            <!-- Profile panel -->
+            <div v-else key="profile" class="w-full">
+              <div class="grid gap-5">
+                <div class="rounded-lg border border-border bg-muted p-4">
+                  <div class="flex items-center gap-3">
+                    <Avatar class="size-10">
+                      <AvatarFallback class="bg-foreground text-sm font-semibold text-primary-foreground">{{ avatarInitial }}</AvatarFallback>
+                    </Avatar>
+                    <div class="min-w-0">
+                      <div class="truncate text-sm leading-tight font-semibold text-foreground">{{ displayName }}</div>
+                      <div class="mt-0.5 truncate text-[0.8125rem] leading-tight text-muted-foreground">{{ userEmail }}</div>
+                    </div>
+                  </div>
+                  <div class="mt-3 flex items-center justify-between border-t border-border pt-3">
+                    <span class="text-[0.8125rem] text-muted-foreground">{{ t('account.balance') }}</span>
+                    <span class="font-mono text-sm font-semibold tracking-tight text-foreground">{{ creditBalanceLabel }}</span>
+                  </div>
+                </div>
+
+                <div class="grid gap-1.5">
+                  <label class="block text-[0.8125rem] font-medium tracking-tight text-foreground" for="redeem-code">{{ t('account.redeemCode') }}</label>
+                  <div class="flex gap-2">
+                    <Input
+                      id="redeem-code"
+                      v-model="redeemCodeDraft"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      :placeholder="t('account.redeemPlaceholder')"
+                      class="h-10 min-w-0 flex-1 rounded-lg bg-muted px-3.5 text-[0.8125rem]"
+                      :aria-invalid="redeemError ? 'true' : undefined"
+                      :disabled="isRedeemingCredits"
+                      @blur="touched.redeem = true"
+                      @keydown.enter="handleRedeem"
+                    />
+                    <Button
+                      type="button"
+                      class="h-10 w-auto rounded-lg px-5 text-[0.8125rem] font-medium max-sm:h-10"
+                      :disabled="isRedeemingCredits || !canSubmitRedeem"
+                      @click="handleRedeem"
+                    >
+                      {{ isRedeemingCredits ? t('account.redeeming') : t('account.redeem') }}
+                    </Button>
+                  </div>
+                  <span v-if="redeemError" class="text-xs text-destructive">{{ redeemError }}</span>
+                  <p v-if="creditNotice" class="m-0 text-[0.8125rem] leading-snug text-muted-foreground">{{ creditNotice }}</p>
+                  <p v-if="creditError" class="m-0 text-[0.8125rem] leading-snug text-destructive">{{ creditError }}</p>
+                </div>
+
+                <UserApiKeys />
+
+                <Button type="button" variant="outline" class="h-10 w-full rounded-lg text-[0.8125rem] font-medium max-sm:h-11" :disabled="isAuthLoading" @click="handleSignOut">
+                  <LogOut :size="14" />
+                  {{ t('account.signOut') }}
+                </Button>
+              </div>
+            </div>
+          </Transition>
+        </section>
       </Transition>
-    </section>
-  </div>
+    </div>
+  </Transition>
 </template>
-
-<style scoped>
-.auth-overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 220;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(16px);
-  animation: overlayIn 0.2s ease-out;
-}
-
-@keyframes overlayIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.auth-card {
-  position: relative;
-  width: 100%;
-  max-width: 400px;
-  /* 账号弹窗内容会随密钥列表增长：限制在视口内并允许内部滚动，
-     避免下方的「退出登录」等按钮落到视口外点不到。 */
-  max-height: calc(100vh - 2rem);
-  max-height: calc(100dvh - 2rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: #ffffff;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 2rem 2rem 1.5rem;
-  color: hsl(var(--card-foreground));
-  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.12);
-  animation: cardIn 0.25s ease-out;
-}
-
-@keyframes cardIn {
-  from { opacity: 0; transform: translateY(8px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.close-btn {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  width: 2rem;
-  height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius);
-  border: none;
-  background: none;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.close-btn:hover {
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-}
-
-.auth-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  background: hsl(var(--foreground));
-  border-radius: var(--radius);
-  flex-shrink: 0;
-}
-
-.brand-icon {
-  color: hsl(var(--primary-foreground));
-}
-
-.brand-text {
-  min-width: 0;
-}
-
-.auth-title {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  margin: 0 0 0.125rem;
-  white-space: nowrap;
-  color: hsl(var(--foreground));
-}
-
-.auth-subtitle {
-  font-size: 0.8125rem;
-  color: hsl(var(--muted-foreground));
-  margin: 0;
-}
-
-.panel {
-  width: 100%;
-}
-
-.panel-enter-active,
-.panel-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.panel-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-
-.panel-leave-to {
-  opacity: 0;
-  transform: translateY(-2px);
-}
-
-.auth-form {
-  display: grid;
-  gap: 1rem;
-}
-
-.field-group {
-  display: grid;
-  gap: 0.375rem;
-}
-
-.field-label {
-  display: block;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: hsl(var(--foreground));
-  letter-spacing: -0.01em;
-}
-
-.field-input {
-  width: 100%;
-  height: 2.5rem;
-  padding: 0 0.875rem;
-  font-size: 0.8125rem;
-  font-family: inherit;
-  color: hsl(var(--foreground));
-  background: #f9fafb;
-  border: 1px solid #d1d5db;
-  border-radius: var(--radius);
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.field-input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.field-input:focus {
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring));
-}
-
-.field-input.error {
-  border-color: hsl(var(--destructive));
-  box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.2);
-}
-
-.field-error {
-  font-size: 0.75rem;
-  color: hsl(var(--destructive));
-}
-
-.form-error {
-  font-size: 0.8125rem;
-  color: hsl(var(--destructive));
-  line-height: 1.4;
-  margin: 0;
-}
-
-.form-notice {
-  font-size: 0.8125rem;
-  color: hsl(var(--muted-foreground));
-  line-height: 1.4;
-  margin: 0;
-}
-
-.pw-wrapper {
-  position: relative;
-}
-
-.pw-toggle {
-  position: absolute;
-  right: 0.5rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2rem;
-  height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: none;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  border-radius: 4px;
-  transition: color 0.15s;
-}
-
-.pw-toggle:hover {
-  color: hsl(var(--foreground));
-}
-
-.pw-wrapper .field-input {
-  padding-right: 2.75rem;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
-  height: 2.5rem;
-  padding: 0 1rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  font-family: inherit;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
-  outline: none;
-}
-
-.btn:focus-visible {
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.3);
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  border-color: hsl(var(--primary));
-}
-
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
-.btn-secondary {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  border-color: hsl(var(--border));
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: hsl(var(--muted));
-}
-
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin: 0.25rem 0;
-}
-
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: hsl(var(--border));
-}
-
-.divider span {
-  font-size: 0.75rem;
-  color: hsl(var(--muted-foreground));
-  flex-shrink: 0;
-}
-
-.footer-link {
-  text-align: center;
-  font-size: 0.8125rem;
-  color: hsl(var(--muted-foreground));
-  margin: 0.25rem 0 0;
-}
-
-.footer-link .link {
-  color: hsl(var(--foreground));
-  text-decoration: none;
-  font-weight: 500;
-  transition: opacity 0.15s;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font-size: inherit;
-}
-
-.footer-link .link:hover {
-  opacity: 0.7;
-}
-
-.profile-stack {
-  display: grid;
-  gap: 1.25rem;
-}
-
-.profile-card {
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 1rem;
-}
-
-.profile-info {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.profile-avatar {
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  background: hsl(var(--foreground));
-  color: hsl(var(--primary-foreground));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.875rem;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.profile-meta {
-  min-width: 0;
-}
-
-.profile-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.profile-email {
-  font-size: 0.8125rem;
-  color: hsl(var(--muted-foreground));
-  line-height: 1.3;
-  margin-top: 0.125rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.credit-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid hsl(var(--border));
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-}
-
-.credit-label {
-  font-size: 0.8125rem;
-  color: hsl(var(--muted-foreground));
-}
-
-.credit-value {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  font-family: var(--font-mono);
-  letter-spacing: -0.02em;
-}
-
-.redeem-group {
-  display: grid;
-  gap: 0.375rem;
-}
-
-.redeem-group .field-label {
-  margin-bottom: 0.125rem;
-}
-
-.redeem-row {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.redeem-row .field-input {
-  flex: 1;
-  min-width: 0;
-}
-
-.redeem-row .btn {
-  width: auto;
-  padding: 0 1.25rem;
-}
-
-/* Mobile adaptation */
-@media (max-width: 640px) {
-  .auth-overlay {
-    align-items: flex-end;
-    padding: 0.75rem;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: none;
-  }
-
-  .auth-card {
-    max-width: none;
-    /* 手机上遮罩内边距为 0.75rem，高度上限同步收紧 */
-    max-height: calc(100vh - 1.5rem);
-    max-height: calc(100dvh - 1.5rem);
-    padding: 1.5rem 1.25rem 1.25rem;
-    border-radius: calc(var(--radius) + 0.25rem);
-    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(24px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .auth-title {
-    font-size: 1.125rem;
-  }
-
-  .btn {
-    height: 2.75rem;
-  }
-
-  .redeem-row .btn {
-    height: 2.5rem;
-  }
-}
-
-@media (max-width: 380px) {
-  .auth-card {
-    padding: 1.25rem 1rem 1rem;
-  }
-
-  .auth-header {
-    gap: 0.625rem;
-  }
-
-  .brand-mark {
-    width: 2.25rem;
-    height: 2.25rem;
-  }
-}
-</style>

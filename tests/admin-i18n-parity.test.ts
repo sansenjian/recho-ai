@@ -34,6 +34,18 @@ const adminComposablePaths = [
   resolve(root, 'src/composables/useAdminAccess.ts'),
   resolve(root, 'src/composables/useAdminApi.ts'),
 ]
+/**
+ * 账号弹窗与用户自助密钥同样面向用户,并且已经从纯中文改为 i18n;
+ * 不纳入扫描的话,它们会重新长出硬编码中文而无人发现。
+ */
+const accountSourcePaths = [
+  resolve(root, 'src/components/AuthPanel.vue'),
+  resolve(root, 'src/components/UserApiKeys.vue'),
+  resolve(root, 'src/composables/useAuthSession.ts'),
+  resolve(root, 'src/composables/useCredits.ts'),
+]
+/** 本地化错误门面:与 admin-format.ts 一样,它是唯一允许直接调用 publicClientErrorMessage 的地方。 */
+const clientErrorMessagePath = resolve(root, 'src/utils/client-error-message.ts')
 
 type MessageTree = { [key: string]: string | MessageTree }
 
@@ -56,7 +68,7 @@ function adminSourceFiles(): string[] {
   const panels = readdirSync(adminDir)
     .filter(name => name.endsWith('.vue'))
     .map(name => join(adminDir, name))
-  return [...panels, adminViewPath, adminFormatPath, ...adminComposablePaths]
+  return [...panels, adminViewPath, adminFormatPath, ...adminComposablePaths, ...accountSourcePaths]
 }
 
 /**
@@ -75,7 +87,7 @@ function stripComments(source: string): string {
     .join('\n')
 }
 
-describe('admin i18n parity', () => {
+describe('admin and account i18n parity', () => {
   it('exposes the same key set in zh and en', () => {
     const missingInEn = zhKeys.filter(key => !enKeySet.has(key))
     const missingInZh = enKeys.filter(key => !zhKeySet.has(key))
@@ -155,7 +167,8 @@ describe('admin i18n parity', () => {
    * `adminErrorMessage`.
    */
   it('routes admin error messages through the localized helper', () => {
-    const scanned = adminSourceFiles().filter(file => file !== adminFormatPath)
+    const allowed = new Set([adminFormatPath, clientErrorMessagePath])
+    const scanned = adminSourceFiles().filter(file => !allowed.has(file))
     expect(scanned.length).toBeGreaterThan(0)
 
     const offenders = scanned
