@@ -143,6 +143,8 @@ VITE_API_BASE_URL = https://recho-gateway.onrender.com  （后端部署后填）
 | 通配 | `https://*.example.com` | `*` 只跨一个主机名标签，不会跨 `.`，因此无法被 `https://x.example.com.evil.test` 绕过 |
 | 正则 | `re:^https://recho-[a-z0-9-]+-team\.vercel\.app$` | `re:` 前缀，其余部分作为正则源码 |
 
+> `re:` 条目里的逗号默认仍是**配置分隔符**。只有三类逗号会被当成正则的一部分保留：转义写法 `\,`、字符类 `[a,b]`、量词 `{1,32}`（见 `splitCorsOriginEntries`）。所以正则里要匹配字面逗号时请写成 `\,`。
+
 线上当前的值（`render.yaml`）：
 
 ```yaml

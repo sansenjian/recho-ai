@@ -59,6 +59,38 @@ describe('cors origin matching', () => {
     expect(isCorsOriginAllowed('https://recho-aiexample.com', [matcher!])).toBe(false)
   })
 
+  it('keeps commas that belong to a re: quantifier', () => {
+    const origins = parseCorsOrigins(
+      'https://a.example.com,re:^https://recho-[a-z]{1,32}\\.example\\.com$,https://b.example.com',
+    )
+
+    expect(origins).toHaveLength(3)
+    expect(origins[0]).toBe('https://a.example.com')
+    expect(origins[1]).toBeInstanceOf(RegExp)
+    expect(String(origins[1])).toContain('{1,32}')
+    expect(origins[2]).toBe('https://b.example.com')
+
+    expect(isCorsOriginAllowed('https://recho-abc.example.com', origins)).toBe(true)
+    expect(isCorsOriginAllowed('https://recho-.example.com', origins)).toBe(false)
+    expect(isCorsOriginAllowed('https://a.example.com', origins)).toBe(true)
+    expect(isCorsOriginAllowed('https://b.example.com', origins)).toBe(true)
+  })
+
+  it('keeps commas that belong to a re: character class or escape', () => {
+    const classOrigins = parseCorsOrigins('re:^https://[a,b]\\.example\\.com$')
+
+    expect(classOrigins).toHaveLength(1)
+    expect(isCorsOriginAllowed('https://a.example.com', classOrigins)).toBe(true)
+    expect(isCorsOriginAllowed('https://b.example.com', classOrigins)).toBe(true)
+    expect(isCorsOriginAllowed('https://c.example.com', classOrigins)).toBe(false)
+
+    const escapedOrigins = parseCorsOrigins('re:^https://a\\,b\\.example\\.com$,https://c.example.com')
+
+    expect(escapedOrigins).toHaveLength(2)
+    expect(isCorsOriginAllowed('https://a,b.example.com', escapedOrigins)).toBe(true)
+    expect(isCorsOriginAllowed('https://c.example.com', escapedOrigins)).toBe(true)
+  })
+
   it('rejects a missing origin', () => {
     const origins = parseCorsOrigins('https://recho.sansenjian.asia')
 
