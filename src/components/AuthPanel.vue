@@ -108,8 +108,11 @@ const submitLabel = computed(() => {
 /** 优先用 OAuth/注册时写入的显示名,其次邮箱,最后回落到本地化的默认名。 */
 const displayName = computed(() => {
   const meta = user.value?.user_metadata as Record<string, unknown> | undefined
-  const fullName = meta?.full_name ?? meta?.name
-  if (typeof fullName === 'string' && fullName.trim()) return fullName.trim()
+  // full_name 可能是空串或纯空白,?? 会把它当成有效值选中,资料页因此显示默认名。
+  // 逐个字段确认是非空白字符串,再决定是否回落到本地化默认名。
+  for (const candidate of [meta?.full_name, meta?.name]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
   return t('account.displayName')
 })
 
@@ -144,6 +147,20 @@ watch(user, (next, prev) => {
     authMode.value = 'signIn'
     passwordDraft.value = ''
   }
+})
+
+/**
+ * 认证视图与资料视图互换时,被卸载的节点会带走焦点,而 <Transition mode="out-in">
+ * 期间新旧节点不会同时存在;焦点一旦掉到 body,挂在遮罩上的 Tab 陷印就收不到按键。
+ * 先把焦点收在始终存在的弹窗容器上,新视图渲染出来后再落到它的第一个可操作元素。
+ */
+watch(isAuthView, () => {
+  if (!props.modelValue) return
+  dialogRef.value?.focus()
+  nextTick(() => {
+    const first = dialogRef.value?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled]), [href], textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    if (first && document.activeElement !== first) first.focus()
+  })
 })
 
 function switchMode(mode: AuthMode) {
