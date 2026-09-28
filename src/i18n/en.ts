@@ -73,7 +73,8 @@ export default {
     signInSubtitle: 'Continue with Recho and start creating',
     signUpSubtitle: 'Create a Recho account',
     email: 'Email',
-    emailPlaceholder: 'you@example.com',
+    // vue-i18n 的消息编译器把裸 @ 当成 linked-message 语法,必须转义成字面量。
+    emailPlaceholder: "you{'@'}example.com",
     password: 'Password',
     passwordPlaceholderSignIn: 'Enter password',
     passwordPlaceholderSignUp: 'At least 6 characters',

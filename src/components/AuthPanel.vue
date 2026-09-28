@@ -168,7 +168,9 @@ async function handleAuthSubmit() {
   touched.value = { ...touched.value, email: true, password: true }
   if (!canSubmitAuth.value) return
   const ok = await submitAuth(authMode.value, emailDraft.value.trim(), passwordDraft.value)
-  if (ok && authMode.value === 'signIn') {
+  // 注册成功时 submitAuth 会把 user 置空(isAuthView 仍为 true),但凭据已经提交,
+  // 没有理由继续留在输入框里;登录与注册统一清空。
+  if (ok) {
     passwordDraft.value = ''
   }
 }
