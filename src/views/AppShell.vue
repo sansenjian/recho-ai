@@ -76,7 +76,7 @@ const { chatModels, isLoaded: isAppConfigLoaded, ensureAppConfig } = useAppConfi
 const currentModel = ref<ModelOption | undefined>(AVAILABLE_MODELS[0])
 const modelOptions = computed<ModelOption[]>(() => !isAppConfigLoaded.value
   ? AVAILABLE_MODELS
-  : chatModels.value.map(model => ({ id: model.id, provider: model.provider, providers: model.providers, label: model.name, level: t('chat.available'), status: 'available' as const })))
+  : chatModels.value.map(model => ({ id: model.id, provider: model.provider, providers: model.providers, label: model.name, status: 'available' as const })))
 watch(modelOptions, (models) => {
   currentModel.value = models.find(model => model.id === currentModel.value?.id) ?? models[0]
 }, { immediate: true })

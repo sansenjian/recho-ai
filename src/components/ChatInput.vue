@@ -81,10 +81,11 @@ function modelHint(model: ModelOption) {
   return model.hintKey ? t(model.hintKey) : ''
 }
 
-function modelStatus(model: ModelOption) {
+/** 下拉行右侧只保留一个标签：状态（推荐/慢速）优先，其次是档位，最后回落到「可用」。 */
+function modelBadge(model: ModelOption) {
   if (model.status === 'recommended') return t('chat.recommended')
   if (model.status === 'slow') return t('chat.slower')
-  return ''
+  return modelLevel(model) || (model.status === 'available' ? t('chat.available') : '')
 }
 
 function onInput(e: Event) {
@@ -297,8 +298,7 @@ function skillIcon(name: string) {
                     <span v-if="modelHint(m)" class="min-w-0 truncate">· {{ modelHint(m) }}</span>
                   </small>
                 </span>
-                <span v-if="modelStatus(m)" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ modelStatus(m) }}</span>
-                <span v-else-if="modelLevel(m)" class="shrink-0 text-[11px] text-muted-foreground">{{ modelLevel(m) }}</span>
+                <span v-if="modelBadge(m)" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ modelBadge(m) }}</span>
                 <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
                   <Check v-if="m.id === currentModel?.id" class="h-[18px] w-[18px]" />
                 </span>
