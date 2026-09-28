@@ -1,6 +1,7 @@
 import { readonly, ref, watch } from 'vue'
 import { apiUrl } from '../lib/api-base'
-import { publicClientErrorMessage } from '../lib/safe-error'
+import i18n from '../i18n'
+import { localizedClientErrorMessage } from '../utils/client-error-message'
 import { normalizeCreditBalance } from '../utils/credit-format'
 import { getAuthAccessToken, useAuthSession } from './useAuthSession'
 
@@ -24,12 +25,12 @@ export function numericBalance(value: unknown) {
   return normalizeCreditBalance(value)
 }
 
-async function readCreditError(response: Response, fallback: string) {
+async function readCreditError(response: Response, fallbackKey: string) {
   try {
     const data = await response.json() as { error?: unknown }
-    return publicClientErrorMessage(data.error || response.statusText, fallback)
+    return localizedClientErrorMessage(data.error || response.statusText, fallbackKey)
   } catch {
-    return publicClientErrorMessage(response.statusText, fallback)
+    return localizedClientErrorMessage(response.statusText, fallbackKey)
   }
 }
 
@@ -77,7 +78,7 @@ export function useCredits() {
       return creditBalance.value
     } catch (err) {
       if (seq === refreshSeq) {
-        console.warn('[credits] balance refresh skipped:', publicClientErrorMessage(err, '额度服务暂时不可用。'))
+        console.warn('[credits] balance refresh skipped:', localizedClientErrorMessage(err, 'account.errors.creditsUnavailable'))
       }
       return null
     } finally {
@@ -93,12 +94,12 @@ export function useCredits() {
 
     const token = await getAuthAccessToken()
     if (!token) {
-      creditError.value = '请先登录后再兑换额度。'
+      creditError.value = i18n.global.t('account.errors.redeemLoginRequired')
       return false
     }
 
     if (!code.trim()) {
-      creditError.value = '请输入兑换码。'
+      creditError.value = i18n.global.t('account.errors.redeemCodeRequired')
       return false
     }
 
@@ -114,7 +115,7 @@ export function useCredits() {
       })
 
       if (!response.ok) {
-        creditError.value = await readCreditError(response, '兑换失败，请稍后重试。')
+        creditError.value = await readCreditError(response, 'account.errors.redeemFailed')
         return false
       }
 
@@ -122,11 +123,11 @@ export function useCredits() {
       setCreditBalance(data.balance)
       const redeemedCredits = numericBalance(data.redeemedCredits)
       creditNotice.value = redeemedCredits !== null && redeemedCredits > 0
-        ? `已兑换 ${redeemedCredits} 额度。`
-        : '兑换成功。'
+        ? i18n.global.t('account.errors.redeemSucceededCount', { count: redeemedCredits })
+        : i18n.global.t('account.errors.redeemSucceeded')
       return true
     } catch (err) {
-      creditError.value = publicClientErrorMessage(err, '兑换失败，请稍后重试。')
+      creditError.value = localizedClientErrorMessage(err, 'account.errors.redeemFailed')
       return false
     } finally {
       isRedeemingCredits.value = false

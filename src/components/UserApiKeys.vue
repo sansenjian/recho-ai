@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Copy, KeyRound } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiUrl } from '../lib/api-base'
-import { publicClientErrorMessage } from '../lib/safe-error'
+import { localizedClientErrorMessage } from '../utils/client-error-message'
+import { localeTag } from '../utils/locale-tag'
 import { getAuthAccessToken } from '../composables/useAuthSession'
 
 /**
  * 用户自助 API 密钥：调用 /api/api-keys（只作用于当前登录用户自己的 key），
  * 供 recho-cli 等外部客户端使用。
  */
+
+const { t } = useI18n()
 
 interface UserApiKey {
   id: string
@@ -37,19 +41,19 @@ function shortTime(value: string | null) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+  return new Intl.DateTimeFormat(localeTag(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getAuthAccessToken()
-  if (!token) throw new Error('请先登录。')
+  if (!token) throw new Error(t('feedback.loginRequired'))
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${token}`)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   // no-store：密钥列表属身份敏感数据，不参与缓存/去重
   const response = await fetch(apiUrl(path), { ...init, headers, cache: 'no-store' })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : '请求失败')
+  if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : t('feedback.requestFailed'))
   return data as T
 }
 
@@ -60,7 +64,7 @@ async function refresh() {
     const data = await request<{ keys: UserApiKey[] }>('/api/api-keys')
     keys.value = data.keys
   } catch (err) {
-    errorMessage.value = publicClientErrorMessage(err, '密钥列表加载失败，请稍后重试。')
+    errorMessage.value = localizedClientErrorMessage(err, 'account.keys.listFailed')
   } finally {
     loading.value = false
   }
@@ -81,7 +85,7 @@ async function createKey() {
     keyName.value = ''
     await refresh()
   } catch (err) {
-    errorMessage.value = publicClientErrorMessage(err, '签发失败，请稍后重试。')
+    errorMessage.value = localizedClientErrorMessage(err, 'account.keys.createFailed')
   } finally {
     creating.value = false
   }
@@ -95,12 +99,12 @@ async function revokeKey(key: UserApiKey) {
     const data = await request<{ ok: boolean }>(`/api/api-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' })
     if (data.ok) {
       keys.value = keys.value.map(item => item.id === key.id ? { ...item, revoked_at: new Date().toISOString() } : item)
-      noticeMessage.value = '密钥已撤销。'
+      noticeMessage.value = t('account.keys.revokedNotice')
     } else {
-      errorMessage.value = '撤销失败，密钥可能已失效。'
+      errorMessage.value = t('account.keys.revokeInvalid')
     }
   } catch (err) {
-    errorMessage.value = publicClientErrorMessage(err, '撤销失败，请稍后重试。')
+    errorMessage.value = localizedClientErrorMessage(err, 'account.keys.revokeFailed')
   } finally {
     revokingId.value = null
   }
@@ -121,19 +125,19 @@ onMounted(refresh)
 </script>
 
 <template>
-  <section class="border-t border-border pt-4">
+  <section class="border-t border-border pt-6">
     <div class="flex items-center gap-2">
-      <KeyRound :size="14" />
-      <span class="text-[13px] font-medium">API 密钥</span>
+      <KeyRound :size="14" class="text-muted-foreground" />
+      <span class="text-[13px] font-medium">{{ t('account.keys.title') }}</span>
     </div>
     <p class="mt-1 text-xs text-muted-foreground">
-      用于 recho-cli 等外部客户端；密钥绑定你的账号，请妥善保管。
+      {{ t('account.keys.description') }}
     </p>
 
     <form class="mt-3 flex gap-2" @submit.prevent="createKey">
-      <Input v-model="keyName" maxlength="100" placeholder="密钥名称，例如 recho-cli" class="h-9 flex-1 text-[13px]" />
+      <Input v-model="keyName" maxlength="100" :placeholder="t('account.keys.namePlaceholder')" class="h-9 flex-1 text-[13px]" />
       <Button type="submit" size="sm" class="h-9" :disabled="creating || !keyName.trim()">
-        {{ creating ? '签发中' : '签发' }}
+        {{ creating ? t('account.keys.creating') : t('account.keys.create') }}
       </Button>
     </form>
 
@@ -143,28 +147,28 @@ onMounted(refresh)
     </div>
 
     <div v-if="issuedKey" class="mt-3 rounded-md border border-border bg-muted p-2.5">
-      <p class="text-xs font-medium">密钥已签发（仅显示一次）</p>
+      <p class="text-xs font-medium">{{ t('account.keys.createdOnceTitle') }}</p>
       <div class="mt-2 flex items-center gap-2">
         <code class="min-w-0 flex-1 break-all font-mono text-xs">{{ issuedKey }}</code>
         <Button type="button" variant="outline" size="sm" class="shrink-0" @click="copyIssuedKey">
           <Copy :size="12" />
-          {{ copied ? '已复制' : '复制' }}
+          {{ copied ? t('account.keys.copied') : t('common.copy') }}
         </Button>
       </div>
-      <p class="mt-2 text-[11px] text-muted-foreground">关闭后无法再次查看明文。</p>
+      <p class="mt-2 text-[11px] text-muted-foreground">{{ t('account.keys.createdOnceBody') }}</p>
     </div>
 
-    <div v-if="loading && !keys.length" class="mt-3 text-xs text-muted-foreground">加载中...</div>
+    <div v-if="loading && !keys.length" class="mt-3 text-xs text-muted-foreground">{{ t('common.loading') }}</div>
     <ul v-else-if="keys.length" class="mt-3 flex flex-col gap-2">
       <li v-for="key in keys" :key="key.id" class="flex items-start justify-between gap-2 rounded-md border border-border p-2.5">
         <div class="min-w-0 flex flex-col gap-1">
           <span class="flex items-center gap-2 text-[13px] font-medium">
-            {{ key.name || '未命名密钥' }}
-            <Badge v-if="key.revoked_at" variant="secondary" class="text-[11px]">已撤销</Badge>
-            <Badge v-else variant="default" class="text-[11px]">启用</Badge>
+            {{ key.name || t('account.keys.unnamed') }}
+            <Badge v-if="key.revoked_at" variant="secondary" class="text-[11px]">{{ t('account.keys.revoked') }}</Badge>
+            <Badge v-else variant="default" class="text-[11px]">{{ t('account.keys.enabled') }}</Badge>
           </span>
           <code class="break-all font-mono text-[11px] text-muted-foreground">{{ key.key_hint }}</code>
-          <span class="text-[11px] text-muted-foreground">创建 {{ shortTime(key.created_at) }}</span>
+          <span class="text-[11px] text-muted-foreground">{{ t('account.keys.created', { time: shortTime(key.created_at) }) }}</span>
         </div>
         <Button
           v-if="!key.revoked_at"
@@ -175,10 +179,10 @@ onMounted(refresh)
           :disabled="revokingId === key.id"
           @click="revokeKey(key)"
         >
-          撤销
+          {{ t('account.keys.revoke') }}
         </Button>
       </li>
     </ul>
-    <p v-else class="mt-3 text-xs text-muted-foreground">还没有密钥。</p>
+    <p v-else class="mt-3 text-xs text-muted-foreground">{{ t('account.keys.empty') }}</p>
   </section>
 </template>

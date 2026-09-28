@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
 import { getSupabaseClient } from '../lib/supabase'
+import i18n from '../i18n'
 
 type AuthMode = 'signIn' | 'signUp'
 
@@ -21,7 +22,7 @@ async function authClientOrNull() {
       return client
     })
     .catch((err) => {
-      authError.value = err instanceof Error ? err.message : 'Supabase Auth 尚未配置'
+      authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.notConfigured')
       return null
     })
 
@@ -61,7 +62,7 @@ export function useAuthSession() {
     if (sessionUser && !isEmailConfirmed(sessionUser)) {
       await client.auth.signOut()
       user.value = null
-      authNotice.value = '请先完成邮箱验证后再登录。'
+      authNotice.value = i18n.global.t('account.errors.emailNotConfirmed')
       return
     }
 
@@ -88,7 +89,7 @@ export function useAuthSession() {
     authNotice.value = null
 
     if (!email.trim() || !password) {
-      authError.value = '请输入邮箱和密码'
+      authError.value = i18n.global.t('account.errors.credentialsRequired')
       return false
     }
 
@@ -108,11 +109,11 @@ export function useAuthSession() {
         if (data.session) {
           await client.auth.signOut()
           user.value = null
-          authNotice.value = '账号已创建，但当前 Supabase 项目没有强制邮箱验证，请在 Supabase Auth 开启 Confirm email。'
+          authNotice.value = i18n.global.t('account.errors.signUpEmailNotEnforced')
           return true
         }
         user.value = null
-        authNotice.value = '账号已创建，请查看邮箱完成验证。'
+        authNotice.value = i18n.global.t('account.errors.signUpCheckEmail')
         return true
       }
 
@@ -123,13 +124,13 @@ export function useAuthSession() {
       if (error) throw error
       if (data.user && !isEmailConfirmed(data.user)) {
         await client.auth.signOut()
-        throw new Error('请先完成邮箱验证后再登录。')
+        throw new Error(i18n.global.t('account.errors.emailNotConfirmed'))
       }
       user.value = data.user || null
-      authNotice.value = '已登录'
+      authNotice.value = i18n.global.t('account.errors.signedIn')
       return true
     } catch (err) {
-      authError.value = err instanceof Error ? err.message : '账号操作失败'
+      authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.signInFailed')
       return false
     } finally {
       isAuthLoading.value = false
@@ -158,10 +159,10 @@ export function useAuthSession() {
       })
 
       if (error) throw error
-      authNotice.value = '正在跳转到 GitHub 登录...'
+      authNotice.value = i18n.global.t('account.errors.githubRedirecting')
       return true
     } catch (err) {
-      authError.value = err instanceof Error ? err.message : 'GitHub 登录失败'
+      authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.githubFailed')
       return false
     } finally {
       isAuthLoading.value = false
@@ -180,7 +181,7 @@ export function useAuthSession() {
       if (error) throw error
       user.value = null
     } catch (err) {
-      authError.value = err instanceof Error ? err.message : '退出失败'
+      authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.signOutFailed')
     } finally {
       isAuthLoading.value = false
     }
