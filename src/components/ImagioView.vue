@@ -17,9 +17,11 @@ import type {
   ImageResolution,
 } from '../types/image'
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../lib/image-aspect-ratio'
+import { hasImageSource } from '../lib/authenticated-image-source'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 import type { NamedWorkspace } from '../lib/workspace-list'
 
 const props = defineProps<{
@@ -87,8 +89,8 @@ const conversationItems = computed(() => {
   return [...groups.values()]
 })
 
-function generatedImageSource(image: GeneratedImage) {
-  return image.previewUrl || image.thumbnailUrl || image.url || image.temporaryUrl || image.dataUrl || ''
+function canDisplayGeneratedImage(image: GeneratedImage) {
+  return hasImageSource(image, 'preview')
 }
 
 const canGenerate = computed(() => Boolean(promptText.value.trim()) && !props.isGenerating)
@@ -244,6 +246,18 @@ async function handleGenerate() {
           :key="item.id"
           class="conversation-turn"
         >
+          <div class="conversation-user">
+            <div v-if="item.references.length" class="conversation-reference-list" aria-label="参考图">
+              <img
+                v-for="reference in item.references"
+                :key="reference.id"
+                :src="reference.previewUrl || reference.thumbnailUrl || reference.dataUrl"
+                :alt="reference.title"
+              >
+            </div>
+            <p>{{ item.prompt }}</p>
+          </div>
+
           <div class="conversation-ai">
             <div class="conversation-avatar" aria-hidden="true">AI</div>
             <div class="conversation-output">
@@ -255,27 +269,16 @@ async function handleGenerate() {
                   class="conversation-image"
                   :title="image.prompt"
                 >
-                  <img
-                    v-if="generatedImageSource(image)"
-                    :src="generatedImageSource(image)"
+                  <AuthenticatedImage
+                    v-if="canDisplayGeneratedImage(image)"
+                    :source="image"
+                    mode="preview"
                     :alt="image.prompt"
-                  >
+                  />
                   <span v-else class="conversation-image-placeholder">图片处理中...</span>
                 </div>
               </div>
             </div>
-          </div>
-
-          <div class="conversation-user">
-            <div v-if="item.references.length" class="conversation-reference-list" aria-label="参考图">
-              <img
-                v-for="reference in item.references"
-                :key="reference.id"
-                :src="reference.previewUrl || reference.thumbnailUrl || reference.dataUrl"
-                :alt="reference.title"
-              >
-            </div>
-            <p>{{ item.prompt }}</p>
           </div>
         </div>
       </div>
