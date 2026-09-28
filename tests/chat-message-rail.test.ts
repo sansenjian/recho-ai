@@ -9,6 +9,7 @@ interface RailMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  toolCalls?: { id: string }[]
 }
 
 /** 一轮 = 一条提问 + 一条回复。 */
@@ -29,6 +30,7 @@ function mountRail(messages: RailMessage[], activeMessageId: string | null) {
 }
 
 const WAVE_WIDTHS = ['w-8', 'w-6', 'w-[18px]', 'w-3']
+const CARD = '[data-slot="chat-turn-card"]'
 
 function markerClasses(wrapper: ReturnType<typeof mountRail>, turnIndex: number) {
   return wrapper.findAll('button')[turnIndex].find('span').classes()
@@ -39,12 +41,12 @@ function markerWidth(wrapper: ReturnType<typeof mountRail>, turnIndex: number) {
   return WAVE_WIDTHS.find(width => classes.includes(width))
 }
 
-describe('ChatMessageRail', () => {
+describe('ChatMessageRail markers', () => {
   it('renders one marker per question and leaves the assistant replies out', () => {
     const wrapper = mountRail(conversation(3), 'user-3')
 
     expect(wrapper.findAll('button')).toHaveLength(3)
-    expect(wrapper.findAll('button')[2].attributes('title')).toBe(i18n.global.t('chat.jumpToTurn', { index: 3 }))
+    expect(wrapper.findAll('button')[2].attributes('aria-label')).toBe(i18n.global.t('chat.jumpToTurn', { index: 3 }))
   })
 
   it('renders nothing while the conversation holds no question yet', () => {
@@ -102,5 +104,65 @@ describe('ChatMessageRail', () => {
 
     expect(wrapper.findAll('button')[0].attributes('aria-current')).toBe('true')
     expect(markerWidth(wrapper, 0)).toBe('w-8')
+  })
+})
+
+describe('ChatMessageRail turn card', () => {
+  it('opens on hover with the counter, the question and the answer', async () => {
+    const wrapper = mountRail(conversation(3), 'user-3')
+
+    expect(wrapper.find(CARD).exists()).toBe(false)
+
+    await wrapper.findAll('button')[1].trigger('mouseenter')
+
+    const card = wrapper.find(CARD)
+    expect(card.exists()).toBe(true)
+    expect(card.attributes('role')).toBe('tooltip')
+    expect(wrapper.findAll('button')[1].attributes('aria-describedby')).toBe(card.attributes('id'))
+    expect(card.text()).toContain(i18n.global.t('chat.turnCounter', { index: 2, total: 3 }))
+    expect(card.text()).toContain('question 2')
+    expect(card.text()).toContain('answer 2')
+    expect(card.text()).not.toContain('question 1')
+  })
+
+  it('closes when the pointer leaves the rail', async () => {
+    const wrapper = mountRail(conversation(2), 'user-1')
+
+    await wrapper.findAll('button')[0].trigger('mouseenter')
+    expect(wrapper.find(CARD).exists()).toBe(true)
+
+    await wrapper.find('[data-slot="chat-turn-rail"]').trigger('mouseleave')
+    expect(wrapper.find(CARD).exists()).toBe(false)
+  })
+
+  it('opens on keyboard focus and clamps both previews', async () => {
+    const wrapper = mountRail(conversation(2), 'user-1')
+
+    await wrapper.findAll('button')[0].trigger('focus')
+
+    const card = wrapper.find(CARD)
+    expect(card.exists()).toBe(true)
+    expect(card.findAll('p')[0].classes()).toContain('line-clamp-2')
+    expect(card.findAll('p')[1].classes()).toContain('line-clamp-3')
+  })
+
+  it('shows the pending hint while a turn has no reply yet', async () => {
+    const wrapper = mountRail([{ id: 'user-1', role: 'user', content: 'question 1', timestamp: 'now' }], 'user-1')
+
+    await wrapper.findAll('button')[0].trigger('mouseenter')
+
+    expect(wrapper.find(CARD).text()).toContain(i18n.global.t('chat.turnPending'))
+  })
+
+  it('reports how many tool calls the turn made', async () => {
+    const messages: RailMessage[] = [
+      { id: 'user-1', role: 'user', content: 'question 1', timestamp: 'now' },
+      { id: 'assistant-1', role: 'assistant', content: 'answer 1', timestamp: 'now', toolCalls: [{ id: 'tool-1' }, { id: 'tool-2' }] },
+    ]
+    const wrapper = mountRail(messages, 'user-1')
+
+    await wrapper.findAll('button')[0].trigger('mouseenter')
+
+    expect(wrapper.find(CARD).text()).toContain(i18n.global.t('chat.turnTools', { count: 2 }))
   })
 })
