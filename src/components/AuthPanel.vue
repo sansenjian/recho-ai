@@ -148,21 +148,29 @@ watch(user, (next, prev) => {
 
 function switchMode(mode: AuthMode) {
   authMode.value = mode
-  touched.value = { email: false, password: false, redeem: false }
+  passwordDraft.value = ''
+  showPassword.value = false
+  touched.value = { ...touched.value, password: false }
 }
 
 function close() {
   emit('update:modelValue', false)
   emit('close')
   nextTick(() => {
-    if (restoreFocusElement && document.contains(restoreFocusElement)) restoreFocusElement.focus()
+    if (restoreFocusElement && document.contains(restoreFocusElement)) {
+      restoreFocusElement.focus()
+    }
+    restoreFocusElement = null
   })
 }
 
 async function handleAuthSubmit() {
   touched.value = { ...touched.value, email: true, password: true }
   if (!canSubmitAuth.value) return
-  await submitAuth(authMode.value, emailDraft.value, passwordDraft.value)
+  const ok = await submitAuth(authMode.value, emailDraft.value.trim(), passwordDraft.value)
+  if (ok && authMode.value === 'signIn') {
+    passwordDraft.value = ''
+  }
 }
 
 async function handleGitHubAuth() {
@@ -171,12 +179,17 @@ async function handleGitHubAuth() {
 
 async function handleSignOut() {
   await signOut()
+  authMode.value = 'signIn'
 }
 
 async function handleRedeem() {
   touched.value = { ...touched.value, redeem: true }
   if (!canSubmitRedeem.value) return
-  await redeemCredits(redeemCodeDraft.value)
+  const ok = await redeemCredits(redeemCodeDraft.value)
+  if (ok) {
+    redeemCodeDraft.value = ''
+    touched.value = { ...touched.value, redeem: false }
+  }
 }
 
 /**
@@ -196,7 +209,11 @@ function onKeydown(e: KeyboardEvent) {
   // jsdom 没有布局引擎,offsetParent 恒为 null;只在有布局信息时用它排除隐藏元素。
   const laidOut = candidates.filter(element => element.offsetParent !== null)
   const focusable = laidOut.length ? laidOut : candidates
-  if (!focusable.length) return
+  if (!focusable.length) {
+    e.preventDefault()
+    dialogRef.value.focus()
+    return
+  }
 
   const first = focusable[0]
   const last = focusable[focusable.length - 1]
