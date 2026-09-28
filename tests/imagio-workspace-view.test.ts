@@ -3,6 +3,7 @@ import { nextTick, ref } from 'vue'
 import { shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ImageCanvas from '../src/components/ImageCanvas.vue'
+import i18n from '../src/i18n'
 import ImagioSidebar from '../src/components/ImagioSidebar.vue'
 import ImagioView from '../src/components/ImagioView.vue'
 import type { GeneratedImage } from '../src/types/image'
@@ -36,7 +37,7 @@ describe('Imagio conversation workspaces', () => {
   })
 
   it('isolates generated images across workspaces, refreshes and deletion', async () => {
-    const wrapper = shallowMount(ImageCanvas, { props: { workspaceMode: 'canvas', imageMode: 'imagio' } })
+    const wrapper = shallowMount(ImageCanvas, { props: { workspaceMode: 'canvas', imageMode: 'imagio' }, global: { plugins: [i18n] } })
     const sidebar = () => wrapper.findComponent(ImagioSidebar)
     const view = () => wrapper.findComponent(ImagioView)
     const defaultId = sidebar().props('activeWorkspaceId') as string

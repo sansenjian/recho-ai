@@ -1,21 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GripVertical, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { NamedWorkspace } from '../lib/workspace-list'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   workspaces: NamedWorkspace[]
   activeId: string
   /** 顶部新建按钮的 title / aria-label，如「新建画布」「新建工作区」 */
   createLabel: string
   /** 只剩一个工作区时删除按钮的禁用提示 */
   keepOneHint: string
-  /** 分组标题，默认「工作区」 */
+  /** 分组标题；省略时回落到本地化的「工作区」 */
   title?: string
-}>(), {
-  title: '工作区',
-})
+}>()
+
+const { t } = useI18n()
+
+const groupTitle = computed(() => props.title || t('chat.workspace'))
 
 const emit = defineEmits<{
   select: [id: string]
@@ -77,14 +80,14 @@ onBeforeUnmount(() => {
 })
 
 function removeHint(workspace: NamedWorkspace): string {
-  return canRemove.value ? `删除${workspace.name}` : props.keepOneHint
+  return canRemove.value ? t('chat.deleteWorkspace', { name: workspace.name }) : props.keepOneHint
 }
 </script>
 
 <template>
   <div ref="listRoot" class="px-3.5 pb-[18px] mb-1 border-b border-border">
     <div class="flex items-center justify-between mb-2 text-foreground text-xs font-extrabold">
-      <span>{{ title }}</span>
+      <span>{{ groupTitle }}</span>
       <Button
         variant="ghost"
         size="icon-xs"
@@ -109,7 +112,7 @@ function removeHint(workspace: NamedWorkspace): string {
           v-model="nameDraft"
           type="text"
           maxlength="80"
-          :aria-label="`重命名${ws.name}`"
+          :aria-label="t('chat.renameWorkspace', { name: ws.name })"
           class="min-w-0 flex-1 h-8 px-2 rounded-md border border-ring bg-background text-foreground text-[13px] outline-none"
           @keydown.enter.prevent="finishRename(true)"
           @keydown.esc.prevent="finishRename(false)"
@@ -151,7 +154,7 @@ function removeHint(workspace: NamedWorkspace): string {
             @click="startRename(ws)"
           >
             <Pencil :size="14" />
-            重命名
+            {{ t('chat.rename') }}
           </button>
         </div>
       </div>

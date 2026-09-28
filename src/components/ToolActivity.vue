@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ToolCall } from '../types/tools'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +11,8 @@ const props = defineProps<{
   completedToolCalls: ToolCall[]
   embedded?: boolean
 }>()
+
+const { t } = useI18n()
 
 const expanded = ref(true)
 const contentId = `tool-activity-${Math.random().toString(36).slice(2)}`
@@ -31,7 +34,7 @@ const title = computed(() => {
     .slice(-3)
     .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
     .join(' · ')
-  return summary || '云端工具活动'
+  return summary || t('chat.toolActivity')
 })
 
 function formatDuration(tool: ToolCall) {
@@ -44,7 +47,7 @@ function formatDuration(tool: ToolCall) {
 
 function compactJson(value: Record<string, unknown>) {
   const keys = Object.keys(value)
-  if (keys.length === 0) return '无参数'
+  if (keys.length === 0) return t('chat.noArgs')
   return keys
     .slice(0, 3)
     .map((key) => {
@@ -62,20 +65,20 @@ function previewResult(result?: string) {
 }
 
 function toolLabel(name: string) {
-  if (name.includes('search')) return '搜索网页'
-  if (name.includes('extract')) return '提取网页'
-  if (name.includes('crawl')) return '抓取站点'
-  if (name.includes('map')) return '扫描站点'
-  if (name.includes('research')) return '深度研究'
+  if (name.includes('search')) return t('chat.toolSearch')
+  if (name.includes('extract')) return t('chat.toolExtract')
+  if (name.includes('crawl')) return t('chat.toolCrawl')
+  if (name.includes('map')) return t('chat.toolMap')
+  if (name.includes('research')) return t('chat.toolResearch')
   return name
 }
 
 function statusLabel(status = 'running') {
-  if (status === 'done') return '完成'
-  if (status === 'error') return '失败'
-  if (status === 'timeout') return '超时'
-  if (status === 'cancelled') return '已停止'
-  return '运行中'
+  if (status === 'done') return t('chat.statusDone')
+  if (status === 'error') return t('chat.statusError')
+  if (status === 'timeout') return t('chat.statusTimeout')
+  if (status === 'cancelled') return t('chat.statusCancelled')
+  return t('chat.statusRunning')
 }
 
 function isTerminalError(status?: string) {
@@ -108,14 +111,14 @@ function isTerminalError(status?: string) {
       <span class="flex min-w-0 flex-1 flex-col gap-0.5">
         <span class="flex items-center gap-1.5">
           <span class="text-[11px] font-semibold text-foreground">
-            {{ hasRunningTools ? '工具调用中' : '工具调用完成' }}
+            {{ hasRunningTools ? t('chat.toolsRunning') : t('chat.toolsFinished') }}
           </span>
           <Badge variant="secondary" class="h-[18px] px-[5px] text-[10px] font-semibold">
             {{ tools.length }}
           </Badge>
         </span>
         <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground">
-          {{ hasRunningTools ? `运行中 ${runningCount} 个` : title }}
+          {{ hasRunningTools ? t('chat.runningCount', { count: runningCount }) : title }}
         </span>
       </span>
       <component :is="expanded ? ChevronDown : ChevronRight" class="mt-0.5 h-[14px] w-[14px] shrink-0 text-muted-foreground/60" />
@@ -134,7 +137,7 @@ function isTerminalError(status?: string) {
             class="flex gap-2 rounded-md bg-card px-2.5 py-2 ring-1 transition-shadow"
             :class="{
               'ring-primary/25': tool.status === 'running',
-              'ring-amber-400/35': isTerminalError(tool.status),
+              'ring-warning/35': isTerminalError(tool.status),
               'ring-border': tool.status === 'done' && !isTerminalError(tool.status),
             }"
           >
@@ -142,7 +145,7 @@ function isTerminalError(status?: string) {
               class="mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center"
               :class="{
                 'text-primary': tool.status === 'running' || tool.status === 'done',
-                'text-amber-600': isTerminalError(tool.status),
+                'text-warning': isTerminalError(tool.status),
               }"
             >
               <CheckCircle2 v-if="tool.status === 'done'" class="h-[13px] w-[13px]" />

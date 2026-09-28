@@ -1,4 +1,5 @@
 import dotenv from 'dotenv'
+import { parseCorsOrigins } from './cors-origin.js'
 import { normalizeImageCreditCostPerImage } from './services/image-credit-cost.js'
 dotenv.config({ override: true })
 
@@ -11,10 +12,9 @@ export function resolveTencentCosBucket(bucket: string, appId: string) {
 }
 
 export const PORT = parseInt(process.env.PORT || '3000', 10)
-export const CORS_ORIGIN = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean)
+// Supports exact origins, globs (https://*.example.com) and re: prefixed
+// regular expressions -- see cors-origin.ts for why previews need the latter.
+export const CORS_ORIGIN = parseCorsOrigins(process.env.CORS_ORIGIN || 'http://localhost:5173')
 
 export const NVIDIA_RPM = 40
 export const STREAM_TIMEOUT_MS = 5 * 60 * 1000

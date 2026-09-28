@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ModelOption } from '../types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,6 +30,8 @@ const emit = defineEmits<{
   selectSkill: [name: string | null]
 }>()
 
+const { t } = useI18n()
+
 const inputValue = ref('')
 const showModelDropdown = ref(false)
 
@@ -45,14 +48,14 @@ const filteredSkills = computed(() => {
   )
 })
 
-const currentModelStatusLabel = computed(() => {
-  if (props.currentModel?.status === 'recommended') return '推荐'
-  if (props.currentModel?.status === 'slow') return '备用'
-  return props.currentModel?.level || '可用'
+const currentModelStatus = computed(() => {
+  if (props.currentModel?.status === 'recommended') return t('chat.recommended')
+  if (props.currentModel?.status === 'slow') return t('chat.backup')
+  return ''
 })
 
 const compactModelLabel = computed(() => {
-  const label = props.currentModel?.label || '模型'
+  const label = props.currentModel?.label || t('chat.model')
   return label.replace(/^DeepSeek\s+/, '').replace(/\s+Flash$/, ' Flash')
 })
 
@@ -64,15 +67,25 @@ const activeSkillOption = computed(() => {
 const skillOnlyFallbackText = computed(() => {
   if (!props.activeSkill) return ''
   const label = activeSkillOption.value?.description || props.activeSkill
-  return `使用 /${props.activeSkill} ${label}`
+  return t('chat.useSkill', { skill: props.activeSkill, label })
 })
 
 const canSubmit = computed(() => Boolean(inputValue.value.trim() || skillOnlyFallbackText.value))
 
-function modelStatusLabel(model: ModelOption) {
-  if (model.status === 'recommended') return '推荐'
-  if (model.status === 'slow') return '较慢'
-  return model.level
+/** 模型目录里的 level/hint 是 i18n key，只能在这里解析后渲染。 */
+function modelLevel(model: ModelOption) {
+  return model.levelKey ? t(model.levelKey) : ''
+}
+
+function modelHint(model: ModelOption) {
+  return model.hintKey ? t(model.hintKey) : ''
+}
+
+/** 下拉行右侧只保留一个标签：状态（推荐/慢速）优先，其次是档位，最后回落到「可用」。 */
+function modelBadge(model: ModelOption) {
+  if (model.status === 'recommended') return t('chat.recommended')
+  if (model.status === 'slow') return t('chat.slower')
+  return modelLevel(model) || (model.status === 'available' ? t('chat.available') : '')
 }
 
 function onInput(e: Event) {
@@ -194,7 +207,7 @@ function skillIcon(name: string) {
             <img :src="img" alt="" class="h-full w-full object-cover" />
             <button
               type="button"
-              title="移除图片"
+              :title="t('chat.removeImage')"
               class="absolute right-1 top-1 inline-flex h-[18px] w-[18px] items-center justify-center rounded border-0 bg-background/90 text-foreground"
               @click="emit('removeImage', idx)"
             >
@@ -205,9 +218,9 @@ function skillIcon(name: string) {
 
         <Textarea
           v-model="inputValue"
-          aria-label="消息输入框"
+          :aria-label="t('chat.messageInput')"
           class="chat-input min-h-[76px] w-full resize-none border-0 bg-transparent px-5 pb-2 pt-[22px] text-lg leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-[54px] max-sm:px-3 max-sm:pb-2 max-sm:pt-3.5 max-sm:text-[15px]"
-          :placeholder="activeSkill ? '输入消息...' : '要求后续变更'"
+          :placeholder="activeSkill ? t('chat.inputPlaceholder') : t('chat.followUpPlaceholder')"
           rows="1"
           :disabled="isLoading"
           @keydown="handleKeydown"
@@ -241,7 +254,7 @@ function skillIcon(name: string) {
             variant="ghost"
             size="icon"
             class="h-8 w-8 text-muted-foreground"
-            title="上传图片"
+            :title="t('chat.uploadImage')"
             @click="emit('upload')"
           >
             <Plus class="h-[19px] w-[19px]" />
@@ -259,6 +272,7 @@ function skillIcon(name: string) {
               @click="showModelDropdown = !showModelDropdown"
             >
               <span class="min-w-0 truncate text-[13px] font-semibold">{{ compactModelLabel }}</span>
+              <span v-if="currentModelStatus" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ currentModelStatus }}</span>
               <ChevronDown class="h-[13px] w-[13px] opacity-70" />
             </Button>
 
@@ -266,7 +280,7 @@ function skillIcon(name: string) {
               v-if="showModelDropdown"
               class="absolute bottom-[calc(100%+12px)] right-0 z-50 w-[min(300px,calc(100vw-32px))] max-h-80 overflow-auto rounded-2xl border border-border bg-popover p-2 shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] max-sm:-right-12 max-sm:w-[min(300px,calc(100vw-20px))]"
             >
-              <div class="px-3.5 pb-2 pt-1 text-sm text-muted-foreground">模型</div>
+              <div class="px-3.5 pb-2 pt-1 text-sm text-muted-foreground">{{ t('chat.model') }}</div>
               <button
                 v-for="m in models"
                 :key="m.id"
@@ -279,9 +293,12 @@ function skillIcon(name: string) {
               >
                 <span class="flex min-w-0 flex-1 flex-col gap-px">
                   <span class="truncate text-[15px] font-medium">{{ m.label }}</span>
-                  <small class="truncate text-[11px] text-muted-foreground">{{ m.provider }}</small>
+                  <small class="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span class="shrink-0">{{ m.provider }}</span>
+                    <span v-if="modelHint(m)" class="min-w-0 truncate">· {{ modelHint(m) }}</span>
+                  </small>
                 </span>
-                <span class="hidden text-[11px] text-muted-foreground">{{ m.hint }}</span>
+                <span v-if="modelBadge(m)" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ modelBadge(m) }}</span>
                 <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
                   <Check v-if="m.id === currentModel?.id" class="h-[18px] w-[18px]" />
                 </span>
@@ -294,7 +311,7 @@ function skillIcon(name: string) {
             variant="destructive"
             size="icon"
             class="h-9 w-9 rounded-full"
-            title="停止"
+            :title="t('chat.stop')"
             @click="emit('stop')"
           >
             <Square class="h-[13px] w-[13px] fill-current" />
@@ -304,7 +321,7 @@ function skillIcon(name: string) {
             size="icon"
             class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="!canSubmit || !currentModel"
-            title="发送"
+            :title="t('chat.send')"
             @click="handleSubmit"
           >
             <Send class="h-[14px] w-[14px] fill-current" />

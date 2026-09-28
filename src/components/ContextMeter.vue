@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Message } from '../types'
 
 const props = defineProps<{
   messages: Message[]
 }>()
+
+const { t } = useI18n()
 
 const ESTIMATED_CONTEXT_WINDOW = 128_000
 
@@ -36,7 +39,10 @@ const ringStyle = computed(() => ({
 
 const detail = computed(() => {
   const formatted = new Intl.NumberFormat().format(estimatedTokens.value)
-  return `估算上下文 ${formatted} / ${new Intl.NumberFormat().format(ESTIMATED_CONTEXT_WINDOW)} tokens`
+  return t('chat.contextEstimate', {
+    used: formatted,
+    total: new Intl.NumberFormat().format(ESTIMATED_CONTEXT_WINDOW),
+  })
 })
 </script>
 
@@ -44,8 +50,8 @@ const detail = computed(() => {
   <div
     class="inline-flex items-center gap-1 h-5 px-1.5 rounded-full bg-secondary text-muted-foreground text-[10px] font-medium font-mono max-[640px]:hidden cursor-default"
     :class="{
-      'ring-1 ring-amber-400/30': tone === 'warn',
-      'ring-1 ring-red-400/30': tone === 'danger',
+      'ring-1 ring-warning/30': tone === 'warn',
+      'ring-1 ring-danger/30': tone === 'danger',
     }"
     :title="detail"
   >

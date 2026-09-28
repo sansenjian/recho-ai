@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Message, MessageBlock } from '../types'
 import { getRendered, getRenderedText } from '../utils/markdown'
 import { stripThinking } from '../utils/messageText'
@@ -23,6 +24,8 @@ defineEmits<{
   copy: []
   retry: []
 }>()
+
+const { t } = useI18n()
 
 const blocks = computed(() => props.msg.blocks ?? [])
 const hasBlocks = computed(() => props.msg.role === 'assistant' && blocks.value.length > 0)
@@ -98,7 +101,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           <div
             v-else-if="block.type === 'assistant_text' && block.content"
             class="msg-text md block-text mt-1 px-3.5 py-2.5 rounded-md border border-border bg-card text-[13.5px] leading-[1.7] text-foreground font-normal break-words shadow-sm"
-            :class="{ 'border-amber-300 bg-amber-50/80 text-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:border-amber-800': block.status === 'incomplete' }"
+            :class="{ 'border-warning/40 bg-warning/10 text-warning': block.status === 'incomplete' }"
             v-html="textRendered(block)"
           />
         </template>
@@ -118,7 +121,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           size="icon"
           class="h-6 w-6"
           :class="{ 'text-primary opacity-100': copyFeedback }"
-          title="复制"
+          :title="t('chat.copy')"
           @click="$emit('copy')"
         >
           <Check v-if="copyFeedback" class="h-3 w-3" />
@@ -128,7 +131,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           variant="ghost"
           size="icon"
           class="h-6 w-6"
-          title="重试"
+          :title="t('chat.retry')"
           @click="$emit('retry')"
         >
           <RefreshCw class="h-3 w-3" />
@@ -161,7 +164,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           size="icon"
           class="h-6 w-6"
           :class="{ 'text-primary': copyFeedback }"
-          title="复制"
+          :title="t('chat.copy')"
           @click="$emit('copy')"
         >
           <Check v-if="copyFeedback" class="h-3 w-3" />
@@ -171,7 +174,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           variant="ghost"
           size="icon"
           class="h-6 w-6"
-          title="重试"
+          :title="t('chat.retry')"
           @click="$emit('retry')"
         >
           <RefreshCw class="h-3 w-3" />

@@ -44,6 +44,26 @@ const accountSourcePaths = [
   resolve(root, 'src/composables/useAuthSession.ts'),
   resolve(root, 'src/composables/useCredits.ts'),
 ]
+/**
+ * 工作台对话页:ChatHeader/ChatInput/... 已从写死中文改为 i18n,AppShell 是它们的宿主。
+ * 漏掉这一组,对话页会重新长出硬编码中文而门禁无感。
+ * 注意 WorkspaceList 的调用方(ImagioSidebar / ImageCanvasSidebar)自身仍有中文,故只扫描 WorkspaceList 本身。
+ */
+const chatSourcePaths = [
+  resolve(root, 'src/views/AppShell.vue'),
+  resolve(root, 'src/components/ChatHeader.vue'),
+  resolve(root, 'src/components/ChatInput.vue'),
+  resolve(root, 'src/components/ChatMessage.vue'),
+  resolve(root, 'src/components/ChatMessageRail.vue'),
+  resolve(root, 'src/components/ChatSidebar.vue'),
+  resolve(root, 'src/components/StreamingStatus.vue'),
+  resolve(root, 'src/components/ThinkingActivity.vue'),
+  resolve(root, 'src/components/ToolActivity.vue'),
+  resolve(root, 'src/components/ContextMeter.vue'),
+  resolve(root, 'src/components/LinkPreviewCard.vue'),
+  resolve(root, 'src/components/AgentWorkspace.vue'),
+  resolve(root, 'src/components/WorkspaceList.vue'),
+]
 /** 本地化错误门面:与 admin-format.ts 一样,它是唯一允许直接调用 publicClientErrorMessage 的地方。 */
 const clientErrorMessagePath = resolve(root, 'src/utils/client-error-message.ts')
 
@@ -68,7 +88,14 @@ function adminSourceFiles(): string[] {
   const panels = readdirSync(adminDir)
     .filter(name => name.endsWith('.vue'))
     .map(name => join(adminDir, name))
-  return [...panels, adminViewPath, adminFormatPath, ...adminComposablePaths, ...accountSourcePaths]
+  return [
+    ...panels,
+    adminViewPath,
+    adminFormatPath,
+    ...adminComposablePaths,
+    ...accountSourcePaths,
+    ...chatSourcePaths,
+  ]
 }
 
 /**
