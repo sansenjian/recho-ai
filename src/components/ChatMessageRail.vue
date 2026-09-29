@@ -106,11 +106,12 @@ function clockOf(turn: { timestamp: string }) {
 </script>
 
 <template>
+  <!-- 窄于 960px 时整条轨道隐藏：聊天列最宽 880px + 两侧 24px 内边距，只有视口 ≥952px 时左侧沟槽才容得下 48px 宽的轨道。 -->
   <div
     v-if="turns.length"
     ref="railRef"
     data-slot="chat-turn-rail"
-    class="pointer-events-auto absolute bottom-7 left-3 top-7 z-20 hidden w-12 lg:block"
+    class="pointer-events-auto absolute bottom-7 left-3 top-7 z-20 hidden w-12 min-[960px]:block"
     @mouseleave="closeCard"
     @keydown.escape="closeCard"
   >
