@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles } from '@lucide/vue'
 import {
@@ -26,6 +26,7 @@ import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
+import { useReducedMotion } from '../composables/useReducedMotion'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -108,6 +109,15 @@ const railTurns = computed<RailTurn[]>(() => conversationItems.value.map((item, 
   summary: t('chat.turnImages', { count: item.images.length }),
 })))
 
+const prefersReducedMotion = useReducedMotion()
+
+/** 空态给的三个起点：一行文案本身就是一条能直接发出去的提示词，点一下落到输入框。 */
+const promptStarters = computed(() => [
+  { id: 'poster', title: t('imagio.starterPosterTitle'), prompt: t('imagio.starterPosterPrompt') },
+  { id: 'product', title: t('imagio.starterProductTitle'), prompt: t('imagio.starterProductPrompt') },
+  { id: 'sticker', title: t('imagio.starterStickerTitle'), prompt: t('imagio.starterStickerPrompt') },
+])
+
 const conversationRef = ref<HTMLElement | null>(null)
 const activeTurnId = ref<string | null>(null)
 const turnElements = new Map<string, HTMLElement>()
@@ -129,13 +139,44 @@ function updateActiveTurn() {
   activeTurnId.value = pickActiveAnchorId(anchors, scroller.scrollTop) ?? conversationItems.value.at(-1)?.id ?? null
 }
 
+let activeTurnFrame: number | null = null
+
+/**
+ * 滚动一帧可能触发好几次，合帧后再量位置，避免一帧里重复读 offsetTop 触发排版。
+ * requestAnimationFrame 不存在、或像测试里那样被 stub 成不执行回调时退回同步执行，
+ * 否则高亮状态永远不会更新。
+ */
+function scheduleActiveTurnUpdate() {
+  if (activeTurnFrame !== null) return
+  if (typeof requestAnimationFrame !== 'function') {
+    updateActiveTurn()
+    return
+  }
+  activeTurnFrame = requestAnimationFrame(() => {
+    activeTurnFrame = null
+    updateActiveTurn()
+  })
+}
+
+onBeforeUnmount(() => {
+  if (activeTurnFrame === null || typeof cancelAnimationFrame !== 'function') return
+  cancelAnimationFrame(activeTurnFrame)
+  activeTurnFrame = null
+})
+
 function jumpToTurn(id: string) {
   const element = turnElements.get(id)
   // jsdom 没有实现 scrollIntoView，测试里点到标记时不该炸。
   if (element && typeof element.scrollIntoView === 'function') {
-    element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // 开了「减少动效」就不再滚动，只把结果瞬时定位过去。
+    element.scrollIntoView({ behavior: prefersReducedMotion.value ? 'auto' : 'smooth', block: 'start' })
   }
   activeTurnId.value = id
+}
+
+/** 空态的起点卡片：点一下把示例提示词放进输入框，用户接着改就行。 */
+function useStarter(prompt: string) {
+  promptText.value = prompt
 }
 
 watch(conversationItems, () => {
@@ -174,7 +215,7 @@ async function addReferenceFile(file: File) {
     ...pendingReferences.value,
     {
       id: `imagio_reference_${referenceIdSeed}`,
-      title: `参考图 ${pendingReferences.value.length + 1}`,
+      title: t('imagio.referenceTitle', { index: pendingReferences.value.length + 1 }),
       dataUrl,
       fileName: fallbackImageFileName(file),
     },
@@ -187,7 +228,7 @@ async function addReferenceFiles(files: File[] | FileList) {
     try {
       await addReferenceFile(file)
     } catch {
-      pasteMessage.value = '图片读取失败，请重新复制或选择图片。'
+      pasteMessage.value = t('imagio.referenceReadFailed')
     }
   }
 }
@@ -235,7 +276,7 @@ function applyCustomAspectRatio() {
   if (aspectRatioLocked.value) return
   const parts = parseImageAspectRatio(`${customAspectRatioWidth.value}:${customAspectRatioHeight.value}`)
   if (!parts) {
-    customAspectRatioError.value = '请输入 1:3 到 3:1 范围内的正整数比例。'
+    customAspectRatioError.value = t('imagio.ratioRangeError')
     return
   }
   customAspectRatioError.value = null
@@ -252,7 +293,7 @@ async function handlePaste(event: ClipboardEvent) {
   try {
     await addReferenceFile(file)
   } catch {
-    pasteMessage.value = '图片读取失败，请重新复制或选择图片。'
+    pasteMessage.value = t('imagio.referenceReadFailed')
   }
 }
 
@@ -277,17 +318,17 @@ async function handleGenerate() {
 </script>
 
 <template>
-  <div class="imagio-view" :class="{ 'has-conversation': conversationItems.length }" @paste="handlePaste">
-    <div class="workspace-heading" aria-label="当前对话工作区">
+<div class="imagio-view" @paste="handlePaste">
+    <div class="workspace-heading" :aria-label="t('imagio.workspaceAria')">
       <div class="min-w-0">
-        <span class="text-[11px] font-medium text-muted-foreground">工作区</span>
-        <h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || '新工作区' }}</h2>
+<span class="text-[11px] font-medium text-muted-foreground">{{ t('imagio.workspaceLabel') }}</span>
+<h2 class="truncate text-sm font-semibold text-foreground">{{ workspaceName || t('imagio.workspaceUntitled') }}</h2>
       </div>
       <select
         v-if="workspaces?.length"
         class="workspace-mobile-select"
         :value="activeWorkspaceId"
-        aria-label="切换对话工作区"
+:aria-label="t('imagio.workspaceSwitch')"
         @change="emit('select-workspace', ($event.target as HTMLSelectElement).value)"
       >
         <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
@@ -299,8 +340,8 @@ async function handleGenerate() {
       <div
         ref="conversationRef"
         class="imagio-conversation"
-        aria-label="图片生成对话记录"
-        @scroll.passive="updateActiveTurn"
+:aria-label="t('imagio.transcriptAria')"
+@scroll.passive="scheduleActiveTurnUpdate"
       >
         <div
           v-for="item in conversationItems"
@@ -309,7 +350,7 @@ async function handleGenerate() {
           class="conversation-turn"
         >
           <div class="conversation-user">
-            <div v-if="item.references.length" class="conversation-reference-list" aria-label="参考图">
+<div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
               <img
                 v-for="reference in item.references"
                 :key="reference.id"
@@ -323,7 +364,7 @@ async function handleGenerate() {
           <div class="conversation-ai">
             <div class="conversation-avatar" aria-hidden="true">AI</div>
             <div class="conversation-output">
-              <div class="conversation-label">生成结果</div>
+<div class="conversation-label">{{ t('imagio.outputLabel') }}</div>
               <div class="conversation-image-grid">
                 <div
                   v-for="image in item.images"
@@ -337,25 +378,45 @@ async function handleGenerate() {
                     mode="preview"
                     :alt="image.prompt"
                   />
-                  <span v-else class="conversation-image-placeholder">图片处理中...</span>
+<span v-else class="conversation-image-placeholder">{{ t('imagio.imagePending') }}</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-      <ChatMessageRail
-        :turns="railTurns"
-        :active-turn-id="activeTurnId"
-        @select="jumpToTurn"
-      />
-      </div>
+<ChatMessageRail
+:turns="railTurns"
+:active-turn-id="activeTurnId"
+@select="jumpToTurn"
+/>
+</div>
+<div v-else class="imagio-empty">
+<div class="empty-intro">
+<span class="empty-mark" aria-hidden="true"><Sparkles :size="18" stroke-width="1.7" /></span>
+<h3>{{ t('imagio.emptyTitle') }}</h3>
+<p>{{ t('imagio.emptyHint') }}</p>
+</div>
+<div class="empty-starters">
+<button
+v-for="starter in promptStarters"
+:key="starter.id"
+type="button"
+class="starter-card"
+:title="starter.prompt"
+@click="useStarter(starter.prompt)"
+>
+<span class="starter-title">{{ starter.title }}</span>
+<span class="starter-prompt">{{ starter.prompt }}</span>
+</button>
+</div>
+</div>
       <div class="prompt-area">
           <textarea
             v-model="promptText"
-            aria-label="描述你想生成的图片"
+:aria-label="t('imagio.promptAria')"
             class="prompt-input"
-            placeholder="描述你想生成的图片，或附加图片进行编辑......"
+:placeholder="t('imagio.promptPlaceholder')"
             rows="4"
             :disabled="isGenerating"
           />
@@ -369,29 +430,29 @@ async function handleGenerate() {
                 class="reference-add"
                 type="button"
                 :disabled="isGenerating"
-                title="添加参考图"
-                @click="openReferencePicker"
+:title="t('imagio.referenceAdd')"
+@click="openReferencePicker"
               >
                 <Plus :size="16" stroke-width="1.7" />
-                <span>参考图</span>
+<span>{{ t('imagio.referenceAdd') }}</span>
               </button>
               <input
                 ref="fileInputRef"
                 class="reference-file-input"
-                aria-label="添加参考图"
+:aria-label="t('imagio.referenceAdd')"
                 type="file"
                 accept="image/*"
                 multiple
                 @change="handleReferenceInput"
               >
-              <div v-if="pendingReferences.length" class="reference-list" aria-label="参考图">
+<div v-if="pendingReferences.length" class="reference-list" :aria-label="t('imagio.referencesAria')">
                 <div
                   v-for="(reference, index) in pendingReferences"
                   :key="reference.id"
                   class="reference-item"
                 >
                   <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-                  <button type="button" title="移除参考图" @click="removeReference(index)">
+<button type="button" :title="t('imagio.referenceRemove')" @click="removeReference(index)">
                     <X :size="12" stroke-width="2" />
                   </button>
                 </div>
@@ -399,7 +460,7 @@ async function handleGenerate() {
             </div>
 
             <div class="generation-count">
-              <span>生成数量</span>
+<span>{{ t('imagio.generationCount') }}</span>
               <template v-if="canSelectGenerationCount">
                 <button
                   type="button"
@@ -442,7 +503,7 @@ async function handleGenerate() {
                 @click="handleGenerate"
               >
                 <Sparkles :size="18" stroke-width="2" />
-                {{ isGenerating ? '生成中...' : '生成' }}
+{{ isGenerating ? t('imagio.generating') : t('imagio.generate') }}
               </button>
             </div>
           </div>
@@ -452,7 +513,7 @@ async function handleGenerate() {
     <div class="imagio-options">
           <div class="inline-params">
             <div v-if="resolutionOptions && resolutionOptions.length" class="param-group">
-              <label>分辨率</label>
+<label>{{ t('imagio.resolution') }}</label>
               <div class="param-buttons">
                 <button
                   v-for="opt in resolutionOptions"
@@ -467,7 +528,7 @@ async function handleGenerate() {
             </div>
 
             <div v-if="aspectRatioOptions && aspectRatioOptions.length" class="param-group aspect-ratio-group">
-              <label>尺寸 / 比例</label>
+<label>{{ t('imagio.aspectRatio') }}</label>
               <div class="param-buttons">
                 <button
                   v-for="opt in aspectRatioOptions"
@@ -485,23 +546,23 @@ async function handleGenerate() {
                   :disabled="aspectRatioLocked"
                   :class="{ active: customAspectRatioSelected }"
                   class="disabled:cursor-not-allowed disabled:opacity-40"
-                  @click="openCustomAspectRatio"
-                >
-                  自定义
-                </button>
+@click="openCustomAspectRatio"
+>
+{{ t('imagio.customRatio') }}
+</button>
               </div>
               <div v-if="customAspectRatioOpen && !aspectRatioLocked" class="custom-ratio-editor mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2">
-                <span class="text-xs font-medium text-muted-foreground">比例</span>
-                <Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例宽度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+<span class="text-xs font-medium text-muted-foreground">{{ t('imagio.ratio') }}</span>
+<Input v-model="customAspectRatioWidth" type="number" min="1" max="1000" inputmode="numeric" :aria-label="t('imagio.ratioWidthAria')" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
                 <span aria-hidden="true">:</span>
-                <Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" aria-label="自定义比例高度" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
-                <Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">应用</Button>
+<Input v-model="customAspectRatioHeight" type="number" min="1" max="1000" inputmode="numeric" :aria-label="t('imagio.ratioHeightAria')" class="h-8 min-w-0 bg-background px-2 text-center text-xs font-semibold text-foreground" />
+<Button type="button" variant="outline" size="sm" class="h-8 px-3 text-xs font-semibold" @click="applyCustomAspectRatio">{{ t('imagio.applyRatio') }}</Button>
                 <span v-if="customAspectRatioError" class="col-span-full text-[11px] leading-snug text-destructive">{{ customAspectRatioError }}</span>
               </div>
             </div>
 
             <div v-if="qualityOptions && qualityOptions.length" class="param-group">
-              <label>质量</label>
+<label>{{ t('imagio.quality') }}</label>
               <div class="param-buttons">
                 <button
                   v-for="opt in qualityOptions"
@@ -516,26 +577,26 @@ async function handleGenerate() {
             </div>
 
             <div class="param-group">
-              <label>背景</label>
+<label>{{ t('imagio.background') }}</label>
               <div class="param-buttons">
                 <button
                   type="button"
                   :class="{ active: !transparentBackground }"
-                  @click="emit('update:transparent-background', false)"
-                >
-                  不透明
-                </button>
+@click="emit('update:transparent-background', false)"
+>
+{{ t('imagio.opaque') }}
+</button>
                 <button
                   type="button"
                   :disabled="!transparentAvailable"
                   :class="{ active: transparentBackground }"
                   class="disabled:cursor-not-allowed disabled:opacity-40"
-                  @click="emit('update:transparent-background', true)"
-                >
-                  透明
-                </button>
+@click="emit('update:transparent-background', true)"
+>
+{{ t('imagio.transparent') }}
+</button>
               </div>
-              <p v-if="!transparentAvailable" class="param-hint">当前模型不支持透明背景</p>
+<p v-if="!transparentAvailable" class="param-hint">{{ t('imagio.transparentUnavailable') }}</p>
             </div>
           </div>
     </div>
@@ -544,7 +605,14 @@ async function handleGenerate() {
 </template>
 
 <style scoped>
+/*
+ * 工作台把它自己的宽度当容器：左侧工作区列表展开后，同样的视口留给对话的宽度会缩水，
+ * 媒体查询却仍按视口判断，参数栏就不会折叠、轨道也会压到对话列上。
+ * 声明成容器后，下面的断点全部按「对话实际拿到的宽度」判断。
+ */
 .imagio-view {
+  container-type: inline-size;
+  container-name: imagio-view;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -580,7 +648,7 @@ async function handleGenerate() {
   gap: 12px;
   width: 100%;
   padding: 16px 28px 12px;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid var(--color-hairline);
   background: transparent;
 }
 
@@ -589,7 +657,7 @@ async function handleGenerate() {
   max-width: 55%;
   min-height: 36px;
   padding: 0 8px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: 6px;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -605,7 +673,7 @@ async function handleGenerate() {
   min-height: 0;
   order: 2;
   padding: 24px 20px;
-  border-left: 1px solid hsl(var(--border) / 0.6);
+  border-left: 1px solid var(--color-hairline);
   background: hsl(var(--background) / 0.72);
   backdrop-filter: blur(20px);
   overflow-y: auto;
@@ -615,6 +683,8 @@ async function handleGenerate() {
  * 轮次轨道的宿主：轨道绝对定位在左侧沟槽里不随内容滚动，所以外层相对定位、
  * 滚动交给里面那一层。≥960px 时两侧各留 56px，轨道自己也在同样的宽度下显示；
  * 留白对称，里面的对话列才仍然居中，不会一边贴边。
+ * 宽度判断一律用容器查询而不是视口：左侧工作区栏展开后 1300px 的视口只剩
+ * 约 1040px 给对话，此时按视口判断就会既保住 320px 参数栏、又错留 56px 沟槽。
  */
 .imagio-transcript {
   position: relative;
@@ -624,10 +694,20 @@ async function handleGenerate() {
   min-height: 0;
 }
 
-@media (min-width: 960px) {
+@container imagio-view (min-width: 960px) {
   .imagio-transcript {
     padding-left: 56px;
     padding-right: 56px;
+  }
+}
+
+/*
+ * 轨道自己的显示阈值仍是 960px；容器比视口窄时在这里整条收掉，
+ * 否则它会压在对话列上。
+ */
+@container imagio-view (max-width: 959px) {
+  .imagio-transcript > [data-slot='chat-turn-rail'] {
+    display: none;
   }
 }
 
@@ -668,10 +748,10 @@ async function handleGenerate() {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: hsl(var(--foreground));
-  color: hsl(var(--background));
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
@@ -683,7 +763,7 @@ async function handleGenerate() {
   margin: 2px 0 7px;
   color: hsl(var(--muted-foreground));
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .conversation-image-grid {
@@ -699,7 +779,7 @@ async function handleGenerate() {
   aspect-ratio: 1 / 1;
   padding: 0;
   overflow: hidden;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg, 8px);
   background: transparent;
   cursor: pointer;
@@ -721,16 +801,19 @@ async function handleGenerate() {
   padding: 12px;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .conversation-user {
   align-self: flex-end;
   width: min(72%, 560px);
   padding: 12px 14px;
-  border-radius: 16px 16px 4px 16px;
-  background: hsl(var(--foreground));
-  color: hsl(var(--background));
+  border-radius: 18px 18px 6px 18px;
+  /* 分层靠留白和极淡描边，不靠反白：纯黑块把整屏最重的对比度放在了最该安静的对话区。 */
+  border: 1px solid hsl(var(--foreground) / 0.08);
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
 }
 
 .conversation-user p {
@@ -762,11 +845,11 @@ async function handleGenerate() {
   flex: none;
   width: min(920px, 100%);
   margin: auto auto 0;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg, 8px);
   background: hsl(var(--card));
   padding: 12px 14px;
-  box-shadow: var(--shadow-sm);
+  /* 输入框是唯一需要「浮起」的表面，焦点环已经承担了这个职责，不需要静态投影。 */
 }
 
 .prompt-input {
@@ -817,12 +900,12 @@ async function handleGenerate() {
   gap: 7px;
   min-height: 36px;
   padding: 0 10px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -854,7 +937,7 @@ async function handleGenerate() {
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md, 7px);
   overflow: hidden;
   background: hsl(var(--card));
@@ -887,7 +970,7 @@ async function handleGenerate() {
   margin: 0 0 4px;
   color: hsl(var(--destructive));
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 /* Inline parameter panel (shown on narrow viewports) */
@@ -896,7 +979,7 @@ async function handleGenerate() {
   max-width: 100%;
   padding: 16px;
   background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg, 8px);
 }
 
@@ -913,7 +996,7 @@ async function handleGenerate() {
   margin-bottom: 8px;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .param-buttons {
@@ -930,12 +1013,12 @@ async function handleGenerate() {
 .param-buttons button {
   min-height: 30px;
   padding: 4px 14px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -960,8 +1043,11 @@ async function handleGenerate() {
   line-height: 1.4;
 }
 
-/* Match ImageCanvas settings-sidebar collapse breakpoint. */
-@media (max-width: 1180px) {
+/*
+ * 参数栏的折叠阈值跟着容器走：侧栏展开时 1180px 的视口只剩一千出头留给对话，
+ * 按视口判断会让 320px 的参数栏继续占着位置。
+ */
+@container imagio-view (max-width: 1180px) {
   .imagio-body {
     flex-direction: column;
   }
@@ -979,7 +1065,7 @@ async function handleGenerate() {
     order: -1;
     padding: 8px 16px;
     border-left: 0;
-    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    border-bottom: 1px solid var(--color-hairline);
     background: transparent;
     overflow: visible;
   }
@@ -1038,18 +1124,18 @@ async function handleGenerate() {
   white-space: nowrap;
   color: hsl(var(--muted-foreground));
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .generation-count button {
   min-height: 30px;
   padding: 0 8px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md, 7px);
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
@@ -1073,7 +1159,7 @@ async function handleGenerate() {
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .generate-btn {
@@ -1089,7 +1175,7 @@ async function handleGenerate() {
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
   font-family: inherit;
@@ -1241,9 +1327,127 @@ async function handleGenerate() {
   }
 }
 
-@media (max-height: 520px) and (max-width: 1180px) {
-  .imagio-options {
-    max-height: 28%;
+/*
+ * 空态：还没有任何生成记录时，落在「从一个想法开始」这一屏。
+ * 卡片只用一层极淡描边划出边界，hover 时才补 5% 的前景填充，
+ * 和对话区同一套克制语言——没有阴影、没有底色块，视觉重心仍在输入框。
+ */
+.imagio-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 28px;
+  width: min(920px, 100%);
+  min-width: 0;
+  margin: 0 auto 18px;
+  padding: 12px 8px 4px;
+}
+
+.empty-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  border-radius: 10px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.empty-intro h3 {
+  margin: 0;
+  color: hsl(var(--foreground));
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.empty-intro p {
+  max-width: 46ch;
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.empty-starters {
+  display: grid;
+  gap: 12px;
+}
+
+.starter-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 106px;
+  padding: 16px;
+  border: 1px solid hsl(var(--foreground) / 0.06);
+  border-radius: 20px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.starter-card:hover {
+  border-color: hsl(var(--foreground) / 0.2);
+  background: hsl(var(--foreground) / 0.05);
+}
+
+.starter-card:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+
+.starter-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.starter-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 760px) {
+  .imagio-empty {
+    gap: 20px;
+    margin-bottom: 12px;
+  }
+
+  .starter-card {
+    min-height: 0;
+    padding: 14px;
+    border-radius: 16px;
+  }
+}
+
+/* 开了「减少动效」就不再做过场，hover 直接切换终态。 */
+@media (prefers-reduced-motion: reduce) {
+  .starter-card {
+    transition: none;
+  }
+}
+
+@media (max-height: 520px) {
+  @container imagio-view (max-width: 1180px) {
+    .imagio-options {
+      max-height: 28%;
+    }
   }
 }
 </style>

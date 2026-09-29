@@ -20,6 +20,7 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { pickActiveAnchorId } from '../utils/chat-rail'
+import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
@@ -114,8 +115,14 @@ function updateActiveRailMessage() {
   activeRailMessageId.value = pickActiveAnchorId(anchors, scroller.scrollTop) ?? messages.value.at(-1)?.id ?? null
 }
 
+const prefersReducedMotion = useReducedMotion()
+
 function jumpToMessage(id: string) {
-  messageElements.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // 开了「减少动效」就不再平滑滚动，只把结果瞬时定位过去。
+  messageElements.get(id)?.scrollIntoView({
+    behavior: prefersReducedMotion.value ? 'auto' : 'smooth',
+    block: 'start',
+  })
   activeRailMessageId.value = id
 }
 

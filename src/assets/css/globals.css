@@ -66,6 +66,16 @@
   }
 }
 
+/*
+ * codex 风格的基础刻度：层级靠更细的线、更慢的位移表达，而不是更重的阴影。
+ * hairline 是描边的统一取值（border 的 60%），和 --border 一样随主题切换。
+ */
+@theme static {
+  --color-hairline: hsl(var(--border) / 0.6);
+  --ease-codex: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-codex: 180ms;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

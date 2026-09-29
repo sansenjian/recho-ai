@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 
 interface ModelOption {
   value: string
@@ -18,6 +19,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
+const { t } = useI18n()
+
 const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 
@@ -25,7 +28,7 @@ const options = computed(() => props.options ?? [])
 const defaultOption = computed(() => options.value.find(option => option.value === props.defaultModel) ?? null)
 const recommendedOptions = computed(() => options.value.filter(option => option.value !== props.defaultModel))
 const selectedOption = computed(() => options.value.find(option => option.value === props.modelValue) ?? null)
-const selectedLabel = computed(() => selectedOption.value?.label || defaultOption.value?.label || '选择模型')
+const selectedLabel = computed(() => selectedOption.value?.label || defaultOption.value?.label || t('imagio.modelSelect'))
 
 function selectModel(value: string) {
   emit('update:modelValue', value)
@@ -65,11 +68,11 @@ onBeforeUnmount(() => {
       <ChevronDown class="h-3.5 w-3.5 shrink-0 opacity-70" />
     </button>
 
-    <div v-if="open && options.length" class="image-model-menu" role="listbox" aria-label="选择模型">
-      <div class="image-model-menu-title">选择模型</div>
+<div v-if="open && options.length" class="image-model-menu" role="listbox" :aria-label="t('imagio.modelSelect')">
+<div class="image-model-menu-title">{{ t('imagio.modelSelect') }}</div>
 
       <div v-if="defaultOption" class="image-model-group">
-        <div class="image-model-group-label">默认</div>
+<div class="image-model-group-label">{{ t('imagio.modelGroupDefault') }}</div>
         <button
           type="button"
           role="option"
@@ -83,7 +86,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="recommendedOptions.length" class="image-model-group">
-        <div class="image-model-group-label">推荐模型集</div>
+<div class="image-model-group-label">{{ t('imagio.modelGroupRecommended') }}</div>
         <button
           v-for="option in recommendedOptions"
           :key="option.value"
@@ -116,10 +119,10 @@ onBeforeUnmount(() => {
   color: hsl(var(--foreground));
   font: inherit;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: background-color var(--dur-codex, 180ms) var(--ease-codex, ease-out);
 }
 
 .image-model-trigger:hover:not(:disabled),
@@ -146,7 +149,7 @@ onBeforeUnmount(() => {
   max-height: min(430px, calc(100vh - 180px));
   overflow-y: auto;
   padding: 8px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--color-hairline);
   border-radius: 16px;
   background: hsl(var(--popover));
   box-shadow: 0 18px 60px hsl(var(--foreground) / 0.14);
