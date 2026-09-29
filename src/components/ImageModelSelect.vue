@@ -369,7 +369,12 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 0;
   z-index: 50;
-  width: min(max(100%, 300px), calc(100vw - 24px));
+  /* 菜单宽度由内容决定,不跟随 trigger:旧值 max(100%, 300px) 会在 trigger 被
+     撑开时让菜单一起变长,整行铺满。220px 下限保证标签短时也有菜单的样子,
+     300px 上限 + 视口钳制保证长模型名不会撑破窄窗口。 */
+  width: max-content;
+  min-width: min(220px, calc(100vw - 24px));
+  max-width: min(300px, calc(100vw - 24px));
   max-height: var(--image-model-menu-max-height, 360px);
   overflow-y: auto;
   padding: 8px;
@@ -426,6 +431,11 @@ onBeforeUnmount(() => {
   padding: 6px 10px 2px;
   color: hsl(var(--muted-foreground));
   font-size: 11px;
+}
+
+/* flex 项默认 min-width:auto,不加这句长模型名会顶破 300px 上限而不是省略号收尾。 */
+.image-model-option > span {
+  min-width: 0;
 }
 
 .image-model-option {

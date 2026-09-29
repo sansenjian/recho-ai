@@ -1110,10 +1110,12 @@ class="starter-card"
   flex: 1 1 auto;
 }
 
+/* 定宽而不是 flex: 1 1 80px:后者在 flex 主轴上覆盖 width,会把模型选择器
+   一路拉到整行宽(实测 1505px 视口下 445px),和「生成」按钮之间留下大片空白。 */
 .prompt-model-select {
-  width: min(150px, 100%);
+  width: min(180px, 100%);
   min-width: 0;
-  flex: 1 1 80px;
+  flex: 0 1 auto;
 }
 
 .generation-count {
@@ -1242,8 +1244,9 @@ class="starter-card"
   }
 
   .prompt-model-select {
-    flex: 1;
+    flex: 1 1 auto;
     width: auto;
+    max-width: 100%;
   }
 
   .generate-btn {
