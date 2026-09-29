@@ -619,11 +619,13 @@ async function handleGenerate() {
 
 /*
  * 轮次轨道的宿主：轨道绝对定位在左侧沟槽里不随内容滚动，所以外层相对定位、
- * 滚动交给里面那一层。≥960px 时预留 56px 沟槽，轨道自己也在同样的宽度下显示。
+ * 滚动交给里面那一层。≥960px 时两侧各留 56px，轨道自己也在同样的宽度下显示；
+ * 留白对称，里面的对话列才仍然居中，不会一边贴边。
  */
 .imagio-transcript {
   position: relative;
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
@@ -631,6 +633,7 @@ async function handleGenerate() {
 @media (min-width: 960px) {
   .imagio-transcript {
     padding-left: 56px;
+    padding-right: 56px;
   }
 }
 

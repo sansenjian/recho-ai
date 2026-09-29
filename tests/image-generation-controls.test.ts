@@ -10,6 +10,7 @@ import ImagioView from '../src/components/ImagioView.vue'
 import ImageCanvasNode from '../src/components/ImageCanvasNode.vue'
 import ImageCanvasGalleryStage from '../src/components/ImageCanvasGalleryStage.vue'
 import { isCustomImageAspectRatio, parseImageAspectRatio } from '../src/lib/image-aspect-ratio'
+import i18n from '../src/i18n'
 
 const resolutionOptions = [
   { value: 'auto' as const, label: 'Auto' },
@@ -69,6 +70,7 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
       },
+      global: { plugins: [i18n] },
     })
     const resolutionGroup = wrapper.findAll('.param-group')
       .find(group => group.find('label').text() === '分辨率')
@@ -90,6 +92,7 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
       },
+      global: { plugins: [i18n] },
     })
     const ratioGroup = wrapper.findAll('.param-group')
       .find(group => group.find('label').text() === '尺寸 / 比例')
@@ -110,6 +113,7 @@ describe('image generation Auto resolution controls', () => {
         aspectRatio: 'auto',
         quality: 'medium',
       },
+      global: { plugins: [i18n] },
     })
 
     await wrapper.find('.prompt-input').setValue('生成一张海报')
@@ -136,6 +140,7 @@ describe('image generation Auto resolution controls', () => {
           { value: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
         ],
       },
+      global: { plugins: [i18n] },
     })
 
     const actions = wrapper.get('.prompt-actions-end')
@@ -167,6 +172,7 @@ describe('image generation Auto resolution controls', () => {
         ...imagioGenerationProps(),
         generatedImages: [generatedImage],
       },
+      global: { plugins: [i18n] },
     })
 
     expect(wrapper.find('.imagio-conversation').exists()).toBe(true)
@@ -183,6 +189,7 @@ describe('image generation Auto resolution controls', () => {
         resolutionOptions,
         aspectRatioOptions,
       },
+      global: { plugins: [i18n] },
     })
 
     const ratioGroup = wrapper.findAll('.param-group')
@@ -208,6 +215,7 @@ describe('image generation Auto resolution controls', () => {
       props: {
         ...imagioGenerationProps(generate),
       },
+      global: { plugins: [i18n] },
     })
 
     await wrapper.find('.prompt-input').setValue('生成一张海报')
@@ -248,6 +256,7 @@ describe('image generation Auto resolution controls', () => {
         resolveMentionToken: () => null,
       },
       global: {
+        plugins: [i18n],
         stubs: { AuthenticatedImage: true },
       },
     })
@@ -292,6 +301,7 @@ describe('image generation Auto resolution controls', () => {
         resolveMentionToken: () => null,
       },
       global: {
+        plugins: [i18n],
         stubs: { AuthenticatedImage: true },
       },
     })
@@ -335,6 +345,7 @@ describe('image generation Auto resolution controls', () => {
         resolveMentionToken: () => null,
       },
       global: {
+        plugins: [i18n],
         stubs: { AuthenticatedImage: true },
       },
     })
@@ -390,6 +401,7 @@ describe('canvas generation node model and transparency controls', () => {
         resolveMentionToken: () => null,
       },
       global: {
+        plugins: [i18n],
         stubs: { AuthenticatedImage: true },
       },
     })
@@ -536,6 +548,7 @@ describe('image gallery failure recovery', () => {
         qualityOptions: [],
         isImageDownloading: () => false,
       },
+      global: { plugins: [i18n] },
     })
 
     expect(wrapper.text()).toContain('作品广场加载失败，请稍后重试。')
@@ -562,6 +575,7 @@ describe('image gallery failure recovery', () => {
         qualityOptions: [],
         isImageDownloading: () => false,
       },
+      global: { plugins: [i18n] },
     })
 
     expect(wrapper.text()).not.toContain('作品广场加载失败，请稍后重试。')
