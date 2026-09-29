@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
+import { MENU_MAX_HEIGHT, placeMenu } from '../utils/floating-placement'
+
 interface ModelOption {
   value: string
   label: string
@@ -33,6 +35,51 @@ const activeIndex = ref(-1)
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
 const listboxRef = ref<HTMLElement | null>(null)
+
+// 菜单朝上还是朝下、最高能有多高,由触发器的真实位置量出来。
+// 纯 CSS 的 `bottom: 100%` 配一个写死的 calc 高度,窗口一变矮或菜单一变长就会被顶出视口。
+const placementSide = ref<'up' | 'down'>('up')
+const menuMaxHeight = ref(MENU_MAX_HEIGHT)
+const menuShift = ref(0)
+const menuStyle = computed(() => ({
+  '--image-model-menu-max-height': `${menuMaxHeight.value}px`,
+  '--image-model-menu-shift': `${menuShift.value}px`,
+}))
+
+let resizeObserver: ResizeObserver | null = null
+
+// 触发器的视口位置会随滚动/窗口变化,所以每次开菜单、每次 resize/scroll 都要重新量。
+function updatePlacement() {
+  const trigger = triggerRef.value
+  const menu = listboxRef.value
+  if (!open.value || !trigger || !menu) return
+
+  const triggerRect = trigger.getBoundingClientRect()
+  const placement = placeMenu({
+    triggerTop: triggerRect.top,
+    triggerBottom: triggerRect.bottom,
+    // 这里刻意用布局盒而不是 getBoundingClientRect:入场动画带 scale(0.98),
+    // 量到的是缩放后的宽度,右边距会算少约 2%;offsetLeft/offsetWidth 不含 transform,
+    // 而且天然就是「未平移」的自然位置,不必再手动减掉已施加的位移。
+    menuLeft: (rootRef.value?.getBoundingClientRect().left ?? 0) + menu.offsetLeft,
+    menuWidth: menu.offsetWidth,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  })
+
+  placementSide.value = placement.side
+  menuMaxHeight.value = placement.maxHeight
+  menuShift.value = placement.shiftX
+}
+
+// 选项换行、字体度量变化、窗口缩放都会改变菜单尺寸,所以两个元素都要盯住。
+function observeMenu() {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!resizeObserver) resizeObserver = new ResizeObserver(updatePlacement)
+  resizeObserver.disconnect()
+  if (listboxRef.value) resizeObserver.observe(listboxRef.value)
+  if (triggerRef.value) resizeObserver.observe(triggerRef.value)
+}
 
 const options = computed(() => props.options ?? [])
 const defaultOption = computed(() => options.value.find(option => option.value === props.defaultModel) ?? null)
@@ -68,7 +115,12 @@ function openMenu(position: 'selected' | 'first' | 'last' = 'selected') {
   else if (position === 'last') activeIndex.value = optionList.value.length - 1
   else activeIndex.value = selectedIndex.value >= 0 ? selectedIndex.value : 0
   // 焦点停在列表本身而不是逐个选项上,当前项由 aria-activedescendant 播报。
-  void nextTick(() => listboxRef.value?.focus())
+  void nextTick(() => {
+    listboxRef.value?.focus()
+    // 菜单此刻才有真实尺寸,量完再决定朝哪边弹、能有多高。
+    updatePlacement()
+    observeMenu()
+  })
 }
 
 function closeMenu(restoreFocus = false) {
@@ -161,11 +213,18 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('keydown', handleDocumentKeydown)
+  window.addEventListener('resize', updatePlacement)
+  // 捕获阶段:菜单所在的滚动容器未必是 window,祖先滚动同样要重算。
+  window.addEventListener('scroll', updatePlacement, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
+  window.removeEventListener('resize', updatePlacement)
+  window.removeEventListener('scroll', updatePlacement, true)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 </script>
 
@@ -192,6 +251,8 @@ onBeforeUnmount(() => {
       ref="listboxRef"
       class="image-model-menu"
       role="listbox"
+      :data-side="placementSide"
+      :style="menuStyle"
       :aria-labelledby="titleId"
       :aria-activedescendant="activeDescendant"
       tabindex="-1"
@@ -307,11 +368,9 @@ onBeforeUnmount(() => {
 .image-model-menu {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 8px);
   z-index: 50;
-  width: min(max(100%, 300px), calc(100vw - 32px));
-  max-height: min(430px, calc(100vh - 180px));
-  max-height: min(430px, calc(100dvh - 180px));
+  width: min(max(100%, 300px), calc(100vw - 24px));
+  max-height: var(--image-model-menu-max-height, 360px);
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--color-hairline);
@@ -320,8 +379,20 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 60px hsl(var(--foreground) / 0.14);
   scrollbar-color: hsl(var(--muted-foreground) / 0.22) transparent;
   scrollbar-width: thin;
-  transform-origin: bottom right;
+  /* 水平夹取挂在 translate 上,把 transform 完整留给入场动画——两者会互相覆盖。 */
+  translate: var(--image-model-menu-shift, 0px) 0;
   animation: image-model-menu-in 160ms var(--ease-codex, ease-out) both;
+}
+
+/* 上方够就向上弹(贴着输入框),不够再翻到下方;8px 与 placeMenu 的 MENU_GAP 一致。 */
+.image-model-menu[data-side='up'] {
+  bottom: calc(100% + 8px);
+  transform-origin: bottom right;
+}
+
+.image-model-menu[data-side='down'] {
+  top: calc(100% + 8px);
+  transform-origin: top right;
 }
 
 .image-model-menu:focus {
@@ -392,14 +463,7 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-@media (max-width: 640px) {
-  .image-model-menu {
-    right: auto;
-    left: 0;
-    transform-origin: bottom left;
-  }
-}
-
+/* 窄屏不再靠断点挪位置:placeMenu 已按视口边距夹取。 */
 @media (prefers-reduced-motion: reduce) {
   .image-model-menu {
     animation: none;
