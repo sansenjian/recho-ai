@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AuthenticatedImage from '../src/components/AuthenticatedImage.vue'
 import ImagioView from '../src/components/ImagioView.vue'
 import i18n from '../src/i18n'
+import { fetchAuthenticatedImageObjectUrl } from '../src/lib/authenticated-image-source'
 import type { GeneratedImage } from '../src/types/image'
 
 // Keep the guard and storage-path resolution real, but never touch the network.
@@ -56,8 +57,29 @@ describe('Imagio conversation turns', () => {
     const cell = wrapper.find('.conversation-image')
 
     expect(cell.exists()).toBe(true)
-    expect(cell.findComponent(AuthenticatedImage).exists()).toBe(true)
+    const image = cell.findComponent(AuthenticatedImage)
+    expect(image.exists()).toBe(true)
+    // 只断言「子组件存在」是不够的：模式退化成 thumbnail、或干脆绕过鉴权加载都能过。
+    expect(image.props('mode')).toBe('preview')
     expect(cell.text()).not.toContain('图片处理中')
+  })
+
+  it('fetches the authenticated preview path instead of the raw storage path', async () => {
+    const fetchMock = vi.mocked(fetchAuthenticatedImageObjectUrl)
+    fetchMock.mockClear()
+    mountView([generatedImage({
+      storagePath: 'user/image-1.png',
+      previewPath: 'preview/image-1.png',
+    })])
+
+    await flushPromises()
+
+    // preview 模式必须先取 previewPath；只有它失败才回落到 storagePath（顺序即优先级）。
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+      'preview/image-1.png',
+      'user/image-1.png',
+    ])
+    expect(fetchMock).toHaveBeenCalledWith('preview/image-1.png', expect.anything())
   })
 
   it('keeps the placeholder when a result has no image source at all', () => {

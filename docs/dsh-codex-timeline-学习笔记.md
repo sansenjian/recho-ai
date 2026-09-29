@@ -27,7 +27,7 @@ dsh-codex-timeline 是 **DeepSeek Harness Web 的第三方插件**：Codex 风�
 | 规模 | 40 个跟踪文件；`lib/client.js` 1086 行、`lib/index.js` 726 行、`src/navigation-model.mjs` 875 行 |
 | 技术栈 | 宿主与客户端均为已提交的构建产物（JavaScript），客户端是 React 18；插件系统为 Cordis |
 | 构建 | `npm run build` 只做两件事：规范化行尾 + 校验产物。**仓库里没有 `lib/*.js` 对应的 TypeScript 源码**，`lib/index.js` 内保留 `//#region src/settings.ts` 这类溯源注释 |
-| 包管理 | pnpm；`engines.node = ^22.19.0 || >=24.0.0` |
+| 包管理 | pnpm；`engines.node = ^22.19.0 \|\| >=24.0.0` |
 | 测试 | Node 原生 `node --test tests/*.test.mjs`，**没有 vitest / jest** |
 | 宿主兼容 | DSH `0.1.7-rc.1` / `0.1.7-rc.2` |
 | 版本矩阵 | DSH `0.1.7-rc.*` → 插件 `0.6.2 / 0.6.3`；DSH `0.1.2-alpha.3` → 插件 `0.6.0`；更老的 DSH → 插件 `0.5.5` |
@@ -221,7 +221,7 @@ CHANGELOG 里有一条**特别值得记下的踩坑**：
 | 语法有效性 | `new vm.Script(client)` 证明 bundle 是合法 JS（只编译、不执行） |
 | 清单一致性 | 校验 `name` / `version` / `private` / `dsh.bundle.patch` |
 | 策略断言 | patch 必须 insert 且不得出现 `id: ui-conversation` 或 `disabled: true` |
-| 契约时效 | `compatibility.json` 与 `package.json` 的 `compatibilityMode` 必须一致 |
+| 契约时效 | `compatibility.json` 与 `package.json` 的 `compatibilityMode` 必须一致；且 `compatibility.dsh.version` 固定指向 DSH `0.1.7-rc.1`，`scripts/verify-dist.mjs` 一旦读到别的版本就判为 stale |
 | 模块标识 | 客户端 bundle 必须以 `window.__ModuleLoader__.load({ id: "dsh-codex-timeline" ...` 开头 |
 | **必须存在** | 约 28 条子串：插槽 id、DOM 选择器、`loadThrough` / `fork` 调用、settings 键名、aria 属性、`prefers-reduced-motion`、`"disabled after startup failure"` 等 |
 | **绝不允许** | 约 17 条子串：旧实现残留（`AdditiveTurnNavigation`、`createPortal`、`LegacyImageGallery`）、私有内部名（`RhpIHW_rail`、`data-chat-anchor-key`、`landingFlash`）、宿主包（`@deepseek-ai/dsh-client-ui-chat` 等）、**本机路径 `E:\Program`、`C:\Users`** |
@@ -294,7 +294,7 @@ recho-ai 现在只有 `scripts/prepare-spa-fallbacks.mjs`（生成 6 条路由�
 | `dist/assets/*.js` 在 production 构建下必须出现 `VITE_API_BASE_URL` 的值 | **正是本次 Vercel 事故**：产物里没有网关地址 => 前端退化到同源 `/api` => 404 |
 | 产物中不得出现 `C:\Users` / `D:\Desktop` 等本机绝对路径 | 本地路径泄漏到发布包 |
 | `dist/` 必须包含 6 条 SPA 兜底副本 | `prepare-spa-fallbacks.mjs` 静默失败时无人察觉 |
-| 产物中不得出现 `VITE_SUPABASE_SERVICE_ROLE_KEY` 等仅服务端变量名 | 防止把服务端密钥变量打进前端 |
+| 产物中不得内联 `SUPABASE_SERVICE_ROLE_KEY` 一类服务端密钥的**值**；只扫 `VITE_*` 变量名只能算补充检查 | Vite 会把 `VITE_*` 的值内联进客户端 bundle，变量名本身在压缩后可能消失，所以扫变量名证明不了密钥没进产物 |
 
 ### 9.2 管理端设置改用 revision CAS
 
