@@ -120,13 +120,13 @@ function clockOf(turn: { timestamp: string }) {
     v-if="turns.length"
     ref="railRef"
     data-slot="chat-turn-rail"
-    class="pointer-events-auto absolute bottom-7 left-3 top-7 z-20 hidden w-12 min-[960px]:block"
+    class="pointer-events-auto absolute bottom-7 left-3 top-7 z-20 hidden w-12 min-[960px]:flex min-[960px]:flex-col"
     @mouseleave="closeCard"
     @keydown.escape="closeCard"
   >
     <nav
       :aria-label="t('chat.quickNav')"
-      class="flex max-h-full w-12 flex-col items-start gap-2 overflow-y-auto py-1 pl-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      class="my-auto flex max-h-full w-12 flex-col items-start gap-2 overflow-y-auto py-1 pl-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       <button
         v-for="(turn, turnIndex) in turns"
