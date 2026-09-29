@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles } from '@lucide/vue'
 import {
   clipboardImageFile,
@@ -22,7 +23,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import ChatMessageRail from './ChatMessageRail.vue'
 import type { NamedWorkspace } from '../lib/workspace-list'
+import type { RailTurn } from '../utils/chat-rail'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -88,6 +91,64 @@ const conversationItems = computed(() => {
 
   return [...groups.values()]
 })
+
+const { t } = useI18n()
+
+/**
+ * 工作台按生成批次分轮，所以镜像对话页的语义：一格 = 一条提问。
+ * 这里的「回复」是图片而不是正文，answer 留空，用 summary 告诉卡片本轮出了几张图。
+ */
+const railTurns = computed<RailTurn[]>(() => conversationItems.value.map((item, index) => ({
+  id: item.id,
+  messageIndex: index,
+  question: item.prompt,
+  answer: '',
+  timestamp: item.timestamp,
+  toolCount: 0,
+  summary: t('chat.turnImages', { count: item.images.length }),
+})))
+
+const conversationRef = ref<HTMLElement | null>(null)
+const activeTurnId = ref<string | null>(null)
+const turnElements = new Map<string, HTMLElement>()
+
+function setTurnElement(id: string, element: Element | null) {
+  if (element instanceof HTMLElement) turnElements.set(id, element)
+  else turnElements.delete(id)
+}
+
+/** 与对话页同一套判定：取离视口顶部（留 32px 余量）最近的那一轮作为当前轮。 */
+function updateActiveTurn() {
+  const scroller = conversationRef.value
+  if (!scroller) return
+  let active: string | null = null
+  let closestOffset = Number.POSITIVE_INFINITY
+  for (const item of conversationItems.value) {
+    const element = turnElements.get(item.id)
+    if (!element) continue
+    const offset = Math.abs(element.offsetTop - scroller.scrollTop - 32)
+    if (offset < closestOffset) {
+      closestOffset = offset
+      active = item.id
+    }
+  }
+  activeTurnId.value = active ?? conversationItems.value.at(-1)?.id ?? null
+}
+
+function jumpToTurn(id: string) {
+  const element = turnElements.get(id)
+  // jsdom 没有实现 scrollIntoView，测试里点到标记时不该炸。
+  if (element && typeof element.scrollIntoView === 'function') {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  activeTurnId.value = id
+}
+
+watch(conversationItems, () => {
+  void nextTick(updateActiveTurn)
+})
+
+onMounted(updateActiveTurn)
 
 function canDisplayGeneratedImage(image: GeneratedImage) {
   return hasImageSource(image, 'preview')
@@ -240,10 +301,17 @@ async function handleGenerate() {
     </div>
     <div class="imagio-body">
       <div class="imagio-main">
-      <div v-if="conversationItems.length" class="imagio-conversation" aria-label="图片生成对话记录">
+      <div v-if="conversationItems.length" class="imagio-transcript">
+      <div
+        ref="conversationRef"
+        class="imagio-conversation"
+        aria-label="图片生成对话记录"
+        @scroll.passive="updateActiveTurn"
+      >
         <div
           v-for="item in conversationItems"
           :key="item.id"
+          :ref="element => setTurnElement(item.id, element as Element | null)"
           class="conversation-turn"
         >
           <div class="conversation-user">
@@ -281,6 +349,12 @@ async function handleGenerate() {
             </div>
           </div>
         </div>
+      </div>
+      <ChatMessageRail
+        :turns="railTurns"
+        :active-turn-id="activeTurnId"
+        @select="jumpToTurn"
+      />
       </div>
       <div class="prompt-area">
           <textarea
@@ -543,12 +617,31 @@ async function handleGenerate() {
   overflow-y: auto;
 }
 
-.imagio-conversation {
+/*
+ * 轮次轨道的宿主：轨道绝对定位在左侧沟槽里不随内容滚动，所以外层相对定位、
+ * 滚动交给里面那一层。≥960px 时预留 56px 沟槽，轨道自己也在同样的宽度下显示。
+ */
+.imagio-transcript {
+  position: relative;
   display: flex;
   flex: 1;
+  min-height: 0;
+}
+
+@media (min-width: 960px) {
+  .imagio-transcript {
+    padding-left: 56px;
+  }
+}
+
+.imagio-conversation {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 28px;
   width: min(920px, 100%);
+  min-width: 0;
   min-height: 0;
   margin: 0 auto 18px;
   overflow-y: auto;

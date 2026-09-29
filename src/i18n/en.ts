@@ -655,6 +655,7 @@ export default {
     turnCounter: 'Turn {index} of {total}',
     turnPending: 'Generating reply',
     turnTools: '{count} tool calls',
+    turnImages: '{count} images',
     openUrl: 'Open {url}',
     webPreview: 'Web preview',
     contextEstimate: 'Estimated context {used} / {total} tokens',

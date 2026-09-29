@@ -2,11 +2,20 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '../types'
-import { buildRailTurns, clampCardTop, findActiveTurnIndex, formatTurnClock } from '../utils/chat-rail'
+import { buildRailTurns, clampCardTop, findActiveTurnIndex, formatTurnClock, type RailTurn } from '../utils/chat-rail'
 
 const props = defineProps<{
-  messages: Message[]
-  activeMessageId: string | null
+  /** 对话页传入完整消息流，由轨道自己折叠成轮次。 */
+  messages?: Message[]
+  /**
+   * 调用方已经折好轮次时直接传入（工作台按生成批次分轮）。
+   * 给了它就完全接管轮次来源，不再读 messages。
+   */
+  turns?: RailTurn[]
+  /** 对话页：当前高亮的消息 id，轨道映射到它所属的轮次。 */
+  activeMessageId?: string | null
+  /** 工作台：直接给出当前高亮的轮次 id。 */
+  activeTurnId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -22,11 +31,11 @@ const WAVE_WIDTHS = ['w-8', 'w-6', 'w-[18px]', 'w-3'] as const
 const WAVE_OPACITIES = ['opacity-100', 'opacity-75', 'opacity-60', 'opacity-50'] as const
 
 const CARD_ID = 'chat-rail-turn-card'
-
-const turns = computed(() => buildRailTurns(props.messages))
-const activeTurnIndex = computed(() =>
-  findActiveTurnIndex(turns.value, props.messages, props.activeMessageId),
-)
+const turns = computed(() => props.turns ?? buildRailTurns(props.messages ?? []))
+const activeTurnIndex = computed(() => {
+  if (props.turns) return turns.value.findIndex(turn => turn.id === props.activeTurnId)
+  return findActiveTurnIndex(turns.value, props.messages ?? [], props.activeMessageId ?? null)
+})
 
 function waveStep(turnIndex: number) {
   if (activeTurnIndex.value < 0) return WAVE_MAX_STEP
@@ -159,6 +168,9 @@ function clockOf(turn: { timestamp: string }) {
       </p>
       <p v-if="openTurn.answer" class="line-clamp-3 text-[11px] leading-4 text-muted-foreground">
         {{ openTurn.answer }}
+      </p>
+      <p v-else-if="openTurn.summary" class="text-[11px] leading-4 text-muted-foreground">
+        {{ openTurn.summary }}
       </p>
       <p v-else class="text-[11px] leading-4 text-muted-foreground">{{ t('chat.turnPending') }}</p>
       <p v-if="openTurn.toolCount" class="text-[11px] leading-4 text-muted-foreground">

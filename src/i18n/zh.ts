@@ -655,6 +655,7 @@ export default {
     turnCounter: '第 {index} / 共 {total} 轮',
     turnPending: '正在生成回复',
     turnTools: '{count} 次工具调用',
+    turnImages: '{count} 张图片',
     openUrl: '打开 {url}',
     webPreview: '网页预览',
     contextEstimate: '估算上下文 {used} / {total} tokens',

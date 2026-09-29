@@ -14,6 +14,11 @@ export interface RailTurn {
   timestamp: string
   /** 该轮回复里累计的工具调用次数。 */
   toolCount: number
+  /**
+   * 回复正文之外的替代摘要。
+   * 工作台的「回复」是图片，没有可展示的正文，用它显示「N 张图片」；对话页留空。
+   */
+  summary?: string
 }
 
 /**
