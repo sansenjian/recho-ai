@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ChatMessageRail from '../src/components/ChatMessageRail.vue'
 import i18n from '../src/i18n'
 
@@ -152,6 +152,33 @@ describe('ChatMessageRail turn card', () => {
     await wrapper.findAll('button')[0].trigger('mouseenter')
 
     expect(wrapper.find(CARD).text()).toContain(i18n.global.t('chat.turnPending'))
+  })
+
+  it('clamps the card again when the same marker is reopened', async () => {
+    const wrapper = mountRail(conversation(2), 'user-1')
+    // 根节点前面有一个注释节点，组件根其实是 fragment，所以 wrapper.element 拿到的是注释；
+    // 必须按 data-slot 取那条真正的轨道。
+    const rail = wrapper.find('[data-slot="chat-turn-rail"]').element as HTMLElement
+    const markers = wrapper.findAll('button')
+    const marker = markers[1].element as HTMLElement
+
+    // jsdom 没有布局，这里按真实场景手动喂一组几何：贴底的标记 + 400px 高的轨道 + 120px 高的卡片。
+    Object.defineProperty(rail, 'getBoundingClientRect', { configurable: true, value: () => ({ top: 0 }) })
+    Object.defineProperty(marker, 'getBoundingClientRect', { configurable: true, value: () => ({ top: 380 }) })
+    Object.defineProperty(rail, 'clientHeight', { configurable: true, value: 400 })
+
+    await markers[1].trigger('mouseenter')
+    await flushPromises()
+
+    // 卡片渲染出来之后才量得到真实高度。
+    Object.defineProperty(wrapper.find(CARD).element, 'offsetHeight', { configurable: true, value: 120 })
+
+    // 悬停之后点击同一个标记会再触发一次 focus，此时 openTurn 没变、watch 不会重跑，
+    // 所以夹紧必须发生在 openCard 内部，否则卡片又回到未夹紧的 370px 被外层裁掉。
+    await markers[1].trigger('focus')
+    await flushPromises()
+
+    expect(wrapper.find(CARD).attributes('style')).toContain('top: 280px')
   })
 
   it('reports how many tool calls the turn made', async () => {

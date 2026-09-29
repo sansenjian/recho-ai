@@ -91,7 +91,7 @@ watch(openTurn, async turn => {
 })
 
 /** 卡片贴着被指向的那一格出现，所以按两者的视口坐标算纵向位置，滚动时也不会错位。 */
-function openCard(turnIndex: number) {
+async function openCard(turnIndex: number) {
   const turn = turns.value[turnIndex]
   const marker = turn ? markerElements.get(turn.id) : undefined
   const rail = railRef.value
@@ -99,6 +99,12 @@ function openCard(turnIndex: number) {
   const offset = marker.getBoundingClientRect().top - rail.getBoundingClientRect().top
   cardTop.value = Math.max(0, offset - 10)
   openTurnIndex.value = turnIndex
+  // 同一个标记再次打开时 openTurn 没有变化，上面那个 watch 不会再跑，
+  // 所以这里要自己等卡片按新位置渲染完，再按真实高度夹一次，否则贴底的卡片会被裁掉。
+  await nextTick()
+  const card = cardRef.value
+  if (!card) return
+  cardTop.value = clampCardTop(cardTop.value, rail.clientHeight, card.offsetHeight)
 }
 
 function closeCard() {

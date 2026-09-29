@@ -19,6 +19,7 @@ import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
+import { pickActiveAnchorId } from '../utils/chat-rail'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
@@ -99,20 +100,18 @@ function setMessageElement(id: string, element: Element | null) {
   else messageElements.delete(id)
 }
 
+/**
+ * 当前消息 = 起点不晚于视口顶部（留 32px 余量）的最后一条。
+ * 不能只看「离顶部最近」：一条长回复滚到一半时可能已经离下一条用户消息更近，会让轨道提前跳到下一轮。
+ */
 function updateActiveRailMessage() {
-  const scrollTop = chatAreaRef.value?.scrollTop ?? 0
-  let active: string | null = null
-  let closestOffset = Number.POSITIVE_INFINITY
-  for (const message of messages.value) {
+  const scroller = chatAreaRef.value
+  if (!scroller) return
+  const anchors = messages.value.flatMap(message => {
     const element = messageElements.get(message.id)
-    if (!element) continue
-    const offset = Math.abs(element.offsetTop - scrollTop - 32)
-    if (offset < closestOffset) {
-      closestOffset = offset
-      active = message.id
-    }
-  }
-  activeRailMessageId.value = active || messages.value.at(-1)?.id || null
+    return element ? [{ id: message.id, offsetTop: element.offsetTop }] : []
+  })
+  activeRailMessageId.value = pickActiveAnchorId(anchors, scroller.scrollTop) ?? messages.value.at(-1)?.id ?? null
 }
 
 function jumpToMessage(id: string) {

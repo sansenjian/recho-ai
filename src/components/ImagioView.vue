@@ -25,7 +25,7 @@ import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import type { NamedWorkspace } from '../lib/workspace-list'
-import type { RailTurn } from '../utils/chat-rail'
+import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 
 const props = defineProps<{
   generate: ImageGenerate
@@ -117,22 +117,16 @@ function setTurnElement(id: string, element: Element | null) {
   else turnElements.delete(id)
 }
 
-/** 与对话页同一套判定：取离视口顶部（留 32px 余量）最近的那一轮作为当前轮。 */
+/** 与对话页同一套判定：起点不晚于视口顶部（留 32px 余量）的最后一轮才是当前轮。 */
 function updateActiveTurn() {
   const scroller = conversationRef.value
   if (!scroller) return
-  let active: string | null = null
-  let closestOffset = Number.POSITIVE_INFINITY
-  for (const item of conversationItems.value) {
+  const anchors = conversationItems.value.flatMap(item => {
     const element = turnElements.get(item.id)
-    if (!element) continue
-    const offset = Math.abs(element.offsetTop - scroller.scrollTop - 32)
-    if (offset < closestOffset) {
-      closestOffset = offset
-      active = item.id
-    }
-  }
-  activeTurnId.value = active ?? conversationItems.value.at(-1)?.id ?? null
+    return element ? [{ id: item.id, offsetTop: element.offsetTop }] : []
+  })
+  // 量不到任何元素时（首帧、测试里的空布局）保留旧行为，高亮最后一轮。
+  activeTurnId.value = pickActiveAnchorId(anchors, scroller.scrollTop) ?? conversationItems.value.at(-1)?.id ?? null
 }
 
 function jumpToTurn(id: string) {

@@ -68,6 +68,32 @@ export function findActiveTurnIndex(
   return Math.max(0, turnIndex)
 }
 
+/** 视口顶部留出的余量：滚动位置越过它，才认为下一轮真的开始了。 */
+export const ACTIVE_ANCHOR_OFFSET = 32
+
+/** 一条可以被高亮的轮次锚点，offsetTop 是它在滚动容器内容里的纵向起点。 */
+export interface ActiveAnchor {
+  id: string
+  offsetTop: number
+}
+
+/**
+ * 当前轮次 = 起点不晚于 scrollTop + 32 的**最后一轮**；滚动位置在所有起点之前时取第一轮。
+ *
+ * 不能用「离视口顶部最近」：一轮可以很高（工作台一轮就是好几张图），
+ * 滚动位置还在这一轮内部、但已经离下一轮起点更近时，最近距离判定会提前点亮还没进视口的下一轮。
+ * 入参需按文档顺序给出 offsetTop。
+ */
+export function pickActiveAnchorId(anchors: readonly ActiveAnchor[], scrollTop: number): string | null {
+  const line = scrollTop + ACTIVE_ANCHOR_OFFSET
+  let active: string | null = null
+  for (const anchor of anchors) {
+    if (anchor.offsetTop > line) break
+    active = anchor.id
+  }
+  return active ?? anchors[0]?.id ?? null
+}
+
 /** 卡片上的时间按当前界面语言格式化。 */
 export function turnClockLocale(locale: string): string {
   return locale === 'zh' ? 'zh-CN' : 'en-US'

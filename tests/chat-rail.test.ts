@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRailTurns, clampCardTop, findActiveTurnIndex, formatTurnClock, turnClockLocale } from '../src/utils/chat-rail'
+import { buildRailTurns, clampCardTop, findActiveTurnIndex, formatTurnClock, pickActiveAnchorId, turnClockLocale } from '../src/utils/chat-rail'
 import type { Message } from '../src/types'
 
 const AT = '2026-09-28T06:32:00.000Z'
@@ -70,6 +70,37 @@ describe('findActiveTurnIndex', () => {
     expect(findActiveTurnIndex(turns, messages, null)).toBe(-1)
     expect(findActiveTurnIndex(turns, messages, 'missing')).toBe(-1)
     expect(findActiveTurnIndex([], [], 'user-1')).toBe(-1)
+  })
+})
+
+describe('pickActiveAnchorId', () => {
+  // 一轮很高时，滚动位置仍在轮内却已经离下一轮起点更近 —— 这里必须是「起点不晚于当前行的最后一轮」。
+  const anchors = [
+    { id: 'turn-1', offsetTop: 0 },
+    { id: 'turn-2', offsetTop: 1200 },
+    { id: 'turn-3', offsetTop: 2400 },
+  ]
+
+  it('keeps the current turn while the scroll position is still inside it', () => {
+    expect(pickActiveAnchorId(anchors, 800)).toBe('turn-1')
+    // 一轮很高：已经离下一轮起点不到 32px，但仍然没进「顶部余量」，不能提前点亮。
+    expect(pickActiveAnchorId(anchors, 1167)).toBe('turn-1')
+  })
+
+  it('switches only once the next turn start passes the top line', () => {
+    // 1168 + 32 = 1200，正好压在第二轮起点上，这时才算翻页。
+    expect(pickActiveAnchorId(anchors, 1168)).toBe('turn-2')
+    expect(pickActiveAnchorId(anchors, 1200)).toBe('turn-2')
+    expect(pickActiveAnchorId(anchors, 2368)).toBe('turn-3')
+  })
+
+  it('falls back to the first turn above every start', () => {
+    expect(pickActiveAnchorId(anchors, 0)).toBe('turn-1')
+    expect(pickActiveAnchorId(anchors, -500)).toBe('turn-1')
+  })
+
+  it('reports nothing without anchors', () => {
+    expect(pickActiveAnchorId([], 120)).toBeNull()
   })
 })
 
