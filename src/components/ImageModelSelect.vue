@@ -151,6 +151,30 @@ function moveActive(key: string) {
   setActiveIndex(next)
 }
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+// 在列表打开时按 Tab,放行原生行为会把焦点先丢进刚展开的选项里(它们也是 button),
+// 所以由组件接管;但只回到触发器又会让用户丢失移动方向。这里按 Shift 找触发器的真实邻居。
+// 排除菜单子树是因为此刻它仍在 DOM 中(open 置 false 后 Vue 还没重渲染)。
+function focusAdjacentControl(backwards: boolean) {
+  const trigger = triggerRef.value
+  if (!trigger) return
+  const menu = listboxRef.value
+  const controls = Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => !menu || !menu.contains(element))
+  const index = controls.indexOf(trigger)
+  const next = index < 0 ? undefined : controls[index + (backwards ? -1 : 1)]
+  // 没有邻居时留在触发器上,总比把焦点丢给 body 强。
+  ;(next ?? trigger).focus()
+}
+
 const NAVIGATION_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End'])
 
 function handleKeydown(event: KeyboardEvent) {
@@ -168,7 +192,9 @@ function handleKeydown(event: KeyboardEvent) {
     if (open.value) {
       // 此刻焦点在列表上,放行 Tab 会把它直接丢给 body。
       event.preventDefault()
-      closeMenu(true)
+      const backwards = event.shiftKey
+      closeMenu()
+      focusAdjacentControl(backwards)
     }
     return
   }
@@ -458,9 +484,15 @@ onBeforeUnmount(() => {
 }
 
 .image-model-option:hover,
-.image-model-option[data-active='true'],
 .image-model-option[aria-selected='true'] {
   background: hsl(var(--muted));
+}
+
+/* 活动项不等于已选项:它跟着键盘上下移动,Enter 选中的就是它。
+   只靠背景色会和 hover 糊在一起,所以再补一圈 ring(inset 不会撑开布局)。 */
+.image-model-option[data-active='true'] {
+  background: hsl(var(--muted));
+  box-shadow: inset 0 0 0 1px hsl(var(--ring) / 0.45);
 }
 
 /* 未选中项也留着同尺寸的对勾占位,选中时文字才不会左右跳动。 */

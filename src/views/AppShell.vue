@@ -462,7 +462,8 @@ function scrollToBottom() {
   nextTick(() => {
     chatAreaRef.value?.scrollTo({
       top: chatAreaRef.value.scrollHeight,
-      behavior: scrollSmooth ? 'smooth' : 'auto',
+      // 开了「减少动效」就不再平滑滚动,和 jumpToMessage 的降级保持一致。
+      behavior: scrollSmooth && !prefersReducedMotion.value ? 'smooth' : 'auto',
     })
   })
 }
