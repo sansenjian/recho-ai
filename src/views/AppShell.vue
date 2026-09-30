@@ -19,6 +19,8 @@ import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
+import { pickActiveAnchorId } from '../utils/chat-rail'
+import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
 import { useAuthSession } from '../composables/useAuthSession'
@@ -99,24 +101,28 @@ function setMessageElement(id: string, element: Element | null) {
   else messageElements.delete(id)
 }
 
+/**
+ * 当前消息 = 起点不晚于视口顶部（留 32px 余量）的最后一条。
+ * 不能只看「离顶部最近」：一条长回复滚到一半时可能已经离下一条用户消息更近，会让轨道提前跳到下一轮。
+ */
 function updateActiveRailMessage() {
-  const scrollTop = chatAreaRef.value?.scrollTop ?? 0
-  let active: string | null = null
-  let closestOffset = Number.POSITIVE_INFINITY
-  for (const message of messages.value) {
+  const scroller = chatAreaRef.value
+  if (!scroller) return
+  const anchors = messages.value.flatMap(message => {
     const element = messageElements.get(message.id)
-    if (!element) continue
-    const offset = Math.abs(element.offsetTop - scrollTop - 32)
-    if (offset < closestOffset) {
-      closestOffset = offset
-      active = message.id
-    }
-  }
-  activeRailMessageId.value = active || messages.value.at(-1)?.id || null
+    return element ? [{ id: message.id, offsetTop: element.offsetTop }] : []
+  })
+  activeRailMessageId.value = pickActiveAnchorId(anchors, scroller.scrollTop) ?? messages.value.at(-1)?.id ?? null
 }
 
+const prefersReducedMotion = useReducedMotion()
+
 function jumpToMessage(id: string) {
-  messageElements.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // 开了「减少动效」就不再平滑滚动，只把结果瞬时定位过去。
+  messageElements.get(id)?.scrollIntoView({
+    behavior: prefersReducedMotion.value ? 'auto' : 'smooth',
+    block: 'start',
+  })
   activeRailMessageId.value = id
 }
 
@@ -456,7 +462,8 @@ function scrollToBottom() {
   nextTick(() => {
     chatAreaRef.value?.scrollTo({
       top: chatAreaRef.value.scrollHeight,
-      behavior: scrollSmooth ? 'smooth' : 'auto',
+      // 开了「减少动效」就不再平滑滚动,和 jumpToMessage 的降级保持一致。
+      behavior: scrollSmooth && !prefersReducedMotion.value ? 'smooth' : 'auto',
     })
   })
 }

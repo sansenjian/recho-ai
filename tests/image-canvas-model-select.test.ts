@@ -5,6 +5,7 @@ import ImageCanvas from '../src/components/ImageCanvas.vue'
 import ImagioView from '../src/components/ImagioView.vue'
 import ImageModelSelect from '../src/components/ImageModelSelect.vue'
 import { resetAppConfigForTests } from '../src/composables/useAppConfig'
+import i18n from '../src/i18n'
 
 describe('ImageCanvas model selector', () => {
   afterEach(() => {
@@ -25,7 +26,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
     })
     await flushPromises()
 
@@ -50,7 +51,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
     })
 
     const selector = wrapper.findComponent(ImageModelSelect)
@@ -83,7 +84,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
     })
     await flushPromises()
 
@@ -107,7 +108,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
     })
 
     const selector = wrapper.findComponent(ImageModelSelect)

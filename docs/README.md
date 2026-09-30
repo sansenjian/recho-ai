@@ -33,6 +33,7 @@
 | [Image Analytics Optimization Roadmap](./image-analytics-optimization-roadmap.md) | 图片分析与指标优化路线 | 参考 |
 | [Dependency And Markdown Performance Plan](./dependency-and-markdown-performance-plan.md) | 依赖和 Markdown 性能优化计划 | 参考 |
 | [dsh-codex-ui 学习笔记](./dsh-codex-ui-学习笔记.md) | 外部插件 dsh-codex-ui 的架构与工程方法研究，含可迁移到本仓库的改造建议 | 外部参考，非本仓库技术栈 |
+| [dsh-codex-timeline 学习笔记](./dsh-codex-timeline-学习笔记.md) | 外部插件 dsh-codex-timeline 的宿主增强方法论与发布期产物契约守卫，含可迁移到本仓库的建议 | 外部参考，非本仓库技术栈 |
 
 ## 历史方案
 
