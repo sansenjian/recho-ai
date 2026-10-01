@@ -5,11 +5,16 @@ import i18n from '../src/i18n'
 
 const fetchMock = vi.fn()
 
+// 身份 ref 必须跨组件调用保持同一个:弹窗靠 watch 它的变化来关闭自己。
+const session = vi.hoisted(() => ({ setUser: null as null | ((value: { id: string } | null) => void) }))
+
 vi.mock('../src/composables/useAuthSession', async () => {
   const { ref } = await import('vue')
+  const user = ref<{ id: string } | null>({ id: 'user-1' })
+  session.setUser = (value) => { user.value = value }
   return {
     useAuthSession: () => ({
-      user: ref(null),
+      user,
       userEmail: ref(''),
       authError: ref(''),
       authNotice: ref(''),
@@ -57,6 +62,7 @@ function currentDialog(): HTMLElement {
 }
 
 beforeEach(() => {
+  session.setUser?.({ id: 'user-1' })
   fetchMock.mockReset()
   fetchMock.mockImplementation(async () => jsonResponse({ keys: [] }))
   vi.stubGlobal('fetch', fetchMock)
@@ -131,6 +137,18 @@ describe('UserApiKeysDialog', () => {
     expect((purge![1] as RequestInit).method).toBe('DELETE')
     expect(dialog.textContent).not.toContain('sk-...abc')
     expect(dialog.textContent).toContain('密钥已删除')
+  })
+
+  it('closes itself when the signed-in identity ends', async () => {
+    // 明文密钥留在打开的弹窗里,退出登录后不能还让下一个人读到。
+    const wrapper = mountDialog()
+    await settle()
+    expect(currentDialog()).toBeTruthy()
+
+    session.setUser?.(null)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('update:open')).toEqual([[false]])
   })
 
   it('emits update:open with false when the dialog closes', async () => {
