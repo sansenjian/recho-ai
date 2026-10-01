@@ -41,6 +41,7 @@ const adminComposablePaths = [
 const accountSourcePaths = [
   resolve(root, 'src/components/AuthPanel.vue'),
   resolve(root, 'src/components/UserApiKeys.vue'),
+  resolve(root, 'src/components/UserApiKeysDialog.vue'),
   resolve(root, 'src/composables/useAuthSession.ts'),
   resolve(root, 'src/composables/useCredits.ts'),
 ]

@@ -23,6 +23,7 @@ import { pickActiveAnchorId } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
+import UserApiKeysDialog from '../components/UserApiKeysDialog.vue'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useAdminAccess } from '../composables/useAdminAccess'
 import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
@@ -293,6 +294,8 @@ type AuthMode = 'signIn' | 'signUp'
 const showAuthDialog = ref(false)
 const authMode = ref<AuthMode>('signIn')
 const pendingAuthPath = ref<string | null>(null)
+/** 顶栏密钥入口独立于账号弹窗:登录用户要能随时签发或撤销 recho-cli 密钥。 */
+const showApiKeysDialog = ref(false)
 
 function openAuthDialog(mode: AuthMode = 'signIn') {
   authMode.value = mode
@@ -581,6 +584,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         @new-chat="handleNewChat"
         @toggle-settings="toggleSystemEditor"
         @open-auth="openAuthDialog()"
+        @open-api-keys="showApiKeysDialog = true"
       />
 
       <!-- System Editor Panel -->
@@ -699,6 +703,8 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
       :announcement="announcement"
       @close="markAnnouncementRead()"
     />
+
+    <UserApiKeysDialog v-model:open="showApiKeysDialog" />
 
     <AuthPanel
       v-if="showAuthDialog"

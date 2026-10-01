@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, KeyRound } from '@lucide/vue'
+import { Copy } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -125,16 +125,8 @@ onMounted(refresh)
 </script>
 
 <template>
-  <section class="border-t border-border pt-6">
-    <div class="flex items-center gap-2">
-      <KeyRound :size="14" class="text-muted-foreground" />
-      <span class="text-[13px] font-medium">{{ t('account.keys.title') }}</span>
-    </div>
-    <p class="mt-1 text-xs text-muted-foreground">
-      {{ t('account.keys.description') }}
-    </p>
-
-    <form class="mt-3 flex gap-2" @submit.prevent="createKey">
+  <div>
+    <form class="flex gap-2" @submit.prevent="createKey">
       <Input v-model="keyName" maxlength="100" :placeholder="t('account.keys.namePlaceholder')" class="h-9 flex-1 text-[13px]" />
       <Button type="submit" size="sm" class="h-9" :disabled="creating || !keyName.trim()">
         {{ creating ? t('account.keys.creating') : t('account.keys.create') }}
@@ -184,5 +176,5 @@ onMounted(refresh)
       </li>
     </ul>
     <p v-else class="mt-3 text-xs text-muted-foreground">{{ t('account.keys.empty') }}</p>
-  </section>
+  </div>
 </template>
