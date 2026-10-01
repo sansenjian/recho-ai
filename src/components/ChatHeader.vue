@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Settings,
   Zap,
+  KeyRound,
 } from '@lucide/vue'
 import { cn } from '@/lib/utils'
 
@@ -60,6 +61,7 @@ const emit = defineEmits<{
   newChat: []
   toggleSettings: []
   openAuth: []
+  openApiKeys: []
 }>()
 
 function handleChatButtonClick() {
@@ -188,6 +190,17 @@ function handleChatButtonClick() {
         @click="$emit('toggleSettings')"
       >
         <Settings class="h-4 w-4" />
+      </Button>
+
+      <Button
+        v-if="authEmail"
+        variant="ghost"
+        size="icon"
+        class="h-8 w-8 shrink-0"
+        :title="t('account.keys.title')"
+        @click="$emit('openApiKeys')"
+      >
+        <KeyRound class="h-4 w-4" />
       </Button>
 
       <Button

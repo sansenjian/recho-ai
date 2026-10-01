@@ -58,7 +58,7 @@ function session(): Session {
 function mountPanel(initialMode: 'signIn' | 'signUp' = 'signIn') {
   return mount(AuthPanel, {
     props: { modelValue: true, initialMode },
-    global: { plugins: [i18n], stubs: { UserApiKeys: true } },
+    global: { plugins: [i18n] },
     attachTo: document.body,
   })
 }

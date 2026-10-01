@@ -21,6 +21,7 @@ interface OrderSpec {
 
 let rows: Row[] = []
 let listError: unknown = null
+let updateError: unknown = null
 
 function matches(row: Row, filters: Record<string, unknown>) {
   return Object.entries(filters).every(([column, value]) => (row[column] ?? null) === value)
@@ -67,6 +68,12 @@ function makeSelectBuilder(options: { count?: string; head?: boolean } = {}) {
       filters[column] = value
       return builder
     }),
+    // lookupKeyUser 走 select(...).eq(...).maybeSingle()
+    maybeSingle: vi.fn(async () => {
+      if (listError) return { data: null, error: listError }
+      const matched = sortRows(rows.filter(row => matches(row, filters)), orders)
+      return { data: matched[0] ?? null, error: null }
+    }),
     then: (
       resolve: (value: { data: Row[] | null; count: number; error: unknown }) => unknown,
       reject?: (reason: unknown) => unknown,
@@ -93,8 +100,46 @@ function makeInsertBuilder(payload: Record<string, unknown>) {
   return builder
 }
 
+/**
+ * 删除走 supabase 的 delete() 链:eq(id) + not(revoked_at, is, null)。
+ * 用同样的假表复现,才能锁住「未撤销的 key 删不掉」这条业务约束。
+ */
+function makeDeleteBuilder() {
+  const filters: Record<string, unknown> = {}
+  let requireRevoked = false
+  const builder = {
+    eq: vi.fn((column: string, value: unknown) => {
+      filters[column] = value
+      return builder
+    }),
+    not: vi.fn((column: string, operator: string, value: unknown) => {
+      if (column === 'revoked_at' && operator === 'is' && value === null) requireRevoked = true
+      return builder
+    }),
+    select: vi.fn(() => builder),
+    maybeSingle: vi.fn(async () => {
+      const target = rows.find(row => matches(row, filters) && (!requireRevoked || Boolean(row.revoked_at)))
+      if (!target) return { data: null, error: null }
+      rows = rows.filter(row => row.id !== target.id)
+      return { data: { id: target.id }, error: null }
+    }),
+  }
+  return builder
+}
+
+/**
+ * touchLastUsed 只 await `update().eq()` 本身(后面不接 select/maybeSingle),
+ * 所以这里的 builder 必须像 PostgREST 那样可以直接 await。
+ */
 function makeUpdateBuilder(payload: Record<string, unknown>) {
   const filters: Record<string, unknown> = {}
+  function run() {
+    if (updateError) return { data: null, error: updateError }
+    const target = rows.find(row => matches(row, filters))
+    if (!target) return { data: null, error: null }
+    Object.assign(target, payload)
+    return { data: { id: target.id }, error: null }
+  }
   const builder = {
     eq: vi.fn((column: string, value: unknown) => {
       filters[column] = value
@@ -105,12 +150,9 @@ function makeUpdateBuilder(payload: Record<string, unknown>) {
       return builder
     }),
     select: vi.fn(() => builder),
-    maybeSingle: vi.fn(async () => {
-      const target = rows.find(row => matches(row, filters))
-      if (!target) return { data: null, error: null }
-      Object.assign(target, payload)
-      return { data: { id: target.id }, error: null }
-    }),
+    maybeSingle: vi.fn(async () => run()),
+    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(run()).then(resolve, reject),
   }
   return builder
 }
@@ -123,12 +165,13 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         select: vi.fn((_columns?: string, options?: { count?: string; head?: boolean }) => makeSelectBuilder(options)),
         insert: vi.fn((payload: Record<string, unknown>) => makeInsertBuilder(payload)),
         update: vi.fn((payload: Record<string, unknown>) => makeUpdateBuilder(payload)),
+        delete: vi.fn(() => makeDeleteBuilder()),
       }
     },
   }),
 }))
 
-const { ApiKeyLimitError, MAX_ACTIVE_KEYS_PER_USER, createApiKey, listApiKeys, revokeApiKey } =
+const { ApiKeyLimitError, MAX_ACTIVE_KEYS_PER_USER, createApiKey, deleteApiKey, listApiKeys, lookupKeyUser, revokeApiKey, touchLastUsed } =
   await import('../backend/gateway/src/services/api-keys')
 
 function seedRows() {
@@ -160,6 +203,7 @@ function seedRows() {
 
 beforeEach(() => {
   listError = null
+  updateError = null
   seedRows()
 })
 
@@ -257,5 +301,59 @@ describe('revokeApiKey', () => {
   it('已撤销的 key 不再重复撤销', async () => {
     rows[0].revoked_at = '2026-09-03T00:00:00.000Z'
     await expect(revokeApiKey('key-alice', 'user-alice')).resolves.toBe(false)
+  })
+})
+
+describe('deleteApiKey', () => {
+  it('带 userId 时可以删除自己已撤销的 key', async () => {
+    rows[0].revoked_at = '2026-09-03T00:00:00.000Z'
+    await expect(deleteApiKey('key-alice', 'user-alice')).resolves.toBe(true)
+    expect(rows.find(row => row.id === 'key-alice')).toBeUndefined()
+  })
+
+  it('未撤销的 key 不会被删除', async () => {
+    // 删除只对「已撤销」开放:否则一个按钮同时承担撤销与删除两种语义。
+    await expect(deleteApiKey('key-alice', 'user-alice')).resolves.toBe(false)
+    expect(rows.find(row => row.id === 'key-alice')).toBeTruthy()
+  })
+
+  it('带 userId 时无法删除他人的 key', async () => {
+    rows[1].revoked_at = '2026-09-03T00:00:00.000Z'
+    await expect(deleteApiKey('key-bob', 'user-alice')).resolves.toBe(false)
+    expect(rows.find(row => row.id === 'key-bob')).toBeTruthy()
+  })
+})
+
+describe('lookupKeyUser', () => {
+  it('解析出用户,并带回命中的 keyId 供回写 last_used_at', async () => {
+    await expect(lookupKeyUser('hash-alice')).resolves.toEqual({
+      id: 'user-alice',
+      email: null,
+      keyId: 'key-alice',
+    })
+  })
+
+  it('已撤销的 key 不再解析出用户', async () => {
+    rows[0].revoked_at = '2026-09-03T00:00:00.000Z'
+    await expect(lookupKeyUser('hash-alice')).resolves.toBeNull()
+  })
+
+  it('已禁用的 key 不再解析出用户', async () => {
+    rows[0].enabled = false
+    await expect(lookupKeyUser('hash-alice')).resolves.toBeNull()
+  })
+})
+
+describe('touchLastUsed', () => {
+  it('写入最近使用时间', async () => {
+    await touchLastUsed('key-alice')
+    expect(rows.find(row => row.id === 'key-alice')?.last_used_at).toBeTruthy()
+  })
+
+  it('写失败时只记日志,不抛错', async () => {
+    // 回写是旁路:鉴权已经成功,不能因为一次统计写入失败就让请求失败。
+    updateError = { message: 'boom' }
+    await expect(touchLastUsed('key-alice')).resolves.toBeUndefined()
+    expect(rows.find(row => row.id === 'key-alice')?.last_used_at).toBeNull()
   })
 })

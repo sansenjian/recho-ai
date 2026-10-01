@@ -9,7 +9,6 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuthSession } from '../composables/useAuthSession'
 import { useCredits } from '../composables/useCredits'
 import { formatCreditAmount } from '../utils/credit-format'
-import UserApiKeys from './UserApiKeys.vue'
 
 type AuthMode = 'signIn' | 'signUp'
 
@@ -435,8 +434,6 @@ function onKeydown(e: KeyboardEvent) {
                   <p v-if="creditNotice" class="m-0 text-[0.8125rem] leading-snug text-muted-foreground">{{ creditNotice }}</p>
                   <p v-if="creditError" class="m-0 text-[0.8125rem] leading-snug text-destructive">{{ creditError }}</p>
                 </div>
-
-                <UserApiKeys />
 
                 <Button type="button" variant="outline" class="h-10 w-full rounded-lg text-[0.8125rem] font-medium max-sm:h-11" :disabled="isAuthLoading" @click="handleSignOut">
                   <LogOut :size="14" />
