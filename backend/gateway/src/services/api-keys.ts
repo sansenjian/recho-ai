@@ -87,7 +87,8 @@ export async function lookupKeyUser(keyHash: string): Promise<RequestUser | null
   try {
     const { data, error } = await client
       .from('api_keys')
-      .select('user_id, enabled, revoked_at')
+      // 连 id 一起取出:调用方要用它回写 last_used_at
+      .select('id, user_id, enabled, revoked_at')
       .eq('key_hash', keyHash)
       .maybeSingle()
     if (error) {
@@ -97,7 +98,7 @@ export async function lookupKeyUser(keyHash: string): Promise<RequestUser | null
     if (!data) return null
     if (data.enabled === false) return null
     if (data.revoked_at) return null
-    return { id: String(data.user_id), email: null }
+    return { id: String(data.user_id), email: null, keyId: String(data.id) }
   } catch (err) {
     console.warn('[api-keys] lookup error:', safeErrorDetail(err))
     return null
@@ -183,9 +184,10 @@ export async function deleteApiKey(id: string, userId?: string): Promise<boolean
   return Boolean(data)
 }
 
-/** 记录最近使用时间(尽力而为,失败不阻断请求)。 */
+/** 记录最近使用时间(尽力而为:失败只留日志,不阻断本次请求)。 */
 export async function touchLastUsed(id: string): Promise<void> {
   const client = getSupabaseAdminClient()
   if (!client) return
-  await client.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', id)
+  const { error } = await client.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', id)
+  if (error) console.warn('[api-keys] touch last_used_at failed:', safeErrorDetail(error))
 }

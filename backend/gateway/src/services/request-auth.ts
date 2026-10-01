@@ -1,11 +1,13 @@
 import type { Request } from 'express'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
-import { hashApiKey, lookupKeyUser } from './api-keys.js'
+import { hashApiKey, lookupKeyUser, touchLastUsed } from './api-keys.js'
 import { safeErrorDetail } from './safe-error.js'
 
 export interface RequestUser {
   id: string
   email: string | null
+  /** 本次请求是用哪把 API key 解析出来的(仅 rk- 路径)。 */
+  keyId?: string
 }
 
 function bearerToken(req: Request) {
@@ -21,7 +23,16 @@ export async function getRequestUser(req: Request): Promise<RequestUser | null> 
   // 外部客户端 API key(如 recho-cli 的 rk-*):查 api_keys 表解析所属用户
   if (token.startsWith('rk-')) {
     const user = await lookupKeyUser(hashApiKey(token))
-    if (!user) console.warn('[auth] ignoring invalid API key')
+    if (!user) {
+      console.warn('[auth] ignoring invalid API key')
+      return null
+    }
+    // 与 Go 网关保持同一语义:回写「最近使用」是旁路,不 await、失败只记日志。
+    if (user.keyId) {
+      void touchLastUsed(user.keyId).catch((err) => {
+        console.warn('[auth] touch last_used_at failed:', safeErrorDetail(err))
+      })
+    }
     return user
   }
 

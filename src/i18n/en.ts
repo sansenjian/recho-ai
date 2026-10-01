@@ -132,6 +132,8 @@ export default {
       enabled: 'Active',
       revoke: 'Revoke',
       created: 'Created {time}',
+      lastUsed: 'Last used {time}',
+      neverUsed: 'Never used',
       empty: 'No keys yet.',
       unnamed: 'Unnamed key',
       listFailed: 'Failed to load keys, please try again.',

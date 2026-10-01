@@ -26,7 +26,8 @@
 | GET | `/api/tools` | routes/tools.ts:6 | MCP 工具列表 | 可缓存（TTL 30s） |
 | GET | `/api/api-keys` | routes/api-keys.ts | 查询本人 API 密钥 | **no-store**（身份敏感，只返回当前用户自己的 key） |
 | POST | `/api/api-keys` | routes/api-keys.ts | 签发本人 API 密钥（绑定当前登录用户） | **no-store**（写） |
-| DELETE | `/api/api-keys/:id` | routes/api-keys.ts | 撤销本人 API 密钥 | **no-store**（写，只能撤销自己的） |
+| DELETE | `/api/api-keys/:id` | routes/api-keys.ts:90 | 撤销本人 API 密钥 | **no-store**（写，只能撤销自己的） |
+| DELETE | `/api/api-keys/:id/purge` | routes/api-keys.ts:108 | 物理删除本人已撤销的密钥 | **no-store**（写且不可逆，只能删自己的、且必须已撤销） |
 | GET | `/health` | routes/health.ts:10 | 健康检查 | 不处理（监控专用） |
 
 ### 2. 图片接口（Node 旧实现 / 兼容路径）

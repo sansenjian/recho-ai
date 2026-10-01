@@ -132,6 +132,8 @@ export default {
       enabled: '启用',
       revoke: '撤销',
       created: '创建 {time}',
+      lastUsed: '最近使用 {time}',
+      neverUsed: '从未使用',
       empty: '还没有密钥。',
       unnamed: '未命名密钥',
       listFailed: '密钥列表加载失败，请稍后重试。',

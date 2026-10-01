@@ -39,8 +39,8 @@ const createdKey = {
   key_hint: 'sk-...abc',
   enabled: true,
   revoked_at: null,
-  last_used_at: null,
   created_at: '2026-01-01T00:00:00Z',
+  last_used_at: '2026-01-01T12:30:00Z',
 }
 
 function mountDialog(open = true) {
@@ -111,6 +111,19 @@ describe('UserApiKeysDialog', () => {
     expect((post![1] as RequestInit).body).toBe(JSON.stringify({ name: 'recho-cli' }))
     expect((post![1] as RequestInit).cache).toBe('no-store')
     expect(dialog.textContent).toContain('sk-live-abc')
+  })
+
+  it('shows when a key was last used, and says so when it never was', async () => {
+    // 撤销与删除都不可逆:用户需要「这把 key 还在被用吗」这个依据。
+    const neverUsed = { ...createdKey, id: 'k3', last_used_at: null }
+    fetchMock.mockImplementationOnce(async () => jsonResponse({ keys: [createdKey, neverUsed] }))
+
+    mountDialog()
+    await settle()
+
+    const text = currentDialog().textContent ?? ''
+    expect(text).toContain('最近使用')
+    expect(text).toContain('从未使用')
   })
 
   it('deletes a revoked key and drops it from the list', async () => {

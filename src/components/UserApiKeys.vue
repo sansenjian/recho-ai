@@ -185,6 +185,10 @@ onMounted(refresh)
           </span>
           <code class="break-all font-mono text-[11px] text-muted-foreground">{{ key.key_hint }}</code>
           <span class="text-[11px] text-muted-foreground">{{ t('account.keys.created', { time: shortTime(key.created_at) }) }}</span>
+          <!-- 撤销与删除都不可逆,先把「最近用过没有」摆出来,别让用户凭记忆判断。 -->
+          <span class="text-[11px] text-muted-foreground">
+            {{ key.last_used_at ? t('account.keys.lastUsed', { time: shortTime(key.last_used_at) }) : t('account.keys.neverUsed') }}
+          </span>
         </div>
         <Button
           v-if="!key.revoked_at"
