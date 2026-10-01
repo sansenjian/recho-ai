@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy } from '@lucide/vue'
+import { Copy, Trash2 } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,6 +36,7 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const issuedKey = ref<string | null>(null)
 const copied = ref(false)
+const deletingId = ref<string | null>(null)
 
 function shortTime(value: string | null) {
   if (!value) return '—'
@@ -121,6 +122,29 @@ async function copyIssuedKey() {
   }
 }
 
+/**
+ * 物理删除已撤销的 key。撤销后明文与 hash 都已无用,留一条不可用的记录
+ * 只会让列表越来越长;未撤销的 key 后端会拒绝删除,必须先撤销。
+ */
+async function deleteKey(key: UserApiKey) {
+  deletingId.value = key.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await request<{ ok: boolean }>(`/api/api-keys/${encodeURIComponent(key.id)}/purge`, { method: 'DELETE' })
+    if (data.ok) {
+      keys.value = keys.value.filter(item => item.id !== key.id)
+      noticeMessage.value = t('account.keys.deletedNotice')
+    } else {
+      errorMessage.value = t('account.keys.deleteInvalid')
+    }
+  } catch (err) {
+    errorMessage.value = localizedClientErrorMessage(err, 'account.keys.deleteFailed')
+  } finally {
+    deletingId.value = null
+  }
+}
+
 onMounted(refresh)
 </script>
 
@@ -172,6 +196,19 @@ onMounted(refresh)
           @click="revokeKey(key)"
         >
           {{ t('account.keys.revoke') }}
+        </Button>
+        <!-- 删除只对已撤销的 key 开放：明文早已不可恢复，留下的只是一条死记录。 -->
+        <Button
+          v-else
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="shrink-0 text-muted-foreground hover:text-destructive"
+          :disabled="deletingId === key.id"
+          @click="deleteKey(key)"
+        >
+          <Trash2 :size="13" />
+          {{ t('account.keys.delete') }}
         </Button>
       </li>
     </ul>

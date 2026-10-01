@@ -93,6 +93,33 @@ function makeInsertBuilder(payload: Record<string, unknown>) {
   return builder
 }
 
+/**
+ * 删除走 supabase 的 delete() 链:eq(id) + not(revoked_at, is, null)。
+ * 用同样的假表复现,才能锁住「未撤销的 key 删不掉」这条业务约束。
+ */
+function makeDeleteBuilder() {
+  const filters: Record<string, unknown> = {}
+  let requireRevoked = false
+  const builder = {
+    eq: vi.fn((column: string, value: unknown) => {
+      filters[column] = value
+      return builder
+    }),
+    not: vi.fn((column: string, operator: string, value: unknown) => {
+      if (column === 'revoked_at' && operator === 'is' && value === null) requireRevoked = true
+      return builder
+    }),
+    select: vi.fn(() => builder),
+    maybeSingle: vi.fn(async () => {
+      const target = rows.find(row => matches(row, filters) && (!requireRevoked || Boolean(row.revoked_at)))
+      if (!target) return { data: null, error: null }
+      rows = rows.filter(row => row.id !== target.id)
+      return { data: { id: target.id }, error: null }
+    }),
+  }
+  return builder
+}
+
 function makeUpdateBuilder(payload: Record<string, unknown>) {
   const filters: Record<string, unknown> = {}
   const builder = {
@@ -123,12 +150,13 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
         select: vi.fn((_columns?: string, options?: { count?: string; head?: boolean }) => makeSelectBuilder(options)),
         insert: vi.fn((payload: Record<string, unknown>) => makeInsertBuilder(payload)),
         update: vi.fn((payload: Record<string, unknown>) => makeUpdateBuilder(payload)),
+        delete: vi.fn(() => makeDeleteBuilder()),
       }
     },
   }),
 }))
 
-const { ApiKeyLimitError, MAX_ACTIVE_KEYS_PER_USER, createApiKey, listApiKeys, revokeApiKey } =
+const { ApiKeyLimitError, MAX_ACTIVE_KEYS_PER_USER, createApiKey, deleteApiKey, listApiKeys, revokeApiKey } =
   await import('../backend/gateway/src/services/api-keys')
 
 function seedRows() {
@@ -257,5 +285,25 @@ describe('revokeApiKey', () => {
   it('已撤销的 key 不再重复撤销', async () => {
     rows[0].revoked_at = '2026-09-03T00:00:00.000Z'
     await expect(revokeApiKey('key-alice', 'user-alice')).resolves.toBe(false)
+  })
+})
+
+describe('deleteApiKey', () => {
+  it('带 userId 时可以删除自己已撤销的 key', async () => {
+    rows[0].revoked_at = '2026-09-03T00:00:00.000Z'
+    await expect(deleteApiKey('key-alice', 'user-alice')).resolves.toBe(true)
+    expect(rows.find(row => row.id === 'key-alice')).toBeUndefined()
+  })
+
+  it('未撤销的 key 不会被删除', async () => {
+    // 删除只对「已撤销」开放:否则一个按钮同时承担撤销与删除两种语义。
+    await expect(deleteApiKey('key-alice', 'user-alice')).resolves.toBe(false)
+    expect(rows.find(row => row.id === 'key-alice')).toBeTruthy()
+  })
+
+  it('带 userId 时无法删除他人的 key', async () => {
+    rows[1].revoked_at = '2026-09-03T00:00:00.000Z'
+    await expect(deleteApiKey('key-bob', 'user-alice')).resolves.toBe(false)
+    expect(rows.find(row => row.id === 'key-bob')).toBeTruthy()
   })
 })

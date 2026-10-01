@@ -6,6 +6,7 @@ import {
 import {
   ApiKeyLimitError,
   createApiKey,
+  deleteApiKey,
   listApiKeys,
   revokeApiKey,
   type ApiKeyRecord,
@@ -98,6 +99,24 @@ router.delete('/api-keys/:id', async (req: Request, res: Response) => {
     res.json({ ok: await revokeApiKey(id, user.id) })
   } catch (err) {
     console.warn('[api-keys] user revoke failed:', safeErrorDetail(err))
+    const r = adminErrorResponse(err)
+    res.status(r.status).json({ error: r.error })
+  }
+})
+
+// 独立子路径而非 ?purge=1:删除比撤销更彻底,留在单独的路由上更显眼也更好审计。
+router.delete('/api-keys/:id/purge', async (req: Request, res: Response) => {
+  try {
+    const user = await requireUser(req)
+    const id = typeof req.params.id === 'string' ? req.params.id : ''
+    if (!id) {
+      res.status(400).json({ error: '缺少 key id' })
+      return
+    }
+    // 只删自己的、且已撤销的 key;其余情况命中 0 行,返回 ok=false。
+    res.json({ ok: await deleteApiKey(id, user.id) })
+  } catch (err) {
+    console.warn('[api-keys] user delete failed:', safeErrorDetail(err))
     const r = adminErrorResponse(err)
     res.status(r.status).json({ error: r.error })
   }

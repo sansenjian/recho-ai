@@ -139,6 +139,10 @@ export default {
       revokeFailed: '撤销失败，请稍后重试。',
       revokeInvalid: '撤销失败，密钥可能已失效。',
       revokedNotice: '密钥已撤销。',
+      delete: '删除',
+      deleteFailed: '删除失败，请稍后重试。',
+      deleteInvalid: '删除失败，密钥可能尚未撤销。',
+      deletedNotice: '密钥已删除。',
     },
   },
   overview: {

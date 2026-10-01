@@ -162,6 +162,27 @@ export async function revokeApiKey(id: string, userId?: string): Promise<boolean
   return Boolean(data)
 }
 
+/**
+ * 物理删除已撤销的 key：撤销后明文早已不可恢复,记录留着只会越积越多。
+ * 传入 userId 时只能删除该用户自己的 key(管理入口不传,可删任意用户)。
+ */
+export async function deleteApiKey(id: string, userId?: string): Promise<boolean> {
+  const client = getSupabaseAdminClient()
+  if (!client) return false
+  const base = client
+    .from('api_keys')
+    .delete()
+    .eq('id', id)
+    // 只有已撤销的才能删:未撤销的必须先撤销,避免一个按钮同时承担两种语义。
+    .not('revoked_at', 'is', null)
+  const { data, error } = await (userId ? base.eq('user_id', userId) : base).select('id').maybeSingle()
+  if (error) {
+    console.warn('[api-keys] delete failed:', safeErrorDetail(error))
+    return false
+  }
+  return Boolean(data)
+}
+
 /** 记录最近使用时间(尽力而为,失败不阻断请求)。 */
 export async function touchLastUsed(id: string): Promise<void> {
   const client = getSupabaseAdminClient()

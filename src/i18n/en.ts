@@ -139,6 +139,10 @@ export default {
       revokeFailed: 'Failed to revoke key, please try again.',
       revokeInvalid: 'Revoke failed; the key may already be invalid.',
       revokedNotice: 'Key revoked.',
+      delete: 'Delete',
+      deleteFailed: 'Failed to delete key, please try again.',
+      deleteInvalid: 'Delete failed; the key may not be revoked yet.',
+      deletedNotice: 'Key deleted.',
     },
   },
   overview: {

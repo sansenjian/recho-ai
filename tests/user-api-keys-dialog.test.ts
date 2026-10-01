@@ -107,6 +107,32 @@ describe('UserApiKeysDialog', () => {
     expect(dialog.textContent).toContain('sk-live-abc')
   })
 
+  it('deletes a revoked key and drops it from the list', async () => {
+    const revokedKey = { ...createdKey, id: 'k2', revoked_at: '2026-01-02T00:00:00Z' }
+    fetchMock
+      .mockImplementationOnce(async () => jsonResponse({ keys: [revokedKey] }))
+      .mockImplementationOnce(async () => jsonResponse({ ok: true }))
+
+    const wrapper = mountDialog()
+    await settle()
+
+    const dialog = currentDialog()
+    // 撤销后才会出现删除入口;未撤销的 key 只有撤销按钮。
+    const removeButton = Array.from(dialog.querySelectorAll("button")).find(
+      button => button.textContent?.trim() === "删除",
+    ) as HTMLButtonElement | undefined
+    expect(removeButton).toBeTruthy()
+    removeButton!.click()
+    await settle()
+    await wrapper.vm.$nextTick()
+
+    const purge = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/purge'))
+    expect(purge).toBeTruthy()
+    expect((purge![1] as RequestInit).method).toBe('DELETE')
+    expect(dialog.textContent).not.toContain('sk-...abc')
+    expect(dialog.textContent).toContain('密钥已删除')
+  })
+
   it('emits update:open with false when the dialog closes', async () => {
     const wrapper = mountDialog()
     await settle()
