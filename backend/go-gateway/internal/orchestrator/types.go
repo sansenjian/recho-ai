@@ -94,9 +94,19 @@ type IdempotencyService interface {
 	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error
 }
 
+// AppSettingsProvider 描述外部兼容端点需要的应用级开关读取。
+//
+// 单独定义而不是复用具体 service 类型，是为了让 handler 在测试里能用桩替换，
+// 且在未配置数据库时（service 为 nil）保持可用。
+type AppSettingsProvider interface {
+	OpenAIB64JSONEnabled(ctx context.Context) (bool, error)
+}
+
 // ProviderSettingsService 描述图片 Provider 配置读取。
 type ProviderSettingsService interface {
 	ImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error)
+	// ListImageModels 供外部 OpenAI 兼容端点的 GET /v1/models 使用。
+	ListImageModels(ctx context.Context) ([]string, error)
 }
 
 // --- Domain 类型（handler 包通过类型别名 re-export，保持测试不变） ---
@@ -118,6 +128,12 @@ type GenRequest struct {
 	// TransparentBackground 请求透明背景输出。只有模型在 Provider 目录里声明了
 	// 透明能力时才会真正带给上游（见 transparentBackgroundSupported）。
 	TransparentBackground bool `json:"transparentBackground,omitempty"`
+	// ExplicitSize 是外部 OpenAI 兼容端点传入的原始 "宽x高"。非空时优先于
+	// resolution+aspectRatio 推出的尺寸，使第三方客户端能指定表外尺寸。
+	//
+	// 站内请求不带此字段，因此不影响既有行为；它的存在只是为了不把外部
+	// 客户端限制在本站尺寸表的几个档位上。
+	ExplicitSize string `json:"explicitSize,omitempty"`
 }
 
 // GenReference 表示一张参考图。

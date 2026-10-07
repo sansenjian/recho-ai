@@ -20,6 +20,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   IMAGE_GEN_API_KEY: '',
   IMAGE_GEN_BASE_URL: '',
   OPENAI_API_KEY: '',
+  OPENAI_B64_JSON_ENABLED: false,
   OPENAI_BASE_URL: '',
   KIMI_API_KEY: '',
   KIMI_BASE_URL: '',

@@ -463,6 +463,31 @@ func (s *AppSettingsService) ImageCreditCostPerModel(ctx context.Context, model 
 	return base, baseErr
 }
 
+// OpenAIB64JSONEnabled 报告外部 OpenAI 兼容端点是否允许 response_format=b64_json。
+//
+// 键缺失时回退到环境变量默认值，与其余开关的解析方式一致。返回 base64 图片会
+// 显著增加响应体积与带宽，故默认关闭，由管理员在后台显式开启。
+func (s *AppSettingsService) OpenAIB64JSONEnabled(ctx context.Context) (bool, error) {
+	fallback := config.OpenAIB64JSONEnabled
+	if s == nil || s.pool == nil {
+		return fallback, nil
+	}
+
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `
+select value
+		from public.app_settings
+		where key = 'openai_b64_json_enabled'
+	`).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fallback, nil
+		}
+		return fallback, err
+	}
+	return parseJSONBool(raw, fallback), nil
+}
+
 func parseJSONBool(raw []byte, fallback bool) bool {
 	var value bool
 	if err := json.Unmarshal(raw, &value); err == nil {

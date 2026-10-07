@@ -58,6 +58,10 @@ type ImageHandler struct {
 	creditService  orchestrator.CreditService      // 仅 Diagnostics 报告可用性
 	idempotencySvc orchestrator.IdempotencyService // 仅 Diagnostics 报告可用性
 	httpClient     *http.Client                    // 仅 Diagnostics 报告可用性
+	// providerSettings 服务于外部 OpenAI 兼容端点的模型列表；也可为 nil（未配置 DB）。
+	providerSettings orchestrator.ProviderSettingsService
+	// appSettings 提供 b64_json 等对外开关；可为 nil，此时按关闭处理。
+	appSettings orchestrator.AppSettingsProvider
 }
 
 // NewImageHandler 创建图片 handler。credit/storage/idempotency 可为 nil（表示禁用）。
@@ -116,6 +120,13 @@ func dependencyIsNil(value any) bool {
 // WithProviderSettings 注入图片 Provider 配置源。返回自身以支持链式调用。
 func (h *ImageHandler) WithProviderSettings(providerSettingsSvc orchestrator.ProviderSettingsService) *ImageHandler {
 	h.orch = h.orch.WithProviderSettings(providerSettingsSvc)
+	h.providerSettings = providerSettingsSvc
+	return h
+}
+
+// WithAppSettings 注入应用级开关源，供外部 OpenAI 兼容端点读取对外配置。
+func (h *ImageHandler) WithAppSettings(appSettings orchestrator.AppSettingsProvider) *ImageHandler {
+	h.appSettings = appSettings
 	return h
 }
 

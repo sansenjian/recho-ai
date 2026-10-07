@@ -109,7 +109,8 @@ func main() {
 	}
 	creditsHandler := handler.NewCreditsHandler(creditService, redeemService, idempotencyService)
 	imageHandler := handler.NewImageHandler(creditService, storageService, idempotencyService).
-		WithProviderSettings(providerSettingsService)
+		WithProviderSettings(providerSettingsService).
+		WithAppSettings(appSettingsService)
 	if config.ImageJobWorkerEnabled && imageJobRepo != nil {
 		imageHandler.WithImageJobStore(imageJobRepo)
 	}
@@ -203,6 +204,14 @@ func main() {
 		r.Route("/image", func(r chi.Router) {
 			imageHandler.RegisterRoutes(r)
 		})
+	})
+
+	// OpenAI 兼容端点：外部客户端（OpenAI SDK、New API、画图前端）把本站当
+	// baseURL 使用。与 /api 分开挂载，因为协议形状不同（/v1/*），且认证要求为
+	// 必须持有效 rk-* 密钥——站内的访客与免费生成开关不适用于按额度计费的外部调用。
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware)
+		imageHandler.RegisterOpenAIRoutes(r)
 	})
 
 	// Create HTTP server

@@ -83,3 +83,9 @@ export const CANVAS_CONTEXT_ENABLED = process.env.CANVAS_CONTEXT_ENABLED === 'tr
 
 export const FREE_GENERATION_ENABLED = process.env.FREE_GENERATION_ENABLED !== 'false'
 export const GUEST_GENERATION_ENABLED = process.env.GUEST_GENERATION_ENABLED !== 'false'
+
+// 外部 OpenAI 兼容端点是否允许 response_format=b64_json。
+// 默认启用：客户端可能只认 base64（无公开存储、内网环境等），开箱即可用；
+// 可用 OPENAI_B64_JSON_ENABLED=false 关闭。数据库 app_settings
+// .openai_b64_json_enabled 存在时以数据库值为准。
+export const OPENAI_B64_JSON_ENABLED = process.env.OPENAI_B64_JSON_ENABLED !== 'false'

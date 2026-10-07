@@ -218,6 +218,99 @@ func (s testProviderSettingsService) ImageProvider(_ context.Context, model stri
 	return cfg, nil
 }
 
+// ListImageModels 满足外部 OpenAI 兼容端点对 ProviderSettingsService 的扩展要求。
+func (s testProviderSettingsService) ListImageModels(_ context.Context) ([]string, error) {
+	if len(s.cfg.ImageModels) > 0 {
+		return s.cfg.ImageModels, nil
+	}
+	if s.cfg.ImageModel != "" {
+		return []string{s.cfg.ImageModel}, nil
+	}
+	return nil, nil
+}
+
+
+
+func TestPersistImagesSynchronouslyKeepsOriginalOnFailure(t *testing.T) {
+	// 单张持久化失败不应影响其余图片，也不应让整个请求失败：
+	// 已经生成出来的图必须仍然返回给调用方（哪怕只是临时链接）。
+	store := &testStorageService{
+		storeURL: func(context.Context, string, string) (*service.StoredImage, error) {
+			return nil, errors.New("storage unavailable")
+		},
+	}
+	orch := NewImageOrchestrator(nil, store, nil)
+
+	images := []generatedImageRecord{
+		{result: ImageResult{ID: "img-1", PersistenceStatus: "processing"}, source: imageSource{URL: "https://upstream.test/1.png"}},
+		{result: ImageResult{ID: "img-2", PersistenceStatus: "processing"}, source: imageSource{URL: "https://upstream.test/2.png"}},
+	}
+
+	result := orch.persistImagesSynchronously(context.Background(), images)
+
+	if len(result) != 2 {
+		t.Fatalf("got %d results, want 2", len(result))
+	}
+	for _, item := range result {
+		if item.result.ID == "" {
+			t.Error("image ID must be preserved when persistence fails")
+		}
+	}
+}
+
+func TestPersistImagesSynchronouslySkipsAlreadyPersisted(t *testing.T) {
+	// 已持久化的图片不应重复上传：异步路径可能已经处理过，重复上传会浪费带宽。
+	storeCalls := 0
+	store := &testStorageService{
+		storeURL: func(context.Context, string, string) (*service.StoredImage, error) {
+			storeCalls++
+			return storedImageForHint("again"), nil
+		},
+	}
+	orch := NewImageOrchestrator(nil, store, nil)
+
+	images := []generatedImageRecord{
+		{result: ImageResult{ID: "img-done", PersistenceStatus: "persisted", URL: "https://cdn.test/done.png"}},
+	}
+
+	result := orch.persistImagesSynchronously(context.Background(), images)
+
+	if storeCalls != 0 {
+		t.Errorf("expected no storage calls for already-persisted image, got %d", storeCalls)
+	}
+	if result[0].result.URL != "https://cdn.test/done.png" {
+		t.Errorf("URL = %q, want the persisted one", result[0].result.URL)
+	}
+}
+
+func TestPersistImagesSynchronouslyReplacesURLWithStorageURL(t *testing.T) {
+	// 这是省流量的核心：持久化成功后 URL 必须换成存储直链，
+	// 而不是继续返回上游的 data URI。
+	store := &testStorageService{}
+	orch := NewImageOrchestrator(nil, store, nil)
+
+	images := []generatedImageRecord{
+		{
+			result: ImageResult{ID: "img-x", PersistenceStatus: "processing", URL: "data:image/png;base64,AAAA"},
+			source: imageSource{URL: "https://upstream.test/x.png"},
+		},
+	}
+
+	result := orch.persistImagesSynchronously(context.Background(), images)
+
+	got := result[0].result
+	if !strings.HasPrefix(got.URL, "https://cdn.example.test/") {
+		t.Errorf("URL = %q, want a storage URL", got.URL)
+	}
+	if strings.HasPrefix(got.URL, "data:") {
+		t.Error("URL must not remain a data URI after successful persistence")
+	}
+	if got.PersistenceStatus != "persisted" {
+		t.Errorf("PersistenceStatus = %q, want persisted", got.PersistenceStatus)
+	}
+}
+
+
 func storedImageForHint(hint string) *service.StoredImage {
 	return &service.StoredImage{
 		PublicURL:     "https://cdn.example.test/" + hint + ".png",

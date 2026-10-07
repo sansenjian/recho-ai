@@ -21,6 +21,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   NVIDIA_API_KEY: '',
   NVIDIA_BASE_URL: '',
   OPENAI_API_KEY: '',
+  OPENAI_B64_JSON_ENABLED: false,
   OPENAI_BASE_URL: '',
   SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_SERVICE_ROLE_KEY: '',
