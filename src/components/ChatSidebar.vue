@@ -185,8 +185,8 @@ function onContextMenuBackdrop() {
       <span class="text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground">{{ t('chat.history') }}</span>
       <Button
         variant="outline"
-        size="icon"
-        class="h-[26px] w-[26px] text-muted-foreground shadow-sm"
+        size="icon-sm"
+        class="rounded-full text-muted-foreground shadow-sm"
         :title="t('chat.newChat')"
         @click="createConversation()"
       >
@@ -242,7 +242,7 @@ function onContextMenuBackdrop() {
           @contextmenu="onGroupContextMenu($event, section.groupId!)"
         >
           <ChevronRight
-            class="h-[11px] w-[11px] shrink-0 text-muted-foreground transition-transform"
+            class="h-[11px] w-[11px] shrink-0 text-muted-foreground transition-transform duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
             :class="{ '-rotate-90': !isExpanded(section.groupId!) }"
           />
           <span v-if="section.groupColor" class="h-[7px] w-[7px] shrink-0 rounded-full" :style="{ background: section.groupColor }" />
@@ -262,14 +262,19 @@ function onContextMenuBackdrop() {
           <span class="shrink-0 rounded-full bg-accent px-1.5 py-px text-[9px] text-muted-foreground/70">{{ section.convs.length }}</span>
         </div>
 
-        <!-- Conversations in group -->
-        <div v-if="isExpanded(section.groupId!)" class="py-px pl-1.5">
+        <!-- 0fr/1fr 折叠可动画，且不卸载列表 -->
+        <div
+          class="grid transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+          :class="isExpanded(section.groupId!) ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
+        >
+          <div class="min-h-0 overflow-hidden" :inert="!isExpanded(section.groupId!)">
+            <div class="py-px pl-1.5">
           <div
             v-for="conv in section.convs"
             :key="conv.id"
             role="button"
             tabindex="0"
-            class="group flex w-full cursor-pointer items-center gap-[5px] rounded-[var(--radius-md,7px)] border-0 border-l-2 border-l-transparent bg-transparent px-[7px] py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="group flex min-h-9 w-full cursor-pointer items-center gap-[5px] rounded-[8px] border-0 border-l-2 border-l-transparent bg-transparent px-[7px] py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="{ 'bg-accent': conv.id === activeConversationId }"
             :style="section.groupColor && conv.id === activeConversationId ? { borderLeftColor: section.groupColor } : {}"
             draggable="true"
@@ -296,8 +301,10 @@ function onContextMenuBackdrop() {
               <Trash2 class="h-3 w-3" />
             </Button>
           </div>
-          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="my-1 rounded-md border border-dashed border-border px-2 py-2.5 text-center text-[11px] text-muted-foreground">
+          <div v-if="section.convs.length === 0 && section.groupId !== '__ungrouped__'" class="my-1 rounded-[8px] border border-dashed border-border px-2 py-2.5 text-center text-[11px] text-muted-foreground">
             {{ t('chat.dragConversationHere') }}
+          </div>
+            </div>
           </div>
         </div>
       </div>
@@ -306,7 +313,7 @@ function onContextMenuBackdrop() {
       <button
         v-if="!creatingGroup"
         type="button"
-        class="my-1 flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="my-1 flex min-h-9 w-full cursor-pointer items-center gap-1.5 rounded-[8px] border-0 bg-transparent px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         @click="creatingGroup = true"
       >
         <Plus class="h-[13px] w-[13px]" />

@@ -200,7 +200,7 @@ function skillIcon(name: string) {
 
 <template>
   <footer class="shrink-0 border-t-0 bg-background/96 px-5 pb-4 pt-3 backdrop-blur-[14px] max-sm:px-2.5 max-sm:pb-2.5 max-sm:pt-2">
-    <div class="relative mx-auto w-full max-w-[760px] overflow-visible rounded-3xl border border-b-0 border-border bg-card shadow-sm shadow-foreground/5 max-sm:rounded-[11px]">
+    <div class="relative mx-auto w-full max-w-[760px] overflow-visible rounded-[20px] border border-b-0 border-border bg-card shadow-[0_2px_8px_hsl(var(--foreground)/0.04),0_4px_80px_8px_hsl(var(--foreground)/0.024)] max-sm:rounded-[11px] max-sm:shadow-[0_2px_8px_hsl(var(--foreground)/0.04),0_4px_40px_8px_hsl(var(--foreground)/0.024)]">
       <div class="relative">
         <div v-if="pendingImages && pendingImages.length > 0" class="flex flex-wrap gap-1.5 px-3 pt-2.5">
           <div v-for="(img, idx) in pendingImages" :key="idx" class="relative h-[58px] w-[58px] overflow-hidden rounded-lg border border-border bg-muted">
@@ -252,8 +252,8 @@ function skillIcon(name: string) {
         <div class="flex shrink-0 items-center gap-1.5">
           <Button
             variant="ghost"
-            size="icon"
-            class="h-8 w-8 text-muted-foreground"
+            size="icon-sm"
+            class="text-muted-foreground"
             :title="t('chat.uploadImage')"
             @click="emit('upload')"
           >
@@ -266,7 +266,7 @@ function skillIcon(name: string) {
             <Button
               variant="ghost"
               size="sm"
-              class="h-8 gap-1.5 px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              class="h-7 gap-1.5 px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               :aria-expanded="showModelDropdown"
               aria-haspopup="listbox"
               @click="showModelDropdown = !showModelDropdown"
@@ -309,8 +309,8 @@ function skillIcon(name: string) {
           <Button
             v-if="isLoading"
             variant="destructive"
-            size="icon"
-            class="h-9 w-9 rounded-full"
+            size="icon-sm"
+            class="rounded-full"
             :title="t('chat.stop')"
             @click="emit('stop')"
           >
@@ -318,8 +318,8 @@ function skillIcon(name: string) {
           </Button>
           <Button
             v-else
-            size="icon"
-            class="h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            size="icon-sm"
+            class="rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="!canSubmit || !currentModel"
             :title="t('chat.send')"
             @click="handleSubmit"
