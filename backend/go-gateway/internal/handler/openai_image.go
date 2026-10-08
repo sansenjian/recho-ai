@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -274,14 +275,14 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	format, formatErr := h.resolveResponseFormat(req.ResponseFormat)
+	format, formatErr := h.resolveResponseFormat(r.Context(), req.ResponseFormat)
 	if formatErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", formatErr.Error())
 		return
 	}
 	// 白名单校验必须早于计费与上游调用：编排层对未命中的模型会回退到
 	// 优先级最高的 Provider，不拦的话调用方会拿到别的模型生成的图。
-	if modelErr := h.validateRequestedModel(req.Model); modelErr != nil {
+	if modelErr := h.validateRequestedModel(r.Context(), req.Model); modelErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", modelErr.Error())
 		return
 	}
@@ -336,12 +337,14 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 		AwaitPersistence: true,
 	})
 	if statusErr != nil {
-		status := statusErr.Code
-		if status < 400 {
-			status = http.StatusBadRequest
+		// 命中幂等重放时 statusErr 携带的是成功响应体，必须先识别出来，
+		// 否则重试的调用方会拿到错误信封而不是缓存的图片。
+		replayed, ok := replayResponse(statusErr)
+		if !ok {
+			writeStatusError(w, statusErr)
+			return
 		}
-		writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
-		return
+		resp = replayed
 	}
 
 	items, err := h.openAIImageItems(r.Context(), resp, format)
@@ -391,8 +394,17 @@ type openAIEditForm struct {
 //
 // 图片直接以 data URL 形式放进 GenReference，不先落存储：编辑是一次性输入，
 // 与历史记录里的参考图不同，没必要产生对象存储副作用。
-func parseOpenAIEditForm(r *http.Request) (*openAIEditForm, error) {
+func parseOpenAIEditForm(w http.ResponseWriter, r *http.Request) (*openAIEditForm, error) {
+	// 先给请求体套上硬上限再解析：ParseMultipartForm 的参数只限制驻留内存的
+	// 部分，超出会写临时文件。逐张与总量的上限原本在解析完成后才检查，届时
+	// 整个请求体已经收完，已认证用户可以借此占用磁盘与带宽。
+	// 上限取总量上限再多一点余量，留给 multipart 边界与其它表单字段。
+	r.Body = http.MaxBytesReader(w, r.Body, openAIEditMaxTotalBytes+(1<<20))
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return nil, fmt.Errorf("请求体过大：上传图片总量不得超过 %d MB", openAIEditMaxTotalBytes>>20)
+		}
 		return nil, fmt.Errorf("无效的 multipart 表单")
 	}
 
@@ -472,7 +484,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	form, err := parseOpenAIEditForm(r)
+	form, err := parseOpenAIEditForm(w, r)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
@@ -482,12 +494,12 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	format, formatErr := h.resolveResponseFormat(form.responseFormat)
+	format, formatErr := h.resolveResponseFormat(r.Context(), form.responseFormat)
 	if formatErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", formatErr.Error())
 		return
 	}
-	if modelErr := h.validateRequestedModel(form.model); modelErr != nil {
+	if modelErr := h.validateRequestedModel(r.Context(), form.model); modelErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", modelErr.Error())
 		return
 	}
@@ -536,12 +548,13 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		AwaitPersistence: true,
 	})
 	if statusErr != nil {
-		status := statusErr.Code
-		if status < 400 {
-			status = http.StatusBadRequest
+		// 同生图端点：命中幂等重放时 statusErr 携带的是成功响应体。
+		replayed, ok := replayResponse(statusErr)
+		if !ok {
+			writeStatusError(w, statusErr)
+			return
 		}
-		writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
-		return
+		resp = replayed
 	}
 
 	items, itemErr := h.openAIImageItems(r.Context(), resp, format)
@@ -564,7 +577,7 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	models := h.openAIImageModels()
+	models := h.openAIImageModels(r.Context())
 	list := make([]openAIModel, 0, len(models))
 	for _, id := range models {
 		list = append(list, openAIModel{
@@ -578,6 +591,36 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 }
 
 
+// replayResponse 识别幂等重放：编排层命中重放时返回 Code<400 且 Body 是缓存的
+// GenResponse JSON，而不是错误。把 Body 解析回 GenResponse 交给正常响应路径。
+//
+// 不识别的话，这段「成功但走错误通道」的返回值会被当成失败：调用方的重试
+// （客户端超时、用户想再生成一张）拿到的是错误信封，缓存的图片被丢弃。
+// 返回的第二个值为 false 表示这不是重放，调用方按普通错误处理。
+func replayResponse(statusErr *orchestrator.StatusError) (*orchestrator.GenResponse, bool) {
+	if statusErr == nil || statusErr.Body == nil || statusErr.Code >= 400 {
+		return nil, false
+	}
+	var resp orchestrator.GenResponse
+	if err := json.Unmarshal(statusErr.Body, &resp); err != nil {
+		return nil, false
+	}
+	return &resp, true
+}
+
+// writeStatusError 把编排层的错误写成 OpenAI 错误信封。
+//
+// 重放（Code<400 且有 Body）不能走这里：那是成功的响应体，需要由调用方解析后
+// 按正常结果返回。这里只负责真正的失败——Code<400 却没有 Body 属于编排层的
+// 异常组合，按 400 处理以免向客户端谎报成功。
+func writeStatusError(w http.ResponseWriter, statusErr *orchestrator.StatusError) {
+	status := statusErr.Code
+	if status < 400 {
+		status = http.StatusBadRequest
+	}
+	writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
+}
+
 // validateRequestedModel 校验请求的模型确实在对外可用列表里。
 //
 // 为什么需要：编排层在模型未命中时会回退到优先级最高的 Provider
@@ -588,12 +631,12 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 //
 // 这里用对外模型列表做白名单，把它挡在进入编排之前。空模型名放行：
 // 那是「用默认模型」的合法语义，由编排层解析。
-func (h *ImageHandler) validateRequestedModel(model string) error {
+func (h *ImageHandler) validateRequestedModel(ctx context.Context, model string) error {
 	requested := strings.TrimSpace(model)
 	if requested == "" {
 		return nil
 	}
-	available := h.openAIImageModels()
+	available := h.openAIImageModels(ctx)
 	if len(available) == 0 {
 		// 一个模型都没配时给出明确指引，而不是让请求走到上游才失败。
 		return fmt.Errorf("服务端尚未配置任何可用的生图模型。")
@@ -619,13 +662,13 @@ func (h *ImageHandler) validateRequestedModel(model string) error {
 // 开关语义：b64_json 开关只约束「显式请求 base64」的场景。默认路径不受它
 // 影响——关掉开关是为了让管理员能强制客户端走省流量的直链，而不是让默认
 // 调用直接失败。
-func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
+func (h *ImageHandler) resolveResponseFormat(ctx context.Context, requested string) (string, error) {
 	format := strings.ToLower(strings.TrimSpace(requested))
 
 	if format == "" {
 		// 未指定：对齐官方给 base64；若管理员关闭了该能力则退回直链，
 		// 保证请求仍然成功而不是要求客户端改参数。
-		if h.b64JSONEnabled() {
+		if h.b64JSONEnabled(ctx) {
 			return openAIImageFormatB64JSON, nil
 		}
 		return openAIImageFormatURL, nil
@@ -634,7 +677,7 @@ func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
 	if format != openAIImageFormatURL && format != openAIImageFormatB64JSON {
 		return "", fmt.Errorf("不支持的 response_format：%s。", requested)
 	}
-	if format == openAIImageFormatB64JSON && !h.b64JSONEnabled() {
+	if format == openAIImageFormatB64JSON && !h.b64JSONEnabled(ctx) {
 		return "", fmt.Errorf("本服务未开启 b64_json 响应格式，请使用 response_format=url。")
 	}
 	return format, nil
@@ -644,11 +687,11 @@ func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
 //
 // 读取失败时按「关闭」处理：宁可让调用方收到明确的 400，也不要因为配置读取
 // 异常而静默回退到一种会显著放大响应的格式。
-func (h *ImageHandler) b64JSONEnabled() bool {
+func (h *ImageHandler) b64JSONEnabled(ctx context.Context) bool {
 	if h.appSettings == nil {
 		return config.OpenAIB64JSONEnabled
 	}
-	enabled, err := h.appSettings.OpenAIB64JSONEnabled(context.Background())
+	enabled, err := h.appSettings.OpenAIB64JSONEnabled(ctx)
 	if err != nil {
 		log.Printf("[openai-image] failed to read b64_json switch, treating as disabled: %v", err)
 		return false
@@ -660,11 +703,11 @@ func (h *ImageHandler) b64JSONEnabled() bool {
 //
 // 读取失败时返回空列表而不是报错：/v1/models 是发现性接口，返回空列表会让
 // 客户端知道当前没有可用模型，比 5xx 更利于诊断。
-func (h *ImageHandler) openAIImageModels() []string {
+func (h *ImageHandler) openAIImageModels(ctx context.Context) []string {
 	if h.providerSettings == nil {
 		return nil
 	}
-	models, err := h.providerSettings.ListImageModels(context.Background())
+	models, err := h.providerSettings.ListImageModels(ctx)
 	if err != nil {
 		log.Printf("[openai-image] failed to list image models: %v", err)
 		return nil
@@ -693,7 +736,15 @@ func (h *ImageHandler) openAIImageItems(ctx context.Context, resp *orchestrator.
 			// 主路径：读存储转 base64。
 			encoded, err := h.encodeImageBase64(ctx, image)
 			if err != nil {
-				// 兜底：读不到图时退回链接，避免整条请求失败。
+				// 兜底一：同步持久化失败时数据仍在内存的 data URI 里
+				// （StoragePath 为空，encodeImageBase64 必然失败）。
+				// 直接把它当 base64 返回，只读 b64_json 的客户端才拿得到图。
+				if inline, ok := stripDataURLPrefix(imageURL); ok {
+					item.B64JSON = inline
+					items = append(items, item)
+					continue
+				}
+				// 兜底二：连内联数据都没有时才退回链接，避免整条请求失败。
 				fallbackErr = err
 				item.URL = imageURL
 				items = append(items, item)
@@ -810,9 +861,37 @@ func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, form
 		strconv.Itoa(req.Count),
 		format,
 		strconv.FormatBool(req.TransparentBackground),
+		referenceFingerprint(req.References),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(fingerprint))
 	return "openai-" + hex.EncodeToString(sum[:16])
+}
+
+// referenceFingerprint 把参考图归纳成一个稳定的短哈希。
+//
+// 参考图必须进入幂等指纹，否则「同一提示词 + 换一张参考图」会被判定为同一请求，
+// 第二次编辑直接命中重放、返回上一张结果。参考图内容是 data URI 或存储路径，
+// 可能有数十 MB，因此只把逐项哈希拼进指纹，不把原文带进去。
+func referenceFingerprint(references []orchestrator.GenReference) string {
+	if len(references) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(references)*4)
+	for _, ref := range references {
+		// 逐张取内容标识：优先实际图像数据，其次是存储位置。
+		// 文件名与标题也带上——同名不同图的情况这两者能区分开。
+		sum := sha256.Sum256([]byte(strings.Join([]string{
+			ref.DataUrl,
+			ref.Content,
+			ref.StoragePath,
+			ref.PreviewURL,
+			ref.PreviewPath,
+			ref.ThumbnailURL,
+			ref.ThumbnailPath,
+		}, "\x00")))
+		parts = append(parts, hex.EncodeToString(sum[:8]), ref.FileName, ref.Title, ref.ID)
+	}
+	return strings.Join(parts, "\x01")
 }
 
 // firstNonEmptyString 返回第一个非空字符串。

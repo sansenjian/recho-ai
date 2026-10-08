@@ -229,19 +229,19 @@ func TestB64JSONEnabledFailsClosedOnReadError(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).
 		WithAppSettings(stubAppSettings{err: errors.New("db down")})
 
-	if handler.b64JSONEnabled() {
+	if handler.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json to be disabled when the settings read fails")
 	}
 }
 
 func TestB64JSONEnabledReflectsSetting(t *testing.T) {
 	enabled := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
-	if !enabled.b64JSONEnabled() {
+	if !enabled.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json enabled when the setting is true")
 	}
 
 	disabled := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
-	if disabled.b64JSONEnabled() {
+	if disabled.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json disabled when the setting is false")
 	}
 }
@@ -304,7 +304,7 @@ func TestParseOpenAIEditFormAcceptsBothImageFieldNames(t *testing.T) {
 			map[string]string{"prompt": "make it blue"},
 			map[string][]byte{field: tinyPNG})
 
-		form, err := parseOpenAIEditForm(req)
+		form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 		if err != nil {
 			t.Fatalf("field %q: unexpected error: %v", field, err)
 		}
@@ -325,7 +325,7 @@ func TestParseOpenAIEditFormAcceptsMultipleImages(t *testing.T) {
 		map[string]string{"prompt": "combine these"},
 		map[string][]byte{"image": tinyPNG})
 	// CreateFormFile 每调用一次产生一个 part；用同名字段再追加一张。
-	form, err := parseOpenAIEditForm(req)
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestParseOpenAIEditFormAcceptsMultipleImages(t *testing.T) {
 
 func TestParseOpenAIEditFormRejectsMissingImage(t *testing.T) {
 	req, _ := buildEditMultipart(t, map[string]string{"prompt": "x"}, nil)
-	if _, err := parseOpenAIEditForm(req); err == nil {
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
 		t.Error("expected an error when no image is provided")
 	}
 }
@@ -345,7 +345,7 @@ func TestParseOpenAIEditFormRejectsNonImageFile(t *testing.T) {
 	req, _ := buildEditMultipart(t,
 		map[string]string{"prompt": "x"},
 		map[string][]byte{"image": []byte("this is not an image at all")})
-	if _, err := parseOpenAIEditForm(req); err == nil {
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
 		t.Error("expected an error for a non-image upload")
 	}
 }
@@ -363,7 +363,7 @@ func TestParseOpenAIEditFormParsesOptionalFields(t *testing.T) {
 		},
 		map[string][]byte{"image": tinyPNG})
 
-	form, err := parseOpenAIEditForm(req)
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestResolveResponseFormatDefaultsToB64JSON(t *testing.T) {
 	// 客户端不传该参数时必须拿到 b64_json，否则按官方示例读 .b64_json 会得到 null。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
-	format, err := handler.resolveResponseFormat("")
+	format, err := handler.resolveResponseFormat(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestResolveResponseFormatExplicitURLWinsEvenWhenB64Enabled(t *testing.T) {
 	// 不能因为开关开着就强行换成 base64。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
-	format, err := handler.resolveResponseFormat("url")
+	format, err := handler.resolveResponseFormat(context.Background(), "url")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestResolveResponseFormatIsCaseInsensitive(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
 	for _, input := range []string{"URL", "Url", "  url  "} {
-		format, err := handler.resolveResponseFormat(input)
+		format, err := handler.resolveResponseFormat(context.Background(), input)
 		if err != nil {
 			t.Fatalf("input %q: unexpected error: %v", input, err)
 		}
@@ -593,7 +593,7 @@ func TestResolveResponseFormatDefaultFallsBackToURLWhenB64Disabled(t *testing.T)
 	// 这样客户端不必为了「管理员关了 base64」去改代码。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
 
-	format, err := handler.resolveResponseFormat("")
+	format, err := handler.resolveResponseFormat(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestResolveResponseFormatRejectsExplicitB64WhenDisabled(t *testing.T) {
 	// （客户端可能依赖 base64 做后续处理，静默降级会埋坑）。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
 
-	if _, err := handler.resolveResponseFormat("b64_json"); err == nil {
+	if _, err := handler.resolveResponseFormat(context.Background(), "b64_json"); err == nil {
 		t.Error("expected an error when b64_json is explicitly requested but disabled")
 	}
 }
@@ -616,7 +616,7 @@ func TestResolveResponseFormatRejectsUnknownValue(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
 	for _, input := range []string{"png", "base64", "data"} {
-		if _, err := handler.resolveResponseFormat(input); err == nil {
+		if _, err := handler.resolveResponseFormat(context.Background(), input); err == nil {
 			t.Errorf("input %q: expected an error", input)
 		}
 	}
@@ -641,7 +641,7 @@ func (s stubModelListProvider) ListImageModels(context.Context) ([]string, error
 func TestValidateRequestedModelAcceptsListedModel(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2", "gpt-image-2.5"}})
 
-	if err := handler.validateRequestedModel("gpt-image-2"); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), "gpt-image-2"); err != nil {
 		t.Errorf("unexpected error for a listed model: %v", err)
 	}
 }
@@ -651,7 +651,7 @@ func TestValidateRequestedModelRejectsUnlistedModel(t *testing.T) {
 	// 不拦的话调用方会拿到别的模型生成的图，且按别的模型计费。
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2.5"}})
 
-	err := handler.validateRequestedModel("gpt-image-2")
+	err := handler.validateRequestedModel(context.Background(), "gpt-image-2")
 	if err == nil {
 		t.Fatal("expected an error for an unlisted model")
 	}
@@ -667,10 +667,10 @@ func TestValidateRequestedModelAllowsEmptyModel(t *testing.T) {
 	// 空模型名是「用默认模型」的合法语义，应由编排层解析而不是在这里拒绝。
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2"}})
 
-	if err := handler.validateRequestedModel(""); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), ""); err != nil {
 		t.Errorf("unexpected error for an empty model: %v", err)
 	}
-	if err := handler.validateRequestedModel("   "); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), "   "); err != nil {
 		t.Errorf("unexpected error for a blank model: %v", err)
 	}
 }
@@ -678,12 +678,129 @@ func TestValidateRequestedModelAllowsEmptyModel(t *testing.T) {
 func TestValidateRequestedModelReportsEmptyConfiguration(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{})
 
-	err := handler.validateRequestedModel("gpt-image-2")
+	err := handler.validateRequestedModel(context.Background(), "gpt-image-2")
 	if err == nil {
 		t.Fatal("expected an error when no models are configured")
 	}
 	if !strings.Contains(err.Error(), "尚未配置") {
 		t.Errorf("error should explain the empty configuration, got: %v", err)
+	}
+}
+
+// --- 幂等重放：成功响应体不能走错误通道 ---
+
+func TestReplayResponseExtractsCachedGenResponse(t *testing.T) {
+	// 编排层命中重放时返回 Code<400 且 Body 是缓存的 GenResponse。
+	// 不识别的话调用方的重试会拿到错误信封，缓存的图片被丢弃。
+	cached := []byte(`{"images":[{"id":"img_1","url":"https://cdn.example.test/a.png","storagePath":"generate/a.png"}]}`)
+	statusErr := &orchestrator.StatusError{Code: 200, Body: cached}
+
+	resp, ok := replayResponse(statusErr)
+	if !ok {
+		t.Fatal("expected the cached success body to be recognized as a replay")
+	}
+	if len(resp.Images) != 1 || resp.Images[0].ID != "img_1" {
+		t.Errorf("unexpected replay payload: %+v", resp.Images)
+	}
+}
+
+func TestReplayResponseRejectsRealErrors(t *testing.T) {
+	// 真正的失败不能被当成重放，否则客户端会收到 200 加空响应。
+	for _, statusErr := range []*orchestrator.StatusError{
+		nil,
+		{Code: 402, ErrorCode: "INSUFFICIENT_CREDITS", Message: "额度不足。"},
+		{Code: 500, ErrorCode: "PROVIDER_BAD_RESPONSE", Message: "图片生成失败。"},
+		{Code: 409, ErrorCode: "IDEMPOTENCY_CONFLICT", Message: "冲突。"},
+	} {
+		if _, ok := replayResponse(statusErr); ok {
+			t.Errorf("status %+v should not be treated as a replay", statusErr)
+		}
+	}
+}
+
+func TestReplayResponseRejectsSuccessWithoutBody(t *testing.T) {
+	// Code<400 但没有 Body 属于编排层的异常组合：按错误处理，不能谎报成功。
+	statusErr := &orchestrator.StatusError{Code: 200}
+	if _, ok := replayResponse(statusErr); ok {
+		t.Error("a success code without a cached body must not be treated as a replay")
+	}
+}
+
+func TestWriteStatusErrorMapsSubFourHundredCodeToBadRequest(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeStatusError(rec, &orchestrator.StatusError{Code: 200, ErrorCode: "weird", Message: "x"})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// --- 幂等指纹必须区分参考图 ---
+
+func TestDeriveOpenAIIdempotencyKeyChangesWithReferences(t *testing.T) {
+	// 同一提示词换一张参考图必须是不同的键。否则第二次编辑会命中重放、
+	// 返回上一张图，用户看不到自己的新输入。
+	base := orchestrator.GenRequest{Prompt: "make it blue", Model: "gpt-image-2"}
+	first := base
+	first.References = []orchestrator.GenReference{{DataUrl: "data:image/png;base64,AAA"}}
+	second := base
+	second.References = []orchestrator.GenReference{{DataUrl: "data:image/png;base64,BBB"}}
+
+	if deriveOpenAIIdempotencyKey("user-1", first, "url") == deriveOpenAIIdempotencyKey("user-1", second, "url") {
+		t.Error("changing the reference image must change the derived key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyStableForIdenticalReferences(t *testing.T) {
+	// 同样的请求（含同样的参考图）必须派生出同样的键，否则客户端重试会重复扣费。
+	reqA := orchestrator.GenRequest{
+		Prompt:     "make it blue",
+		Model:      "gpt-image-2",
+		References: []orchestrator.GenReference{{DataUrl: "data:image/png;base64,SAME", FileName: "a.png"}},
+	}
+	reqB := orchestrator.GenRequest{
+		Prompt:     "make it blue",
+		Model:      "gpt-image-2",
+		References: []orchestrator.GenReference{{DataUrl: "data:image/png;base64,SAME", FileName: "a.png"}},
+	}
+
+	if deriveOpenAIIdempotencyKey("user-1", reqA, "url") != deriveOpenAIIdempotencyKey("user-1", reqB, "url") {
+		t.Error("identical requests must derive the same key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyWithoutReferencesIsStable(t *testing.T) {
+	req := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	if deriveOpenAIIdempotencyKey("user-1", req, "url") != deriveOpenAIIdempotencyKey("user-1", req, "url") {
+		t.Error("requests without references must still derive a stable key")
+	}
+}
+
+// --- multipart 请求体上限 ---
+
+func TestParseOpenAIEditFormRejectsOversizedBody(t *testing.T) {
+	// 解析前就要挡住超大请求体：ParseMultipartForm 的参数只管内存部分，
+	// 超出会写临时文件，等到解析完再检查已经收完了整个请求体。
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("prompt", "a dot")
+	part, err := writer.CreateFormFile(openAIImageField, "big.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	oversized := make([]byte, openAIEditMaxTotalBytes+(2<<20))
+	if _, err := part.Write(oversized); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(buf.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
+		t.Error("expected an error for an oversized request body")
 	}
 }
 

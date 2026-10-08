@@ -732,6 +732,19 @@ func imageJobManifestFor(images []generatedImageRecord, metadata imageGeneration
 	}
 	for _, image := range images {
 		result := image.result
+		// 已同步持久化的图片保留其存储字段：外部端点（AwaitPersistence）已经在
+		// 返回响应前完成转码与上传，这里再清空会让 worker 从临时源重新上传一遍，
+		// 白白多出一次转码与三次对象写入。落库历史仍由 job 负责，只是跳过搬运。
+		// 用 stored 而不是自定义 phase：worker 只认 awaiting_stage/staged/stored/
+		// history_saved，未知值会直接判定 job 失败。stored 的语义正是「对象已就位，
+		// 只剩落历史」——跳过转码上传，继续走 saveHistory。
+		if result.PersistenceStatus == "persisted" {
+			manifest.Images = append(manifest.Images, imageJobManifestImage{
+				Result: result,
+				Phase:  imageJobPhaseStored,
+			})
+			continue
+		}
 		result.URL = ""
 		result.TemporaryURL = ""
 		result.DataURL = ""
@@ -1099,8 +1112,12 @@ func (o *ImageOrchestrator) prepareGeneratedImages(images []generatedImageRecord
 func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, count int, aspectRatio, resolution, quality string, provider service.ImageProviderConfig) ([]generatedImageRecord, error) {
 	// 显式尺寸优先：外部 OpenAI 兼容端点可以指定本站尺寸表之外的宽高，
 	// 此时按客户端原样下发，不再由 resolution+aspectRatio 推断。
+	//
+	// 但 Lucen 兼容模式例外：它只接受 1024x1024 / 1536x1024 / 1024x1536 三种源尺寸，
+	// 其余比例（16:9、9:16 等）靠后续裁剪得到。把 1536x864 这类原样透传会被上游
+	// 拒绝，请求以 provider_failed 结束并触发退款补偿。那种模式下仍旧按比例推导。
 	size := determineProviderSize(resolution, aspectRatio, provider)
-	if explicit := normalizeExplicitSize(req.ExplicitSize); explicit != "" {
+	if explicit := normalizeExplicitSize(req.ExplicitSize); explicit != "" && !usesLucenImageCompatibility(provider) {
 		size = explicit
 	}
 	imageMime := "image/png"

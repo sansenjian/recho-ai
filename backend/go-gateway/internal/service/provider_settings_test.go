@@ -290,7 +290,7 @@ func TestCatalogModelsCollectsPerRowEditModels(t *testing.T) {
 		{"id":"retired-model","name":"Retired","enabled":false,"editModel":"retired-edit"}
 	]`)
 
-	models, editModels := catalogModels(catalog)
+	models, editModels, _ := catalogModels(catalog)
 	if len(models) != 2 || models[0] != "gpt-image-2" || models[1] != "flux-pro" {
 		t.Fatalf("unexpected models: %#v", models)
 	}
@@ -304,7 +304,7 @@ func TestCatalogModelsCollectsPerRowEditModels(t *testing.T) {
 }
 
 func TestCatalogModelsSkipsRowsWithoutAnEditModel(t *testing.T) {
-	models, editModels := catalogModels([]byte(`[{"id":"gpt-image-2","enabled":true},{"id":"flux-pro","enabled":true,"editModel":"  "}]`))
+	models, editModels, _ := catalogModels([]byte(`[{"id":"gpt-image-2","enabled":true},{"id":"flux-pro","enabled":true,"editModel":"  "}]`))
 	if len(models) != 2 {
 		t.Fatalf("unexpected models: %#v", models)
 	}
@@ -312,7 +312,7 @@ func TestCatalogModelsSkipsRowsWithoutAnEditModel(t *testing.T) {
 		t.Fatalf("expected nil edit models when no row configures one, got %#v", editModels)
 	}
 
-	if _, unparsable := catalogModels([]byte(`not-json`)); unparsable != nil {
+	if _, unparsable, _ := catalogModels([]byte(`not-json`)); unparsable != nil {
 		t.Fatalf("expected nil edit models for an unparsable catalog, got %#v", unparsable)
 	}
 }
@@ -338,7 +338,7 @@ func TestCatalogTransparentModelsRequiresAnEnabledDeclaration(t *testing.T) {
 }
 
 func TestBuildImageProviderConfigFillsTransparentModels(t *testing.T) {
-	models, editModels := catalogModels([]byte(`[{"id":"model-one","enabled":true}]`))
+	models, editModels, _ := catalogModels([]byte(`[{"id":"model-one","enabled":true}]`))
 	transparentModels := catalogTransparentModels([]byte(`[
 		{"id":"model-one","enabled":true,"supportsTransparent":true},
 		{"id":"model-two","enabled":true}
@@ -374,7 +374,7 @@ func TestBuildImageProviderConfigFillsTransparentModels(t *testing.T) {
 }
 
 func TestBuildImageProviderConfigFillsModelEditModels(t *testing.T) {
-	models, editModels := catalogModels([]byte(`[
+	models, editModels, _ := catalogModels([]byte(`[
 		{"id":"model-one","enabled":true,"editModel":"row-edit"},
 		{"id":"model-two","enabled":true,"editModel":""}
 	]`))

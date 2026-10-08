@@ -206,6 +206,47 @@ describe('app settings service', () => {
     })
   })
 
+  it('applies the stored openai_b64_json_enabled value instead of leaving the default', async () => {
+    // 该键曾被映射却漏进赋值分支，于是管理员存下的 true/false 都不生效，
+    // 读取时永远回到环境变量默认值。
+    appSettingRows = [{ key: 'openai_b64_json_enabled', value: false }]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      openaiB64JsonEnabled: false,
+    })
+  })
+
+  it('applies a stored true for openai_b64_json_enabled', async () => {
+    appSettingRows = [{ key: 'openai_b64_json_enabled', value: true }]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      openaiB64JsonEnabled: true,
+    })
+  })
+
+  it('merges duplicate model ids inside the primary list and keeps the capability union', async () => {
+    // 多个已启用 Provider 声明同一模型时，primary 自己就会有重复项。
+    // 不去重会让下拉框出现两个相同选项，且其中一个丢掉透明能力。
+    appSettingRows = [
+      {
+        key: 'available_image_models',
+        value: [
+          { id: 'dup-model', name: 'Dup', supportsTransparent: false },
+          { id: 'dup-model', name: 'Dup Again', supportsTransparent: true },
+        ],
+      },
+    ]
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [
+        { id: 'dup-model', name: 'Dup', supportsTransparent: true },
+      ],
+    })
+  })
+
   it('keeps the first row when the same model is priced twice', async () => {
     appSettingRows = [
       { key: 'image_model_credit_costs', value: [{ id: 'dup', cost: 2 }, { id: 'dup', cost: 9 }] },
