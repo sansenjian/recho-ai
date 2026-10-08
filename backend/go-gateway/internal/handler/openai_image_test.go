@@ -1049,10 +1049,13 @@ func TestResolveOpenAIIdempotencyKeyPropagatesLookupFailure(t *testing.T) {
 	// CodeRabbit 指出：把查询失败当成「没有旧记录」会在查询瞬时抖动的窗口里让
 	// 重试重复扣费——上一桶可能已有成功记录，此刻新建就是又生成一张。
 	// 解析器必须把错误交给调用方，由调用方拒绝这次请求。
+	//
+	// 只让首次查询失败：若解析器吞掉首个错误继续探测，第二次查询会成功并
+	// 返回当前桶的键，测试就会漏判——那正是这个用例要挡住的行为。
 	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
 	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
 	handler := NewImageHandler(nil, nil, nil).
-		WithIdempotencyService(&stubImageIdempotencyService{lookupFailing: true}).
+		WithIdempotencyService(&stubImageIdempotencyService{lookupFailFirstOnly: true}).
 		WithClock(func() time.Time { return now })
 
 	if _, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); err == nil {

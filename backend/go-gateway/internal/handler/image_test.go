@@ -364,6 +364,9 @@ type stubImageIdempotencyService struct {
 	lookupKeys    map[string]bool
 	lookupQueries []string
 	lookupFailing bool
+	// lookupFailFirstOnly 只让第一次查询失败，用于验证解析器在首个
+	// Lookup 出错时立刻报错，而不是靠后续查询兜住。
+	lookupFailFirstOnly bool
 }
 
 func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error) {
@@ -379,6 +382,9 @@ func (s *stubImageIdempotencyService) Lookup(_ context.Context, _ string, idemKe
 	s.lookupQueries = append(s.lookupQueries, idemKey)
 	if s.lookupFailing {
 		return nil, errors.New("lookup unavailable")
+	}
+	if s.lookupFailFirstOnly && len(s.lookupQueries) == 1 {
+		return nil, errors.New("lookup unavailable on first query")
 	}
 	// 只有 map 中显式标记的键才算「已有记录」。空 map 与 nil 都表示没有任何记录，
 	// 这样「首次请求」「跨桶重试」两种时序才区分得开。
