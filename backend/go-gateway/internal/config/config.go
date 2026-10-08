@@ -104,6 +104,12 @@ var CanvasContextEnabled = parseEnvBool("CANVAS_CONTEXT_ENABLED", false)
 var FreeGenerationEnabled = parseEnvBool("FREE_GENERATION_ENABLED", true)
 var GuestGenerationEnabled = parseEnvBool("GUEST_GENERATION_ENABLED", true)
 
+// OpenAIB64JSONEnabled 是外部 OpenAI 兼容端点 response_format=b64_json 的默认开关。
+// 默认启用：客户端可能只认 base64（无公开存储、内网环境等）；
+// 置 OPENAI_B64_JSON_ENABLED=false 可关闭。数据库
+// app_settings.openai_b64_json_enabled 存在时以数据库值为准。
+var OpenAIB64JSONEnabled = parseEnvBool("OPENAI_B64_JSON_ENABLED", true)
+
 // Admin config
 var AdminUserIDs = parseEnvStringSlice("ADMIN_USER_IDS", ",")
 var AdminUserEmails = parseEnvStringSlice("ADMIN_USER_EMAILS", ",")

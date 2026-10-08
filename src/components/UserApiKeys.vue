@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, KeyRound } from '@lucide/vue'
+import { Copy, Trash2 } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,6 +36,7 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const issuedKey = ref<string | null>(null)
 const copied = ref(false)
+const deletingId = ref<string | null>(null)
 
 function shortTime(value: string | null) {
   if (!value) return '—'
@@ -121,20 +122,35 @@ async function copyIssuedKey() {
   }
 }
 
+/**
+ * 物理删除已撤销的 key。撤销后明文与 hash 都已无用,留一条不可用的记录
+ * 只会让列表越来越长;未撤销的 key 后端会拒绝删除,必须先撤销。
+ */
+async function deleteKey(key: UserApiKey) {
+  deletingId.value = key.id
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const data = await request<{ ok: boolean }>(`/api/api-keys/${encodeURIComponent(key.id)}/purge`, { method: 'DELETE' })
+    if (data.ok) {
+      keys.value = keys.value.filter(item => item.id !== key.id)
+      noticeMessage.value = t('account.keys.deletedNotice')
+    } else {
+      errorMessage.value = t('account.keys.deleteInvalid')
+    }
+  } catch (err) {
+    errorMessage.value = localizedClientErrorMessage(err, 'account.keys.deleteFailed')
+  } finally {
+    deletingId.value = null
+  }
+}
+
 onMounted(refresh)
 </script>
 
 <template>
-  <section class="border-t border-border pt-6">
-    <div class="flex items-center gap-2">
-      <KeyRound :size="14" class="text-muted-foreground" />
-      <span class="text-[13px] font-medium">{{ t('account.keys.title') }}</span>
-    </div>
-    <p class="mt-1 text-xs text-muted-foreground">
-      {{ t('account.keys.description') }}
-    </p>
-
-    <form class="mt-3 flex gap-2" @submit.prevent="createKey">
+  <div>
+    <form class="flex gap-2" @submit.prevent="createKey">
       <Input v-model="keyName" maxlength="100" :placeholder="t('account.keys.namePlaceholder')" class="h-9 flex-1 text-[13px]" />
       <Button type="submit" size="sm" class="h-9" :disabled="creating || !keyName.trim()">
         {{ creating ? t('account.keys.creating') : t('account.keys.create') }}
@@ -169,6 +185,10 @@ onMounted(refresh)
           </span>
           <code class="break-all font-mono text-[11px] text-muted-foreground">{{ key.key_hint }}</code>
           <span class="text-[11px] text-muted-foreground">{{ t('account.keys.created', { time: shortTime(key.created_at) }) }}</span>
+          <!-- 撤销与删除都不可逆,先把「最近用过没有」摆出来,别让用户凭记忆判断。 -->
+          <span class="text-[11px] text-muted-foreground">
+            {{ key.last_used_at ? t('account.keys.lastUsed', { time: shortTime(key.last_used_at) }) : t('account.keys.neverUsed') }}
+          </span>
         </div>
         <Button
           v-if="!key.revoked_at"
@@ -181,8 +201,21 @@ onMounted(refresh)
         >
           {{ t('account.keys.revoke') }}
         </Button>
+        <!-- 删除只对已撤销的 key 开放：明文早已不可恢复，留下的只是一条死记录。 -->
+        <Button
+          v-else
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="shrink-0 text-muted-foreground hover:text-destructive"
+          :disabled="deletingId === key.id"
+          @click="deleteKey(key)"
+        >
+          <Trash2 :size="13" />
+          {{ t('account.keys.delete') }}
+        </Button>
       </li>
     </ul>
     <p v-else class="mt-3 text-xs text-muted-foreground">{{ t('account.keys.empty') }}</p>
-  </section>
+  </div>
 </template>

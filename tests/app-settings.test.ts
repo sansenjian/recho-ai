@@ -25,6 +25,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   NVIDIA_API_KEY: '',
   NVIDIA_BASE_URL: '',
   OPENAI_API_KEY: '',
+  OPENAI_B64_JSON_ENABLED: false,
   OPENAI_BASE_URL: '',
   SUPABASE_PUBLISHABLE_KEY: '',
   SUPABASE_SERVICE_ROLE_KEY: '',
@@ -216,7 +217,10 @@ describe('app settings service', () => {
     })
   })
 
-  it('exposes enabled image provider models ahead of legacy app settings', async () => {
+  it('treats a non-empty runtime configuration as the authoritative visible list', async () => {
+    // 运行时配置非空时它就是用户可见的全部模型，Provider 只补足未列出的部分。
+    // 这样管理员能用运行时配置「隐藏」某个 Provider 模型——并集语义做不到这点，
+    // 因为并集只能加不能减。
     appSettingRows = [
       { key: 'available_image_models', value: [{ id: 'gpt-image-2', name: 'GPT Image 2' }] },
       { key: 'image_responses_image_model', value: 'gpt-image-2' },
@@ -237,12 +241,67 @@ describe('app settings service', () => {
     ]
 
     const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    // Provider 独有的 gpt-image-2.5 不再出现：运行时配置非空时它就是全部可见
+    // 模型。这正是「用运行时配置隐藏某个 Provider 模型」得以成立的原因。
     await expect(publicAppConfig()).resolves.toMatchObject({
       availableImageModels: [
-        { id: 'gpt-image-2.5', name: 'gpt-image-2.5' },
-        { id: 'gpt-image-2', name: 'GPT Image 2' },
+        { id: 'gpt-image-2', name: 'GPT Image 2', supportsTransparent: false },
       ],
+      defaultImageModel: 'gpt-image-2',
+    })
+  })
+
+  it('falls back to provider models when the runtime configuration is empty', async () => {
+    // 没配置过运行时列表时不能出现空列表，否则前端没有模型可选。
+    appSettingRows = []
+    providerSettingRows = [
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        kind: 'image',
+        name: 'Primary Image',
+        base_url: 'https://image.example.test/v1',
+        image_model: 'gpt-image-2.5',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      availableImageModels: [{ id: 'gpt-image-2.5', name: 'gpt-image-2.5' }],
       defaultImageModel: 'gpt-image-2.5',
+    })
+  })
+
+  it('keeps the default model inside the visible list so hidden models cannot leak back', async () => {
+    // 前端在默认值不在选项里时会把它 unshift 回下拉框。若默认值指向一个被
+    // 运行时配置隐藏的模型，该模型就会重新出现在用户面前——默认值必须落在
+    // 可见列表内。
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'visible-only', name: 'Visible Only' }] },
+      { key: 'image_responses_image_model', value: 'hidden-by-runtime' },
+    ]
+    providerSettingRows = [
+      {
+        id: '44444444-4444-4444-8444-444444444444',
+        kind: 'image',
+        name: 'Primary Image',
+        base_url: 'https://image.example.test/v1',
+        image_model: 'hidden-by-runtime',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    await expect(publicAppConfig()).resolves.toMatchObject({
+      defaultImageModel: 'visible-only',
     })
   })
 
@@ -275,14 +334,81 @@ describe('app settings service', () => {
     const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
     const config = await publicAppConfig()
 
-    // Disabled catalog rows stay hidden; duplicate ids from app settings collapse.
-    // 透明能力跟着目录行透传，停用行即使勾了也不下发（前端据此灰掉透明选项）。
+    // 运行时配置非空时它就是用户可见的全部模型：Provider 目录里额外存在的
+    // flux-pro 不再下发。停用行（retired-image）同样保持隐藏。
+    // 模型名与能力位来自运行时配置（此处未声明透明，故为 false）。
+    expect(config.availableImageModels).toEqual([
+      { id: 'gpt-image-2', name: 'GPT Image 2', supportsTransparent: false },
+    ])
+    expect(config.defaultImageModel).toBe('gpt-image-2')
+  })
+
+  it('exposes the provider catalog in full when the runtime configuration is empty', async () => {
+    // 回退路径：没配置运行时列表时，Provider 的启用模型要原样全部可见，
+    // 包括目录行声明的透明能力。
+    appSettingRows = []
+    providerSettingRows = [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        kind: 'image',
+        name: 'Multi Image',
+        base_url: 'https://multi-image.example.test/v1',
+        models: ['gpt-image-2', 'flux-pro', 'retired-image'],
+        model_catalog: [
+          { id: 'gpt-image-2', name: 'GPT Image 2', enabled: true },
+          { id: 'flux-pro', name: 'FLUX Pro', enabled: true, supportsTransparent: true },
+          { id: 'retired-image', name: 'Retired', enabled: false, supportsTransparent: true },
+        ],
+        image_model: 'gpt-image-2',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    const config = await publicAppConfig()
+
     expect(config.availableImageModels).toEqual([
       { id: 'gpt-image-2', name: 'GPT Image 2', supportsTransparent: false },
       { id: 'flux-pro', name: 'FLUX Pro', supportsTransparent: true },
     ])
-    // The first enabled catalog entry becomes the default generation model.
     expect(config.defaultImageModel).toBe('gpt-image-2')
+  })
+
+  it('keeps provider-declared transparency when the runtime config omits the capability', async () => {
+    // 手工在运行时配置里添加模型时容易漏勾「支持透明」，而上游确实支持。
+    // 能力位取并集兜住这种漏勾，否则前端会错误地灰掉透明选项。
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'flux-pro', name: 'FLUX Pro' }] },
+    ]
+    providerSettingRows = [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        kind: 'image',
+        name: 'Multi Image',
+        base_url: 'https://multi-image.example.test/v1',
+        models: ['flux-pro'],
+        model_catalog: [
+          { id: 'flux-pro', name: 'FLUX Pro', enabled: true, supportsTransparent: true },
+        ],
+        image_model: 'flux-pro',
+        enabled: true,
+        priority: 1,
+        timeout_ms: 360000,
+        retry_count: 3,
+        api_key_encrypted: 'encrypted',
+      },
+    ]
+
+    const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
+    const config = await publicAppConfig()
+
+    expect(config.availableImageModels).toEqual([
+      { id: 'flux-pro', name: 'FLUX Pro', supportsTransparent: true },
+    ])
   })
 
   it('preserves transparent capability from recommended models and merges it across sources', async () => {
@@ -314,10 +440,13 @@ describe('app settings service', () => {
 
     const { publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
 
+    // 顺序以运行时配置为准（它排在前），但能力取并集：shared-model 在运行时
+    // 配置里声明 false、在 Provider 目录里声明 true，结果必须是 true——能力是
+    // 模型的属性，不该因为来源顺序而丢失。
     await expect(publicAppConfig()).resolves.toMatchObject({
       availableImageModels: [
-        { id: 'shared-model', name: 'Shared Model', supportsTransparent: true },
         { id: 'recommended-transparent', name: 'Recommended Transparent', supportsTransparent: true },
+        { id: 'shared-model', name: 'Shared Model', supportsTransparent: true },
       ],
     })
   })

@@ -135,6 +135,13 @@ type GenerateParams struct {
 	IdemKey   string
 	RequestID string
 	Request   GenRequest
+	// AwaitPersistence 让 Generate 在返回前等待图片上传到对象存储完成，
+	// 使响应里的 URL 是可直接访问的存储直链，而不是上游给的临时 data URI。
+	//
+	// 外部 OpenAI 兼容端点需要它：客户端拿到的应该是链接而非做 base64 内联，
+	// 否则每次响应要承载近 1MB 的图片数据经过网关。站内请求保持 false，
+	// 沿用「先返回、后台持久化」的既有行为，不影响前端体验。
+	AwaitPersistence bool
 }
 
 // Generate 执行图片生成编排。
@@ -400,6 +407,21 @@ func (o *ImageOrchestrator) Generate(ctx context.Context, params GenerateParams)
 		resp.CreditBalance = &struct {
 			Balance float64 `json:"balance"`
 		}{Balance: reservation.Balance}
+	}
+
+	// --- 外部端点：先同步完成持久化，使响应携带存储直链 ---
+	//
+	// 站内请求保持异步（不阻塞响应）；只有显式要求等待的调用方在此同步落库，
+	// 因为外部客户端拿 data URI 会让每次响应多传近 1MB 图片数据。
+	if params.AwaitPersistence && len(preparedImages) > 0 && o.storage != nil {
+		persistCtx, cancelPersist := context.WithTimeout(ctx, persistenceAwaitTimeout)
+		preparedImages = o.persistImagesSynchronously(persistCtx, preparedImages)
+		cancelPersist()
+		responseImages = responseImages[:0]
+		for _, image := range preparedImages {
+			responseImages = append(responseImages, image.result)
+		}
+		resp.Images = responseImages
 	}
 
 	// --- 异步持久化（saga）—— 不阻塞响应 ---
@@ -839,6 +861,36 @@ func (o *ImageOrchestrator) resolveImageProvider(ctx context.Context, model stri
 	return o.provider.ImageProvider(ctx, model)
 }
 
+
+// persistenceAwaitTimeout 是外部端点在返回前等待图片落存储的上限。
+//
+// 超时后不再等待：宁可退回临时 data URI 也不让调用方无限期挂起。
+// 取值与异步 saga 的 10 分钟一致，保证两条路径对同一张图的行为一致。
+const persistenceAwaitTimeout = 10 * time.Minute
+
+// persistImagesSynchronously 逐张把生成结果落存储，返回替换后的记录。
+//
+// 单张失败不影响其余图片：该张保留原始结果（仍是可用的临时链接），
+// 调用方拿到的是「部分已持久化」的混合结果，而不是整体失败。这与站内
+// 异步 saga 的容错取向一致——已经生成出来的图不应该因为上传失败而丢失。
+func (o *ImageOrchestrator) persistImagesSynchronously(ctx context.Context, images []generatedImageRecord) []generatedImageRecord {
+	result := make([]generatedImageRecord, len(images))
+	copy(result, images)
+
+	for idx := range result {
+		if result[idx].result.PersistenceStatus == "persisted" {
+			continue
+		}
+		persisted, err := o.persistGeneratedImage(ctx, result[idx])
+		if err != nil {
+			o.logger.Printf("[image] synchronous persistence failed for %s, keeping temporary source: %v", result[idx].result.ID, err)
+			continue
+		}
+		result[idx].result = persisted
+	}
+	return result
+}
+
 // persistAsyncSaga 在 goroutine 中用 saga 执行异步持久化。
 //
 // Saga 步骤（按每张图，顺序执行）：
@@ -1045,7 +1097,12 @@ func (o *ImageOrchestrator) prepareGeneratedImages(images []generatedImageRecord
 
 // callImageAPI 调用上游图片生成 API，带重试。
 func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, count int, aspectRatio, resolution, quality string, provider service.ImageProviderConfig) ([]generatedImageRecord, error) {
+	// 显式尺寸优先：外部 OpenAI 兼容端点可以指定本站尺寸表之外的宽高，
+	// 此时按客户端原样下发，不再由 resolution+aspectRatio 推断。
 	size := determineProviderSize(resolution, aspectRatio, provider)
+	if explicit := normalizeExplicitSize(req.ExplicitSize); explicit != "" {
+		size = explicit
+	}
 	imageMime := "image/png"
 	usesEdits := len(req.References) > 0
 	imageModel := imageModelForRequest(provider, usesEdits)
@@ -1420,43 +1477,79 @@ func mapQualityToAPI(q string) string {
 	}
 }
 
+// supportedSizes 是本站 resolution × aspectRatio 到实际像素尺寸的对照表。
+//
+// 同时服务于两个方向：站内请求由 resolution+aspectRatio 正查得到尺寸；
+// 外部 OpenAI 兼容端点则反向查表，把客户端给的 "宽x高" 还原为本站参数组合。
+var supportedSizes = map[string]map[string]string{
+	"1k": {
+		"auto": "1024x1024",
+		"1:1":  "1024x1024",
+		"3:2":  "1536x1024",
+		"2:3":  "1024x1536",
+		"16:9": "1536x864",
+		"9:16": "864x1536",
+	},
+	"2k": {
+		"auto": "2048x2048",
+		"1:1":  "2048x2048",
+		"3:2":  "2160x1440",
+		"2:3":  "1440x2160",
+		"16:9": "2048x1152",
+		"9:16": "1152x2048",
+	},
+	"4k": {
+		"auto": "3840x2160",
+		"1:1":  "2880x2880",
+		"3:2":  "3520x2336",
+		"2:3":  "2336x3520",
+		"16:9": "3840x2160",
+		"9:16": "2160x3840",
+	},
+}
+
+// DetermineSize 返回本站 resolution × aspectRatio 对应的实际像素尺寸。
+//
+// 导出是供 handler 层的外部兼容端点做反向映射（"宽x高" → ratio+resolution），
+// 使表在两个方向上只有一个来源，避免两处维护而漂移。
+func DetermineSize(resolution, aspectRatio string) string {
+	return determineSize(resolution, aspectRatio)
+}
+
 func determineSize(resolution, aspectRatio string) string {
 	if resolution == "auto" {
 		return "auto"
 	}
-	sizes := map[string]map[string]string{
-		"1k": {
-			"auto": "1024x1024",
-			"1:1":  "1024x1024",
-			"3:2":  "1536x1024",
-			"2:3":  "1024x1536",
-			"16:9": "1536x864",
-			"9:16": "864x1536",
-		},
-		"2k": {
-			"auto": "2048x2048",
-			"1:1":  "2048x2048",
-			"3:2":  "2160x1440",
-			"2:3":  "1440x2160",
-			"16:9": "2048x1152",
-			"9:16": "1152x2048",
-		},
-		"4k": {
-			"auto": "3840x2160",
-			"1:1":  "2880x2880",
-			"3:2":  "3520x2336",
-			"2:3":  "2336x3520",
-			"16:9": "3840x2160",
-			"9:16": "2160x3840",
-		},
-	}
-
-	if sizes, ok := sizes[resolution]; ok {
+	if sizes, ok := supportedSizes[resolution]; ok {
 		if size, ok := sizes[aspectRatio]; ok {
 			return size
 		}
 	}
 	return "1024x1024"
+}
+
+// normalizeExplicitSize 校验并规范化外部传入的 "宽x高"。
+//
+// 非法输入返回空串，调用方据此回退到 resolution+aspectRatio 推断；
+// 这样格式错误的 size 不会静默变成一张错尺寸的图。
+func normalizeExplicitSize(size string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(size))
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.Split(trimmed, "x")
+	if len(parts) != 2 {
+		return ""
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil {
+		return ""
+	}
+	if width < 1 || height < 1 || width > 10000 || height > 10000 {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", width, height)
 }
 
 func determineProviderSize(resolution, aspectRatio string, provider service.ImageProviderConfig) string {

@@ -18,6 +18,7 @@ import adminSystemRouter from './routes/admin-system.js'
 import adminAnnouncementsRouter from './routes/admin-announcements.js'
 import apiKeysRouter from './routes/api-keys.js'
 import goSidecarRouter from './routes/go-sidecar.js'
+import openAIProxyRouter from './routes/openai-proxy.js'
 import {
   REQUEST_ID_HEADER,
   requestObservabilityMiddleware,
@@ -56,6 +57,11 @@ app.use(cors({
 // When deployed as a single Render backend, proxy Go-owned image/works routes
 // to the local Go sidecar before body parsers consume request streams.
 app.use('/api', goSidecarRouter)
+
+// OpenAI 兼容端点同样必须在 body parser 之前挂载：外部客户端可能发送大体积
+// 生图请求体，交给 express.json 解析会先消费掉流。挂载在 /v1 前缀下，
+// 与站内 /api 路由完全隔离。
+app.use('/v1', openAIProxyRouter)
 
 app.use(express.json({ limit: '50mb' }))
 app.use('/api', requestBodyErrorMiddleware)

@@ -384,6 +384,7 @@ type stubProviderSettingsService struct {
 	cfg            service.ImageProviderConfig
 	err            error
 	requestedModel string
+	models         []string
 }
 
 func (s *stubProviderSettingsService) ImageProvider(ctx context.Context, model string) (service.ImageProviderConfig, error) {
@@ -392,6 +393,21 @@ func (s *stubProviderSettingsService) ImageProvider(ctx context.Context, model s
 		return service.DefaultImageProviderConfig(), s.err
 	}
 	return s.cfg, nil
+}
+
+// ListImageModels 满足 orchestrator.ProviderSettingsService 的外部端点扩展。
+// 默认从桩的 provider 配置推导，单独设置 models 时以其为准。
+func (s *stubProviderSettingsService) ListImageModels(ctx context.Context) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(s.models) > 0 {
+		return s.models, nil
+	}
+	if s.cfg.ImageModel != "" {
+		return []string{s.cfg.ImageModel}, nil
+	}
+	return nil, nil
 }
 
 func TestImageGenerateUsesProviderSettings(t *testing.T) {

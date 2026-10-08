@@ -9,6 +9,7 @@ import {
   IMAGE_EVENTS_ENABLED,
   IMAGE_RESPONSES_IMAGE_MODEL,
   IMAGE_RESPONSES_MODEL,
+  OPENAI_B64_JSON_ENABLED,
 } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
 import {
@@ -37,6 +38,7 @@ type AppSettingKey =
   | 'guest_generation_enabled'
   | 'available_image_models'
   | 'image_model_credit_costs'
+  | 'openai_b64_json_enabled'
 
 export type AdminRole = 'senior' | 'operator'
 
@@ -66,6 +68,11 @@ export interface AppSettings {
   availableImageModels: ImageModelEntry[]
   /** 按模型 id 覆盖单价；未列出的模型使用 imageCreditCostPerImage 兜底。 */
   imageModelCreditCosts: ImageModelCreditCostEntry[]
+  /**
+   * 外部 OpenAI 兼容端点是否允许 response_format=b64_json。
+   * 默认关闭：内联 base64 会把响应体积放大数倍，应由管理员显式开启。
+   */
+  openaiB64JsonEnabled: boolean
 }
 
 export interface AdminUserRule {
@@ -112,6 +119,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   guestGenerationEnabled: GUEST_GENERATION_ENABLED,
   availableImageModels: [],
   imageModelCreditCosts: [],
+  openaiB64JsonEnabled: OPENAI_B64_JSON_ENABLED,
 }
 
 const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
@@ -125,6 +133,7 @@ const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
   guest_generation_enabled: 'guestGenerationEnabled',
   available_image_models: 'availableImageModels',
   image_model_credit_costs: 'imageModelCreditCosts',
+  openai_b64_json_enabled: 'openaiB64JsonEnabled',
 }
 
 const propertyToSettingKey = Object.fromEntries(
@@ -207,6 +216,53 @@ function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): I
     })
   }
   return result.length > 0 ? result : fallback
+}
+
+// mergeImageModelEntries 按顺序合并模型列表，同一个 id 只保留首次出现的位置。
+//
+// 同一模型可能同时出现在运行时配置和 Provider 目录里（也可能横跨多个 Provider）。
+// 位置以首个来源为准，能力取并集：只要任一来源声明支持透明，前端就应允许选择
+// 透明背景——能力是模型的属性，不该因为来源顺序而丢失。
+//
+// capabilityOnly 为 true 时只把后续来源当作能力补充，不把它们的新模型加进
+// 结果。用于「列表以运行时配置为准，但能力仍参考 Provider」的场景。
+function mergeImageModelEntries(
+  primary: ImageModelEntry[],
+  capabilitySource: ImageModelEntry[] = [],
+): ImageModelEntry[] {
+  // primary 决定有哪些模型、以及它们的顺序；capabilitySource 只用来补能力位，
+  // 不引入新模型。这样「列表以运行时配置为准」与「透明能力仍参考 Provider」
+  // 可以同时成立。
+  const models: ImageModelEntry[] = primary.map(model => ({ ...model }))
+  for (const model of capabilitySource) {
+    const existing = models.find(item => item.id === model.id)
+    if (existing && model.supportsTransparent) {
+      existing.supportsTransparent = true
+    }
+  }
+  return models
+}
+
+// resolveDefaultImageModel 挑出用户可见列表里的默认选中模型。
+//
+// 默认值必须落在 availableImageModels 内：前端在默认值不在下拉选项里时会把它
+// 强行补回列表（ImageCanvas 的 options.unshift 分支），于是被运行时配置隐藏的
+// 模型又会出现在用户面前。这里先认配置的默认模型，它不可见时退回可见列表的
+// 第一项，最后才考虑 Provider 的首个模型。
+function resolveDefaultImageModel(
+  configuredDefault: string,
+  available: ImageModelEntry[],
+  providerModels: ImageModelEntry[],
+): string {
+  const visibleIds = new Set(available.map(model => model.id))
+  const configured = normalizeModelName(configuredDefault, '')
+  if (configured && visibleIds.has(configured)) {
+    return configured
+  }
+  if (available.length > 0) {
+    return available[0].id
+  }
+  return providerModels[0]?.id || configured
 }
 
 function normalizeEmail(value: unknown) {
@@ -632,18 +688,22 @@ export async function publicAppConfig() {
         .filter((id): id is string => Boolean(id))
         .map(id => ({ id, name: id, supportsTransparent: false }))
     })
-  // 同一模型可能同时出现在多个 Provider 或旧的推荐列表中。能力是模型
-  // 的并集：只要任一启用来源声明支持透明，前端就应该允许选择透明背景。
-  const availableImageModels = [...providerImageModels, ...settings.availableImageModels]
-    .reduce<ImageModelEntry[]>((models, model) => {
-      const existing = models.find(item => item.id === model.id)
-      if (!existing) {
-        models.push(model)
-      } else if (model.supportsTransparent) {
-        existing.supportsTransparent = true
-      }
-      return models
-    }, [])
+  // 模型可见性以「运行时配置」为准：
+  //   - 配置非空 → 用户只能看到它列出的模型。管理员据此精确控制开放范围，
+  //     不受 Provider 目录里有多少模型影响（并集只能加不能减，做不到隐藏）。
+  //   - 配置为空 → 回退到 Provider 推导，保证没配置过时不会出现空列表。
+  //
+  // 但「支持透明」这个能力标签仍取两个来源的并集：手工在运行时配置里添加
+  // 模型时很容易漏勾该选项，而上游确实支持透明。以能力并集兜住这种情况，
+  // 避免因为漏勾就把功能藏起来。
+  const availableImageModels = settings.availableImageModels.length > 0
+    ? mergeImageModelEntries(settings.availableImageModels, providerImageModels)
+    : mergeImageModelEntries(providerImageModels)
+  const defaultImageModel = resolveDefaultImageModel(
+    settings.imageResponsesImageModel,
+    availableImageModels,
+    providerImageModels,
+  )
   return {
     chatModels,
     imageEventsEnabled: settings.imageEventsEnabled,
@@ -653,6 +713,6 @@ export async function publicAppConfig() {
     // 兜底价 + 按模型覆盖价一并下发：前端据此显示单价，未命中覆盖价的模型回退兜底价。
     imageModelCreditCosts: settings.imageModelCreditCosts,
     availableImageModels,
-    defaultImageModel: providerImageModels[0]?.id || settings.imageResponsesImageModel,
+    defaultImageModel,
   }
 }

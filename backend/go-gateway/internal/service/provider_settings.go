@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -176,6 +177,52 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context, requestedMo
 		return fallback, candidateErr
 	}
 	return fallback, nil
+}
+
+// ListImageModels 返回所有已启用图片 Provider 对外提供的模型 id（去重、稳定排序）。
+//
+// 供外部 OpenAI 兼容端点的 GET /v1/models 使用：客户端需要先知道本站有哪些模型
+// 可调。只读 provider 的 model_catalog，不触碰密钥，因此不要求凭据可解密。
+func (s *ProviderSettingsService) ListImageModels(ctx context.Context) ([]string, error) {
+	if s == nil || s.pool == nil {
+		return nil, nil
+	}
+
+	rows, err := s.pool.Query(ctx, imageProviderQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	models := make([]string, 0, 16)
+	for rows.Next() {
+		candidate, scanErr := scanImageProviderCandidate(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		for _, model := range candidate.models {
+			id := strings.TrimSpace(model)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			models = append(models, id)
+		}
+		// 未声明 catalog 时回退到 provider 级 image_model，保证仍能被列出。
+		if len(candidate.models) == 0 {
+			id := strings.TrimSpace(candidate.config.ImageModel)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				models = append(models, id)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(models)
+	return models, nil
 }
 
 // selectImageProvider 从「已按优先级排序的可用 Provider」中挑选承载 requestedModel 的那个。

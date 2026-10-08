@@ -38,6 +38,7 @@ vi.mock('../backend/gateway/src/config', () => ({
   TENCENT_COS_SECRET_ID: '',
   TENCENT_COS_SECRET_KEY: '',
   OPENAI_API_KEY: '',
+  OPENAI_B64_JSON_ENABLED: false,
   OPENAI_BASE_URL: '',
   PROVIDER_API_KEY_MASTER_KEY: '0123456789abcdef0123456789abcdef',
 }))
