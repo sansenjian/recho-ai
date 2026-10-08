@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScrollSettleState, observeScrollFrame } from '../src/utils/scroll-settle'
+import {
+  beginScrollGeneration,
+  createScrollGeneration,
+  createScrollSettleState,
+  invalidateScrollGeneration,
+  isScrollGenerationCurrent,
+  observeScrollFrame,
+} from '../src/utils/scroll-settle'
 
 /**
  * 这组用例模拟「切换到一条长会话」的真实时序：容器高度分多帧撑开，
@@ -48,6 +55,35 @@ describe('switching to a long conversation scrolls to the newest message', () =>
     const { settledAt, finalHeight } = runSettleLoop(growing, 12)
     expect(settledAt).toBe(11)
     expect(finalHeight).toBe(500 + 11 * 300)
+  })
+})
+
+
+describe('scroll generation', () => {
+  it('invalidates an older loop when a newer one starts', () => {
+    // 连续切会话时，前一次的收敛循环仍在跑；它每帧重读容器，会把新会话也拉到底。
+    const generation = createScrollGeneration()
+    const first = beginScrollGeneration(generation)
+    expect(isScrollGenerationCurrent(generation, first)).toBe(true)
+
+    const second = beginScrollGeneration(generation)
+    expect(isScrollGenerationCurrent(generation, first)).toBe(false)
+    expect(isScrollGenerationCurrent(generation, second)).toBe(true)
+  })
+
+  it('invalidates in-flight loops on unmount', () => {
+    const generation = createScrollGeneration()
+    const token = beginScrollGeneration(generation)
+    invalidateScrollGeneration(generation)
+    expect(isScrollGenerationCurrent(generation, token)).toBe(false)
+  })
+
+  it('keeps a loop valid while no newer one starts', () => {
+    const generation = createScrollGeneration()
+    const token = beginScrollGeneration(generation)
+    for (let i = 0; i < 5; i++) {
+      expect(isScrollGenerationCurrent(generation, token)).toBe(true)
+    }
   })
 })
 

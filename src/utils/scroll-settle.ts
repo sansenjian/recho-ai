@@ -26,6 +26,37 @@ export function createScrollSettleState(): ScrollSettleState {
 }
 
 /**
+ * 收敛循环的代际计数器。
+ *
+ * 每帧都重新读取滚动容器，因此用户连续切换会话时，前一次发起的循环会拿到新的
+ * 容器继续把它拉到底——用户正想看新会话的历史，却被反复拽回底部。每次发起定位
+ * 就开启新一代，旧循环发现自己过期后立即退出。
+ */
+export interface ScrollGeneration {
+  current: number
+}
+
+export function createScrollGeneration(): ScrollGeneration {
+  return { current: 0 }
+}
+
+/** 开启新一代并返回它，调用方应在每个异步步骤前校验自己是否仍然有效。 */
+export function beginScrollGeneration(generation: ScrollGeneration): number {
+  generation.current += 1
+  return generation.current
+}
+
+/** 让所有在途循环失效（例如组件卸载）。 */
+export function invalidateScrollGeneration(generation: ScrollGeneration): void {
+  generation.current += 1
+}
+
+/** 判断某次发起的循环是否仍然有效。 */
+export function isScrollGenerationCurrent(generation: ScrollGeneration, token: number): boolean {
+  return generation.current === token
+}
+
+/**
  * 把元素滚到指定位置，兼容没有 scrollTo 的环境。
  *
  * 浏览器都实现了 Element.scrollTo，但 jsdom 没有——组件测试渲染到带滚动的视图时

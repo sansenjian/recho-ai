@@ -556,6 +556,50 @@ func TestPNGHasAlphaChannel(t *testing.T) {
 	}
 }
 
+func TestPNGHasAlphaChannelRequiresIHDRFirst(t *testing.T) {
+	// PNG 规范要求 IHDR 是第一个块。不强制的话，把 tRNS 提到前面就能让畸形文件
+	// 走到「调色板 + 已见 tRNS」的分支被放行，然后原样转给上游。
+	valid := buildTestPNG(3, true)
+
+	// 在签名之后插入一个 tRNS 块，把 IHDR 挤到后面。
+	var trns bytes.Buffer
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], 2)
+	trns.Write(length[:])
+	trns.WriteString("tRNS")
+	trns.Write([]byte{0, 0})
+	trns.Write([]byte{0, 0, 0, 0})
+
+	malformed := append(append([]byte{}, valid[:8]...), trns.Bytes()...)
+	malformed = append(malformed, valid[8:]...)
+
+	if pngHasAlphaChannel(malformed) {
+		t.Error("a PNG whose first chunk is not IHDR must be rejected")
+	}
+}
+
+func TestPNGHasAlphaChannelRejectsRepeatedIHDR(t *testing.T) {
+	// 两个 IHDR 同样是畸形文件，不能因为第一个是调色板就放行。
+	valid := buildTestPNG(3, true)
+	ihdr := valid[8:33] // 长度4 + 类型4 + 数据13 + CRC4
+
+	duplicated := append(append([]byte{}, valid[:8]...), ihdr...)
+	duplicated = append(duplicated, valid[8:]...)
+
+	if pngHasAlphaChannel(duplicated) {
+		t.Error("a PNG with two IHDR chunks must be rejected")
+	}
+}
+
+func TestPNGHasAlphaChannelIgnoresTRNSWithoutPalette(t *testing.T) {
+	// 真彩图（颜色类型 2）也可能带 tRNS，但那是逐像素透明色键，与蒙版的
+	// alpha 语义不同，不能当作可用蒙版。
+	data := buildTestPNG(2, true)
+	if pngHasAlphaChannel(data) {
+		t.Error("tRNS on a truecolor PNG does not make it a usable mask")
+	}
+}
+
 func TestPNGHasAlphaChannelRejectsTruncatedChunk(t *testing.T) {
 	// 块长度声称比实际数据还长时说明文件被截断，不能当作有效蒙版。
 	data := buildTestPNG(6, false)

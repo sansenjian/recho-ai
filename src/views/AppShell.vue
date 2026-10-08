@@ -20,7 +20,15 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { pickActiveAnchorId } from '../utils/chat-rail'
-import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
+import {
+  beginScrollGeneration,
+  createScrollGeneration,
+  createScrollSettleState,
+  invalidateScrollGeneration,
+  isScrollGenerationCurrent,
+  observeScrollFrame,
+  scrollElementTo,
+} from '../utils/scroll-settle'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
@@ -476,12 +484,23 @@ let scrollSmooth = true
  * 撑开都发生在这些帧里。
  */
 const SETTLE_MAX_FRAMES = 12
+/**
+ * 收敛循环的代际号。
+ *
+ * 每帧都重新读 chatAreaRef，所以用户连着切两次会话时，第一次的循环会拿到第二次
+ * 的容器继续把它拉到底——用户正想看新会话的历史，却被反复拽回底部。每次发起
+ * 定位就自增一代，旧循环发现自己过期后立即退出。
+ */
+const scrollGeneration = createScrollGeneration()
 function scrollToBottomWhenSettled() {
+  const token = beginScrollGeneration(scrollGeneration)
   const smooth = scrollSmooth && !prefersReducedMotion.value
   void nextTick(() => {
+    if (!isScrollGenerationCurrent(scrollGeneration, token)) return
     if (!chatAreaRef.value) return
     let settleState = createScrollSettleState()
     const settle = () => {
+      if (!isScrollGenerationCurrent(scrollGeneration, token)) return
       const target = chatAreaRef.value
       if (!target) return
       // 每帧都先贴到底：高度分多帧撑开时，这样能跟着内容走而不是等最后跳一下。
@@ -552,6 +571,8 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('paste', onPaste)
   stopGeneration()
+  // 让仍在排队的收敛循环失效：组件已卸载，继续滚动只会操作游离的节点。
+  invalidateScrollGeneration(scrollGeneration)
 })
 
 function handleChangeModel(m: ModelOption) { currentModel.value = m }

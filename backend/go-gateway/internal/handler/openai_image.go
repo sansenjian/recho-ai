@@ -573,6 +573,8 @@ func pngHasAlphaChannel(data []byte) bool {
 	}
 	offset := len(pngSignature)
 	hasTRNS := false
+	isPalette := false
+	sawIHDR := false
 	for offset+8 <= len(data) {
 		length := int(binary.BigEndian.Uint32(data[offset : offset+4]))
 		if length < 0 || offset+12+length > len(data) {
@@ -580,11 +582,21 @@ func pngHasAlphaChannel(data []byte) bool {
 			return false
 		}
 		chunkType := string(data[offset+4 : offset+8])
+		// PNG 规范要求 IHDR 是第一个块。不强制的话，把 tRNS 提到前面就能让
+		// 畸形文件走到「调色板 + 已见 tRNS」的分支被放行，然后原样转给上游。
+		if !sawIHDR && chunkType != "IHDR" {
+			return false
+		}
 		payload := data[offset+8 : offset+8+length]
 
 		switch chunkType {
 		case "IHDR":
-			// IHDR 必须是第一个块且固定 13 字节：宽4 高4 位深1 颜色类型1 压缩1 滤波1 隔行1。
+			if sawIHDR {
+				// 第二个 IHDR 同样是畸形文件。
+				return false
+			}
+			sawIHDR = true
+			// IHDR 固定 13 字节：宽4 高4 位深1 颜色类型1 压缩1 滤波1 隔行1。
 			if len(payload) < 13 {
 				return false
 			}
@@ -594,11 +606,17 @@ func pngHasAlphaChannel(data []byte) bool {
 				return true
 			case 3:
 				// 调色板图：是否透明取决于后面有没有 tRNS 块，继续往下看。
+				isPalette = true
 			default:
 				// 0（灰度）与 2（真彩）没有 alpha 通道。
 				return false
 			}
 		case "tRNS":
+			// 只有调色板图的透明度由 tRNS 承载；真彩/灰度的 tRNS 是另一种语义，
+			// 本站不把它当作「可用的蒙版」。
+			if !isPalette {
+				return false
+			}
 			hasTRNS = true
 		case "IDAT", "IEND":
 			// 到图像数据或结尾说明 tRNS（若存在）已经出现过，可以定论了。

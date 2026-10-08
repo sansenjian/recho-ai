@@ -198,7 +198,13 @@ const CONVERSATION_SETTLE_MAX_FRAMES = 12
  */
 let conversationSettledOnce = false
 function scrollConversationToLatest() {
-  // 标记在这里置位，而不是等滚动跑完：nextTick 之前若又触发一次调用，
+  // 列表还是空的就什么都别做，也不要消耗标记。
+  //
+  // 挂载那一刻历史数据往往还没到，v-if 不渲染 .imagio-conversation，容器是 null。
+  // 若在这里就置位标记，等数据到达、watcher 再调用时会被「已经定位过」挡掉，
+  // 结果是打开工作台永远不滚动——正是这条路径最容易出的错。
+  if (!conversationItems.value.length) return
+  // 有内容才置位，且置在 nextTick 之前：nextTick 前若又触发一次调用，
   // 两轮 settle 会同时排队，各自把视图拉到底。
   conversationSettledOnce = true
   void nextTick(() => {

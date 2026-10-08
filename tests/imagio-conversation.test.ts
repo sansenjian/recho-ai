@@ -115,6 +115,37 @@ describe('Imagio conversation turns', () => {
     }
   })
 
+
+  it('still scrolls when history arrives after an empty mount', async () => {
+    // 挂载那刻历史数据往往还没到，容器是 null。若这时就消耗掉「已定位」标记，
+    // 等数据到达后 watcher 会被挡掉，结果是打开工作台永远不滚动。
+    const scrollTo = vi.fn()
+    const original = HTMLElement.prototype.scrollTo
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: scrollTo })
+    const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return 5000 } })
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => { cb(0); return 1 })
+
+    try {
+      // 先以空列表挂载。
+      const wrapper = mountView([])
+      await flushPromises()
+      expect(scrollTo).not.toHaveBeenCalled()
+
+      // 历史数据随后到达。
+      await wrapper.setProps({ generatedImages: [generatedImage({ url: 'https://example.com/late.png' })] })
+      await flushPromises()
+
+      expect(scrollTo).toHaveBeenCalled()
+      const lastCall = scrollTo.mock.calls.at(-1)![0] as ScrollToOptions
+      expect(lastCall.top).toBe(5000)
+    } finally {
+      raf.mockRestore()
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: original })
+      if (originalHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalHeight)
+    }
+  })
+
   it('renders the user prompt before the generation result', () => {
     const wrapper = mountView([generatedImage({ url: 'https://example.com/result.png' })])
     const turn = wrapper.find('.conversation-turn')

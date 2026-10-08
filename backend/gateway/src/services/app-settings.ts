@@ -360,10 +360,10 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
 /**
  * 校验并归一化一次配置更新。
  *
- * current 是当前生效的设置，只用于「输入不可用时保留原值」的回退——next 本身
- * 只装本次要改的字段，缺了它就无法区分「没传这个字段」与「传了但内容不可用」。
+ * 只返回本次确实要写入的字段：内容不可用的输入会被整项跳过，而不是回填当前值——
+ * 回填会在并发编辑时把别人刚存的更新覆盖掉（见 availableImageModels 分支）。
  */
-function validateAppSettingsUpdate(input: Record<string, unknown>, current: AppSettings): Partial<AppSettings> {
+function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppSettings> {
   const next: Partial<AppSettings> = {}
 
   if ('imageCreditCostPerImage' in input) {
@@ -402,10 +402,11 @@ function validateAppSettingsUpdate(input: Record<string, unknown>, current: AppS
     // 早先在这里要求非空，导致管理员无法清空列表回到跟随模式——保存会以
     // invalid_available_image_models 失败，同一次请求里的其他设置也一起落空。
     //
-    // 回退值取当前值而不是 []：无法识别的输入（null、数字、解析不了的 JSON 文本）
-    // 必须保留原配置。若回退成空数组，一个拼错的请求体就会把管理员的可见模型限制
-    // 悄悄清成「跟随 Provider」，把本该隐藏的模型公开出去。
-    next.availableImageModels = normalizeImageModelList(input.availableImageModels, current.availableImageModels)
+    // 无法识别的输入（null、数字、解析不了的 JSON 文本）不写进 updates，而不是
+    // 回填当前值：回填会把它当成一次真实赋值提交上去，若期间别的管理员改过这个
+    // 字段，这次 upsert 就会把人家的更新覆盖掉。不提交则原值原样留在库里。
+    const parsed = parseImageModelListInput(input.availableImageModels)
+    if (parsed !== null) next.availableImageModels = parsed
   }
   if ('imageModelCreditCosts' in input) {
     // 空表是合法状态（表示全部走兜底价），因此不像 availableImageModels 那样要求非空。
@@ -574,8 +575,7 @@ async function assertCanDisableAdminUserRule(ruleId: string) {
 }
 
 export async function updateAppSettings(input: Record<string, unknown>, adminUser: RequestUser): Promise<AppSettings> {
-  const current = await getAppSettings({ refresh: true })
-  const updates = validateAppSettingsUpdate(input, current)
+  const updates = validateAppSettingsUpdate(input)
   const entries = Object.entries(updates) as Array<[keyof AppSettings, AppSettings[keyof AppSettings]]>
   if (!entries.length) return await getAppSettings({ refresh: true })
 
