@@ -20,6 +20,7 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { pickActiveAnchorId } from '../utils/chat-rail'
+import { createScrollSettleState, observeScrollFrame } from '../utils/scroll-settle'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
@@ -461,6 +462,43 @@ function handleRetry(msg: Message) {
 // --- Scroll ---
 const chatAreaRef = ref<HTMLElement | null>(null)
 let scrollSmooth = true
+
+/**
+ * 切到某条会话时，等内容真正撑开再定位到底部。
+ *
+ * 消息列表里的 ChatMessage 是异步组件（defineAsyncComponent），切换会话后
+ * 首帧只有旧内容或占位，scrollHeight 还是没撑开的值。原先只等一次 nextTick
+ * 就去滚，那时高度往往还没到位，结果停在会话开头——正是「打开会话看到最老
+ * 的消息」的原因。
+ *
+ * 这里改成连续几帧观察 scrollHeight，高度收敛后再滚到底。判定逻辑放在
+ * utils/scroll-settle 里以便单测覆盖那次时序问题。异步组件、图片与代码块
+ * 撑开都发生在这些帧里。
+ */
+const SETTLE_MAX_FRAMES = 12
+function scrollToBottomWhenSettled() {
+  const smooth = scrollSmooth && !prefersReducedMotion.value
+  void nextTick(() => {
+    if (!chatAreaRef.value) return
+    let settleState = createScrollSettleState()
+    const settle = () => {
+      const target = chatAreaRef.value
+      if (!target) return
+      // 每帧都先贴到底：高度分多帧撑开时，这样能跟着内容走而不是等最后跳一下。
+      target.scrollTo({ top: target.scrollHeight, behavior: 'auto' })
+      const result = observeScrollFrame(settleState, target.scrollHeight, SETTLE_MAX_FRAMES)
+      settleState = result.state
+      if (result.settled) {
+        // 收敛后按用户的动效偏好对齐最终位置。
+        target.scrollTo({ top: target.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+        return
+      }
+      requestAnimationFrame(settle)
+    }
+    settle()
+  })
+}
+
 function scrollToBottom() {
   nextTick(() => {
     chatAreaRef.value?.scrollTo({
@@ -475,7 +513,16 @@ watch(() => messages.value.length, () => scrollToBottom())
 watch(() => messages.value[messages.value.length - 1]?.content, () => {
   if (messages.value[messages.value.length - 1]?.role === 'assistant') scrollToBottom()
 })
-watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
+watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottomWhenSettled() })
+
+// 首次进入对话页（含刷新）时也定位到底部：消息要等认证就绪后才从本地存储
+// 读出来，此刻组件同样还在异步加载，所以走同一套「等稳定」的流程。
+let didInitialScroll = false
+watch([() => messages.value.length, isAuthReady], () => {
+  if (didInitialScroll || !isAuthReady.value || messages.value.length === 0) return
+  didInitialScroll = true
+  scrollToBottomWhenSettled()
+})
 watch(isLoading, (v) => { scrollSmooth = !v })
 watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
 onMounted(() => { void nextTick(updateActiveRailMessage) })
