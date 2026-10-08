@@ -391,6 +391,106 @@ func buildEditMultipartWithParts(t *testing.T, prompt string, fieldNames []strin
 	return req
 }
 
+// --- mask（局部重绘蒙版） ---
+
+// minimalPNG 是一张合法 PNG 的最小字节序列，仅用于走过格式校验分支。
+var minimalPNG = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
+
+func TestParseOpenAIEditFormParsesMask(t *testing.T) {
+	// mask 要作为独立的 GenReference 带出去，编排层才能把它写成 multipart 的
+	// mask 字段，而不是混进 image[] 当成又一张参考图。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    minimalPNG,
+	})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if form.mask == nil {
+		t.Fatal("mask must be parsed into the form")
+	}
+	if !strings.HasPrefix(form.mask.DataUrl, "data:image/png;base64,") {
+		t.Errorf("mask must be carried as a PNG data URL, got %q", form.mask.DataUrl[:min(40, len(form.mask.DataUrl))])
+	}
+	if len(form.references) != 1 {
+		t.Errorf("mask must not be counted as a reference image, got %d references", len(form.references))
+	}
+}
+
+func TestParseOpenAIEditFormAllowsMissingMask(t *testing.T) {
+	// 不传 mask 是合法的整图重绘，不能被拒绝。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+	})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if form.mask != nil {
+		t.Error("a request without a mask must not invent one")
+	}
+}
+
+func TestParseOpenAIEditFormRejectsNonPNGMask(t *testing.T) {
+	// 官方要求 mask 是 PNG：它的语义依赖 alpha 通道。放一份 JPEG 过去，上游只会
+	// 得到一张全不透明蒙版——等于什么都没改，却让人以为蒙版生效了。静默失效比
+	// 直接报错更难排查，所以这里必须挡住。
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 'J', 'F', 'I', 'F'}
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    jpeg,
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("a non-PNG mask must be rejected")
+	}
+	if !strings.Contains(err.Error(), "PNG") {
+		t.Errorf("the error must explain the PNG requirement, got %q", err.Error())
+	}
+}
+
+func TestParseOpenAIEditFormRejectsOversizedMask(t *testing.T) {
+	// 官方上限 4MB，比参考图的 50MB 严格。超限要在解析阶段挡掉，不能等到上游。
+	oversized := append([]byte{}, minimalPNG...)
+	oversized = append(oversized, make([]byte, openAIEditMaxMaskBytes+1)...)
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    oversized,
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("an oversized mask must be rejected")
+	}
+	if !strings.Contains(err.Error(), "蒙版过大") {
+		t.Errorf("the error must mention the size limit, got %q", err.Error())
+	}
+}
+
+func TestIsPNG(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"valid png signature", minimalPNG, true},
+		{"jpeg", []byte{0xff, 0xd8, 0xff, 0xe0}, false},
+		{"empty", nil, false},
+		{"truncated signature", []byte{0x89, 'P', 'N', 'G'}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPNG(tc.data); got != tc.want {
+				t.Errorf("isPNG(%v) = %v, want %v", tc.data, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseOpenAIEditFormRejectsMissingImage(t *testing.T) {
 	req, _ := buildEditMultipart(t, map[string]string{"prompt": "x"}, nil)
 	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {

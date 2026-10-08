@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -235,8 +237,6 @@ func (s testProviderSettingsService) ListImageModels(_ context.Context) ([]strin
 	return nil, nil
 }
 
-
-
 func TestPersistImagesSynchronouslyKeepsOriginalOnFailure(t *testing.T) {
 	// 单张持久化失败不应影响其余图片，也不应让整个请求失败：
 	// 已经生成出来的图必须仍然返回给调用方（哪怕只是临时链接）。
@@ -315,7 +315,6 @@ func TestPersistImagesSynchronouslyReplacesURLWithStorageURL(t *testing.T) {
 		t.Errorf("PersistenceStatus = %q, want persisted", got.PersistenceStatus)
 	}
 }
-
 
 func storedImageForHint(hint string) *service.StoredImage {
 	return &service.StoredImage{
@@ -769,6 +768,90 @@ func TestCallImageAPIOtherProvidersKeepImageControls(t *testing.T) {
 	}
 }
 
+func TestCallImageAPISendsMaskAsItsOwnMultipartField(t *testing.T) {
+	// mask 必须是独立的 mask 字段。混进 image[] 会被上游当成又一张参考图，
+	// 于是整张图被重绘，而不是只改蒙版透明的那块区域。
+	var gotFields []string
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://provider.example/v1/images/edits" {
+			t.Fatalf("unexpected request URL: %s", req.URL)
+		}
+		if err := req.ParseMultipartForm(32 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		for name := range req.MultipartForm.File {
+			gotFields = append(gotFields, name)
+		}
+		sort.Strings(gotFields)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/one.png"}]}`)),
+		}, nil
+	})}
+
+	_, err := o.callImageAPI(
+		context.Background(),
+		GenRequest{
+			Prompt:     "make the center red",
+			References: []GenReference{{ID: "ref", DataUrl: "data:image/png;base64,aGVsbG8="}},
+			Mask:       &GenReference{ID: "mask", DataUrl: "data:image/png;base64,aGVsbG8="},
+		},
+		1,
+		"1:1",
+		"1k",
+		"auto",
+		service.ImageProviderConfig{BaseURL: "https://provider.example/v1", APIKey: "k", ImageModel: "m"},
+	)
+	if err != nil {
+		t.Fatalf("callImageAPI returned error: %v", err)
+	}
+	if !slices.Contains(gotFields, "mask") {
+		t.Fatalf("the mask must be sent as its own field, got %v", gotFields)
+	}
+	if !slices.Contains(gotFields, "image[]") {
+		t.Fatalf("the reference image must still be sent as image[], got %v", gotFields)
+	}
+}
+
+func TestCallImageAPIOmitsMaskFieldWhenAbsent(t *testing.T) {
+	// 没有 mask 时不能凭空造一个字段，否则整图重绘会被意外变成局部重绘。
+	var gotFields []string
+	o := NewImageOrchestrator(nil, nil, nil)
+	o.httpClient = &http.Client{Transport: imageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if err := req.ParseMultipartForm(32 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		for name := range req.MultipartForm.File {
+			gotFields = append(gotFields, name)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"url":"https://provider.example/one.png"}]}`)),
+		}, nil
+	})}
+
+	_, err := o.callImageAPI(
+		context.Background(),
+		GenRequest{
+			Prompt:     "recolor everything",
+			References: []GenReference{{ID: "ref", DataUrl: "data:image/png;base64,aGVsbG8="}},
+		},
+		1,
+		"1:1",
+		"1k",
+		"auto",
+		service.ImageProviderConfig{BaseURL: "https://provider.example/v1", APIKey: "k", ImageModel: "m"},
+	)
+	if err != nil {
+		t.Fatalf("callImageAPI returned error: %v", err)
+	}
+	if slices.Contains(gotFields, "mask") {
+		t.Error("a request without a mask must not send a mask field")
+	}
+}
 func TestCallImageAPISendsTransparentBackgroundOnlyForDeclaredModels(t *testing.T) {
 	callWithProvider := func(t *testing.T, req GenRequest, provider service.ImageProviderConfig) map[string]any {
 		t.Helper()

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -383,6 +384,10 @@ const (
 	openAIEditMaxTotalBytes = 100 * 1024 * 1024
 	// 官方允许最多 16 张输入图。
 	openAIEditMaxImages = 16
+	// mask 字段名，与官方 multipart 规范一致。
+	openAIEditMaskField = "mask"
+	// 官方要求蒙版小于 4MB（比参考图的 50MB 严格得多）。
+	openAIEditMaxMaskBytes = 4 * 1024 * 1024
 )
 
 // openAIEditForm 是解析后的编辑请求。
@@ -395,6 +400,8 @@ type openAIEditForm struct {
 	background     string
 	count          int
 	references     []orchestrator.GenReference
+	// mask 是局部重绘蒙版，nil 表示整图重绘。官方要求它是 PNG 且小于 4MB。
+	mask *orchestrator.GenReference
 }
 
 // parseOpenAIEditForm 解析 multipart 请求并转换为本站的参考图结构。
@@ -480,7 +487,69 @@ func parseOpenAIEditForm(w http.ResponseWriter, r *http.Request) (*openAIEditFor
 		})
 	}
 
+	mask, err := parseOpenAIEditMask(r)
+	if err != nil {
+		return nil, err
+	}
+	form.mask = mask
+
 	return form, nil
+}
+
+// parseOpenAIEditMask 解析可选的 mask 字段。
+//
+// 官方对 mask 的要求比参考图严格：必须是 PNG、小于 4MB，且尺寸与底图一致。
+// 尺寸一致性这里无法校验（参考图此时还是原始字节），所以先卡住格式与体积；
+// 尺寸不符由上游报错，消息对调用方仍然可读。
+//
+// 返回 (nil, nil) 表示调用方没传 mask，属于整图重绘的合法用法。
+func parseOpenAIEditMask(r *http.Request) (*orchestrator.GenReference, error) {
+	headers := r.MultipartForm.File[openAIEditMaskField]
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	if len(headers) > 1 {
+		return nil, fmt.Errorf("mask 只能有一张")
+	}
+
+	header := headers[0]
+	if header.Size > openAIEditMaxMaskBytes {
+		return nil, fmt.Errorf("蒙版过大：上限 %d 字节", openAIEditMaxMaskBytes)
+	}
+
+	file, err := header.Open()
+	if err != nil {
+		return nil, fmt.Errorf("无法读取蒙版")
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, openAIEditMaxMaskBytes+1))
+	_ = file.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("无法读取蒙版")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("蒙版为空")
+	}
+
+	// 官方要求 mask 必须是 PNG：它的语义依赖 alpha 通道。JPEG 没有 alpha，
+	// 放过去只会在上游得到一张全不透明的蒙版——等于什么都没改，却让人以为
+	// 蒙版生效了。静默失效比直接报错更难排查，所以这里必须挡住。
+	if !isPNG(data) {
+		return nil, fmt.Errorf("蒙版必须是 PNG 格式：它用 alpha 通道标记需要重绘的区域")
+	}
+	if int64(len(data)) > openAIEditMaxMaskBytes {
+		return nil, fmt.Errorf("蒙版过大：上限 %d 字节", openAIEditMaxMaskBytes)
+	}
+
+	return &orchestrator.GenReference{
+		ID:       "openai-mask",
+		FileName: "mask.png",
+		DataUrl:  "data:image/png;base64," + base64.StdEncoding.EncodeToString(data),
+	}, nil
+}
+
+// isPNG 判断数据是否以 PNG 签名开头。
+func isPNG(data []byte) bool {
+	return len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
 }
 
 // editOpenAIImage 处理 POST /v1/images/edits。
@@ -517,6 +586,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		Count:      normalizeOpenAICount(form.count),
 		Quality:    openAIQualityToSiteQuality(form.quality),
 		References: form.references,
+		Mask:       form.mask,
 	}
 	if form.size != "" {
 		aspectRatio, resolution, ok := sizeToAspectRatioResolution(form.size)

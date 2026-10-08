@@ -81,8 +81,13 @@ describe('user-visible image models', () => {
   beforeEach(async () => {
     appSettingRows = []
     providerSettingRows = []
-    const mod = await import('../backend/gateway/src/services/app-settings')
-    mod.clearAppSettingsCache()
+    // 两个缓存都要清。只清 app_settings 时，先跑的用例会把 Provider 结果留在
+    // 缓存里，后续用例即使自己的 fixture 没加载也能通过——测试之间互相借数据，
+    // 断言就失去意义。
+    const appSettings = await import('../backend/gateway/src/services/app-settings')
+    appSettings.clearAppSettingsCache()
+    const providerSettings = await import('../backend/gateway/src/services/provider-settings')
+    providerSettings.clearProviderSettingsCache()
   })
 
   it('shows exactly what the admin configured, hiding other provider models', async () => {

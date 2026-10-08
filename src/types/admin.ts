@@ -244,7 +244,7 @@ export interface AdminAppSettings {
   canvasContextEnabled: boolean
   freeGenerationEnabled: boolean
   guestGenerationEnabled: boolean
-  availableImageModels: Array<{ id: string; name: string }>
+  availableImageModels: Array<{ id: string; name: string; supportsTransparent?: boolean }>
 }
 
 export type ProviderKind = 'chat' | 'image'

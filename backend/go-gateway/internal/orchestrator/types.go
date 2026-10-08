@@ -136,6 +136,12 @@ type GenRequest struct {
 	// 站内请求不带此字段，因此不影响既有行为；它的存在只是为了不把外部
 	// 客户端限制在本站尺寸表的几个档位上。
 	ExplicitSize string `json:"explicitSize,omitempty"`
+	// Mask 是 OpenAI 局部重绘的蒙版，语义与官方一致：它的【透明区域】即需要
+	// 重新生成的区域，不透明处保持原图。
+	//
+	// 与 References 分开存放而不是塞进数组，是因为它必须作为独立的 multipart
+	// 字段 mask 下发，而不是混在 image[] 里——混进去会被上游当成又一张参考图。
+	Mask *GenReference `json:"mask,omitempty"`
 }
 
 // GenReference 表示一张参考图。

@@ -368,11 +368,12 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
     next.openaiB64JsonEnabled = normalizeBoolean(input.openaiB64JsonEnabled, DEFAULT_APP_SETTINGS.openaiB64JsonEnabled)
   }
   if ('availableImageModels' in input) {
-    const models = normalizeImageModelList(input.availableImageModels, [])
-    if (!models.length) throw new AppSettingsError('invalid_available_image_models', {
-      publicMessage: '至少需要一个可用的图像模型。',
-    })
-    next.availableImageModels = models
+    // 空表是合法状态：它表示「跟随已启用 Provider」，而不是「一个模型都不给」。
+    //
+    // 早先在这里要求非空，导致管理员无法清空列表回到跟随模式——保存会以
+    // invalid_available_image_models 失败，同一次请求里的其他设置也一起落空。
+    // 真正「没有任何模型可用」由下游兜住：解析时会回退到 Provider 目录。
+    next.availableImageModels = normalizeImageModelList(input.availableImageModels, [])
   }
   if ('imageModelCreditCosts' in input) {
     // 空表是合法状态（表示全部走兜底价），因此不像 availableImageModels 那样要求非空。
