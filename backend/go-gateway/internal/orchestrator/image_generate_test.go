@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -169,6 +170,11 @@ type testIdempotencyService struct {
 
 func (s *testIdempotencyService) Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error) {
 	return &service.IdempotencyOutcome{Proceed: true}, nil
+}
+
+// Lookup 只读探测：编排层测试不涉及跨桶场景，返回空表示没有既有记录。
+func (s *testIdempotencyService) Lookup(context.Context, string, string, string) (*repository.IdempotencyRecord, error) {
+	return nil, nil
 }
 
 func (s *testIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) error {

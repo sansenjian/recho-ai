@@ -246,18 +246,22 @@ func TestImageJobWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
 	}
 	worker := newWorkerForTest(jobs, storageWithBlockingDownload, &workerCreditService{}, &processorIdempotency{}, ImageJobWorkerOptions{
 		WorkerID:          "worker-1",
-		LeaseDuration:     40 * time.Millisecond,
+		LeaseDuration:     200 * time.Millisecond,
 		HeartbeatInterval: 5 * time.Millisecond,
-		JobTimeout:        time.Second,
+		JobTimeout:        5 * time.Second,
 	})
 	done := make(chan error, 1)
 	go func() {
 		_, err := worker.RunOnce(context.Background())
 		done <- err
 	}()
+	// 这两个等待是调度延迟的上界，不是被测量的行为。容器里 CPU 配额紧张时
+	// goroutine 可能几百毫秒才被调度一次，1 秒会偶发失败（CI 上表现为
+	// "processor did not begin external work"，耗时正好卡在超时值）。
+	// 给足余量，真正的失败仍会因为 entered 永不关闭而在这里报错。
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("processor did not begin external work")
 	}
 	select {
@@ -265,7 +269,7 @@ func TestImageJobWorkerCancelsProcessingWhenLeaseRenewalFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunOnce() error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("RunOnce() did not stop after lease loss")
 	}
 	if len(jobs.retryCalls) != 0 || len(jobs.compensationCalls) != 0 || len(jobs.completedCalls) != 0 {

@@ -62,6 +62,17 @@ type ImageHandler struct {
 	providerSettings orchestrator.ProviderSettingsService
 	// appSettings 提供 b64_json 等对外开关；可为 nil，此时按关闭处理。
 	appSettings orchestrator.AppSettingsProvider
+	// clock 返回当前时间，仅用于派生幂等键的时间窗口。
+	// 抽成字段是为了让测试能把时间固定在窗口边界上验证行为。
+	clock func() time.Time
+}
+
+// now 返回当前时间，未注入时钟时用系统时间。
+func (h *ImageHandler) now() time.Time {
+	if h.clock != nil {
+		return h.clock()
+	}
+	return time.Now()
 }
 
 // NewImageHandler 创建图片 handler。credit/storage/idempotency 可为 nil（表示禁用）。
@@ -134,6 +145,22 @@ func (h *ImageHandler) WithAppSettings(appSettings orchestrator.AppSettingsProvi
 // request path. It is optional until the persistence worker is wired in.
 func (h *ImageHandler) WithImageJobStore(jobStore orchestrator.ImageJobEnqueuer) *ImageHandler {
 	h.orch = h.orch.WithImageJobStore(jobStore)
+	return h
+}
+
+// WithClock 注入时间源，仅影响幂等键的时间窗口计算。
+//
+// 生产环境始终走系统时间；抽出来是为了让测试能把「同一时间桶内」与
+// 「跨桶边界」这两种情形固定下来，否则只能靠真实等待。
+func (h *ImageHandler) WithClock(clock func() time.Time) *ImageHandler {
+	h.clock = clock
+	return h
+}
+
+// WithIdempotencyService 注入幂等服务，仅用于跨时间桶的只读探测。
+// 未注入时派生键退化为「只看当前桶」。
+func (h *ImageHandler) WithIdempotencyService(svc orchestrator.IdempotencyService) *ImageHandler {
+	h.idempotencySvc = svc
 	return h
 }
 

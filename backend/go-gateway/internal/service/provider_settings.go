@@ -114,6 +114,12 @@ type imageProviderCandidate struct {
 	models            []string
 	editModels        map[string]string
 	transparentModels map[string]bool
+	// hasCatalog 记录该行是否声明了 model_catalog。
+	//
+	// 必须与 len(models) 区分开：目录存在但每一项都被禁用时，models 同样是空的，
+	// 而这两种状态含义相反——「没声明目录」应回退到 provider 级 image_model，
+	// 「目录全禁用」表示管理员刻意关掉了所有模型，应当什么都不暴露。
+	hasCatalog bool
 }
 
 func (c imageProviderCandidate) defaultCatalogModel() string {
@@ -185,7 +191,19 @@ func (s *ProviderSettingsService) ImageProvider(ctx context.Context, requestedMo
 // 可调。只读 provider 的 model_catalog，不触碰密钥，因此不要求凭据可解密。
 func (s *ProviderSettingsService) ListImageModels(ctx context.Context) ([]string, error) {
 	if s == nil || s.pool == nil {
-		return nil, nil
+		// 无数据库连接时也要列出环境变量 Provider 的模型：ImageProvider 在这种
+		// 状态下返回 DefaultImageProviderConfig() 并能正常生图，若这里返回空，
+		// 纯环境变量部署的 /v1/models 会对外声称一个模型都没有，客户端据此
+		// 认为服务不可用。
+		envModels := environmentImageModels()
+		ids := make([]string, 0, len(envModels))
+		for _, model := range envModels {
+			if id := strings.TrimSpace(model.ID); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		return ids, nil
 	}
 
 	rows, err := s.pool.Query(ctx, imageProviderQuery)
@@ -209,8 +227,11 @@ func (s *ProviderSettingsService) ListImageModels(ctx context.Context) ([]string
 			seen[id] = true
 			models = append(models, id)
 		}
-		// 未声明 catalog 时回退到 provider 级 image_model，保证仍能被列出。
-		if len(candidate.models) == 0 {
+		// 只有「未声明 catalog」才回退到 provider 级 image_model。
+		// 判据必须是 hasCatalog 而不是 len(models)：目录存在但每一项都被禁用时
+		// models 同样为空，那种情况表示管理员关掉了全部模型，不能把 image_model
+		// 当作兜底重新暴露出去。
+		if !candidate.hasCatalog {
 			id := strings.TrimSpace(candidate.config.ImageModel)
 			if id != "" && !seen[id] {
 				seen[id] = true
@@ -220,6 +241,17 @@ func (s *ProviderSettingsService) ListImageModels(ctx context.Context) ([]string
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if len(models) == 0 {
+		// 库里没有任何可用 Provider 时，ImageProvider 会回退到环境变量配置并
+		// 正常生图。列表必须跟着回退，否则 /v1/models 会声称没有模型可调，
+		// 而模型白名单还会把显式请求该模型的调用方拒之门外——两边自相矛盾。
+		for _, model := range environmentImageModels() {
+			if id := strings.TrimSpace(model.ID); id != "" && !seen[id] {
+				seen[id] = true
+				models = append(models, id)
+			}
+		}
 	}
 	sort.Strings(models)
 	return models, nil
@@ -261,7 +293,7 @@ func scanImageProviderCandidate(rows pgx.Rows) (imageProviderCandidate, error) {
 	); err != nil {
 		return candidate, err
 	}
-	candidate.models, candidate.editModels = catalogModels(catalog)
+	candidate.models, candidate.editModels, candidate.hasCatalog = catalogModels(catalog)
 	candidate.transparentModels = catalogTransparentModels(catalog)
 	return candidate, nil
 }
@@ -292,7 +324,7 @@ func catalogTransparentModels(catalog []byte) map[string]bool {
 // 只有「启用且 editModel 非空」的行才进编辑模型表：停用的行不能把带参考图的
 // 请求计费到一个管理员已经关掉的模型上。没有任何编辑模型时返回 nil，调用方据此
 // 回落到 Provider 级 EditModel。
-func catalogModels(catalog []byte) ([]string, map[string]string) {
+func catalogModels(catalog []byte) ([]string, map[string]string, bool) {
 	options := parseProviderModelOptions(catalog)
 	models := make([]string, 0, len(options))
 	editModels := make(map[string]string, len(options))
@@ -312,7 +344,7 @@ func catalogModels(catalog []byte) ([]string, map[string]string) {
 	if len(editModels) == 0 {
 		editModels = nil
 	}
-	return models, editModels
+	return models, editModels, len(options) > 0
 }
 
 func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImageProviderConfig) (ImageProviderConfig, bool, error) {
@@ -324,6 +356,13 @@ func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImagePr
 	}
 	cfg.APIKey = strings.TrimSpace(apiKey)
 	if cfg.APIKey == "" || cfg.BaseURL == "" {
+		return cfg, false, nil
+	}
+	// 目录存在但每一项都被禁用：这个 Provider 不产出任何模型，也就没有理由
+	// 承载请求。若仍把它纳入候选，selectImageProvider 会在请求模型未命中时
+	// 回退到它，并用行里的 image_model 生成——管理员已经关掉的模型就这样
+	// 绕过禁用状态继续出图，而且照常计费。
+	if candidate.hasCatalog && len(candidate.models) == 0 {
 		return cfg, false, nil
 	}
 	cfg.ImageModels = candidate.models

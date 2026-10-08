@@ -34,10 +34,37 @@ function proxyTimeoutMs() {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PROXY_TIMEOUT_MS
 }
 
-function requestHeaders(req: Request) {
+// Node 会从 socket 层重新推导这些头，转发它们既无意义又会让 fetch 直接失败：
+// undici 对 transfer-encoding、keep-alive 这类头会抛 TypeError，代理只能回 502。
+// 外部 OpenAI 客户端常用 chunked 上传大图，不剥离就会踩到。
+const HOP_BY_HOP_HEADERS = new Set([
+  'host',
+  'connection',
+  'content-length',
+  'keep-alive',
+  'transfer-encoding',
+  'te',
+  'trailer',
+  'upgrade',
+  'proxy-connection',
+  'proxy-authorization',
+  'proxy-authenticate',
+])
+
+export function requestHeaders(req: Request) {
   const headers = new Headers()
+  // Connection 头可以点名额外的逐跳头（如 Connection: x-custom），
+  // 这些同样不能转发到下一跳。
+  const nominated = new Set(
+    String(req.headers.connection || '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  )
   for (const [key, value] of Object.entries(req.headers)) {
-    if (!value || ['host', 'connection', 'content-length'].includes(key.toLowerCase())) continue
+    if (!value) continue
+    const lower = key.toLowerCase()
+    if (HOP_BY_HOP_HEADERS.has(lower) || nominated.has(lower)) continue
     if (Array.isArray(value)) {
       for (const item of value) headers.append(key, item)
     } else {

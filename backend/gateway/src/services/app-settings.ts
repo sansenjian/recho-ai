@@ -233,7 +233,18 @@ function mergeImageModelEntries(
   // primary 决定有哪些模型、以及它们的顺序；capabilitySource 只用来补能力位，
   // 不引入新模型。这样「列表以运行时配置为准」与「透明能力仍参考 Provider」
   // 可以同时成立。
-  const models: ImageModelEntry[] = primary.map(model => ({ ...model }))
+  const models: ImageModelEntry[] = []
+  for (const model of primary) {
+    const existing = models.find(item => item.id === model.id)
+    if (existing) {
+      // primary 内部也可能有同 ID 重复（多个已启用 Provider 声明同一模型）。
+      // 位置保留首次出现，能力取并集，避免下拉框出现两个相同选项、
+      // 且其中一个丢掉了透明能力。
+      if (model.supportsTransparent) existing.supportsTransparent = true
+      continue
+    }
+    models.push({ ...model })
+  }
   for (const model of capabilitySource) {
     const existing = models.find(item => item.id === model.id)
     if (existing && model.supportsTransparent) {
@@ -308,7 +319,7 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
 
     if (property === 'imageCreditCostPerImage') {
       settings[property] = normalizeImageCreditCostPerImage(value)
-    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled' || property === 'freeGenerationEnabled' || property === 'guestGenerationEnabled') {
+    } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled' || property === 'freeGenerationEnabled' || property === 'guestGenerationEnabled' || property === 'openaiB64JsonEnabled') {
       settings[property] = normalizeBoolean(value, settings[property])
     } else if (property === 'imageResponsesModel' || property === 'imageResponsesImageModel') {
       settings[property] = normalizeModelName(value, settings[property])
@@ -352,6 +363,9 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
   }
   if ('guestGenerationEnabled' in input) {
     next.guestGenerationEnabled = normalizeBoolean(input.guestGenerationEnabled, DEFAULT_APP_SETTINGS.guestGenerationEnabled)
+  }
+  if ('openaiB64JsonEnabled' in input) {
+    next.openaiB64JsonEnabled = normalizeBoolean(input.openaiB64JsonEnabled, DEFAULT_APP_SETTINGS.openaiB64JsonEnabled)
   }
   if ('availableImageModels' in input) {
     const models = normalizeImageModelList(input.availableImageModels, [])

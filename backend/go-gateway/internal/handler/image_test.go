@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go-gateway/internal/config"
 	"go-gateway/internal/middleware"
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -354,6 +355,18 @@ type stubImageIdempotencyService struct {
 	failCh        chan string
 	completeCalls []string
 	completeCh    chan string
+	// lookupRecord 是 Lookup 命中的既有记录。
+	//
+	// 只按键区分：真实仓储按 (user, key, scope) 精确匹配，桩也必须如此，
+	// 否则「当前桶有记录」「上一桶有记录」「都没有」这三种情形无法区分，
+	// 跨时间桶的用例就失去意义。
+	lookupRecord  *repository.IdempotencyRecord
+	lookupKeys    map[string]bool
+	lookupQueries []string
+	lookupFailing bool
+	// lookupFailFirstOnly 只让第一次查询失败，用于验证解析器在首个
+	// Lookup 出错时立刻报错，而不是靠后续查询兜住。
+	lookupFailFirstOnly bool
 }
 
 func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error) {
@@ -362,6 +375,28 @@ func (s *stubImageIdempotencyService) Acquire(ctx context.Context, userID, idemK
 		return s.outcome, nil
 	}
 	return &service.IdempotencyOutcome{Proceed: true}, nil
+}
+
+// Lookup 只读探测：返回预置的既有记录，供跨时间桶的用例断言。
+func (s *stubImageIdempotencyService) Lookup(_ context.Context, _ string, idemKey, _ string) (*repository.IdempotencyRecord, error) {
+	s.lookupQueries = append(s.lookupQueries, idemKey)
+	if s.lookupFailing {
+		return nil, errors.New("lookup unavailable")
+	}
+	if s.lookupFailFirstOnly && len(s.lookupQueries) == 1 {
+		return nil, errors.New("lookup unavailable on first query")
+	}
+	// 只有 map 中显式标记的键才算「已有记录」。空 map 与 nil 都表示没有任何记录，
+	// 这样「首次请求」「跨桶重试」两种时序才区分得开。
+	if s.lookupKeys[idemKey] {
+		if s.lookupRecord != nil {
+			return s.lookupRecord, nil
+		}
+		// 真实仓储命中时一定返回记录，桩也必须如此——返回 (nil, nil) 会被调用方
+		// 解读成「没有记录」，跨桶用例就失去意义。
+		return &repository.IdempotencyRecord{ID: "stub-record", Key: idemKey}, nil
+	}
+	return nil, nil
 }
 
 func (s *stubImageIdempotencyService) Fail(ctx context.Context, userID, idemKey, scope string) error {

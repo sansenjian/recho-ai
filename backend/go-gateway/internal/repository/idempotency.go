@@ -238,6 +238,17 @@ func (r *IdempotencyRepository) Fail(
 	return nil
 }
 
+// Lookup 只读查询一条幂等记录，不存在时返回 (nil, nil)。不产生任何副作用。
+//
+// 外部端点的派生键带时间桶，跨桶边界的重试会落到不同键上。调用方在占用之前
+// 先用它探测邻近桶，命中就复用那条记录，避免仅仅因为跨过桶边界就重复生成。
+func (r *IdempotencyRepository) Lookup(
+	ctx context.Context,
+	userID, idemKey, scope string,
+) (*IdempotencyRecord, error) {
+	return r.findByUserKeyScope(ctx, userID, idemKey, scope)
+}
+
 // findByUserKeyScope looks up an existing idempotency record
 func (r *IdempotencyRepository) findByUserKeyScope(
 	ctx context.Context,

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -56,7 +57,7 @@ type openAIImageRequest struct {
 
 // openAIImageResponse 是 OpenAI /v1/images/generations 的响应体。
 type openAIImageResponse struct {
-	Created int64                 `json:"created"`
+	Created int64                     `json:"created"`
 	Data    []openAIImageResponseItem `json:"data"`
 }
 
@@ -85,8 +86,8 @@ type openAIErrorDetail struct {
 
 // openAIModelList 是 GET /v1/models 的响应体。
 type openAIModelList struct {
-	Object string          `json:"object"`
-	Data   []openAIModel   `json:"data"`
+	Object string        `json:"object"`
+	Data   []openAIModel `json:"data"`
 }
 
 type openAIModel struct {
@@ -274,22 +275,22 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	format, formatErr := h.resolveResponseFormat(req.ResponseFormat)
+	format, formatErr := h.resolveResponseFormat(r.Context(), req.ResponseFormat)
 	if formatErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", formatErr.Error())
 		return
 	}
 	// 白名单校验必须早于计费与上游调用：编排层对未命中的模型会回退到
 	// 优先级最高的 Provider，不拦的话调用方会拿到别的模型生成的图。
-	if modelErr := h.validateRequestedModel(req.Model); modelErr != nil {
+	if modelErr := h.validateRequestedModel(r.Context(), req.Model); modelErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", modelErr.Error())
 		return
 	}
 
 	genReq := orchestrator.GenRequest{
-		Prompt: req.Prompt,
-		Model:  strings.TrimSpace(req.Model),
-		Count:  normalizeOpenAICount(req.N),
+		Prompt:  req.Prompt,
+		Model:   strings.TrimSpace(req.Model),
+		Count:   normalizeOpenAICount(req.N),
 		Quality: openAIQualityToSiteQuality(req.Quality),
 	}
 	if size := strings.TrimSpace(req.Size); size != "" {
@@ -312,7 +313,14 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	// 幂等重放而不是重复扣费，这正是 OpenAI 客户端超时重试时期望的语义。
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format)
+		resolved, resolveErr := h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		if resolveErr != nil {
+			// 探测失败时拒绝请求，而不是改用当前桶新建：上一桶可能已有成功记录，
+			// 此刻新建会让这次重试真正再生成一张并再次扣费。宁可返回可重试的 503。
+			writeOpenAIError(w, http.StatusServiceUnavailable, "idempotency_unavailable", "幂等服务暂时不可用，请稍后重试。")
+			return
+		}
+		idemKey = resolved
 	}
 
 	// 幂等指纹必须来自规范化后的请求体，不能传 nil：编排层用 body 的哈希区分
@@ -336,12 +344,15 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 		AwaitPersistence: true,
 	})
 	if statusErr != nil {
-		status := statusErr.Code
-		if status < 400 {
-			status = http.StatusBadRequest
+		// 命中幂等重放时 statusErr 携带的是成功响应体，必须先识别出来，
+		// 否则重试的调用方会拿到错误信封而不是缓存的图片。
+		replayed, ok := replayResponse(statusErr)
+		if !ok {
+			writeStatusError(w, statusErr)
+			return
 		}
-		writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
-		return
+		writeReplayHeaders(w, statusErr)
+		resp = replayed
 	}
 
 	items, err := h.openAIImageItems(r.Context(), resp, format)
@@ -356,7 +367,6 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-
 // --- OpenAI 兼容：图像编辑端点 ---
 
 const (
@@ -364,7 +374,7 @@ const (
 	//   - 官方 SDK 使用 image（单数），可传一个文件或文件数组
 	//   - 部分中转实现（含本站上游）使用 image[]
 	// 两者都接受，避免因字段名不一致而让客户端无法接入。
-	openAIImageField   = "image"
+	openAIImageField    = "image"
 	openAIImageArrField = "image[]"
 
 	// 每张输入图上限，与官方文档的 50MB 对齐。
@@ -391,8 +401,17 @@ type openAIEditForm struct {
 //
 // 图片直接以 data URL 形式放进 GenReference，不先落存储：编辑是一次性输入，
 // 与历史记录里的参考图不同，没必要产生对象存储副作用。
-func parseOpenAIEditForm(r *http.Request) (*openAIEditForm, error) {
+func parseOpenAIEditForm(w http.ResponseWriter, r *http.Request) (*openAIEditForm, error) {
+	// 先给请求体套上硬上限再解析：ParseMultipartForm 的参数只限制驻留内存的
+	// 部分，超出会写临时文件。逐张与总量的上限原本在解析完成后才检查，届时
+	// 整个请求体已经收完，已认证用户可以借此占用磁盘与带宽。
+	// 上限取总量上限再多一点余量，留给 multipart 边界与其它表单字段。
+	r.Body = http.MaxBytesReader(w, r.Body, openAIEditMaxTotalBytes+(1<<20))
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return nil, fmt.Errorf("请求体过大：上传图片总量不得超过 %d MB", openAIEditMaxTotalBytes>>20)
+		}
 		return nil, fmt.Errorf("无效的 multipart 表单")
 	}
 
@@ -472,7 +491,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	form, err := parseOpenAIEditForm(r)
+	form, err := parseOpenAIEditForm(w, r)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
@@ -482,12 +501,12 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	format, formatErr := h.resolveResponseFormat(form.responseFormat)
+	format, formatErr := h.resolveResponseFormat(r.Context(), form.responseFormat)
 	if formatErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", formatErr.Error())
 		return
 	}
-	if modelErr := h.validateRequestedModel(form.model); modelErr != nil {
+	if modelErr := h.validateRequestedModel(r.Context(), form.model); modelErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", modelErr.Error())
 		return
 	}
@@ -521,7 +540,14 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format)
+		resolved, resolveErr := h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		if resolveErr != nil {
+			// 探测失败时拒绝请求，而不是改用当前桶新建：上一桶可能已有成功记录，
+			// 此刻新建会让这次重试真正再生成一张并再次扣费。宁可返回可重试的 503。
+			writeOpenAIError(w, http.StatusServiceUnavailable, "idempotency_unavailable", "幂等服务暂时不可用，请稍后重试。")
+			return
+		}
+		idemKey = resolved
 	}
 
 	// AwaitPersistence：外部客户端要的是可直接下载的图片地址，而不是内联数据。
@@ -536,12 +562,14 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 		AwaitPersistence: true,
 	})
 	if statusErr != nil {
-		status := statusErr.Code
-		if status < 400 {
-			status = http.StatusBadRequest
+		// 同生图端点：命中幂等重放时 statusErr 携带的是成功响应体。
+		replayed, ok := replayResponse(statusErr)
+		if !ok {
+			writeStatusError(w, statusErr)
+			return
 		}
-		writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
-		return
+		writeReplayHeaders(w, statusErr)
+		resp = replayed
 	}
 
 	items, itemErr := h.openAIImageItems(r.Context(), resp, format)
@@ -564,7 +592,7 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	models := h.openAIImageModels()
+	models := h.openAIImageModels(r.Context())
 	list := make([]openAIModel, 0, len(models))
 	for _, id := range models {
 		list = append(list, openAIModel{
@@ -577,6 +605,46 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 	response.JSON(w, http.StatusOK, openAIModelList{Object: "list", Data: list})
 }
 
+// replayResponse 识别幂等重放：编排层命中重放时返回 Code<400 且 Body 是缓存的
+// GenResponse JSON，而不是错误。把 Body 解析回 GenResponse 交给正常响应路径。
+//
+// 不识别的话，这段「成功但走错误通道」的返回值会被当成失败：调用方的重试
+// （客户端超时、用户想再生成一张）拿到的是错误信封，缓存的图片被丢弃。
+// 返回的第二个值为 false 表示这不是重放，调用方按普通错误处理。
+func replayResponse(statusErr *orchestrator.StatusError) (*orchestrator.GenResponse, bool) {
+	if statusErr == nil || statusErr.Body == nil || statusErr.Code >= 400 {
+		return nil, false
+	}
+	var resp orchestrator.GenResponse
+	if err := json.Unmarshal(statusErr.Body, &resp); err != nil {
+		return nil, false
+	}
+	return &resp, true
+}
+
+// writeReplayHeaders 把重放携带的响应头写回。
+//
+// 编排层用 StatusError.Headers 传递 X-Idempotent-Replay 之类的信号。识别出重放
+// 后如果不写回，调用方就无法区分「这次真的生成了」与「复用了缓存」——客户端
+// 重试逻辑与用量监控都依赖这个区分。
+func writeReplayHeaders(w http.ResponseWriter, statusErr *orchestrator.StatusError) {
+	for key, value := range statusErr.Headers {
+		w.Header().Set(key, value)
+	}
+}
+
+// writeStatusError 把编排层的错误写成 OpenAI 错误信封。
+//
+// 重放（Code<400 且有 Body）不能走这里：那是成功的响应体，需要由调用方解析后
+// 按正常结果返回。这里只负责真正的失败——Code<400 却没有 Body 属于编排层的
+// 异常组合，按 400 处理以免向客户端谎报成功。
+func writeStatusError(w http.ResponseWriter, statusErr *orchestrator.StatusError) {
+	status := statusErr.Code
+	if status < 400 {
+		status = http.StatusBadRequest
+	}
+	writeOpenAIError(w, status, statusErr.ErrorCode, statusErr.Message)
+}
 
 // validateRequestedModel 校验请求的模型确实在对外可用列表里。
 //
@@ -588,12 +656,12 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 //
 // 这里用对外模型列表做白名单，把它挡在进入编排之前。空模型名放行：
 // 那是「用默认模型」的合法语义，由编排层解析。
-func (h *ImageHandler) validateRequestedModel(model string) error {
+func (h *ImageHandler) validateRequestedModel(ctx context.Context, model string) error {
 	requested := strings.TrimSpace(model)
 	if requested == "" {
 		return nil
 	}
-	available := h.openAIImageModels()
+	available := h.openAIImageModels(ctx)
 	if len(available) == 0 {
 		// 一个模型都没配时给出明确指引，而不是让请求走到上游才失败。
 		return fmt.Errorf("服务端尚未配置任何可用的生图模型。")
@@ -619,13 +687,13 @@ func (h *ImageHandler) validateRequestedModel(model string) error {
 // 开关语义：b64_json 开关只约束「显式请求 base64」的场景。默认路径不受它
 // 影响——关掉开关是为了让管理员能强制客户端走省流量的直链，而不是让默认
 // 调用直接失败。
-func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
+func (h *ImageHandler) resolveResponseFormat(ctx context.Context, requested string) (string, error) {
 	format := strings.ToLower(strings.TrimSpace(requested))
 
 	if format == "" {
 		// 未指定：对齐官方给 base64；若管理员关闭了该能力则退回直链，
 		// 保证请求仍然成功而不是要求客户端改参数。
-		if h.b64JSONEnabled() {
+		if h.b64JSONEnabled(ctx) {
 			return openAIImageFormatB64JSON, nil
 		}
 		return openAIImageFormatURL, nil
@@ -634,7 +702,7 @@ func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
 	if format != openAIImageFormatURL && format != openAIImageFormatB64JSON {
 		return "", fmt.Errorf("不支持的 response_format：%s。", requested)
 	}
-	if format == openAIImageFormatB64JSON && !h.b64JSONEnabled() {
+	if format == openAIImageFormatB64JSON && !h.b64JSONEnabled(ctx) {
 		return "", fmt.Errorf("本服务未开启 b64_json 响应格式，请使用 response_format=url。")
 	}
 	return format, nil
@@ -644,11 +712,11 @@ func (h *ImageHandler) resolveResponseFormat(requested string) (string, error) {
 //
 // 读取失败时按「关闭」处理：宁可让调用方收到明确的 400，也不要因为配置读取
 // 异常而静默回退到一种会显著放大响应的格式。
-func (h *ImageHandler) b64JSONEnabled() bool {
+func (h *ImageHandler) b64JSONEnabled(ctx context.Context) bool {
 	if h.appSettings == nil {
 		return config.OpenAIB64JSONEnabled
 	}
-	enabled, err := h.appSettings.OpenAIB64JSONEnabled(context.Background())
+	enabled, err := h.appSettings.OpenAIB64JSONEnabled(ctx)
 	if err != nil {
 		log.Printf("[openai-image] failed to read b64_json switch, treating as disabled: %v", err)
 		return false
@@ -660,11 +728,11 @@ func (h *ImageHandler) b64JSONEnabled() bool {
 //
 // 读取失败时返回空列表而不是报错：/v1/models 是发现性接口，返回空列表会让
 // 客户端知道当前没有可用模型，比 5xx 更利于诊断。
-func (h *ImageHandler) openAIImageModels() []string {
+func (h *ImageHandler) openAIImageModels(ctx context.Context) []string {
 	if h.providerSettings == nil {
 		return nil
 	}
-	models, err := h.providerSettings.ListImageModels(context.Background())
+	models, err := h.providerSettings.ListImageModels(ctx)
 	if err != nil {
 		log.Printf("[openai-image] failed to list image models: %v", err)
 		return nil
@@ -693,7 +761,15 @@ func (h *ImageHandler) openAIImageItems(ctx context.Context, resp *orchestrator.
 			// 主路径：读存储转 base64。
 			encoded, err := h.encodeImageBase64(ctx, image)
 			if err != nil {
-				// 兜底：读不到图时退回链接，避免整条请求失败。
+				// 兜底一：同步持久化失败时数据仍在内存的 data URI 里
+				// （StoragePath 为空，encodeImageBase64 必然失败）。
+				// 直接把它当 base64 返回，只读 b64_json 的客户端才拿得到图。
+				if inline, ok := stripDataURLPrefix(imageURL); ok {
+					item.B64JSON = inline
+					items = append(items, item)
+					continue
+				}
+				// 兜底二：连内联数据都没有时才退回链接，避免整条请求失败。
 				fallbackErr = err
 				item.URL = imageURL
 				items = append(items, item)
@@ -797,9 +873,9 @@ func stripDataURLPrefix(value string) (string, bool) {
 // 为什么是确定性的：超时重试是 OpenAI 客户端的常规行为。用「用户 + 完整请求参数」
 // 作为指纹，同一用户以相同参数重试会命中幂等重放而非再次扣费；参数不同则视为
 // 新请求。这与站内「显式幂等键」的语义一致，只是键由服务端推导。
-func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, format string) string {
-	fingerprint := strings.Join([]string{
-		"openai-image-v1",
+func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, format string, now time.Time) string {
+	fields := []string{
+		openAIIdempotencyKeyVersion,
 		userID,
 		req.Prompt,
 		req.Model,
@@ -810,9 +886,154 @@ func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, form
 		strconv.Itoa(req.Count),
 		format,
 		strconv.FormatBool(req.TransparentBackground),
-	}, "\x00")
-	sum := sha256.Sum256([]byte(fingerprint))
+	}
+	// 参考图指纹只在确实有参考图时才参与。
+	//
+	// 无条件追加（哪怕为空字符串）会改变无参考图请求的指纹，使改动上线后算出的键
+	// 与滚动部署期间旧版本写入的记录对不上：旧记录尚未过期，重试却找不到它，
+	// 于是重新生成并再次扣费。保持无参考图时的字段序列不变，跨版本重试仍能命中。
+	if refs := referenceFingerprint(req.References); refs != "" {
+		fields = append(fields, refs)
+	}
+	fields = append(fields, strconv.FormatInt(idempotencyWindowStart(now), 10))
+
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return "openai-" + hex.EncodeToString(sum[:16])
+}
+
+// openAIRetryReuseWindow 是「跨时间桶重试」可以复用旧记录的时限。
+//
+// 派生键按时间分桶，跨过边界的重试会算出不同的键。若只看当前桶，12:04:59 发出、
+// 12:05:01 重发的请求会重新生成并再次扣费。但不能无条件复用上一桶：幂等记录存活
+// 24 小时，上一桶往往还留着很久以前的记录，那样「再生成一张」永远拿不到新图。
+//
+// 两者的请求字节完全相同，服务端唯一能依据的区分信号就是时间间隔——重试发生在
+// 数十秒内，而用户主动重新生成通常在几分钟之后。90 秒既覆盖常见的超时重试与退避
+// 重试，又短到不会把「再生成一张」误判成重试。
+const openAIRetryReuseWindow = 90 * time.Second
+
+// openAIImageIdempotencyScope 是外部生图端点使用的幂等作用域。
+const openAIImageIdempotencyScope = "image_generate"
+
+// resolveOpenAIIdempotencyKey 选出本次请求应使用的幂等键。
+//
+// 判定顺序（只读探测，不产生占用）：
+//  1. 当前桶已有记录 → 用当前桶。同一窗口内的重试都走这里。
+//  2. 当前桶没有、上一桶有且那条记录足够新 → 用上一桶。这是跨边界的那两秒重试。
+//  3. 其余情况 → 用当前桶，即全新请求。
+//
+// 第 2 步的时限不能省：没有它，任何新请求只要撞上「上一桶还留着历史记录」就会
+// 复用旧键并返回旧图。第 1 步也不能让位给第 2 步——当前桶的记录总是更近的一次。
+//
+// 探测失败时返回错误，由调用方决定如何处理：把失败当成「没有旧记录」会在查询
+// 瞬时抖动的窗口里让重试重复扣费。
+func (h *ImageHandler) resolveOpenAIIdempotencyKey(ctx context.Context, userID string, req orchestrator.GenRequest, format string) (string, error) {
+	now := h.now()
+	currentKey := deriveOpenAIIdempotencyKey(userID, req, format, now)
+
+	if h.idempotencySvc == nil {
+		return currentKey, nil
+	}
+
+	current, err := h.idempotencySvc.Lookup(ctx, userID, currentKey, openAIImageIdempotencyScope)
+	if err != nil {
+		return "", fmt.Errorf("查询幂等记录失败：%w", err)
+	}
+	if current != nil {
+		return currentKey, nil
+	}
+
+	previousKey := deriveOpenAIIdempotencyKeyForWindow(userID, req, format, idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+	if previousKey == currentKey {
+		return currentKey, nil
+	}
+
+	previous, err := h.idempotencySvc.Lookup(ctx, userID, previousKey, openAIImageIdempotencyScope)
+	if err != nil {
+		return "", fmt.Errorf("查询幂等记录失败：%w", err)
+	}
+	if previous != nil && now.Sub(previous.CreatedAt) <= openAIRetryReuseWindow {
+		return previousKey, nil
+	}
+	return currentKey, nil
+}
+
+// deriveOpenAIIdempotencyKeyForWindow 按指定的窗口起点派生键。
+//
+// 与 deriveOpenAIIdempotencyKey 共用同一套字段序列，只是窗口起点由调用方给出，
+// 这样才能为「上一个桶」算出候选键。
+func deriveOpenAIIdempotencyKeyForWindow(userID string, req orchestrator.GenRequest, format string, windowStart int64) string {
+	fields := []string{
+		openAIIdempotencyKeyVersion,
+		userID,
+		req.Prompt,
+		req.Model,
+		req.AspectRatio,
+		req.Resolution,
+		req.ExplicitSize,
+		req.Quality,
+		strconv.Itoa(req.Count),
+		format,
+		strconv.FormatBool(req.TransparentBackground),
+	}
+	// 参考图指纹只在确实有参考图时才参与：无条件追加空字符串会改变无参考图请求
+	// 的指纹，使滚动部署期间新旧版本算出的键对不上。
+	if refs := referenceFingerprint(req.References); refs != "" {
+		fields = append(fields, refs)
+	}
+	fields = append(fields, strconv.FormatInt(windowStart, 10))
+	return openAIIdempotencyHash(fields)
+}
+
+// openAIIdempotencyHash 把字段序列折叠成最终的键，避免各处重复哈希逻辑。
+func openAIIdempotencyHash(fields []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
+	return "openai-" + hex.EncodeToString(sum[:16])
+}
+
+// openAIIdempotencyKeyVersion 让派生算法可以演进而不会误命中旧记录。
+const openAIIdempotencyKeyVersion = "openai-image-v1"
+
+// openAIIdempotencyWindow 是派生键的时间桶宽度。
+//
+// 取 5 分钟：足够覆盖一次生成（实测约 30s）加上客户端重试退避，又不会长到
+// 让「再生成一张」显得失效。
+const openAIIdempotencyWindow = 5 * time.Minute
+
+// idempotencyWindowStart 返回 now 所属时间桶的起点（Unix 秒）。
+//
+// 用桶起点而不是「当前秒」：同一窗口内的所有请求必须落到同一个键，否则重试
+// 会因为时间差落到别的桶上，重放保护就失效了。
+func idempotencyWindowStart(now time.Time) int64 {
+	window := int64(openAIIdempotencyWindow / time.Second)
+	return now.Unix() / window * window
+}
+
+// referenceFingerprint 把参考图归纳成一个稳定的短哈希。
+//
+// 参考图必须进入幂等指纹，否则「同一提示词 + 换一张参考图」会被判定为同一请求，
+// 第二次编辑直接命中重放、返回上一张结果。参考图内容是 data URI 或存储路径，
+// 可能有数十 MB，因此只把逐项哈希拼进指纹，不把原文带进去。
+func referenceFingerprint(references []orchestrator.GenReference) string {
+	if len(references) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(references)*4)
+	for _, ref := range references {
+		// 逐张取内容标识：优先实际图像数据，其次是存储位置。
+		// 文件名与标题也带上——同名不同图的情况这两者能区分开。
+		sum := sha256.Sum256([]byte(strings.Join([]string{
+			ref.DataUrl,
+			ref.Content,
+			ref.StoragePath,
+			ref.PreviewURL,
+			ref.PreviewPath,
+			ref.ThumbnailURL,
+			ref.ThumbnailPath,
+		}, "\x00")))
+		parts = append(parts, hex.EncodeToString(sum[:8]), ref.FileName, ref.Title, ref.ID)
+	}
+	return strings.Join(parts, "\x01")
 }
 
 // firstNonEmptyString 返回第一个非空字符串。

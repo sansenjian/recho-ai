@@ -92,6 +92,8 @@ type IdempotencyService interface {
 	Acquire(ctx context.Context, userID, idemKey, scope string, body []byte) (*service.IdempotencyOutcome, error)
 	Fail(ctx context.Context, userID, idemKey, scope string) error
 	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error
+	// Lookup 只读探测某个键是否已有记录，用于跨时间桶的重试识别。
+	Lookup(ctx context.Context, userID, idemKey, scope string) (*repository.IdempotencyRecord, error)
 }
 
 // AppSettingsProvider 描述外部兼容端点需要的应用级开关读取。

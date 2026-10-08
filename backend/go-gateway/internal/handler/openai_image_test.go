@@ -5,14 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"go-gateway/internal/orchestrator"
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -145,12 +148,12 @@ func TestOpenAIQualityToSiteQuality(t *testing.T) {
 
 func TestOpenAIErrorTypeForStatus(t *testing.T) {
 	cases := map[int]string{
-		http.StatusUnauthorized:     "authentication_error",
-		http.StatusForbidden:        "permission_error",
-		http.StatusTooManyRequests:  "rate_limit_error",
+		http.StatusUnauthorized:        "authentication_error",
+		http.StatusForbidden:           "permission_error",
+		http.StatusTooManyRequests:     "rate_limit_error",
 		http.StatusInternalServerError: "server_error",
-		http.StatusBadGateway:       "server_error",
-		http.StatusBadRequest:       "invalid_request_error",
+		http.StatusBadGateway:          "server_error",
+		http.StatusBadRequest:          "invalid_request_error",
 	}
 	for status, want := range cases {
 		if got := openAIErrorTypeForStatus(status); got != want {
@@ -229,23 +232,22 @@ func TestB64JSONEnabledFailsClosedOnReadError(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).
 		WithAppSettings(stubAppSettings{err: errors.New("db down")})
 
-	if handler.b64JSONEnabled() {
+	if handler.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json to be disabled when the settings read fails")
 	}
 }
 
 func TestB64JSONEnabledReflectsSetting(t *testing.T) {
 	enabled := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
-	if !enabled.b64JSONEnabled() {
+	if !enabled.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json enabled when the setting is true")
 	}
 
 	disabled := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
-	if disabled.b64JSONEnabled() {
+	if disabled.b64JSONEnabled(context.Background()) {
 		t.Error("expected b64_json disabled when the setting is false")
 	}
 }
-
 
 // --- OpenAI 编辑端点 ---
 
@@ -304,7 +306,7 @@ func TestParseOpenAIEditFormAcceptsBothImageFieldNames(t *testing.T) {
 			map[string]string{"prompt": "make it blue"},
 			map[string][]byte{field: tinyPNG})
 
-		form, err := parseOpenAIEditForm(req)
+		form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 		if err != nil {
 			t.Fatalf("field %q: unexpected error: %v", field, err)
 		}
@@ -321,22 +323,77 @@ func TestParseOpenAIEditFormAcceptsBothImageFieldNames(t *testing.T) {
 }
 
 func TestParseOpenAIEditFormAcceptsMultipleImages(t *testing.T) {
-	req, _ := buildEditMultipart(t,
-		map[string]string{"prompt": "combine these"},
-		map[string][]byte{"image": tinyPNG})
-	// CreateFormFile 每调用一次产生一个 part；用同名字段再追加一张。
-	form, err := parseOpenAIEditForm(req)
+	// 必须在同一个 image 字段下放两个 part 才算测到多图：buildEditMultipart 用
+	// map 存文件，同名 key 放不进两张，所以这里手工构造。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageField, openAIImageField}, [][]byte{tinyPNG, tinyPNG})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(form.references) != 1 {
-		t.Fatalf("got %d references, want 1", len(form.references))
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
 	}
+}
+
+func TestParseOpenAIEditFormAcceptsImageArrayFieldNames(t *testing.T) {
+	// image[] 是 OpenAI 的另一种字段写法，供应商与 SDK 都有使用。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageArrField, openAIImageArrField}, [][]byte{tinyPNG, tinyPNG})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
+	}
+}
+
+func TestParseOpenAIEditFormMixesBothImageFieldNames(t *testing.T) {
+	// 两种字段名混用时要合并计数，不能只取其中一个。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageField, openAIImageArrField}, [][]byte{tinyPNG, tinyPNG})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
+	}
+}
+
+// buildEditMultipartWithParts 构造允许多个同名字段文件 part 的编辑请求。
+func buildEditMultipartWithParts(t *testing.T, prompt string, fieldNames []string, contents [][]byte) *http.Request {
+	t.Helper()
+	if len(fieldNames) != len(contents) {
+		t.Fatalf("fieldNames and contents must have equal length")
+	}
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("prompt", prompt); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	for index, name := range fieldNames {
+		part, err := writer.CreateFormFile(name, fmt.Sprintf("part-%d.png", index))
+		if err != nil {
+			t.Fatalf("create file part %d: %v", index, err)
+		}
+		if _, err := part.Write(contents[index]); err != nil {
+			t.Fatalf("write file part %d: %v", index, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }
 
 func TestParseOpenAIEditFormRejectsMissingImage(t *testing.T) {
 	req, _ := buildEditMultipart(t, map[string]string{"prompt": "x"}, nil)
-	if _, err := parseOpenAIEditForm(req); err == nil {
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
 		t.Error("expected an error when no image is provided")
 	}
 }
@@ -345,7 +402,7 @@ func TestParseOpenAIEditFormRejectsNonImageFile(t *testing.T) {
 	req, _ := buildEditMultipart(t,
 		map[string]string{"prompt": "x"},
 		map[string][]byte{"image": []byte("this is not an image at all")})
-	if _, err := parseOpenAIEditForm(req); err == nil {
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
 		t.Error("expected an error for a non-image upload")
 	}
 }
@@ -363,7 +420,7 @@ func TestParseOpenAIEditFormParsesOptionalFields(t *testing.T) {
 		},
 		map[string][]byte{"image": tinyPNG})
 
-	form, err := parseOpenAIEditForm(req)
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -389,15 +446,14 @@ func TestEditOpenAIImageRequiresAuthenticatedUser(t *testing.T) {
 	}
 }
 
-
 // --- 响应格式兜底 ---
 
 // stubImageStorageForItems 提供可控的图片下载行为，用于验证各条兜底路径。
 type stubImageStorageForItems struct {
 	orchestrator.StorageService
-	data      []byte
+	data        []byte
 	downloadErr error
-	calls     int
+	calls       int
 }
 
 func (s *stubImageStorageForItems) DownloadImage(_ context.Context, _ string) (*service.DownloadedImage, error) {
@@ -543,7 +599,6 @@ func TestStripDataURLPrefix(t *testing.T) {
 	}
 }
 
-
 // --- response_format 解析 ---
 
 func TestResolveResponseFormatDefaultsToB64JSON(t *testing.T) {
@@ -551,7 +606,7 @@ func TestResolveResponseFormatDefaultsToB64JSON(t *testing.T) {
 	// 客户端不传该参数时必须拿到 b64_json，否则按官方示例读 .b64_json 会得到 null。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
-	format, err := handler.resolveResponseFormat("")
+	format, err := handler.resolveResponseFormat(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -565,7 +620,7 @@ func TestResolveResponseFormatExplicitURLWinsEvenWhenB64Enabled(t *testing.T) {
 	// 不能因为开关开着就强行换成 base64。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
-	format, err := handler.resolveResponseFormat("url")
+	format, err := handler.resolveResponseFormat(context.Background(), "url")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -578,7 +633,7 @@ func TestResolveResponseFormatIsCaseInsensitive(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
 	for _, input := range []string{"URL", "Url", "  url  "} {
-		format, err := handler.resolveResponseFormat(input)
+		format, err := handler.resolveResponseFormat(context.Background(), input)
 		if err != nil {
 			t.Fatalf("input %q: unexpected error: %v", input, err)
 		}
@@ -593,7 +648,7 @@ func TestResolveResponseFormatDefaultFallsBackToURLWhenB64Disabled(t *testing.T)
 	// 这样客户端不必为了「管理员关了 base64」去改代码。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
 
-	format, err := handler.resolveResponseFormat("")
+	format, err := handler.resolveResponseFormat(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -607,7 +662,7 @@ func TestResolveResponseFormatRejectsExplicitB64WhenDisabled(t *testing.T) {
 	// （客户端可能依赖 base64 做后续处理，静默降级会埋坑）。
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: false})
 
-	if _, err := handler.resolveResponseFormat("b64_json"); err == nil {
+	if _, err := handler.resolveResponseFormat(context.Background(), "b64_json"); err == nil {
 		t.Error("expected an error when b64_json is explicitly requested but disabled")
 	}
 }
@@ -616,12 +671,11 @@ func TestResolveResponseFormatRejectsUnknownValue(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithAppSettings(stubAppSettings{enabled: true})
 
 	for _, input := range []string{"png", "base64", "data"} {
-		if _, err := handler.resolveResponseFormat(input); err == nil {
+		if _, err := handler.resolveResponseFormat(context.Background(), input); err == nil {
 			t.Errorf("input %q: expected an error", input)
 		}
 	}
 }
-
 
 // --- 模型白名单校验 ---
 
@@ -641,7 +695,7 @@ func (s stubModelListProvider) ListImageModels(context.Context) ([]string, error
 func TestValidateRequestedModelAcceptsListedModel(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2", "gpt-image-2.5"}})
 
-	if err := handler.validateRequestedModel("gpt-image-2"); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), "gpt-image-2"); err != nil {
 		t.Errorf("unexpected error for a listed model: %v", err)
 	}
 }
@@ -651,7 +705,7 @@ func TestValidateRequestedModelRejectsUnlistedModel(t *testing.T) {
 	// 不拦的话调用方会拿到别的模型生成的图，且按别的模型计费。
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2.5"}})
 
-	err := handler.validateRequestedModel("gpt-image-2")
+	err := handler.validateRequestedModel(context.Background(), "gpt-image-2")
 	if err == nil {
 		t.Fatal("expected an error for an unlisted model")
 	}
@@ -667,10 +721,10 @@ func TestValidateRequestedModelAllowsEmptyModel(t *testing.T) {
 	// 空模型名是「用默认模型」的合法语义，应由编排层解析而不是在这里拒绝。
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2"}})
 
-	if err := handler.validateRequestedModel(""); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), ""); err != nil {
 		t.Errorf("unexpected error for an empty model: %v", err)
 	}
-	if err := handler.validateRequestedModel("   "); err != nil {
+	if err := handler.validateRequestedModel(context.Background(), "   "); err != nil {
 		t.Errorf("unexpected error for a blank model: %v", err)
 	}
 }
@@ -678,12 +732,363 @@ func TestValidateRequestedModelAllowsEmptyModel(t *testing.T) {
 func TestValidateRequestedModelReportsEmptyConfiguration(t *testing.T) {
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{})
 
-	err := handler.validateRequestedModel("gpt-image-2")
+	err := handler.validateRequestedModel(context.Background(), "gpt-image-2")
 	if err == nil {
 		t.Fatal("expected an error when no models are configured")
 	}
 	if !strings.Contains(err.Error(), "尚未配置") {
 		t.Errorf("error should explain the empty configuration, got: %v", err)
+	}
+}
+
+// --- 幂等重放：成功响应体不能走错误通道 ---
+
+func TestReplayResponseExtractsCachedGenResponse(t *testing.T) {
+	// 编排层命中重放时返回 Code<400 且 Body 是缓存的 GenResponse。
+	// 不识别的话调用方的重试会拿到错误信封，缓存的图片被丢弃。
+	cached := []byte(`{"images":[{"id":"img_1","url":"https://cdn.example.test/a.png","storagePath":"generate/a.png"}]}`)
+	statusErr := &orchestrator.StatusError{Code: 200, Body: cached}
+
+	resp, ok := replayResponse(statusErr)
+	if !ok {
+		t.Fatal("expected the cached success body to be recognized as a replay")
+	}
+	// 必须逐个字段核对：只断言数量和 ID 的话，即便解码把 URL/StoragePath
+	// 丢掉（那正是「重放丢图」的表现）测试也照样通过。
+	if len(resp.Images) != 1 {
+		t.Fatalf("image count = %d, want 1", len(resp.Images))
+	}
+	image := resp.Images[0]
+	if image.ID != "img_1" {
+		t.Errorf("ID = %q, want %q", image.ID, "img_1")
+	}
+	if image.URL != "https://cdn.example.test/a.png" {
+		t.Errorf("URL = %q, want the cached link", image.URL)
+	}
+	if image.StoragePath != "generate/a.png" {
+		t.Errorf("StoragePath = %q, want the cached path", image.StoragePath)
+	}
+}
+
+func TestReplayResponseRejectsRealErrors(t *testing.T) {
+	// 真正的失败不能被当成重放，否则客户端会收到 200 加空响应。
+	for _, statusErr := range []*orchestrator.StatusError{
+		nil,
+		{Code: 402, ErrorCode: "INSUFFICIENT_CREDITS", Message: "额度不足。"},
+		{Code: 500, ErrorCode: "PROVIDER_BAD_RESPONSE", Message: "图片生成失败。"},
+		{Code: 409, ErrorCode: "IDEMPOTENCY_CONFLICT", Message: "冲突。"},
+	} {
+		if _, ok := replayResponse(statusErr); ok {
+			t.Errorf("status %+v should not be treated as a replay", statusErr)
+		}
+	}
+}
+
+func TestReplayResponseRejectsSuccessWithoutBody(t *testing.T) {
+	// Code<400 但没有 Body 属于编排层的异常组合：按错误处理，不能谎报成功。
+	statusErr := &orchestrator.StatusError{Code: 200}
+	if _, ok := replayResponse(statusErr); ok {
+		t.Error("a success code without a cached body must not be treated as a replay")
+	}
+}
+
+func TestWriteStatusErrorMapsSubFourHundredCodeToBadRequest(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeStatusError(rec, &orchestrator.StatusError{Code: 200, ErrorCode: "weird", Message: "x"})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// --- 幂等指纹必须区分参考图 ---
+
+func TestDeriveOpenAIIdempotencyKeyChangesWithReferences(t *testing.T) {
+	// 同一提示词换一张参考图必须是不同的键。否则第二次编辑会命中重放、
+	// 返回上一张图，用户看不到自己的新输入。
+	base := orchestrator.GenRequest{Prompt: "make it blue", Model: "gpt-image-2"}
+	first := base
+	first.References = []orchestrator.GenReference{{DataUrl: "data:image/png;base64,AAA"}}
+	second := base
+	second.References = []orchestrator.GenReference{{DataUrl: "data:image/png;base64,BBB"}}
+
+	if deriveOpenAIIdempotencyKey("user-1", first, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) == deriveOpenAIIdempotencyKey("user-1", second, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) {
+		t.Error("changing the reference image must change the derived key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyStableForIdenticalReferences(t *testing.T) {
+	// 同样的请求（含同样的参考图）必须派生出同样的键，否则客户端重试会重复扣费。
+	reqA := orchestrator.GenRequest{
+		Prompt:     "make it blue",
+		Model:      "gpt-image-2",
+		References: []orchestrator.GenReference{{DataUrl: "data:image/png;base64,SAME", FileName: "a.png"}},
+	}
+	reqB := orchestrator.GenRequest{
+		Prompt:     "make it blue",
+		Model:      "gpt-image-2",
+		References: []orchestrator.GenReference{{DataUrl: "data:image/png;base64,SAME", FileName: "a.png"}},
+	}
+
+	if deriveOpenAIIdempotencyKey("user-1", reqA, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) != deriveOpenAIIdempotencyKey("user-1", reqB, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) {
+		t.Error("identical requests must derive the same key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyWithoutReferencesIsStable(t *testing.T) {
+	// 两个独立构造的相同请求必须落到同一个键，客户端重试才会命中重放。
+	// 用同一个值自比没有意义（staticcheck SA4000），这里刻意构造两份。
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	first := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	second := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	if deriveOpenAIIdempotencyKey("user-1", first, "url", now) != deriveOpenAIIdempotencyKey("user-1", second, "url", now) {
+		t.Error("identical requests must derive the same key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyIgnoresReferenceFieldWhenEmpty(t *testing.T) {
+	// 无参考图时不能把空指纹拼进键：那会改变旧版本算出的键，滚动部署期间
+	// 重试找不到旧记录，于是重新生成并再次扣费。
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	withoutField := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	withEmptySlice := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2", References: []orchestrator.GenReference{}}
+
+	if deriveOpenAIIdempotencyKey("user-1", withoutField, "url", now) != deriveOpenAIIdempotencyKey("user-1", withEmptySlice, "url", now) {
+		t.Error("an empty reference list must not change the derived key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyChangesAcrossTimeWindows(t *testing.T) {
+	// 时间窗口让「相同参数再生成一张」成为新请求，而不是永远命中重放。
+	// 窗口内必须稳定，跨窗口必须变化。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	window := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+
+	sameWindowLater := window.Add(openAIIdempotencyWindow - time.Second)
+	if deriveOpenAIIdempotencyKey("user-1", request, "url", window) != deriveOpenAIIdempotencyKey("user-1", request, "url", sameWindowLater) {
+		t.Error("requests inside one window must share a key so retries still replay")
+	}
+
+	nextWindow := window.Add(openAIIdempotencyWindow)
+	if deriveOpenAIIdempotencyKey("user-1", request, "url", window) == deriveOpenAIIdempotencyKey("user-1", request, "url", nextWindow) {
+		t.Error("a request in the next window must be treated as new work")
+	}
+}
+
+func TestIdempotencyWindowStartBucketsByWindow(t *testing.T) {
+	window := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	start := idempotencyWindowStart(window)
+
+	if got := idempotencyWindowStart(window.Add(openAIIdempotencyWindow - time.Second)); got != start {
+		t.Errorf("same bucket expected: got %d want %d", got, start)
+	}
+	if got := idempotencyWindowStart(window.Add(openAIIdempotencyWindow)); got == start {
+		t.Error("advancing one full window must start a new bucket")
+	}
+}
+
+// --- multipart 请求体上限 ---
+
+func TestParseOpenAIEditFormRejectsOversizedBody(t *testing.T) {
+	// 解析前就要挡住超大请求体：ParseMultipartForm 的参数只管内存部分，
+	// 超出会写临时文件，等到解析完再检查已经收完了整个请求体。
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("prompt", "a dot")
+	part, err := writer.CreateFormFile(openAIImageField, "big.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	oversized := make([]byte, openAIEditMaxTotalBytes+(2<<20))
+	if _, err := part.Write(oversized); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(buf.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
+		t.Error("expected an error for an oversized request body")
+	}
+}
+
+func TestWriteReplayHeadersCopiesSignals(t *testing.T) {
+	// X-Idempotent-Replay 让调用方知道这次复用了缓存而不是真的生成了新图。
+	// 丢掉这些头会让客户端重试逻辑与用量监控失去判据。
+	rec := httptest.NewRecorder()
+	statusErr := &orchestrator.StatusError{
+		Code:    200,
+		Headers: map[string]string{"X-Idempotent-Replay": "true", "Content-Type": "application/json"},
+		Body:    []byte(`{"images":[]}`),
+	}
+
+	writeReplayHeaders(rec, statusErr)
+
+	if got := rec.Header().Get("X-Idempotent-Replay"); got != "true" {
+		t.Errorf("X-Idempotent-Replay = %q, want %q", got, "true")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+}
+
+func TestWriteReplayHeadersToleratesNilHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeReplayHeaders(rec, &orchestrator.StatusError{Code: 200})
+
+	if len(rec.Header()) != 0 {
+		t.Errorf("expected no headers, got %v", rec.Header())
+	}
+}
+
+// --- 跨时间桶的重试识别 ---
+
+func TestResolveOpenAIIdempotencyKeyKeepsRetryInPreviousBucket(t *testing.T) {
+	// 12:04:59 发出、12:05:01 重试：相隔两秒却跨过桶边界。只按当前桶派生会算出
+	// 不同键，重试就会重新生成并再次扣费。
+	first := time.Date(2026, 10, 8, 12, 4, 59, 0, time.UTC)
+	retry := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+
+	current := first
+	stub := &stubImageIdempotencyService{}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return current })
+
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	original, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 第一次请求占用了这个键，仓储里从此有它。键由服务端派生，桩无法预知，
+	// 所以在这里回填，模拟真实的写入时序；CreatedAt 取刚刚，否则会被
+	// openAIRetryReuseWindow 的时限挡掉。
+	stub.lookupKeys = map[string]bool{original: true}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "just-created", CreatedAt: first}
+
+	current = retry
+	replayed, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if replayed != original {
+		t.Errorf("a retry just across the bucket boundary must reuse the original key: original=%s retry=%s", original, replayed)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyDoesNotReuseStalePreviousRecord(t *testing.T) {
+	// 上一桶留着很久以前的记录时，新请求必须是新键。
+	//
+	// CodeRabbit 指出过这一点：没有时限的话，任何撞上历史记录的新请求都会复用
+	// 旧键并返回旧图，「再生成一张」永远失效。请求字节完全相同，服务端唯一能
+	// 依据的区分信号是时间间隔。
+	generatedAt := time.Date(2026, 10, 8, 12, 0, 30, 0, time.UTC)
+	now := time.Date(2026, 10, 8, 12, 8, 0, 0, time.UTC) // 距生成 7.5 分钟
+
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	currentKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+	previousKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+
+	stub := &stubImageIdempotencyService{lookupKeys: map[string]bool{previousKey: true}}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "old", CreatedAt: generatedAt}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != currentKey {
+		t.Errorf("a stale previous-window record must not be reused: got=%s want=%s", got, currentKey)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyPrefersCurrentBucketOverRecentPrevious(t *testing.T) {
+	// 两桶都有记录时必须优先当前桶：它是更近的一次同参数请求。
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	currentKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+	previousKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+
+	stub := &stubImageIdempotencyService{lookupKeys: map[string]bool{currentKey: true, previousKey: true}}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "recent", CreatedAt: now.Add(-time.Second)}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != currentKey {
+		t.Errorf("the current window must win when both windows have records: got=%s want=%s", got, currentKey)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyUsesCurrentBucketForNewWork(t *testing.T) {
+	// 两个桶都没有记录时是全新请求，占用当前桶。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{}).
+		WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	if got != want {
+		t.Errorf("a fresh request must take the current window key: got=%s want=%s", got, want)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyPropagatesLookupFailure(t *testing.T) {
+	// CodeRabbit 指出：把查询失败当成「没有旧记录」会在查询瞬时抖动的窗口里让
+	// 重试重复扣费——上一桶可能已有成功记录，此刻新建就是又生成一张。
+	// 解析器必须把错误交给调用方，由调用方拒绝这次请求。
+	//
+	// 只让首次查询失败：若解析器吞掉首个错误继续探测，第二次查询会成功并
+	// 返回当前桶的键，测试就会漏判——那正是这个用例要挡住的行为。
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{lookupFailFirstOnly: true}).
+		WithClock(func() time.Time { return now })
+
+	if _, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); err == nil {
+		t.Error("a lookup failure must be reported so the caller can refuse to create a new key")
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyWithoutServiceUsesCurrentWindow(t *testing.T) {
+	// 没有幂等服务时退化为只按当前桶，行为与未引入跨桶解析时一致。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	handler := NewImageHandler(nil, nil, nil).WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	if got != want {
+		t.Errorf("without an idempotency service the current window key must be used: got=%s want=%s", got, want)
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyForWindowMatchesWindowStart(t *testing.T) {
+	// 按窗口起点派生与按时刻派生必须一致，否则探测上一桶会算出错误的候选键。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 7, 33, 0, time.UTC)
+
+	byTime := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	byWindow := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+
+	if byTime != byWindow {
+		t.Errorf("window-start derivation must match time-based derivation: %s vs %s", byTime, byWindow)
 	}
 }
 
