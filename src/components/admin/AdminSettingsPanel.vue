@@ -115,7 +115,11 @@ const billableImageModelIds = computed(() => {
 const enabledImageModelIds = computed(() => {
   const ids: string[] = []
   for (const provider of imageProviderRows.value) {
-    if (!provider.enabled) continue
+    // 与后端的 Provider 推导保持同一条件（见 app-settings 里 kind === 'image'
+    // 的那条 filter）：启用还不够，必须也配好了凭据。只看 enabled 会把没有
+    // 密钥的 Provider 也标成可用，管理员据此保存的可见列表就包含实际出不了图
+    // 的模型——而手填的非空列表会覆盖后端的推导，等于把这个错误公开出去。
+    if (!provider.enabled || !provider.apiKeyConfigured) continue
     for (const model of providerModelCatalogRows(provider)) {
       if (!model.enabled) continue
       const id = (model.id || '').trim()
@@ -155,14 +159,14 @@ function addVisibleModel(modelId = '') {
     rows.push({ id: modelId, name: '', supportsTransparent: false })
     return
   }
+  // 空表时先带入所有已启用模型，管理员按需删减而不是逐个手打。
   if (!rows.length) {
-    // 首次展开时带入所有已启用模型，管理员按需删减而不是逐个手打。
     fillVisibleModels()
   }
-  // 没有候选可补时仍要给出一个空行：否则表格保持空的，管理员无从下手。
-  if (!rows.length) {
-    rows.push({ id: '', name: '', supportsTransparent: false })
-  }
+  // 无论上面是否补到了候选，都要保证这一次点击真的加出一行：
+  // - 没有候选可补（例如一个 Provider 都没启用）时，给一个空行让管理员手填；
+  // - 已经有条目时同样追加空行，否则「添加」按钮在非空表上毫无反应。
+  rows.push({ id: '', name: '', supportsTransparent: false })
 }
 
 function removeVisibleModel(index: number) {

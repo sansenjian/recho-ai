@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -393,8 +394,46 @@ func buildEditMultipartWithParts(t *testing.T, prompt string, fieldNames []strin
 
 // --- mask（局部重绘蒙版） ---
 
-// minimalPNG 是一张合法 PNG 的最小字节序列，仅用于走过格式校验分支。
-var minimalPNG = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
+// buildTestPNG 构造一张结构完整的最小 PNG，用于走过格式与 alpha 校验。
+//
+// 不直接用固定字节序列：新校验会解析 IHDR 的颜色类型，只有签名而无结构的
+// 「伪 PNG」不再算合法，测试数据必须是一份真的能被解析的文件。
+//
+// colorType 取官方 PNG 规范的值：0 灰度、2 真彩、3 调色板、4 灰度+alpha、
+// 6 真彩+alpha。带 tRNS 时额外插入一个透明块，用于覆盖调色板图的透明路径。
+func buildTestPNG(colorType byte, withTRNS bool) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+
+	writeChunk := func(chunkType string, payload []byte) {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(payload)))
+		buf.Write(length[:])
+		buf.WriteString(chunkType)
+		buf.Write(payload)
+		// CRC 校验不是本测试关心的事，占位即可——解析代码不读它。
+		buf.Write([]byte{0, 0, 0, 0})
+	}
+
+	// IHDR：宽 1、高 1、位深 8、给定颜色类型、无压缩/滤波/隔行。
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], 1)
+	binary.BigEndian.PutUint32(ihdr[4:8], 1)
+	ihdr[8] = 8
+	ihdr[9] = colorType
+	writeChunk("IHDR", ihdr)
+
+	if withTRNS {
+		// 调色板图的透明度由 tRNS 承载，必须出现在 IDAT 之前。
+		writeChunk("tRNS", []byte{0, 0})
+	}
+	writeChunk("IDAT", []byte{0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01})
+	writeChunk("IEND", nil)
+	return buf.Bytes()
+}
+
+// minimalPNG 是一张合法的真彩+alpha PNG，作为 mask 的基准测试数据。
+var minimalPNG = buildTestPNG(6, false)
 
 func TestParseOpenAIEditFormParsesMask(t *testing.T) {
 	// mask 要作为独立的 GenReference 带出去，编排层才能把它写成 multipart 的
@@ -488,6 +527,61 @@ func TestIsPNG(t *testing.T) {
 				t.Errorf("isPNG(%v) = %v, want %v", tc.data, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPNGHasAlphaChannel(t *testing.T) {
+	// mask 的语义完全依赖 alpha：只有透明处才会被重绘。不带 alpha 的图在蒙版
+	// 位置上没有「透明」可言，放过去只会得到一张全不透明蒙版——静默失效。
+	cases := []struct {
+		name      string
+		data      []byte
+		wantAlpha bool
+	}{
+		{"truecolor with alpha (color type 6)", buildTestPNG(6, false), true},
+		{"grayscale with alpha (color type 4)", buildTestPNG(4, false), true},
+		{"palette with tRNS carries transparency", buildTestPNG(3, true), true},
+		{"palette without tRNS has no transparency", buildTestPNG(3, false), false},
+		{"truecolor without alpha (color type 2)", buildTestPNG(2, false), false},
+		{"grayscale without alpha (color type 0)", buildTestPNG(0, false), false},
+		{"not a png", []byte{0xff, 0xd8, 0xff, 0xe0}, false},
+		{"signature only, no chunks", []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pngHasAlphaChannel(tc.data); got != tc.wantAlpha {
+				t.Errorf("pngHasAlphaChannel() = %v, want %v", got, tc.wantAlpha)
+			}
+		})
+	}
+}
+
+func TestPNGHasAlphaChannelRejectsTruncatedChunk(t *testing.T) {
+	// 块长度声称比实际数据还长时说明文件被截断，不能当作有效蒙版。
+	data := buildTestPNG(6, false)
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], 9999)
+	broken := append(append([]byte{}, data[:8]...), length[:]...)
+	broken = append(broken, []byte("IHDR")...)
+
+	if pngHasAlphaChannel(broken) {
+		t.Error("a chunk claiming more bytes than the file holds must not count as a valid mask")
+	}
+}
+
+func TestParseOpenAIEditFormRejectsMaskWithoutAlpha(t *testing.T) {
+	// 真彩无 alpha 的 PNG 结构上合法，但作为蒙版没有意义，必须拒绝并说明原因。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    buildTestPNG(2, false),
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("a mask without an alpha channel must be rejected")
+	}
+	if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("the error must explain the alpha requirement, got %q", err.Error())
 	}
 }
 

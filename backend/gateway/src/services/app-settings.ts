@@ -197,12 +197,36 @@ function normalizeModelName(value: unknown, fallback: string) {
   return /^[a-zA-Z0-9._:/-]+$/.test(model) ? model : fallback
 }
 
+/**
+ * 归一化图像模型列表。
+ *
+ * 显式空数组是合法赋值，语义为「跟随已启用 Provider」；而 null、数字、无法解析
+ * 的 JSON 文本这类无效输入必须回退旧值。早先两者都被折成「规范化后为空 → 回退」，
+ * 于是传 [] 无法清空限制；反过来若把无效输入也当成空数组，一个拼错的请求体就会
+ * 悄悄抹掉管理员配置的可见模型限制。
+ */
 function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): ImageModelEntry[] {
+  const parsed = parseImageModelListInput(value)
+  return parsed === null ? fallback : parsed
+}
+
+/**
+ * 解析图像模型列表输入，无法识别时返回 null。
+ *
+ * 只有数组及其 JSON 文本形式算合法；其余一律返回 null 交由调用方回退。
+ * 数组内的无效条目被跳过——「有几个条目写坏了」应保留其余可用的，而不是整份作废。
+ */
+function parseImageModelListInput(value: unknown): ImageModelEntry[] | null {
   let parsed: unknown = value
   if (typeof value === 'string') {
-    try { parsed = JSON.parse(value) } catch { return fallback }
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return null
+    }
   }
-  if (!Array.isArray(parsed)) return fallback
+  if (!Array.isArray(parsed)) return null
+
   const result: ImageModelEntry[] = []
   for (const item of parsed) {
     if (item == null || typeof item !== 'object') continue
@@ -215,7 +239,7 @@ function normalizeImageModelList(value: unknown, fallback: ImageModelEntry[]): I
       supportsTransparent: record.supportsTransparent === true,
     })
   }
-  return result.length > 0 ? result : fallback
+  return result
 }
 
 // mergeImageModelEntries 按顺序合并模型列表，同一个 id 只保留首次出现的位置。
@@ -333,7 +357,13 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
   return settings
 }
 
-function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppSettings> {
+/**
+ * 校验并归一化一次配置更新。
+ *
+ * current 是当前生效的设置，只用于「输入不可用时保留原值」的回退——next 本身
+ * 只装本次要改的字段，缺了它就无法区分「没传这个字段」与「传了但内容不可用」。
+ */
+function validateAppSettingsUpdate(input: Record<string, unknown>, current: AppSettings): Partial<AppSettings> {
   const next: Partial<AppSettings> = {}
 
   if ('imageCreditCostPerImage' in input) {
@@ -368,12 +398,14 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
     next.openaiB64JsonEnabled = normalizeBoolean(input.openaiB64JsonEnabled, DEFAULT_APP_SETTINGS.openaiB64JsonEnabled)
   }
   if ('availableImageModels' in input) {
-    // 空表是合法状态：它表示「跟随已启用 Provider」，而不是「一个模型都不给」。
-    //
+    // 显式空数组是合法状态：它表示「跟随已启用 Provider」，而不是「一个模型都不给」。
     // 早先在这里要求非空，导致管理员无法清空列表回到跟随模式——保存会以
     // invalid_available_image_models 失败，同一次请求里的其他设置也一起落空。
-    // 真正「没有任何模型可用」由下游兜住：解析时会回退到 Provider 目录。
-    next.availableImageModels = normalizeImageModelList(input.availableImageModels, [])
+    //
+    // 回退值取当前值而不是 []：无法识别的输入（null、数字、解析不了的 JSON 文本）
+    // 必须保留原配置。若回退成空数组，一个拼错的请求体就会把管理员的可见模型限制
+    // 悄悄清成「跟随 Provider」，把本该隐藏的模型公开出去。
+    next.availableImageModels = normalizeImageModelList(input.availableImageModels, current.availableImageModels)
   }
   if ('imageModelCreditCosts' in input) {
     // 空表是合法状态（表示全部走兜底价），因此不像 availableImageModels 那样要求非空。
@@ -542,7 +574,8 @@ async function assertCanDisableAdminUserRule(ruleId: string) {
 }
 
 export async function updateAppSettings(input: Record<string, unknown>, adminUser: RequestUser): Promise<AppSettings> {
-  const updates = validateAppSettingsUpdate(input)
+  const current = await getAppSettings({ refresh: true })
+  const updates = validateAppSettingsUpdate(input, current)
   const entries = Object.entries(updates) as Array<[keyof AppSettings, AppSettings[keyof AppSettings]]>
   if (!entries.length) return await getAppSettings({ refresh: true })
 

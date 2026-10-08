@@ -41,7 +41,23 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
   getSupabaseAdminClient: () => ({
     from: (table: string) => {
       if (table === 'app_settings') {
-        return { select: vi.fn(async () => ({ data: appSettingRows, error: null })) }
+        return {
+          select: vi.fn(async () => ({ data: appSettingRows, error: null })),
+          // 写入路径会 upsert 后回读，这里把行直接记回内存，让「保存后读回」成立。
+          upsert: vi.fn(async (rows: Array<Record<string, unknown>>) => {
+            for (const row of Array.isArray(rows) ? rows : [rows]) {
+              const key = String(row.key)
+              const existing = appSettingRows.find(r => r.key === key)
+              let value = row.value
+              if (typeof value === 'string') {
+                try { value = JSON.parse(value) } catch { /* 保留原值 */ }
+              }
+              if (existing) existing.value = value
+              else appSettingRows.push({ key, value })
+            }
+            return { error: null }
+          }),
+        }
       }
       if (table === 'provider_settings') {
         const chain: Record<string, unknown> = {
@@ -76,6 +92,9 @@ function imageProviderRow(overrides: Record<string, unknown> = {}) {
     ...overrides,
   }
 }
+
+// 写入路径要求记录操作者，测试里给一个稳定身份即可。
+const TEST_ADMIN = { id: 'admin-1', email: 'admin@example.test' } as never
 
 describe('user-visible image models', () => {
   beforeEach(async () => {
@@ -142,6 +161,64 @@ describe('user-visible image models', () => {
     const config = await publicAppConfig()
 
     expect(config.availableImageModels[0]).toMatchObject({ id: 'gpt-image-2.5', name: '旗舰生图' })
+  })
+
+
+  it('treats an explicit empty list as following the providers', async () => {
+    // 空列表是合法的赋值，语义为「跟随已启用 Provider」。它必须能清掉限制，
+    // 否则管理员没有回到跟随状态的途径。
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'pinned-model', name: 'Pinned' }] },
+    ]
+    providerSettingRows = [
+      imageProviderRow({
+        model_catalog: [{ id: 'provider-model', name: 'From Provider', enabled: true }],
+      }),
+    ]
+
+    const mod = await import('../backend/gateway/src/services/app-settings')
+    mod.clearAppSettingsCache()
+    const { updateAppSettings, publicAppConfig } = mod
+    await updateAppSettings({ availableImageModels: [] } as never, TEST_ADMIN)
+    mod.clearAppSettingsCache()
+
+    const config = await publicAppConfig()
+    expect(config.availableImageModels.map(m => m.id)).toContain('provider-model')
+    expect(config.availableImageModels.map(m => m.id)).not.toContain('pinned-model')
+  })
+
+  it('keeps the stored list when the input is unusable', async () => {
+    // 无法识别的输入（不是数组、解析不了的 JSON 文本）必须保留原值。
+    // 若把它当成空列表，一个拼错的请求体就会悄悄抹掉可见模型限制。
+    appSettingRows = [
+      { key: 'available_image_models', value: [{ id: 'keep-me', name: 'Keep' }] },
+    ]
+
+    const mod = await import('../backend/gateway/src/services/app-settings')
+    mod.clearAppSettingsCache()
+    const { updateAppSettings } = mod
+    for (const bad of [null, 42, '{not json', 'nope'] as const) {
+      const saved = await updateAppSettings({ availableImageModels: bad } as never, TEST_ADMIN)
+      expect(saved.availableImageModels.map(m => m.id)).toEqual(['keep-me'])
+    }
+  })
+
+  it('drops unusable entries but keeps the ones that parse', async () => {
+    // 条目级别写坏时保留其余可用的，而不是整份作废。
+    appSettingRows = []
+    const mod = await import('../backend/gateway/src/services/app-settings')
+    mod.clearAppSettingsCache()
+    const saved = await mod.updateAppSettings({
+      availableImageModels: [
+        { id: 'good-one', name: 'Good' },
+        { id: '   ', name: 'blank id' },
+        null,
+        { name: 'no id' },
+      ],
+    } as never, TEST_ADMIN)
+
+    expect(saved.availableImageModels.map(m => m.id)).toEqual(['good-one'])
+
   })
 
   it('keeps the default model inside the configured list', async () => {

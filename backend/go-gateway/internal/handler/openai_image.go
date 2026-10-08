@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -530,11 +531,13 @@ func parseOpenAIEditMask(r *http.Request) (*orchestrator.GenReference, error) {
 		return nil, fmt.Errorf("蒙版为空")
 	}
 
-	// 官方要求 mask 必须是 PNG：它的语义依赖 alpha 通道。JPEG 没有 alpha，
-	// 放过去只会在上游得到一张全不透明的蒙版——等于什么都没改，却让人以为
-	// 蒙版生效了。静默失效比直接报错更难排查，所以这里必须挡住。
+	// 官方要求 mask 必须是有效 PNG 且带 alpha 通道。格式校验与格式无关的
+	// 「透明区域」语义是同一件事的两面，缺一条都会让蒙版静默失效。
 	if !isPNG(data) {
 		return nil, fmt.Errorf("蒙版必须是 PNG 格式：它用 alpha 通道标记需要重绘的区域")
+	}
+	if !pngHasAlphaChannel(data) {
+		return nil, fmt.Errorf("蒙版必须带 alpha 通道（真彩+alpha 或灰度+alpha 的 PNG）：不带 alpha 的图无法标记需要重绘的区域")
 	}
 	if int64(len(data)) > openAIEditMaxMaskBytes {
 		return nil, fmt.Errorf("蒙版过大：上限 %d 字节", openAIEditMaxMaskBytes)
@@ -547,9 +550,63 @@ func parseOpenAIEditMask(r *http.Request) (*orchestrator.GenReference, error) {
 	}, nil
 }
 
+// pngSignature 是 PNG 文件的 8 字节魔数。
+var pngSignature = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+
 // isPNG 判断数据是否以 PNG 签名开头。
 func isPNG(data []byte) bool {
-	return len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	return len(data) >= 8 && bytes.Equal(data[:8], pngSignature)
+}
+
+// pngHasAlphaChannel 报告这份 PNG 是否带有 alpha 通道。
+//
+// 只校验签名不够：mask 的语义完全依赖 alpha——透明处才是要重绘的区域。一张
+// 不带 alpha 的 PNG（颜色类型 0 灰度或 2 真彩）在蒙版位置上没有任何「透明」
+// 可言，上游只会得到一张全不透明的蒙版，等于什么都没改，却让人以为蒙版生效。
+// 这类静默失效比直接报错难排查得多，所以在这里挡住。
+//
+// 解析策略：走 PNG 的块结构，读 IHDR 拿到颜色类型。带 alpha 的是 4（灰度+alpha）
+// 与 6（真彩+alpha）；调色板图（3）的透明度由 tRNS 块承载，因此额外看一眼它。
+func pngHasAlphaChannel(data []byte) bool {
+	if !isPNG(data) {
+		return false
+	}
+	offset := len(pngSignature)
+	hasTRNS := false
+	for offset+8 <= len(data) {
+		length := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		if length < 0 || offset+12+length > len(data) {
+			// 块长度越界说明文件被截断或结构损坏，按不可用处理。
+			return false
+		}
+		chunkType := string(data[offset+4 : offset+8])
+		payload := data[offset+8 : offset+8+length]
+
+		switch chunkType {
+		case "IHDR":
+			// IHDR 必须是第一个块且固定 13 字节：宽4 高4 位深1 颜色类型1 压缩1 滤波1 隔行1。
+			if len(payload) < 13 {
+				return false
+			}
+			colorType := payload[9]
+			switch colorType {
+			case 4, 6:
+				return true
+			case 3:
+				// 调色板图：是否透明取决于后面有没有 tRNS 块，继续往下看。
+			default:
+				// 0（灰度）与 2（真彩）没有 alpha 通道。
+				return false
+			}
+		case "tRNS":
+			hasTRNS = true
+		case "IDAT", "IEND":
+			// 到图像数据或结尾说明 tRNS（若存在）已经出现过，可以定论了。
+			return hasTRNS
+		}
+		offset += 12 + length
+	}
+	return hasTRNS
 }
 
 // editOpenAIImage 处理 POST /v1/images/edits。
