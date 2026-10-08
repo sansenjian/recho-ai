@@ -32,6 +32,7 @@ type idempotencyRepository interface {
 	Acquire(ctx context.Context, userID, idemKey, scope, requestHash string) (*repository.AcquireResult, error)
 	Complete(ctx context.Context, userID, idemKey, scope string, responseCode int16, responseBody any, transactionID string) error
 	Fail(ctx context.Context, userID, idemKey, scope string) error
+	Lookup(ctx context.Context, userID, idemKey, scope string) (*repository.IdempotencyRecord, error)
 }
 
 // NewIdempotencyService creates a new idempotency service
@@ -47,6 +48,17 @@ func newIdempotencyService(repo idempotencyRepository) *IdempotencyService {
 func HashBody(body []byte) string {
 	h := sha256.Sum256(body)
 	return hex.EncodeToString(h[:])
+}
+
+// Lookup 只读查询某个键是否已有记录，不占用也不修改任何状态。
+//
+// 供外部端点在占用前探测邻近时间桶：派生键按时间分桶，恰好跨过桶边界的重试
+// 会算出一个不同的键，只靠精确匹配就会重复生成。返回 (nil, nil) 表示不存在。
+func (s *IdempotencyService) Lookup(
+	ctx context.Context,
+	userID, idemKey, scope string,
+) (*repository.IdempotencyRecord, error) {
+	return s.repo.Lookup(ctx, userID, idemKey, scope)
 }
 
 // Acquire checks or claims the idempotency key for a given request.

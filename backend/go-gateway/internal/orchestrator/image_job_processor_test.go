@@ -286,6 +286,11 @@ type processorIdempotency struct {
 	mu          sync.Mutex
 }
 
+// Lookup 只读探测：job 处理路径不使用它，返回空表示没有既有记录。
+func (s *processorIdempotency) Lookup(context.Context, string, string, string) (*repository.IdempotencyRecord, error) {
+	return nil, nil
+}
+
 func (s *processorIdempotency) Acquire(context.Context, string, string, string, []byte) (*service.IdempotencyOutcome, error) {
 	return &service.IdempotencyOutcome{Proceed: true}, nil
 }

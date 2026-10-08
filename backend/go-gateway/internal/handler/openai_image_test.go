@@ -147,12 +147,12 @@ func TestOpenAIQualityToSiteQuality(t *testing.T) {
 
 func TestOpenAIErrorTypeForStatus(t *testing.T) {
 	cases := map[int]string{
-		http.StatusUnauthorized:     "authentication_error",
-		http.StatusForbidden:        "permission_error",
-		http.StatusTooManyRequests:  "rate_limit_error",
+		http.StatusUnauthorized:        "authentication_error",
+		http.StatusForbidden:           "permission_error",
+		http.StatusTooManyRequests:     "rate_limit_error",
 		http.StatusInternalServerError: "server_error",
-		http.StatusBadGateway:       "server_error",
-		http.StatusBadRequest:       "invalid_request_error",
+		http.StatusBadGateway:          "server_error",
+		http.StatusBadRequest:          "invalid_request_error",
 	}
 	for status, want := range cases {
 		if got := openAIErrorTypeForStatus(status); got != want {
@@ -247,7 +247,6 @@ func TestB64JSONEnabledReflectsSetting(t *testing.T) {
 		t.Error("expected b64_json disabled when the setting is false")
 	}
 }
-
 
 // --- OpenAI 编辑端点 ---
 
@@ -446,15 +445,14 @@ func TestEditOpenAIImageRequiresAuthenticatedUser(t *testing.T) {
 	}
 }
 
-
 // --- 响应格式兜底 ---
 
 // stubImageStorageForItems 提供可控的图片下载行为，用于验证各条兜底路径。
 type stubImageStorageForItems struct {
 	orchestrator.StorageService
-	data      []byte
+	data        []byte
 	downloadErr error
-	calls     int
+	calls       int
 }
 
 func (s *stubImageStorageForItems) DownloadImage(_ context.Context, _ string) (*service.DownloadedImage, error) {
@@ -600,7 +598,6 @@ func TestStripDataURLPrefix(t *testing.T) {
 	}
 }
 
-
 // --- response_format 解析 ---
 
 func TestResolveResponseFormatDefaultsToB64JSON(t *testing.T) {
@@ -678,7 +675,6 @@ func TestResolveResponseFormatRejectsUnknownValue(t *testing.T) {
 		}
 	}
 }
-
 
 // --- 模型白名单校验 ---
 
@@ -919,7 +915,6 @@ func TestParseOpenAIEditFormRejectsOversizedBody(t *testing.T) {
 	}
 }
 
-
 func TestWriteReplayHeadersCopiesSignals(t *testing.T) {
 	// X-Idempotent-Replay 让调用方知道这次复用了缓存而不是真的生成了新图。
 	// 丢掉这些头会让客户端重试逻辑与用量监控失去判据。
@@ -946,6 +941,111 @@ func TestWriteReplayHeadersToleratesNilHeaders(t *testing.T) {
 
 	if len(rec.Header()) != 0 {
 		t.Errorf("expected no headers, got %v", rec.Header())
+	}
+}
+
+// --- 跨时间桶的重试识别 ---
+
+func TestResolveOpenAIIdempotencyKeyKeepsRetryInPreviousBucket(t *testing.T) {
+	// 12:04:59 发出、12:05:01 重试：两次相隔两秒却跨过桶边界。只按当前桶派生
+	// 会算出不同键，重试就会重新生成并再次扣费。
+	//
+	// 键由服务端派生，桩无法预知，所以这里模拟真实的写入时序：第一次解析产生的
+	// 键被记为「已有记录」，第二次解析时仓储里就只剩下它。
+	first := time.Date(2026, 10, 8, 12, 4, 59, 0, time.UTC)
+	retry := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+
+	current := first
+	stub := &stubImageIdempotencyService{}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return current })
+
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	original := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	// 第一次请求占用了这个键，仓储里从此有它。
+	stub.lookupKeys = map[string]bool{original: true}
+
+	current = retry
+	replayed := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+
+	if replayed != original {
+		t.Errorf("a retry just across the bucket boundary must reuse the original key: original=%s retry=%s", original, replayed)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyPrefersCurrentBucketOverStalePrevious(t *testing.T) {
+	// 幂等记录存活 24 小时，当前桶往往和上一桶都留着记录。此时必须优先当前桶：
+	// 那是最近一次同参数请求，而上一桶可能是几十分钟前的。
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	currentKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+	previousKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{lookupKeys: map[string]bool{currentKey: true, previousKey: true}}).
+		WithClock(func() time.Time { return now })
+
+	if got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); got != currentKey {
+		t.Errorf("the current window must win when both windows have records: got=%s want=%s", got, currentKey)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyIgnoresLookupErrors(t *testing.T) {
+	// 探测失败要退化为「没有既有记录」，而不是让请求失败。
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{lookupFailing: true}).
+		WithClock(func() time.Time { return now })
+
+	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	if got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); got != want {
+		t.Errorf("lookup failure must fall back to the current window: got=%s want=%s", got, want)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyUsesCurrentBucketForNewWork(t *testing.T) {
+	// 上一桶没有记录时是全新请求，应当占用当前桶——否则「再生成一张」永远
+	// 复用同一个键，用户拿不到新图。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{lookupRecord: nil}).
+		WithClock(func() time.Time { return time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC) })
+
+	got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	expected := deriveOpenAIIdempotencyKey("user-1", request, "url", time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC))
+
+	if got != expected {
+		t.Errorf("a fresh request must take the current window key:\n got=%s\n want=%s", got, expected)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyFallsBackWhenLookupFails(t *testing.T) {
+	// 探测失败不能让请求失败：退化为只按当前桶，行为与本函数不存在时一致。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	handler := NewImageHandler(nil, nil, nil).
+		WithClock(func() time.Time { return now })
+
+	got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	expected := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+
+	if got != expected {
+		t.Errorf("without a lookup service the current window key must be used:\n got=%s\n want=%s", got, expected)
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyForWindowMatchesWindowStart(t *testing.T) {
+	// 按窗口起点派生与按时刻派生必须一致，否则探测上一桶会算出错误的候选键。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 7, 33, 0, time.UTC)
+
+	byTime := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	byWindow := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+
+	if byTime != byWindow {
+		t.Errorf("window-start derivation must match time-based derivation:\n %s\n %s", byTime, byWindow)
 	}
 }
 

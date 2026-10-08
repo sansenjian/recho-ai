@@ -313,7 +313,7 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	// 幂等重放而不是重复扣费，这正是 OpenAI 客户端超时重试时期望的语义。
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format, h.now())
+		idemKey = h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
 	}
 
 	// 幂等指纹必须来自规范化后的请求体，不能传 nil：编排层用 body 的哈希区分
@@ -533,7 +533,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format, h.now())
+		idemKey = h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
 	}
 
 	// AwaitPersistence：外部客户端要的是可直接下载的图片地址，而不是内联数据。
@@ -883,6 +883,82 @@ func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, form
 	}
 	fields = append(fields, strconv.FormatInt(idempotencyWindowStart(now), 10))
 
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
+	return "openai-" + hex.EncodeToString(sum[:16])
+}
+
+// resolveOpenAIIdempotencyKey 选出本次请求应使用的幂等键，并解决跨桶边界的重试。
+//
+// 派生键按时间分桶，恰好跨过边界的重试（12:04:59 发出、12:05:01 重发）会算出
+// 两个不同的键，从而绕过重放保护、重新生成并再次扣费。
+//
+// 判定顺序（只读探测，不产生占用）：
+//  1. 当前桶已有记录 → 用当前桶。同一窗口内的重试都走这里。
+//  2. 当前桶没有、上一桶有 → 用上一桶。这是跨边界的那两秒重试。
+//  3. 两个桶都没有 → 用当前桶，即全新请求。
+//
+// 不能颠倒 1 和 2：幂等记录存活 24 小时，普通新请求时上一桶往往还留着上一轮生成
+// 的记录，优先上一桶会让「再生成一张」永远复用旧请求。
+//
+// 探测失败不阻断请求：退化为「只按当前桶」，与本函数不存在时行为一致。
+func (h *ImageHandler) resolveOpenAIIdempotencyKey(ctx context.Context, userID string, req orchestrator.GenRequest, format string) string {
+	if h.idempotencySvc == nil {
+		return deriveOpenAIIdempotencyKey(userID, req, format, h.now())
+	}
+	now := h.now()
+	currentKey := deriveOpenAIIdempotencyKey(userID, req, format, now)
+
+	if hasIdempotencyRecord(ctx, h.idempotencySvc, userID, currentKey) {
+		return currentKey
+	}
+
+	previousKey := deriveOpenAIIdempotencyKeyForWindow(userID, req, format, idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+	if previousKey != currentKey && hasIdempotencyRecord(ctx, h.idempotencySvc, userID, previousKey) {
+		return previousKey
+	}
+	return currentKey
+}
+
+// hasIdempotencyRecord 只读探测某个派生键是否已有记录，出错时按「没有」处理。
+func hasIdempotencyRecord(ctx context.Context, svc orchestrator.IdempotencyService, userID, idemKey string) bool {
+	record, err := svc.Lookup(ctx, userID, idemKey, "image_generate")
+	if err != nil {
+		// 探测失败不能让请求失败：退化成「没有既有记录」，即按当前桶新建。
+		log.Printf("[openai-image] idempotency lookup failed, treating as a fresh request: %v", err)
+		return false
+	}
+	return record != nil
+}
+
+// deriveOpenAIIdempotencyKeyForWindow 按指定的窗口起点派生键。
+//
+// 与 deriveOpenAIIdempotencyKey 共用同一套字段序列，只是窗口起点由调用方给出，
+// 这样才能为「上一个桶」算出候选键。
+func deriveOpenAIIdempotencyKeyForWindow(userID string, req orchestrator.GenRequest, format string, windowStart int64) string {
+	fields := []string{
+		openAIIdempotencyKeyVersion,
+		userID,
+		req.Prompt,
+		req.Model,
+		req.AspectRatio,
+		req.Resolution,
+		req.ExplicitSize,
+		req.Quality,
+		strconv.Itoa(req.Count),
+		format,
+		strconv.FormatBool(req.TransparentBackground),
+	}
+	// 参考图指纹只在确实有参考图时才参与：无条件追加空字符串会改变无参考图请求
+	// 的指纹，使滚动部署期间新旧版本算出的键对不上。
+	if refs := referenceFingerprint(req.References); refs != "" {
+		fields = append(fields, refs)
+	}
+	fields = append(fields, strconv.FormatInt(windowStart, 10))
+	return openAIIdempotencyHash(fields)
+}
+
+// openAIIdempotencyHash 把字段序列折叠成最终的键，避免各处重复哈希逻辑。
+func openAIIdempotencyHash(fields []string) string {
 	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return "openai-" + hex.EncodeToString(sum[:16])
 }

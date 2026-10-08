@@ -148,6 +148,22 @@ func (h *ImageHandler) WithImageJobStore(jobStore orchestrator.ImageJobEnqueuer)
 	return h
 }
 
+// WithClock 注入时间源，仅影响幂等键的时间窗口计算。
+//
+// 生产环境始终走系统时间；抽出来是为了让测试能把「同一时间桶内」与
+// 「跨桶边界」这两种情形固定下来，否则只能靠真实等待。
+func (h *ImageHandler) WithClock(clock func() time.Time) *ImageHandler {
+	h.clock = clock
+	return h
+}
+
+// WithIdempotencyService 注入幂等服务，仅用于跨时间桶的只读探测。
+// 未注入时派生键退化为「只看当前桶」。
+func (h *ImageHandler) WithIdempotencyService(svc orchestrator.IdempotencyService) *ImageHandler {
+	h.idempotencySvc = svc
+	return h
+}
+
 type referenceUploadResponse struct {
 	Reference ImageGenReference `json:"reference"`
 }
