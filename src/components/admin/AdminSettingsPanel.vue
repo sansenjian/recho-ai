@@ -107,6 +107,53 @@ function effectiveModelPrice(cost: number | null | undefined) {
   return value !== null && value >= 0.01 ? value : settingsPricePerImage.value
 }
 
+
+/** 已启用 Provider 实际提供的模型集合，用于判断某个可见模型是否真的可用。 */
+const enabledImageModelIds = computed(() => new Set(billableImageModelIds.value))
+
+/** 某个可见模型是否仍由已启用 Provider 提供；不提供时要给出警示。 */
+function isVisibleModelAvailable(modelId: string) {
+  return enabledImageModelIds.value.has(modelId.trim())
+}
+
+function addVisibleModel(modelId = '') {
+  const rows = settingsForm.value.availableImageModels
+  if (!modelId && !rows.length) {
+    // 首次展开时带入所有已启用模型，管理员按需删减而不是逐个手打。
+    fillVisibleModels()
+    return
+  }
+  rows.push({ id: modelId, name: '' })
+}
+
+function removeVisibleModel(index: number) {
+  settingsForm.value.availableImageModels.splice(index, 1)
+}
+
+/** 把候选模型里尚未列出的项补进可见列表，展示名留空表示沿用模型 ID。 */
+function fillVisibleModels() {
+  const rows = settingsForm.value.availableImageModels
+  const existing = new Set(rows.map(row => row.id.trim()).filter(Boolean))
+  for (const id of billableImageModelIds.value) {
+    if (existing.has(id)) continue
+    rows.push({ id, name: '' })
+    existing.add(id)
+  }
+}
+
+/** 提交给接口的可见模型列表：丢掉空行并按 id 去重，名字留空则交给后端用 id 兜底。 */
+function normalizeVisibleModels(rows: Array<{ id: string; name?: string }> | undefined) {
+  const result: Array<{ id: string; name: string }> = []
+  const seen = new Set<string>()
+  for (const row of rows || []) {
+    const id = (row?.id || '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    result.push({ id, name: (row?.name || '').trim() })
+  }
+  return result
+}
+
 function addModelPriceRow(modelId = '') {
   const rows = settingsForm.value.imageModelCreditCosts
   if (!modelId && !rows.length) {
@@ -180,6 +227,8 @@ function syncSettingsForm(settings: AdminAppSettings) {
     // 覆盖价行要能被就地编辑，必须与接口返回的对象断开引用，
     // 否则未保存的改动会污染 appSettings 里的快照。
     imageModelCreditCosts: (settings.imageModelCreditCosts || []).map(row => ({ ...row })),
+    // 可见模型同理：就地增删不能改动接口快照。
+    availableImageModels: (settings.availableImageModels || []).map(row => ({ id: row.id, name: row.name || '' })),
   }
   settingsLoaded.value = true
 }
@@ -239,7 +288,7 @@ async function saveSettings() {
         canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
         freeGenerationEnabled: Boolean(settingsForm.value.freeGenerationEnabled),
         guestGenerationEnabled: Boolean(settingsForm.value.guestGenerationEnabled),
-        availableImageModels: settingsForm.value.availableImageModels,
+        availableImageModels: normalizeVisibleModels(settingsForm.value.availableImageModels),
       }),
     })
     syncSettingsForm(data.settings)
@@ -345,6 +394,28 @@ onMounted(refreshSettings)
               <Button type="button" variant="ghost" size="icon" :aria-label="t('settings.providerRemoveModelPriceAria', { index: index + 1 })" :title="t('settings.modelPriceRemove')" @click="removeModelPriceRow(index)"><Trash2 class="h-4 w-4" /></Button>
             </div>
             <span v-if="!settingsForm.imageModelCreditCosts.length" class="text-[11px] text-[var(--text-muted)]">{{ t('settings.modelPriceEmpty') }}</span>
+          </div>
+          <div class="flex flex-col gap-2 rounded-md border border-border bg-[var(--bubble-bg)] p-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.visibleModelsTitle') }}</span>
+                <span class="mt-0.5 block text-[11px] text-[var(--text-muted)]">{{ t('settings.visibleModelsHint') }}</span>
+              </div>
+              <div class="flex shrink-0 gap-1.5">
+                <Button type="button" variant="outline" size="sm" :disabled="!billableImageModelIds.length" @click="fillVisibleModels()">{{ t('settings.visibleModelsFill') }}</Button>
+                <Button type="button" variant="outline" size="sm" @click="addVisibleModel()"><Plus class="mr-1 h-4 w-4" />{{ t('common.add') }}</Button>
+              </div>
+            </div>
+            <div v-for="(row, index) in settingsForm.availableImageModels" :key="index" class="flex flex-col gap-1">
+              <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+                <input :id="`setting-visible-model-id-${index}`" v-model.trim="row.id" :list="`setting-visible-model-options-${index}`" :placeholder="t('settings.modelPriceIdPlaceholder')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+                <datalist :id="`setting-visible-model-options-${index}`"><option v-for="modelId in billableImageModelIds" :key="modelId" :value="modelId" /></datalist>
+                <input :id="`setting-visible-model-name-${index}`" v-model.trim="row.name" :placeholder="t('settings.visibleModelsNamePlaceholder')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+                <Button type="button" variant="ghost" size="icon" :aria-label="t('settings.visibleModelsRemoveAria', { index: index + 1 })" :title="t('settings.visibleModelsRemove')" @click="removeVisibleModel(index)"><Trash2 class="h-4 w-4" /></Button>
+              </div>
+              <span v-if="row.id.trim() && !isVisibleModelAvailable(row.id)" class="text-[11px] text-[var(--text-muted)]">{{ t('settings.visibleModelsUnavailable') }}</span>
+            </div>
+            <span v-if="!settingsForm.availableImageModels.length" class="text-[11px] text-[var(--text-muted)]">{{ t('settings.visibleModelsEmpty') }}</span>
           </div>
           <label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.responseModel') }}</span><input id="setting-response-model" v-model.trim="settingsForm.imageResponsesModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]"></label>
           <label class="flex flex-col gap-1"><span class="text-xs font-medium text-[var(--text-muted)]">{{ t('settings.imageModel') }}</span><input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 py-1 text-[13px]"></label>
