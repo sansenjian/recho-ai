@@ -313,7 +313,14 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	// 幂等重放而不是重复扣费，这正是 OpenAI 客户端超时重试时期望的语义。
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		resolved, resolveErr := h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		if resolveErr != nil {
+			// 探测失败时拒绝请求，而不是改用当前桶新建：上一桶可能已有成功记录，
+			// 此刻新建会让这次重试真正再生成一张并再次扣费。宁可返回可重试的 503。
+			writeOpenAIError(w, http.StatusServiceUnavailable, "idempotency_unavailable", "幂等服务暂时不可用，请稍后重试。")
+			return
+		}
+		idemKey = resolved
 	}
 
 	// 幂等指纹必须来自规范化后的请求体，不能传 nil：编排层用 body 的哈希区分
@@ -533,7 +540,14 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		resolved, resolveErr := h.resolveOpenAIIdempotencyKey(r.Context(), user.ID, genReq, format)
+		if resolveErr != nil {
+			// 探测失败时拒绝请求，而不是改用当前桶新建：上一桶可能已有成功记录，
+			// 此刻新建会让这次重试真正再生成一张并再次扣费。宁可返回可重试的 503。
+			writeOpenAIError(w, http.StatusServiceUnavailable, "idempotency_unavailable", "幂等服务暂时不可用，请稍后重试。")
+			return
+		}
+		idemKey = resolved
 	}
 
 	// AwaitPersistence：外部客户端要的是可直接下载的图片地址，而不是内联数据。
@@ -887,47 +901,61 @@ func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, form
 	return "openai-" + hex.EncodeToString(sum[:16])
 }
 
-// resolveOpenAIIdempotencyKey 选出本次请求应使用的幂等键，并解决跨桶边界的重试。
+// openAIRetryReuseWindow 是「跨时间桶重试」可以复用旧记录的时限。
 //
-// 派生键按时间分桶，恰好跨过边界的重试（12:04:59 发出、12:05:01 重发）会算出
-// 两个不同的键，从而绕过重放保护、重新生成并再次扣费。
+// 派生键按时间分桶，跨过边界的重试会算出不同的键。若只看当前桶，12:04:59 发出、
+// 12:05:01 重发的请求会重新生成并再次扣费。但不能无条件复用上一桶：幂等记录存活
+// 24 小时，上一桶往往还留着很久以前的记录，那样「再生成一张」永远拿不到新图。
+//
+// 两者的请求字节完全相同，服务端唯一能依据的区分信号就是时间间隔——重试发生在
+// 数十秒内，而用户主动重新生成通常在几分钟之后。90 秒既覆盖常见的超时重试与退避
+// 重试，又短到不会把「再生成一张」误判成重试。
+const openAIRetryReuseWindow = 90 * time.Second
+
+// openAIImageIdempotencyScope 是外部生图端点使用的幂等作用域。
+const openAIImageIdempotencyScope = "image_generate"
+
+// resolveOpenAIIdempotencyKey 选出本次请求应使用的幂等键。
 //
 // 判定顺序（只读探测，不产生占用）：
 //  1. 当前桶已有记录 → 用当前桶。同一窗口内的重试都走这里。
-//  2. 当前桶没有、上一桶有 → 用上一桶。这是跨边界的那两秒重试。
-//  3. 两个桶都没有 → 用当前桶，即全新请求。
+//  2. 当前桶没有、上一桶有且那条记录足够新 → 用上一桶。这是跨边界的那两秒重试。
+//  3. 其余情况 → 用当前桶，即全新请求。
 //
-// 不能颠倒 1 和 2：幂等记录存活 24 小时，普通新请求时上一桶往往还留着上一轮生成
-// 的记录，优先上一桶会让「再生成一张」永远复用旧请求。
+// 第 2 步的时限不能省：没有它，任何新请求只要撞上「上一桶还留着历史记录」就会
+// 复用旧键并返回旧图。第 1 步也不能让位给第 2 步——当前桶的记录总是更近的一次。
 //
-// 探测失败不阻断请求：退化为「只按当前桶」，与本函数不存在时行为一致。
-func (h *ImageHandler) resolveOpenAIIdempotencyKey(ctx context.Context, userID string, req orchestrator.GenRequest, format string) string {
-	if h.idempotencySvc == nil {
-		return deriveOpenAIIdempotencyKey(userID, req, format, h.now())
-	}
+// 探测失败时返回错误，由调用方决定如何处理：把失败当成「没有旧记录」会在查询
+// 瞬时抖动的窗口里让重试重复扣费。
+func (h *ImageHandler) resolveOpenAIIdempotencyKey(ctx context.Context, userID string, req orchestrator.GenRequest, format string) (string, error) {
 	now := h.now()
 	currentKey := deriveOpenAIIdempotencyKey(userID, req, format, now)
 
-	if hasIdempotencyRecord(ctx, h.idempotencySvc, userID, currentKey) {
-		return currentKey
+	if h.idempotencySvc == nil {
+		return currentKey, nil
+	}
+
+	current, err := h.idempotencySvc.Lookup(ctx, userID, currentKey, openAIImageIdempotencyScope)
+	if err != nil {
+		return "", fmt.Errorf("查询幂等记录失败：%w", err)
+	}
+	if current != nil {
+		return currentKey, nil
 	}
 
 	previousKey := deriveOpenAIIdempotencyKeyForWindow(userID, req, format, idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
-	if previousKey != currentKey && hasIdempotencyRecord(ctx, h.idempotencySvc, userID, previousKey) {
-		return previousKey
+	if previousKey == currentKey {
+		return currentKey, nil
 	}
-	return currentKey
-}
 
-// hasIdempotencyRecord 只读探测某个派生键是否已有记录，出错时按「没有」处理。
-func hasIdempotencyRecord(ctx context.Context, svc orchestrator.IdempotencyService, userID, idemKey string) bool {
-	record, err := svc.Lookup(ctx, userID, idemKey, "image_generate")
+	previous, err := h.idempotencySvc.Lookup(ctx, userID, previousKey, openAIImageIdempotencyScope)
 	if err != nil {
-		// 探测失败不能让请求失败：退化成「没有既有记录」，即按当前桶新建。
-		log.Printf("[openai-image] idempotency lookup failed, treating as a fresh request: %v", err)
-		return false
+		return "", fmt.Errorf("查询幂等记录失败：%w", err)
 	}
-	return record != nil
+	if previous != nil && now.Sub(previous.CreatedAt) <= openAIRetryReuseWindow {
+		return previousKey, nil
+	}
+	return currentKey, nil
 }
 
 // deriveOpenAIIdempotencyKeyForWindow 按指定的窗口起点派生键。

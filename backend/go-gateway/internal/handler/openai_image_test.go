@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go-gateway/internal/orchestrator"
+	"go-gateway/internal/repository"
 	"go-gateway/internal/service"
 )
 
@@ -947,11 +948,8 @@ func TestWriteReplayHeadersToleratesNilHeaders(t *testing.T) {
 // --- 跨时间桶的重试识别 ---
 
 func TestResolveOpenAIIdempotencyKeyKeepsRetryInPreviousBucket(t *testing.T) {
-	// 12:04:59 发出、12:05:01 重试：两次相隔两秒却跨过桶边界。只按当前桶派生
-	// 会算出不同键，重试就会重新生成并再次扣费。
-	//
-	// 键由服务端派生，桩无法预知，所以这里模拟真实的写入时序：第一次解析产生的
-	// 键被记为「已有记录」，第二次解析时仓储里就只剩下它。
+	// 12:04:59 发出、12:05:01 重试：相隔两秒却跨过桶边界。只按当前桶派生会算出
+	// 不同键，重试就会重新生成并再次扣费。
 	first := time.Date(2026, 10, 8, 12, 4, 59, 0, time.UTC)
 	retry := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
 
@@ -961,78 +959,120 @@ func TestResolveOpenAIIdempotencyKeyKeepsRetryInPreviousBucket(t *testing.T) {
 
 	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
 
-	original := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
-	// 第一次请求占用了这个键，仓储里从此有它。
+	original, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 第一次请求占用了这个键，仓储里从此有它。键由服务端派生，桩无法预知，
+	// 所以在这里回填，模拟真实的写入时序；CreatedAt 取刚刚，否则会被
+	// openAIRetryReuseWindow 的时限挡掉。
 	stub.lookupKeys = map[string]bool{original: true}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "just-created", CreatedAt: first}
 
 	current = retry
-	replayed := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	replayed, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if replayed != original {
 		t.Errorf("a retry just across the bucket boundary must reuse the original key: original=%s retry=%s", original, replayed)
 	}
 }
 
-func TestResolveOpenAIIdempotencyKeyPrefersCurrentBucketOverStalePrevious(t *testing.T) {
-	// 幂等记录存活 24 小时，当前桶往往和上一桶都留着记录。此时必须优先当前桶：
-	// 那是最近一次同参数请求，而上一桶可能是几十分钟前的。
+func TestResolveOpenAIIdempotencyKeyDoesNotReuseStalePreviousRecord(t *testing.T) {
+	// 上一桶留着很久以前的记录时，新请求必须是新键。
+	//
+	// CodeRabbit 指出过这一点：没有时限的话，任何撞上历史记录的新请求都会复用
+	// 旧键并返回旧图，「再生成一张」永远失效。请求字节完全相同，服务端唯一能
+	// 依据的区分信号是时间间隔。
+	generatedAt := time.Date(2026, 10, 8, 12, 0, 30, 0, time.UTC)
+	now := time.Date(2026, 10, 8, 12, 8, 0, 0, time.UTC) // 距生成 7.5 分钟
+
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	currentKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
+	previousKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
+
+	stub := &stubImageIdempotencyService{lookupKeys: map[string]bool{previousKey: true}}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "old", CreatedAt: generatedAt}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != currentKey {
+		t.Errorf("a stale previous-window record must not be reused: got=%s want=%s", got, currentKey)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyPrefersCurrentBucketOverRecentPrevious(t *testing.T) {
+	// 两桶都有记录时必须优先当前桶：它是更近的一次同参数请求。
 	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
 	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
 
 	currentKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
 	previousKey := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now)-int64(openAIIdempotencyWindow/time.Second))
 
-	handler := NewImageHandler(nil, nil, nil).
-		WithIdempotencyService(&stubImageIdempotencyService{lookupKeys: map[string]bool{currentKey: true, previousKey: true}}).
-		WithClock(func() time.Time { return now })
+	stub := &stubImageIdempotencyService{lookupKeys: map[string]bool{currentKey: true, previousKey: true}}
+	stub.lookupRecord = &repository.IdempotencyRecord{ID: "recent", CreatedAt: now.Add(-time.Second)}
+	handler := NewImageHandler(nil, nil, nil).WithIdempotencyService(stub).WithClock(func() time.Time { return now })
 
-	if got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); got != currentKey {
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != currentKey {
 		t.Errorf("the current window must win when both windows have records: got=%s want=%s", got, currentKey)
 	}
 }
 
-func TestResolveOpenAIIdempotencyKeyIgnoresLookupErrors(t *testing.T) {
-	// 探测失败要退化为「没有既有记录」，而不是让请求失败。
+func TestResolveOpenAIIdempotencyKeyUsesCurrentBucketForNewWork(t *testing.T) {
+	// 两个桶都没有记录时是全新请求，占用当前桶。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
+	handler := NewImageHandler(nil, nil, nil).
+		WithIdempotencyService(&stubImageIdempotencyService{}).
+		WithClock(func() time.Time { return now })
+
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	if got != want {
+		t.Errorf("a fresh request must take the current window key: got=%s want=%s", got, want)
+	}
+}
+
+func TestResolveOpenAIIdempotencyKeyPropagatesLookupFailure(t *testing.T) {
+	// CodeRabbit 指出：把查询失败当成「没有旧记录」会在查询瞬时抖动的窗口里让
+	// 重试重复扣费——上一桶可能已有成功记录，此刻新建就是又生成一张。
+	// 解析器必须把错误交给调用方，由调用方拒绝这次请求。
 	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
 	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
 	handler := NewImageHandler(nil, nil, nil).
 		WithIdempotencyService(&stubImageIdempotencyService{lookupFailing: true}).
 		WithClock(func() time.Time { return now })
 
-	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
-	if got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); got != want {
-		t.Errorf("lookup failure must fall back to the current window: got=%s want=%s", got, want)
+	if _, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url"); err == nil {
+		t.Error("a lookup failure must be reported so the caller can refuse to create a new key")
 	}
 }
 
-func TestResolveOpenAIIdempotencyKeyUsesCurrentBucketForNewWork(t *testing.T) {
-	// 上一桶没有记录时是全新请求，应当占用当前桶——否则「再生成一张」永远
-	// 复用同一个键，用户拿不到新图。
-	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
-	handler := NewImageHandler(nil, nil, nil).
-		WithIdempotencyService(&stubImageIdempotencyService{lookupRecord: nil}).
-		WithClock(func() time.Time { return time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC) })
-
-	got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
-	expected := deriveOpenAIIdempotencyKey("user-1", request, "url", time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC))
-
-	if got != expected {
-		t.Errorf("a fresh request must take the current window key:\n got=%s\n want=%s", got, expected)
-	}
-}
-
-func TestResolveOpenAIIdempotencyKeyFallsBackWhenLookupFails(t *testing.T) {
-	// 探测失败不能让请求失败：退化为只按当前桶，行为与本函数不存在时一致。
+func TestResolveOpenAIIdempotencyKeyWithoutServiceUsesCurrentWindow(t *testing.T) {
+	// 没有幂等服务时退化为只按当前桶，行为与未引入跨桶解析时一致。
 	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
 	now := time.Date(2026, 10, 8, 12, 5, 1, 0, time.UTC)
-	handler := NewImageHandler(nil, nil, nil).
-		WithClock(func() time.Time { return now })
+	handler := NewImageHandler(nil, nil, nil).WithClock(func() time.Time { return now })
 
-	got := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
-	expected := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
-
-	if got != expected {
-		t.Errorf("without a lookup service the current window key must be used:\n got=%s\n want=%s", got, expected)
+	got, err := handler.resolveOpenAIIdempotencyKey(context.Background(), "user-1", request, "url")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := deriveOpenAIIdempotencyKey("user-1", request, "url", now)
+	if got != want {
+		t.Errorf("without an idempotency service the current window key must be used: got=%s want=%s", got, want)
 	}
 }
 
@@ -1045,7 +1085,7 @@ func TestDeriveOpenAIIdempotencyKeyForWindowMatchesWindowStart(t *testing.T) {
 	byWindow := deriveOpenAIIdempotencyKeyForWindow("user-1", request, "url", idempotencyWindowStart(now))
 
 	if byTime != byWindow {
-		t.Errorf("window-start derivation must match time-based derivation:\n %s\n %s", byTime, byWindow)
+		t.Errorf("window-start derivation must match time-based derivation: %s vs %s", byTime, byWindow)
 	}
 }
 
