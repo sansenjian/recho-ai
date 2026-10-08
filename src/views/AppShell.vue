@@ -20,7 +20,7 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { pickActiveAnchorId } from '../utils/chat-rail'
-import { createScrollSettleState, observeScrollFrame } from '../utils/scroll-settle'
+import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
@@ -485,12 +485,12 @@ function scrollToBottomWhenSettled() {
       const target = chatAreaRef.value
       if (!target) return
       // 每帧都先贴到底：高度分多帧撑开时，这样能跟着内容走而不是等最后跳一下。
-      target.scrollTo({ top: target.scrollHeight, behavior: 'auto' })
+      scrollElementTo(target, target.scrollHeight)
       const result = observeScrollFrame(settleState, target.scrollHeight, SETTLE_MAX_FRAMES)
       settleState = result.state
       if (result.settled) {
         // 收敛后按用户的动效偏好对齐最终位置。
-        target.scrollTo({ top: target.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+        scrollElementTo(target, target.scrollHeight, smooth)
         return
       }
       requestAnimationFrame(settle)
@@ -501,11 +501,10 @@ function scrollToBottomWhenSettled() {
 
 function scrollToBottom() {
   nextTick(() => {
-    chatAreaRef.value?.scrollTo({
-      top: chatAreaRef.value.scrollHeight,
-      // 开了「减少动效」就不再平滑滚动,和 jumpToMessage 的降级保持一致。
-      behavior: scrollSmooth && !prefersReducedMotion.value ? 'smooth' : 'auto',
-    })
+    const target = chatAreaRef.value
+    if (!target) return
+    // 开了「减少动效」就不再平滑滚动，和 jumpToMessage 的降级保持一致。
+    scrollElementTo(target, target.scrollHeight, scrollSmooth && !prefersReducedMotion.value)
   })
 }
 

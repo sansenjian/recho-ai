@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createScrollSettleState, observeScrollFrame } from '../utils/scroll-settle'
+import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles } from '@lucide/vue'
 import {
@@ -208,7 +208,7 @@ function scrollConversationToLatest() {
       const scroller = conversationRef.value
       if (!scroller) return
       // 每帧都先贴到底，高度分多帧撑开时能跟着内容走而不是最后跳一下。
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' })
+      scrollElementTo(scroller, scroller.scrollHeight)
       const result = observeScrollFrame(settleState, scroller.scrollHeight, CONVERSATION_SETTLE_MAX_FRAMES)
       settleState = result.state
       if (result.settled) {

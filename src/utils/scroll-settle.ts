@@ -26,6 +26,28 @@ export function createScrollSettleState(): ScrollSettleState {
 }
 
 /**
+ * 把元素滚到指定位置，兼容没有 scrollTo 的环境。
+ *
+ * 浏览器都实现了 Element.scrollTo，但 jsdom 没有——组件测试渲染到带滚动的视图时
+ * 会抛 "scrollTo is not a function"，让整条流水线红掉。这里在缺失时退回直接写
+ * scrollTop，行为等价（都是瞬时定位），真实浏览器仍走原生实现。
+ */
+export function scrollElementTo(
+  element: { scrollTo?: unknown; scrollTop: number },
+  top: number,
+  smooth = false,
+): void {
+  if (typeof element.scrollTo === 'function') {
+    ;(element.scrollTo as (options: ScrollToOptions) => void)({
+      top,
+      behavior: smooth ? 'smooth' : 'auto',
+    })
+    return
+  }
+  element.scrollTop = top
+}
+
+/**
  * 记录一帧高度，返回是否已经可以停止观察。
  *
  * 用 maxFrames 兜底：动画或懒加载可能让高度永不重复，到达上限也要收手，
