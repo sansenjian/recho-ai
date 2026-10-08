@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"go-gateway/internal/orchestrator"
 	"go-gateway/internal/service"
@@ -321,17 +323,72 @@ func TestParseOpenAIEditFormAcceptsBothImageFieldNames(t *testing.T) {
 }
 
 func TestParseOpenAIEditFormAcceptsMultipleImages(t *testing.T) {
-	req, _ := buildEditMultipart(t,
-		map[string]string{"prompt": "combine these"},
-		map[string][]byte{"image": tinyPNG})
-	// CreateFormFile 每调用一次产生一个 part；用同名字段再追加一张。
+	// 必须在同一个 image 字段下放两个 part 才算测到多图：buildEditMultipart 用
+	// map 存文件，同名 key 放不进两张，所以这里手工构造。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageField, openAIImageField}, [][]byte{tinyPNG, tinyPNG})
+
 	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(form.references) != 1 {
-		t.Fatalf("got %d references, want 1", len(form.references))
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
 	}
+}
+
+func TestParseOpenAIEditFormAcceptsImageArrayFieldNames(t *testing.T) {
+	// image[] 是 OpenAI 的另一种字段写法，供应商与 SDK 都有使用。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageArrField, openAIImageArrField}, [][]byte{tinyPNG, tinyPNG})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
+	}
+}
+
+func TestParseOpenAIEditFormMixesBothImageFieldNames(t *testing.T) {
+	// 两种字段名混用时要合并计数，不能只取其中一个。
+	req := buildEditMultipartWithParts(t, "combine these", []string{openAIImageField, openAIImageArrField}, [][]byte{tinyPNG, tinyPNG})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(form.references) != 2 {
+		t.Fatalf("got %d references, want 2", len(form.references))
+	}
+}
+
+// buildEditMultipartWithParts 构造允许多个同名字段文件 part 的编辑请求。
+func buildEditMultipartWithParts(t *testing.T, prompt string, fieldNames []string, contents [][]byte) *http.Request {
+	t.Helper()
+	if len(fieldNames) != len(contents) {
+		t.Fatalf("fieldNames and contents must have equal length")
+	}
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("prompt", prompt); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	for index, name := range fieldNames {
+		part, err := writer.CreateFormFile(name, fmt.Sprintf("part-%d.png", index))
+		if err != nil {
+			t.Fatalf("create file part %d: %v", index, err)
+		}
+		if _, err := part.Write(contents[index]); err != nil {
+			t.Fatalf("write file part %d: %v", index, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }
 
 func TestParseOpenAIEditFormRejectsMissingImage(t *testing.T) {
@@ -699,8 +756,20 @@ func TestReplayResponseExtractsCachedGenResponse(t *testing.T) {
 	if !ok {
 		t.Fatal("expected the cached success body to be recognized as a replay")
 	}
-	if len(resp.Images) != 1 || resp.Images[0].ID != "img_1" {
-		t.Errorf("unexpected replay payload: %+v", resp.Images)
+	// 必须逐个字段核对：只断言数量和 ID 的话，即便解码把 URL/StoragePath
+	// 丢掉（那正是「重放丢图」的表现）测试也照样通过。
+	if len(resp.Images) != 1 {
+		t.Fatalf("image count = %d, want 1", len(resp.Images))
+	}
+	image := resp.Images[0]
+	if image.ID != "img_1" {
+		t.Errorf("ID = %q, want %q", image.ID, "img_1")
+	}
+	if image.URL != "https://cdn.example.test/a.png" {
+		t.Errorf("URL = %q, want the cached link", image.URL)
+	}
+	if image.StoragePath != "generate/a.png" {
+		t.Errorf("StoragePath = %q, want the cached path", image.StoragePath)
 	}
 }
 
@@ -746,7 +815,7 @@ func TestDeriveOpenAIIdempotencyKeyChangesWithReferences(t *testing.T) {
 	second := base
 	second.References = []orchestrator.GenReference{{DataUrl: "data:image/png;base64,BBB"}}
 
-	if deriveOpenAIIdempotencyKey("user-1", first, "url") == deriveOpenAIIdempotencyKey("user-1", second, "url") {
+	if deriveOpenAIIdempotencyKey("user-1", first, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) == deriveOpenAIIdempotencyKey("user-1", second, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) {
 		t.Error("changing the reference image must change the derived key")
 	}
 }
@@ -764,15 +833,61 @@ func TestDeriveOpenAIIdempotencyKeyStableForIdenticalReferences(t *testing.T) {
 		References: []orchestrator.GenReference{{DataUrl: "data:image/png;base64,SAME", FileName: "a.png"}},
 	}
 
-	if deriveOpenAIIdempotencyKey("user-1", reqA, "url") != deriveOpenAIIdempotencyKey("user-1", reqB, "url") {
+	if deriveOpenAIIdempotencyKey("user-1", reqA, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) != deriveOpenAIIdempotencyKey("user-1", reqB, "url", time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)) {
 		t.Error("identical requests must derive the same key")
 	}
 }
 
 func TestDeriveOpenAIIdempotencyKeyWithoutReferencesIsStable(t *testing.T) {
-	req := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
-	if deriveOpenAIIdempotencyKey("user-1", req, "url") != deriveOpenAIIdempotencyKey("user-1", req, "url") {
-		t.Error("requests without references must still derive a stable key")
+	// 两个独立构造的相同请求必须落到同一个键，客户端重试才会命中重放。
+	// 用同一个值自比没有意义（staticcheck SA4000），这里刻意构造两份。
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	first := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	second := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+
+	if deriveOpenAIIdempotencyKey("user-1", first, "url", now) != deriveOpenAIIdempotencyKey("user-1", second, "url", now) {
+		t.Error("identical requests must derive the same key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyIgnoresReferenceFieldWhenEmpty(t *testing.T) {
+	// 无参考图时不能把空指纹拼进键：那会改变旧版本算出的键，滚动部署期间
+	// 重试找不到旧记录，于是重新生成并再次扣费。
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	withoutField := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	withEmptySlice := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2", References: []orchestrator.GenReference{}}
+
+	if deriveOpenAIIdempotencyKey("user-1", withoutField, "url", now) != deriveOpenAIIdempotencyKey("user-1", withEmptySlice, "url", now) {
+		t.Error("an empty reference list must not change the derived key")
+	}
+}
+
+func TestDeriveOpenAIIdempotencyKeyChangesAcrossTimeWindows(t *testing.T) {
+	// 时间窗口让「相同参数再生成一张」成为新请求，而不是永远命中重放。
+	// 窗口内必须稳定，跨窗口必须变化。
+	request := orchestrator.GenRequest{Prompt: "a dot", Model: "gpt-image-2"}
+	window := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+
+	sameWindowLater := window.Add(openAIIdempotencyWindow - time.Second)
+	if deriveOpenAIIdempotencyKey("user-1", request, "url", window) != deriveOpenAIIdempotencyKey("user-1", request, "url", sameWindowLater) {
+		t.Error("requests inside one window must share a key so retries still replay")
+	}
+
+	nextWindow := window.Add(openAIIdempotencyWindow)
+	if deriveOpenAIIdempotencyKey("user-1", request, "url", window) == deriveOpenAIIdempotencyKey("user-1", request, "url", nextWindow) {
+		t.Error("a request in the next window must be treated as new work")
+	}
+}
+
+func TestIdempotencyWindowStartBucketsByWindow(t *testing.T) {
+	window := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	start := idempotencyWindowStart(window)
+
+	if got := idempotencyWindowStart(window.Add(openAIIdempotencyWindow - time.Second)); got != start {
+		t.Errorf("same bucket expected: got %d want %d", got, start)
+	}
+	if got := idempotencyWindowStart(window.Add(openAIIdempotencyWindow)); got == start {
+		t.Error("advancing one full window must start a new bucket")
 	}
 }
 
@@ -801,6 +916,36 @@ func TestParseOpenAIEditFormRejectsOversizedBody(t *testing.T) {
 
 	if _, err := parseOpenAIEditForm(httptest.NewRecorder(), req); err == nil {
 		t.Error("expected an error for an oversized request body")
+	}
+}
+
+
+func TestWriteReplayHeadersCopiesSignals(t *testing.T) {
+	// X-Idempotent-Replay 让调用方知道这次复用了缓存而不是真的生成了新图。
+	// 丢掉这些头会让客户端重试逻辑与用量监控失去判据。
+	rec := httptest.NewRecorder()
+	statusErr := &orchestrator.StatusError{
+		Code:    200,
+		Headers: map[string]string{"X-Idempotent-Replay": "true", "Content-Type": "application/json"},
+		Body:    []byte(`{"images":[]}`),
+	}
+
+	writeReplayHeaders(rec, statusErr)
+
+	if got := rec.Header().Get("X-Idempotent-Replay"); got != "true" {
+		t.Errorf("X-Idempotent-Replay = %q, want %q", got, "true")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+}
+
+func TestWriteReplayHeadersToleratesNilHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeReplayHeaders(rec, &orchestrator.StatusError{Code: 200})
+
+	if len(rec.Header()) != 0 {
+		t.Errorf("expected no headers, got %v", rec.Header())
 	}
 }
 

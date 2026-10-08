@@ -242,6 +242,17 @@ func (s *ProviderSettingsService) ListImageModels(ctx context.Context) ([]string
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if len(models) == 0 {
+		// 库里没有任何可用 Provider 时，ImageProvider 会回退到环境变量配置并
+		// 正常生图。列表必须跟着回退，否则 /v1/models 会声称没有模型可调，
+		// 而模型白名单还会把显式请求该模型的调用方拒之门外——两边自相矛盾。
+		for _, model := range environmentImageModels() {
+			if id := strings.TrimSpace(model.ID); id != "" && !seen[id] {
+				seen[id] = true
+				models = append(models, id)
+			}
+		}
+	}
 	sort.Strings(models)
 	return models, nil
 }
@@ -345,6 +356,13 @@ func buildImageProviderConfig(candidate imageProviderCandidate, fallback ImagePr
 	}
 	cfg.APIKey = strings.TrimSpace(apiKey)
 	if cfg.APIKey == "" || cfg.BaseURL == "" {
+		return cfg, false, nil
+	}
+	// 目录存在但每一项都被禁用：这个 Provider 不产出任何模型，也就没有理由
+	// 承载请求。若仍把它纳入候选，selectImageProvider 会在请求模型未命中时
+	// 回退到它，并用行里的 image_model 生成——管理员已经关掉的模型就这样
+	// 绕过禁用状态继续出图，而且照常计费。
+	if candidate.hasCatalog && len(candidate.models) == 0 {
 		return cfg, false, nil
 	}
 	cfg.ImageModels = candidate.models

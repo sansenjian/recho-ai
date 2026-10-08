@@ -672,6 +672,13 @@ func (o *ImageOrchestrator) enqueueImageJob(
 	}
 
 	for index := range images {
+		// 已同步持久化的图片（外部端点的 AwaitPersistence 路径）跳过暂存：
+		// 对象已经在最终位置，再读一次临时源、写一份 staging 副本纯属浪费带宽，
+		// 而且暂存失败会让一个已经成功生成并落库的请求反过来报错。
+		// manifest 里对应条目的 phase 已是 stored，worker 会直接走落历史。
+		if images[index].result.PersistenceStatus == "persisted" {
+			continue
+		}
 		storagePath := fmt.Sprintf("staging/image-jobs/%s/%s.source", metadata.BatchID, images[index].result.ID)
 		staged, stageErr := o.stageGeneratedImage(ctx, images[index], storagePath)
 		if stageErr != nil {

@@ -62,6 +62,17 @@ type ImageHandler struct {
 	providerSettings orchestrator.ProviderSettingsService
 	// appSettings 提供 b64_json 等对外开关；可为 nil，此时按关闭处理。
 	appSettings orchestrator.AppSettingsProvider
+	// clock 返回当前时间，仅用于派生幂等键的时间窗口。
+	// 抽成字段是为了让测试能把时间固定在窗口边界上验证行为。
+	clock func() time.Time
+}
+
+// now 返回当前时间，未注入时钟时用系统时间。
+func (h *ImageHandler) now() time.Time {
+	if h.clock != nil {
+		return h.clock()
+	}
+	return time.Now()
 }
 
 // NewImageHandler 创建图片 handler。credit/storage/idempotency 可为 nil（表示禁用）。

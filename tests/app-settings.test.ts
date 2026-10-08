@@ -209,20 +209,20 @@ describe('app settings service', () => {
   it('applies the stored openai_b64_json_enabled value instead of leaving the default', async () => {
     // 该键曾被映射却漏进赋值分支，于是管理员存下的 true/false 都不生效，
     // 读取时永远回到环境变量默认值。
-    appSettingRows = [{ key: 'openai_b64_json_enabled', value: false }]
+    //
+    // mock 里的 OPENAI_B64_JSON_ENABLED 是 false，所以只断言「存 false 得到
+    // false」是无效的——忽略存储行也会通过。这里两种存储值都断言，并确认结果
+    // 跟随存储值而与默认值无关。
     const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
 
-    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
-      openaiB64JsonEnabled: false,
-    })
-  })
-
-  it('applies a stored true for openai_b64_json_enabled', async () => {
     appSettingRows = [{ key: 'openai_b64_json_enabled', value: true }]
-    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
-
     await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
       openaiB64JsonEnabled: true,
+    })
+
+    appSettingRows = [{ key: 'openai_b64_json_enabled', value: false }]
+    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+      openaiB64JsonEnabled: false,
     })
   })
 

@@ -57,7 +57,7 @@ type openAIImageRequest struct {
 
 // openAIImageResponse 是 OpenAI /v1/images/generations 的响应体。
 type openAIImageResponse struct {
-	Created int64                 `json:"created"`
+	Created int64                     `json:"created"`
 	Data    []openAIImageResponseItem `json:"data"`
 }
 
@@ -86,8 +86,8 @@ type openAIErrorDetail struct {
 
 // openAIModelList 是 GET /v1/models 的响应体。
 type openAIModelList struct {
-	Object string          `json:"object"`
-	Data   []openAIModel   `json:"data"`
+	Object string        `json:"object"`
+	Data   []openAIModel `json:"data"`
 }
 
 type openAIModel struct {
@@ -288,9 +288,9 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	}
 
 	genReq := orchestrator.GenRequest{
-		Prompt: req.Prompt,
-		Model:  strings.TrimSpace(req.Model),
-		Count:  normalizeOpenAICount(req.N),
+		Prompt:  req.Prompt,
+		Model:   strings.TrimSpace(req.Model),
+		Count:   normalizeOpenAICount(req.N),
 		Quality: openAIQualityToSiteQuality(req.Quality),
 	}
 	if size := strings.TrimSpace(req.Size); size != "" {
@@ -313,7 +313,7 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	// 幂等重放而不是重复扣费，这正是 OpenAI 客户端超时重试时期望的语义。
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format)
+		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format, h.now())
 	}
 
 	// 幂等指纹必须来自规范化后的请求体，不能传 nil：编排层用 body 的哈希区分
@@ -344,6 +344,7 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 			writeStatusError(w, statusErr)
 			return
 		}
+		writeReplayHeaders(w, statusErr)
 		resp = replayed
 	}
 
@@ -359,7 +360,6 @@ func (h *ImageHandler) generateOpenAIImage(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-
 // --- OpenAI 兼容：图像编辑端点 ---
 
 const (
@@ -367,7 +367,7 @@ const (
 	//   - 官方 SDK 使用 image（单数），可传一个文件或文件数组
 	//   - 部分中转实现（含本站上游）使用 image[]
 	// 两者都接受，避免因字段名不一致而让客户端无法接入。
-	openAIImageField   = "image"
+	openAIImageField    = "image"
 	openAIImageArrField = "image[]"
 
 	// 每张输入图上限，与官方文档的 50MB 对齐。
@@ -533,7 +533,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 
 	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idemKey == "" {
-		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format)
+		idemKey = deriveOpenAIIdempotencyKey(user.ID, genReq, format, h.now())
 	}
 
 	// AwaitPersistence：外部客户端要的是可直接下载的图片地址，而不是内联数据。
@@ -554,6 +554,7 @@ func (h *ImageHandler) editOpenAIImage(w http.ResponseWriter, r *http.Request) {
 			writeStatusError(w, statusErr)
 			return
 		}
+		writeReplayHeaders(w, statusErr)
 		resp = replayed
 	}
 
@@ -590,7 +591,6 @@ func (h *ImageHandler) listOpenAIModels(w http.ResponseWriter, r *http.Request) 
 	response.JSON(w, http.StatusOK, openAIModelList{Object: "list", Data: list})
 }
 
-
 // replayResponse 识别幂等重放：编排层命中重放时返回 Code<400 且 Body 是缓存的
 // GenResponse JSON，而不是错误。把 Body 解析回 GenResponse 交给正常响应路径。
 //
@@ -606,6 +606,17 @@ func replayResponse(statusErr *orchestrator.StatusError) (*orchestrator.GenRespo
 		return nil, false
 	}
 	return &resp, true
+}
+
+// writeReplayHeaders 把重放携带的响应头写回。
+//
+// 编排层用 StatusError.Headers 传递 X-Idempotent-Replay 之类的信号。识别出重放
+// 后如果不写回，调用方就无法区分「这次真的生成了」与「复用了缓存」——客户端
+// 重试逻辑与用量监控都依赖这个区分。
+func writeReplayHeaders(w http.ResponseWriter, statusErr *orchestrator.StatusError) {
+	for key, value := range statusErr.Headers {
+		w.Header().Set(key, value)
+	}
 }
 
 // writeStatusError 把编排层的错误写成 OpenAI 错误信封。
@@ -848,9 +859,9 @@ func stripDataURLPrefix(value string) (string, bool) {
 // 为什么是确定性的：超时重试是 OpenAI 客户端的常规行为。用「用户 + 完整请求参数」
 // 作为指纹，同一用户以相同参数重试会命中幂等重放而非再次扣费；参数不同则视为
 // 新请求。这与站内「显式幂等键」的语义一致，只是键由服务端推导。
-func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, format string) string {
-	fingerprint := strings.Join([]string{
-		"openai-image-v1",
+func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, format string, now time.Time) string {
+	fields := []string{
+		openAIIdempotencyKeyVersion,
 		userID,
 		req.Prompt,
 		req.Model,
@@ -861,10 +872,37 @@ func deriveOpenAIIdempotencyKey(userID string, req orchestrator.GenRequest, form
 		strconv.Itoa(req.Count),
 		format,
 		strconv.FormatBool(req.TransparentBackground),
-		referenceFingerprint(req.References),
-	}, "\x00")
-	sum := sha256.Sum256([]byte(fingerprint))
+	}
+	// 参考图指纹只在确实有参考图时才参与。
+	//
+	// 无条件追加（哪怕为空字符串）会改变无参考图请求的指纹，使改动上线后算出的键
+	// 与滚动部署期间旧版本写入的记录对不上：旧记录尚未过期，重试却找不到它，
+	// 于是重新生成并再次扣费。保持无参考图时的字段序列不变，跨版本重试仍能命中。
+	if refs := referenceFingerprint(req.References); refs != "" {
+		fields = append(fields, refs)
+	}
+	fields = append(fields, strconv.FormatInt(idempotencyWindowStart(now), 10))
+
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return "openai-" + hex.EncodeToString(sum[:16])
+}
+
+// openAIIdempotencyKeyVersion 让派生算法可以演进而不会误命中旧记录。
+const openAIIdempotencyKeyVersion = "openai-image-v1"
+
+// openAIIdempotencyWindow 是派生键的时间桶宽度。
+//
+// 取 5 分钟：足够覆盖一次生成（实测约 30s）加上客户端重试退避，又不会长到
+// 让「再生成一张」显得失效。
+const openAIIdempotencyWindow = 5 * time.Minute
+
+// idempotencyWindowStart 返回 now 所属时间桶的起点（Unix 秒）。
+//
+// 用桶起点而不是「当前秒」：同一窗口内的所有请求必须落到同一个键，否则重试
+// 会因为时间差落到别的桶上，重放保护就失效了。
+func idempotencyWindowStart(now time.Time) int64 {
+	window := int64(openAIIdempotencyWindow / time.Second)
+	return now.Unix() / window * window
 }
 
 // referenceFingerprint 把参考图归纳成一个稳定的短哈希。
