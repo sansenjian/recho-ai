@@ -43,6 +43,78 @@ describe('Imagio conversation turns', () => {
     localStorage.clear()
   })
 
+
+  it('scrolls the conversation to the latest message on mount', async () => {
+    // 打开工作台对话时原先没有任何滚动逻辑，浏览器停在默认位置——列表顶部，
+    // 也就是最老的一条。长会话每次都要手动拉到底。
+    const scrollTo = vi.fn()
+    const original = HTMLElement.prototype.scrollTo
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      writable: true,
+      value: scrollTo,
+    })
+    // 每帧都返回一个稳定高度，让收敛判定立刻成立。
+    const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() { return 4000 },
+    })
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+      cb(0)
+      return 1
+    })
+
+    try {
+      const wrapper = mountView([
+        generatedImage({ id: 'a', url: 'https://example.com/a.png' }),
+        generatedImage({ id: 'b', url: 'https://example.com/b.png' }),
+      ])
+      await flushPromises()
+
+      const scroller = wrapper.find('.imagio-conversation')
+      expect(scroller.exists()).toBe(true)
+      expect(scrollTo).toHaveBeenCalled()
+      const lastCall = scrollTo.mock.calls.at(-1)![0] as ScrollToOptions
+      expect(lastCall.top).toBe(4000)
+    } finally {
+      raf.mockRestore()
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: original })
+      if (originalHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalHeight)
+    }
+  })
+
+  it('does not yank the view back down when the user browses history', async () => {
+    // 初次定位只做一次：用户往回翻历史时，列表变化不能再把他拽回底部。
+    const scrollTo = vi.fn()
+    const original = HTMLElement.prototype.scrollTo
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: scrollTo })
+    const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return 4000 } })
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => { cb(0); return 1 })
+
+    try {
+      const wrapper = mountView([generatedImage({ id: 'a', url: 'https://example.com/a.png' })])
+      await flushPromises()
+      const afterMount = scrollTo.mock.calls.length
+
+      // 追加一条消息：此时用户可能正在看历史，不该再次强行滚到底。
+      await wrapper.setProps({
+        generatedImages: [
+          generatedImage({ id: 'a', url: 'https://example.com/a.png' }),
+          generatedImage({ id: 'b', url: 'https://example.com/b.png' }),
+        ],
+      })
+      await flushPromises()
+
+      expect(scrollTo.mock.calls.length).toBe(afterMount)
+    } finally {
+      raf.mockRestore()
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: original })
+      if (originalHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalHeight)
+    }
+  })
+
   it('renders the user prompt before the generation result', () => {
     const wrapper = mountView([generatedImage({ url: 'https://example.com/result.png' })])
     const turn = wrapper.find('.conversation-turn')
