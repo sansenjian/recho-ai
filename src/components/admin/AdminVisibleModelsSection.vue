@@ -60,8 +60,9 @@ function fillFromAvailable() {
       </Button>
     </template>
 
+    <!-- 列宽固定，与定价表右对齐在同一条竖线上；纯 1fr 会把两列各撑到半屏。 -->
     <div v-for="(row, index) in rows" :key="index" class="flex flex-col gap-1">
-      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+      <div class="grid items-center gap-2" style="grid-template-columns: minmax(180px, 320px) minmax(160px, 280px) 32px;">
         <Input
           :id="`setting-visible-model-id-${index}`"
           v-model.trim="row.id"

@@ -276,16 +276,16 @@ onMounted(refreshSettings)
   <section class="flex flex-col gap-4">
     <AdminStatusBanner :error="errorMessage" :notice="noticeMessage" />
     <div class="grid gap-4" :class="props.section === 'all' ? 'grid-cols-[minmax(280px,380px)_minmax(0,1fr)] max-lg:grid-cols-1' : 'grid-cols-1'">
-      <div v-if="props.section !== 'providers'" class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
-        <div class="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h2 class="text-sm font-semibold">{{ t('settings.runtimeConfig') }}</h2>
-            <span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span>
+      <div v-if="props.section !== 'providers'" class="self-start rounded-md border border-border bg-[var(--surface)] shadow-sm">
+        <div class="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+          <div class="flex items-baseline gap-2">
+            <h2 class="m-0 text-sm font-semibold">{{ t('settings.runtimeConfig') }}</h2>
+            <span class="text-xs text-[var(--text-muted)]">{{ appSettings ? t('settings.loaded') : t('settings.waiting') }}</span>
           </div>
-          <Button variant="outline" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
+          <Button variant="ghost" size="sm" :disabled="settingsLoading" @click="refreshSettings">{{ t('common.refresh') }}</Button>
         </div>
 
-        <form class="flex flex-col gap-3" @submit.prevent="saveSettings">
+        <form class="flex flex-col px-5 py-2" @submit.prevent="saveSettings">
           <!-- 常用的放最上面，低频的收起，主列只留真正会改的东西。 -->
           <AdminSettingsGroup
             :title="t('settings.groupBillingTitle')"
@@ -359,12 +359,16 @@ onMounted(refreshSettings)
             :hint="t('settings.groupFlagsHint')"
             :default-open="false"
           >
-            <div class="grid gap-2 sm:grid-cols-2">
+            <!--
+              宽度与上面的控件列对齐（同为 420px 上限）：开关铺满整行时，
+              整页会出现「宽窄忽变」的观感，像是两个不同的表单拼在一起。
+            -->
+            <div class="grid max-w-[420px] gap-1.5 sm:grid-cols-2">
               <label
                 v-for="item in TOGGLE_FIELDS"
                 :key="item.field"
                 :for="`setting-${item.field}`"
-                class="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"
+                class="flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-2.5"
               >
                 <input :id="`setting-${item.field}`" v-model="settingsForm[item.field]" type="checkbox" class="min-h-auto w-auto">
                 <span class="text-[13px]">{{ t(item.labelKey) }}</span>
@@ -372,9 +376,15 @@ onMounted(refreshSettings)
             </div>
           </AdminSettingsGroup>
 
-          <Button type="submit" :disabled="settingsSaving || !settingsLoaded">
-            {{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}
-          </Button>
+          <!-- 保存按钮靠右收窄：拉通栏会看起来像进度条，也不利于确认自己点的是哪个。 -->
+          <div class="flex items-center justify-end gap-3 border-t border-border py-3">
+            <span class="text-[11px] text-[var(--text-muted)]">
+              {{ appSettings ? t('settings.loaded') : t('settings.waiting') }}
+            </span>
+            <Button type="submit" size="sm" :disabled="settingsSaving || !settingsLoaded">
+              {{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}
+            </Button>
+          </div>
         </form>
       </div>
 

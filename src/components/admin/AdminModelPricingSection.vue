@@ -63,10 +63,16 @@ function fillFromCandidates() {
       </Button>
     </template>
 
+    <!--
+      第一列用 minmax(220px, 1fr) 而不是纯 1fr：纯 1fr 会把模型名输入框撑到整行宽，
+      价格框和「生效」被推到最右侧，一行里视线要横跨整个屏幕。给它一个上限，
+      行内元素才不会散开。
+    -->
     <div
       v-for="(row, index) in rows"
       :key="index"
-      class="grid grid-cols-[minmax(0,1fr)_minmax(0,120px)_auto_auto] items-center gap-2"
+      class="grid items-center gap-2"
+      style="grid-template-columns: minmax(180px, 320px) 96px 72px 32px;"
     >
       <Input
         :id="`setting-model-price-id-${index}`"

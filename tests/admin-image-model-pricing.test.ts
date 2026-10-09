@@ -103,9 +103,11 @@ async function mountPanel() {
  * 用具体容器而不是整页文本：页面别处也有「回退兜底价」这类措辞，整页匹配会误判。
  */
 function defaultModelNotice(wrapper: ReturnType<typeof mount>): string {
-  const field = wrapper.findAll('[for="setting-image-model"]')[0]
+  // 提示挂在控件列里，与 <label> 是兄弟节点，所以要从字段容器取而不是从 label 取。
+  const field = wrapper.findAll('[data-slot="settings-field"]')
+    .find(node => node.find('#setting-image-model').exists())
   if (!field) return ''
-  // 提示行是字段里唯一的 <p>；标签与说明都是 <span>，据此把两者分开。
+  // 字段里唯一的 <p> 就是提示行；标签、说明与 hint 都是 <span>。
   const hint = field.findAll('p')[0]
   return hint ? hint.text() : ''
 }

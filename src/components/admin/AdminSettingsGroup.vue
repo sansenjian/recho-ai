@@ -5,8 +5,8 @@ import { ChevronDown } from '@lucide/vue'
 /**
  * 设置面板里的一个可折叠分组。
  *
- * 运行时配置原先是一列平铺九项，改价、选模型、开关混在一起，既看不出哪些是一组的，
- * 也找不到重点。分组之后每一类各有标题与说明，低频项默认收起，主列只留常用的。
+ * 用标题 + 分隔线而不是嵌套卡片：外层已经是一张卡片，再套一层边框会形成
+ * 「框套框套框」的碎感，也让每项的缩进层级难以辨认。
  */
 const props = withDefaults(defineProps<{
   title: string
@@ -19,23 +19,21 @@ const open = ref(props.defaultOpen)
 </script>
 
 <template>
-  <section data-slot="settings-group" class="rounded-md border border-border bg-[var(--surface)]">
+  <section data-slot="settings-group" class="border-t border-border pt-3 first:border-t-0 first:pt-0">
     <button
       type="button"
-      class="flex w-full cursor-pointer items-start justify-between gap-3 border-0 bg-transparent px-4 py-3 text-left"
+      class="flex w-full cursor-pointer items-baseline gap-2 border-0 bg-transparent p-0 pb-1 text-left"
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="min-w-0">
-        <span class="block text-[13px] font-semibold text-foreground">{{ props.title }}</span>
-        <span v-if="props.hint" class="mt-0.5 block text-[11px] text-[var(--text-muted)]">{{ props.hint }}</span>
-      </span>
+      <h3 class="m-0 text-[13px] font-semibold text-foreground">{{ props.title }}</h3>
+      <span v-if="props.hint" class="flex-1 text-[11px] text-[var(--text-muted)]">{{ props.hint }}</span>
       <ChevronDown
-        class="mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)] transition-transform"
+        class="h-3.5 w-3.5 shrink-0 self-center text-[var(--text-muted)] transition-transform"
         :class="open ? 'rotate-180' : ''"
       />
     </button>
-    <div v-show="open" class="flex flex-col gap-3 border-t border-border px-4 py-3">
+    <div v-show="open" class="flex flex-col divide-y divide-border">
       <slot />
     </div>
   </section>
