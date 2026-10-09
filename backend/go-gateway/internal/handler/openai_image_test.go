@@ -955,15 +955,25 @@ func TestValidateRequestedModelRejectsUnlistedModel(t *testing.T) {
 	}
 }
 
-func TestValidateRequestedModelAllowsEmptyModel(t *testing.T) {
-	// 空模型名是「用默认模型」的合法语义，应由编排层解析而不是在这里拒绝。
+func TestValidateRequestedModelRejectsEmptyModel(t *testing.T) {
+	// 外部接口必须显式写出 model。
+	//
+	// 站内前台可以用「生图模型」兜底，那是给 Web 客户端看的；外部调用方拿到一张
+	// 自己没要过的模型生成的图，比直接报错更糟——既难排查，也容易被当成计费异常。
 	handler := NewImageHandler(nil, nil, nil).WithProviderSettings(stubModelListProvider{models: []string{"gpt-image-2"}})
 
-	if err := handler.validateRequestedModel(context.Background(), ""); err != nil {
-		t.Errorf("unexpected error for an empty model: %v", err)
-	}
-	if err := handler.validateRequestedModel(context.Background(), "   "); err != nil {
-		t.Errorf("unexpected error for a blank model: %v", err)
+	for _, model := range []string{"", "   "} {
+		err := handler.validateRequestedModel(context.Background(), model)
+		if err == nil {
+			t.Fatalf("expected an error for model %q", model)
+		}
+		if !strings.Contains(err.Error(), "model") {
+			t.Errorf("error should mention model, got: %v", err)
+		}
+		// 报错时一并列出可用模型，调用方不用再查一次文档。
+		if !strings.Contains(err.Error(), "gpt-image-2") {
+			t.Errorf("error should list available models, got: %v", err)
+		}
 	}
 }
 

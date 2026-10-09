@@ -804,7 +804,16 @@ func writeStatusError(w http.ResponseWriter, statusErr *orchestrator.StatusError
 func (h *ImageHandler) validateRequestedModel(ctx context.Context, model string) error {
 	requested := strings.TrimSpace(model)
 	if requested == "" {
-		return nil
+		// 外部接口必须显式指定 model。
+		//
+		// 站内前台可以用「生图模型」这个默认值兜底，那是给 Web 客户端看的；外部调用方
+		// 拿到一张自己没要过的模型生成的图，比直接报错更糟——既难排查，也容易被当成
+		// 计费异常。这里拦住，让调用方明确写出想要哪一个。
+		available := h.openAIImageModels(ctx)
+		if len(available) == 0 {
+			return fmt.Errorf("服务端尚未配置任何可用的生图模型。")
+		}
+		return fmt.Errorf("缺少 model：外部接口必须显式指定。当前可用模型：%s。", strings.Join(available, ", "))
 	}
 	available := h.openAIImageModels(ctx)
 	if len(available) == 0 {
