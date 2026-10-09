@@ -130,6 +130,47 @@ describe('runtime config per-model image pricing', () => {
     expect(ids).not.toContain('retired-model')
   })
 
+  it('fills visible-model rows from enabled providers when the list is empty', async () => {
+    // 走面板自己的按钮，而不是直接调工具函数：填充逻辑一度在组件里各写一份，
+    // 工具函数的单测无法证明按钮真的会补出行来。
+    const wrapper = await mountPanel()
+
+    const fillButton = wrapper.findAll('button').find(button => button.text() === '带入已启用模型')
+    expect(fillButton).toBeDefined()
+    await fillButton!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const ids = wrapper.findAll<HTMLInputElement>('input[id^="setting-visible-model-id-"]').map(input => input.element.value)
+    expect(ids).toEqual(['gpt-image-2', 'flux-pro'])
+  })
+
+  it('adds an editable blank row when there is nothing to fill in', async () => {
+    // 一个 Provider 都没启用时，按钮仍须给出可手填的一行，否则无从下手。
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/admin/settings') {
+        return {
+          ...settingsResponse(),
+          providerSettings: { providers: [imageProvider({ enabled: false })], tableAvailable: true },
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = await mountPanel()
+
+    // 定价面板与可见模型面板各有一个「添加」，必须限定在可见模型区块内取，
+    // 否则 find() 会返回定价表那一个：两个区块都在同一个选择器范围内。
+    const section = wrapper.findAll('[data-slot="settings-section"]')[1]
+    const addButton = section.findAll('button').find(button => button.text() === '添加')
+    expect(addButton).toBeDefined()
+    await addButton!.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const ids = section.findAll<HTMLInputElement>('input[id^="setting-visible-model-id-"]')
+      .map(input => input.element.value)
+    expect(ids).toEqual([''])
+  })
+
   it('includes a per-row catalog edit model in the billable model candidates', async () => {
     adminApiJsonMock.mockReset()
     adminApiJsonMock.mockImplementation(async (url: string) => {

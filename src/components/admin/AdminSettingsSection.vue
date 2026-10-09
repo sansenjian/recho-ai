@@ -16,7 +16,7 @@ const props = defineProps<{
 </script>
 
 <template>
-  <div class="flex flex-col gap-2 rounded-md border border-border bg-[var(--bubble-bg)] p-3">
+  <div data-slot="settings-section" class="flex flex-col gap-2 rounded-md border border-border bg-[var(--bubble-bg)] p-3">
     <div class="flex items-start justify-between gap-2">
       <div>
         <span class="text-xs font-medium text-[var(--text-muted)]">{{ props.title }}</span>

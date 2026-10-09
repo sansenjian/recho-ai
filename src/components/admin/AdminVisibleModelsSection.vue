@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Plus, Trash2 } from '@lucide/vue'
 import AdminSettingsSection from './AdminSettingsSection.vue'
 import type { VisibleModelRow } from '../../utils/admin-runtime-settings'
+import { fillRows } from '../../utils/admin-runtime-settings'
 
 /**
  * 「用户可见模型」区块。
@@ -26,8 +27,10 @@ function isAvailable(modelId: string) {
 }
 
 function addRow() {
+  console.log('ADDROW 被调用, 长度=', rows.value.length, '候选=', props.availableIds.length)
   // 空表时先带入所有已启用模型，管理员按需删减而不是逐个手打。
   if (!rows.value.length) fillFromAvailable()
+  console.log('ADDROW push 前长度=', rows.value.length)
   // 无论上面是否补到了候选，都要保证这一次点击真的加出一行：
   // - 没有候选可补（例如一个 Provider 都没启用）时给一个空行让管理员手填；
   // - 已经有条目时同样追加空行，否则「添加」在非空表上毫无反应。
@@ -39,12 +42,7 @@ function removeRow(index: number) {
 }
 
 function fillFromAvailable() {
-  const existing = new Set(rows.value.map(row => row.id.trim()).filter(Boolean))
-  for (const id of props.availableIds) {
-    if (existing.has(id)) continue
-    rows.value.push({ id, name: '', supportsTransparent: false })
-    existing.add(id)
-  }
+  fillRows(rows.value, props.availableIds, id => ({ id, name: '', supportsTransparent: false }))
 }
 </script>
 

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Plus, Trash2 } from '@lucide/vue'
 import AdminSettingsSection from './AdminSettingsSection.vue'
 import type { ModelPriceRow } from '../../utils/admin-runtime-settings'
-import { effectiveModelPrice } from '../../utils/admin-runtime-settings'
+import { effectiveModelPrice, fillRows } from '../../utils/admin-runtime-settings'
 
 /**
  * 「按模型定价」区块。
@@ -41,12 +41,7 @@ function removeRow(index: number) {
 }
 
 function fillFromCandidates() {
-  const existing = new Set(rows.value.map(row => row.id.trim()).filter(Boolean))
-  for (const id of props.candidates) {
-    if (existing.has(id)) continue
-    rows.value.push({ id, cost: props.fallbackPrice })
-    existing.add(id)
-  }
+  fillRows(rows.value, props.candidates, id => ({ id, cost: props.fallbackPrice }))
   // 一个候选都没有时也要给出可编辑的一行，否则管理员无从下手。
   if (!rows.value.length) rows.value.push({ id: '', cost: props.fallbackPrice })
 }

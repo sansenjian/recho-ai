@@ -347,6 +347,7 @@ onMounted(refreshSettings)
         :can-manage="canManageAdminUsers"
         :loading="settingsLoading"
         @refresh="refreshSettings"
+        @clear="clearMessages"
         @error="setError"
         @notice="noticeMessage = $event"
         @updated="handleRulesUpdated"

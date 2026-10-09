@@ -26,6 +26,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refresh: []
+  /** 清空父级的横幅，让本次操作的结果单独显示。 */
+  clear: []
   error: [message: string]
   notice: [message: string]
   /** 面板自己发起写入后会拿到最新列表，回传给父组件即可，不必整页刷新。 */
@@ -57,7 +59,14 @@ function roleLabel(rule: AdminUserRule) {
 }
 
 async function createRule() {
+  if (!props.canManage) return emit('error', t('settings.onlySeniorCanManage'))
+  // 身份为空时先在本地拦下：服务端会以 invalid_admin_identity 拒绝，而那个错误码
+  // 没有对应译文，管理员看到的是服务器原文，英文界面还会因此混进中文。
+  if (!form.value.userId.trim() && !form.value.email.trim()) {
+    return emit('error', t('feedback.enterUserIdOrEmail'))
+  }
   actionLoading.value = true
+  emit('clear')
   try {
     const data = await adminApiJson<{ adminUsers: AdminUserRule[]; adminAccess: AdminAccessSummary }>(
       '/api/admin/settings/admin-users',
@@ -83,6 +92,8 @@ async function createRule() {
 async function applyEnabled(rule: AdminUserRule) {
   const next = !rule.enabled
   actionId.value = rule.id
+  // 先清掉上一次留下的横幅，否则旧错误会盖住这次的成功提示。
+  emit('clear')
   try {
     const data = await adminApiJson<{ adminUsers: AdminUserRule[]; adminAccess: AdminAccessSummary }>(
       `/api/admin/settings/admin-users/${encodeURIComponent(rule.id)}`,
