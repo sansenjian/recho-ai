@@ -7,6 +7,7 @@ import { adminApiJson } from '../../composables/useAdminApi'
 import AdminStatusBanner from './AdminStatusBanner.vue'
 import AdminProviderSettingsPanel from './AdminProviderSettingsPanel.vue'
 import AdminField from './AdminField.vue'
+import AdminSettingsGroup from './AdminSettingsGroup.vue'
 import AdminModelPricingSection from './AdminModelPricingSection.vue'
 import AdminVisibleModelsSection from './AdminVisibleModelsSection.vue'
 import AdminUserRulesPanel from './AdminUserRulesPanel.vue'
@@ -266,60 +267,81 @@ onMounted(refreshSettings)
         </div>
 
         <form class="flex flex-col gap-3" @submit.prevent="saveSettings">
-          <AdminField
-            id="setting-image-price"
-            :label="t('settings.imagePrice')"
-            :hint="t('settings.imagePriceHint')"
+          <!-- 常用的放最上面，低频的收起，主列只留真正会改的东西。 -->
+          <AdminSettingsGroup
+            :title="t('settings.groupBillingTitle')"
+            :hint="t('settings.groupBillingHint')"
           >
-            <Input
+            <AdminField
               id="setting-image-price"
-              v-model.number="settingsForm.imageCreditCostPerImage"
-              type="number"
-              min="0.01"
-              step="0.01"
-              required
+              :label="t('settings.imagePrice')"
+              :hint="t('settings.imagePriceHint')"
+            >
+              <Input
+                id="setting-image-price"
+                v-model.number="settingsForm.imageCreditCostPerImage"
+                type="number"
+                min="0.01"
+                step="0.01"
+                required
+              />
+              <template #after>
+                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                  <span
+                    v-for="item in settingsPricePreview"
+                    :key="item.label"
+                    class="inline-flex min-h-6 items-center rounded-md border border-border bg-[var(--bubble-bg)] px-2 text-[11px] text-[var(--text-muted)]"
+                  >
+                    {{ item.label }} {{ item.value }} {{ t('settings.creditUnit') }}
+                  </span>
+                </div>
+              </template>
+            </AdminField>
+
+            <AdminModelPricingSection
+              v-model="settingsForm.imageModelCreditCosts"
+              :candidates="billableImageModelIds"
+              :fallback-price="settingsPricePerImage"
             />
-            <template #after>
-              <div class="mt-1.5 flex flex-wrap gap-1.5">
-                <span
-                  v-for="item in settingsPricePreview"
-                  :key="item.label"
-                  class="inline-flex min-h-6 items-center rounded-md border border-border bg-[var(--bubble-bg)] px-2 text-[11px] text-[var(--text-muted)]"
-                >
-                  {{ item.label }} {{ item.value }} {{ t('settings.creditUnit') }}
-                </span>
-              </div>
-            </template>
-          </AdminField>
+          </AdminSettingsGroup>
 
-          <AdminModelPricingSection
-            v-model="settingsForm.imageModelCreditCosts"
-            :candidates="billableImageModelIds"
-            :fallback-price="settingsPricePerImage"
-          />
-
-          <AdminVisibleModelsSection
-            v-model="settingsForm.availableImageModels"
-            :available-ids="enabledImageModelIds"
-          />
-
-          <AdminField id="setting-response-model" :label="t('settings.responseModel')">
-            <Input id="setting-response-model" v-model.trim="settingsForm.imageResponsesModel" />
-          </AdminField>
-
-          <AdminField id="setting-image-model" :label="t('settings.imageModel')">
-            <Input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" />
-          </AdminField>
-
-          <label
-            v-for="item in TOGGLE_FIELDS"
-            :key="item.field"
-            :for="`setting-${item.field}`"
-            class="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"
+          <AdminSettingsGroup
+            :title="t('settings.groupModelsTitle')"
+            :hint="t('settings.groupModelsHint')"
           >
-            <input :id="`setting-${item.field}`" v-model="settingsForm[item.field]" type="checkbox" class="min-h-auto w-auto">
-            <span class="text-[13px]">{{ t(item.labelKey) }}</span>
-          </label>
+            <AdminVisibleModelsSection
+              v-model="settingsForm.availableImageModels"
+              :available-ids="enabledImageModelIds"
+            />
+
+            <div class="grid gap-3 sm:grid-cols-2">
+              <AdminField id="setting-response-model" :label="t('settings.responseModel')">
+                <Input id="setting-response-model" v-model.trim="settingsForm.imageResponsesModel" />
+              </AdminField>
+
+              <AdminField id="setting-image-model" :label="t('settings.imageModel')">
+                <Input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" />
+              </AdminField>
+            </div>
+          </AdminSettingsGroup>
+
+          <AdminSettingsGroup
+            :title="t('settings.groupFlagsTitle')"
+            :hint="t('settings.groupFlagsHint')"
+            :default-open="false"
+          >
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label
+                v-for="item in TOGGLE_FIELDS"
+                :key="item.field"
+                :for="`setting-${item.field}`"
+                class="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"
+              >
+                <input :id="`setting-${item.field}`" v-model="settingsForm[item.field]" type="checkbox" class="min-h-auto w-auto">
+                <span class="text-[13px]">{{ t(item.labelKey) }}</span>
+              </label>
+            </div>
+          </AdminSettingsGroup>
 
           <Button type="submit" :disabled="settingsSaving || !settingsLoaded">
             {{ settingsSaving ? t('common.saving') : t('settings.saveConfig') }}

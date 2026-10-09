@@ -171,6 +171,66 @@ describe('runtime config per-model image pricing', () => {
     expect(ids).toEqual([''])
   })
 
+
+  it('splits the settings into labelled groups instead of one flat column', async () => {
+    // 原先九项平铺在一列，改价、选模型、开关混在一起，看不出层次也找不到重点。
+    const wrapper = await mountPanel()
+
+    const titles = wrapper.findAll('[data-slot="settings-group"]')
+      .map(group => group.find('button').text())
+    expect(titles.some(title => title.includes('计费'))).toBe(true)
+    expect(titles.some(title => title.includes('模型'))).toBe(true)
+    expect(titles.some(title => title.includes('功能开关'))).toBe(true)
+  })
+
+  it('collapses the low-frequency flags by default', async () => {
+    const wrapper = await mountPanel()
+
+    const flags = wrapper.findAll('[data-slot="settings-group"]')
+      .find(group => group.find('button').text().includes('功能开关'))!
+    expect(flags.find('button').attributes('aria-expanded')).toBe('false')
+
+    await flags.find('button').trigger('click')
+    expect(flags.find('button').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('keeps the billing group open by default', async () => {
+    // 计费是天天要改的，不该藏起来。
+    const wrapper = await mountPanel()
+
+    const billing = wrapper.findAll('[data-slot="settings-group"]')
+      .find(group => group.find('button').text().includes('计费'))!
+    expect(billing.find('button').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('still submits every field after grouping', async () => {
+    // 分组只改布局，提交内容必须与原先一致。
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/admin/settings' && init?.method === 'PATCH') return { settings: baseSettings }
+      if (url === '/api/admin/settings') return settingsResponse()
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = await mountPanel()
+
+    await wrapper.find('form').trigger('submit')
+
+    const patch = adminApiJsonMock.mock.calls.find(call => (call[1] as RequestInit)?.method === 'PATCH')
+    expect(patch).toBeDefined()
+    // 可见模型列表只有被改动时才会带上，这里没动过，所以不在提交里。
+    expect(Object.keys(JSON.parse(String((patch![1] as RequestInit).body))).sort()).toEqual([
+      'canvasContextEnabled',
+      'freeGenerationEnabled',
+      'guestGenerationEnabled',
+      'imageAnalyticsEnabled',
+      'imageCreditCostPerImage',
+      'imageEventsEnabled',
+      'imageModelCreditCosts',
+      'imageResponsesImageModel',
+      'imageResponsesModel',
+    ])
+  })
+
   it('includes a per-row catalog edit model in the billable model candidates', async () => {
     adminApiJsonMock.mockReset()
     adminApiJsonMock.mockImplementation(async (url: string) => {
