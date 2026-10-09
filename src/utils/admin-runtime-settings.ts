@@ -33,10 +33,12 @@ export function normalizeModelPriceRows(rows: readonly ModelPriceRow[]): AdminIm
   for (const row of rows) {
     const id = row.id.trim()
     if (!id || seen.has(id)) continue
+    // normalizeCreditBalance 自己就会把金额舍到两位小数，这里不必再算一次——
+    // 多出来的那次舍入看着像是在保证精度，实际上永远不会改变结果。
     const cost = normalizeCreditBalance(row.cost)
     if (cost === null || cost < 0.01) continue
     seen.add(id)
-    result.push({ id, cost: Math.round(cost * 100) / 100 })
+    result.push({ id, cost })
   }
   return result
 }

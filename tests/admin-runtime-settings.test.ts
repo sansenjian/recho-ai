@@ -10,8 +10,21 @@ import {
 
 describe('normalizeModelPriceRows', () => {
   it('trims ids and rounds costs to two decimals', () => {
+    // 保留原始精度会让库里存下 1.239 这类值，展示与实际扣费的口径就不一致了。
     expect(normalizeModelPriceRows([{ id: '  gpt-image-2  ', cost: 1.239 }]))
       .toEqual([{ id: 'gpt-image-2', cost: 1.24 }])
+  })
+
+  it('rounds both up and down to the nearest cent', () => {
+    expect(normalizeModelPriceRows([
+      { id: 'up', cost: 1.235 },
+      { id: 'down', cost: 1.234 },
+      { id: 'exact', cost: 2 },
+    ])).toEqual([
+      { id: 'up', cost: 1.24 },
+      { id: 'down', cost: 1.23 },
+      { id: 'exact', cost: 2 },
+    ])
   })
 
   it('drops empty ids, duplicates and non-positive costs', () => {
