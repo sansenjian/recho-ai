@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -389,6 +390,243 @@ func buildEditMultipartWithParts(t *testing.T, prompt string, fieldNames []strin
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &buf)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
+}
+
+// --- mask（局部重绘蒙版） ---
+
+// buildTestPNG 构造一张结构完整的最小 PNG，用于走过格式与 alpha 校验。
+//
+// 不直接用固定字节序列：新校验会解析 IHDR 的颜色类型，只有签名而无结构的
+// 「伪 PNG」不再算合法，测试数据必须是一份真的能被解析的文件。
+//
+// colorType 取官方 PNG 规范的值：0 灰度、2 真彩、3 调色板、4 灰度+alpha、
+// 6 真彩+alpha。带 tRNS 时额外插入一个透明块，用于覆盖调色板图的透明路径。
+func buildTestPNG(colorType byte, withTRNS bool) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+
+	writeChunk := func(chunkType string, payload []byte) {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(payload)))
+		buf.Write(length[:])
+		buf.WriteString(chunkType)
+		buf.Write(payload)
+		// CRC 校验不是本测试关心的事，占位即可——解析代码不读它。
+		buf.Write([]byte{0, 0, 0, 0})
+	}
+
+	// IHDR：宽 1、高 1、位深 8、给定颜色类型、无压缩/滤波/隔行。
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], 1)
+	binary.BigEndian.PutUint32(ihdr[4:8], 1)
+	ihdr[8] = 8
+	ihdr[9] = colorType
+	writeChunk("IHDR", ihdr)
+
+	if withTRNS {
+		// 调色板图的透明度由 tRNS 承载，必须出现在 IDAT 之前。
+		writeChunk("tRNS", []byte{0, 0})
+	}
+	writeChunk("IDAT", []byte{0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01})
+	writeChunk("IEND", nil)
+	return buf.Bytes()
+}
+
+// minimalPNG 是一张合法的真彩+alpha PNG，作为 mask 的基准测试数据。
+var minimalPNG = buildTestPNG(6, false)
+
+func TestParseOpenAIEditFormParsesMask(t *testing.T) {
+	// mask 要作为独立的 GenReference 带出去，编排层才能把它写成 multipart 的
+	// mask 字段，而不是混进 image[] 当成又一张参考图。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    minimalPNG,
+	})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if form.mask == nil {
+		t.Fatal("mask must be parsed into the form")
+	}
+	if !strings.HasPrefix(form.mask.DataUrl, "data:image/png;base64,") {
+		t.Errorf("mask must be carried as a PNG data URL, got %q", form.mask.DataUrl[:min(40, len(form.mask.DataUrl))])
+	}
+	if len(form.references) != 1 {
+		t.Errorf("mask must not be counted as a reference image, got %d references", len(form.references))
+	}
+}
+
+func TestParseOpenAIEditFormAllowsMissingMask(t *testing.T) {
+	// 不传 mask 是合法的整图重绘，不能被拒绝。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+	})
+
+	form, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if form.mask != nil {
+		t.Error("a request without a mask must not invent one")
+	}
+}
+
+func TestParseOpenAIEditFormRejectsNonPNGMask(t *testing.T) {
+	// 官方要求 mask 是 PNG：它的语义依赖 alpha 通道。放一份 JPEG 过去，上游只会
+	// 得到一张全不透明蒙版——等于什么都没改，却让人以为蒙版生效了。静默失效比
+	// 直接报错更难排查，所以这里必须挡住。
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 'J', 'F', 'I', 'F'}
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    jpeg,
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("a non-PNG mask must be rejected")
+	}
+	if !strings.Contains(err.Error(), "PNG") {
+		t.Errorf("the error must explain the PNG requirement, got %q", err.Error())
+	}
+}
+
+func TestParseOpenAIEditFormRejectsOversizedMask(t *testing.T) {
+	// 官方上限 4MB，比参考图的 50MB 严格。超限要在解析阶段挡掉，不能等到上游。
+	oversized := append([]byte{}, minimalPNG...)
+	oversized = append(oversized, make([]byte, openAIEditMaxMaskBytes+1)...)
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    oversized,
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("an oversized mask must be rejected")
+	}
+	if !strings.Contains(err.Error(), "蒙版过大") {
+		t.Errorf("the error must mention the size limit, got %q", err.Error())
+	}
+}
+
+func TestIsPNG(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"valid png signature", minimalPNG, true},
+		{"jpeg", []byte{0xff, 0xd8, 0xff, 0xe0}, false},
+		{"empty", nil, false},
+		{"truncated signature", []byte{0x89, 'P', 'N', 'G'}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPNG(tc.data); got != tc.want {
+				t.Errorf("isPNG(%v) = %v, want %v", tc.data, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPNGHasAlphaChannel(t *testing.T) {
+	// mask 的语义完全依赖 alpha：只有透明处才会被重绘。不带 alpha 的图在蒙版
+	// 位置上没有「透明」可言，放过去只会得到一张全不透明蒙版——静默失效。
+	cases := []struct {
+		name      string
+		data      []byte
+		wantAlpha bool
+	}{
+		{"truecolor with alpha (color type 6)", buildTestPNG(6, false), true},
+		{"grayscale with alpha (color type 4)", buildTestPNG(4, false), true},
+		{"palette with tRNS carries transparency", buildTestPNG(3, true), true},
+		{"palette without tRNS has no transparency", buildTestPNG(3, false), false},
+		{"truecolor without alpha (color type 2)", buildTestPNG(2, false), false},
+		{"grayscale without alpha (color type 0)", buildTestPNG(0, false), false},
+		{"not a png", []byte{0xff, 0xd8, 0xff, 0xe0}, false},
+		{"signature only, no chunks", []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pngHasAlphaChannel(tc.data); got != tc.wantAlpha {
+				t.Errorf("pngHasAlphaChannel() = %v, want %v", got, tc.wantAlpha)
+			}
+		})
+	}
+}
+
+func TestPNGHasAlphaChannelRequiresIHDRFirst(t *testing.T) {
+	// PNG 规范要求 IHDR 是第一个块。不强制的话，把 tRNS 提到前面就能让畸形文件
+	// 走到「调色板 + 已见 tRNS」的分支被放行，然后原样转给上游。
+	valid := buildTestPNG(3, true)
+
+	// 在签名之后插入一个 tRNS 块，把 IHDR 挤到后面。
+	var trns bytes.Buffer
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], 2)
+	trns.Write(length[:])
+	trns.WriteString("tRNS")
+	trns.Write([]byte{0, 0})
+	trns.Write([]byte{0, 0, 0, 0})
+
+	malformed := append(append([]byte{}, valid[:8]...), trns.Bytes()...)
+	malformed = append(malformed, valid[8:]...)
+
+	if pngHasAlphaChannel(malformed) {
+		t.Error("a PNG whose first chunk is not IHDR must be rejected")
+	}
+}
+
+func TestPNGHasAlphaChannelRejectsRepeatedIHDR(t *testing.T) {
+	// 两个 IHDR 同样是畸形文件，不能因为第一个是调色板就放行。
+	valid := buildTestPNG(3, true)
+	ihdr := valid[8:33] // 长度4 + 类型4 + 数据13 + CRC4
+
+	duplicated := append(append([]byte{}, valid[:8]...), ihdr...)
+	duplicated = append(duplicated, valid[8:]...)
+
+	if pngHasAlphaChannel(duplicated) {
+		t.Error("a PNG with two IHDR chunks must be rejected")
+	}
+}
+
+func TestPNGHasAlphaChannelIgnoresTRNSWithoutPalette(t *testing.T) {
+	// 真彩图（颜色类型 2）也可能带 tRNS，但那是逐像素透明色键，与蒙版的
+	// alpha 语义不同，不能当作可用蒙版。
+	data := buildTestPNG(2, true)
+	if pngHasAlphaChannel(data) {
+		t.Error("tRNS on a truecolor PNG does not make it a usable mask")
+	}
+}
+
+func TestPNGHasAlphaChannelRejectsTruncatedChunk(t *testing.T) {
+	// 块长度声称比实际数据还长时说明文件被截断，不能当作有效蒙版。
+	data := buildTestPNG(6, false)
+	var length [4]byte
+	binary.BigEndian.PutUint32(length[:], 9999)
+	broken := append(append([]byte{}, data[:8]...), length[:]...)
+	broken = append(broken, []byte("IHDR")...)
+
+	if pngHasAlphaChannel(broken) {
+		t.Error("a chunk claiming more bytes than the file holds must not count as a valid mask")
+	}
+}
+
+func TestParseOpenAIEditFormRejectsMaskWithoutAlpha(t *testing.T) {
+	// 真彩无 alpha 的 PNG 结构上合法，但作为蒙版没有意义，必须拒绝并说明原因。
+	req, _ := buildEditMultipart(t, map[string]string{"prompt": "make it red"}, map[string][]byte{
+		"image[]": minimalPNG,
+		"mask":    buildTestPNG(2, false),
+	})
+
+	_, err := parseOpenAIEditForm(httptest.NewRecorder(), req)
+	if err == nil {
+		t.Fatal("a mask without an alpha channel must be rejected")
+	}
+	if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("the error must explain the alpha requirement, got %q", err.Error())
+	}
 }
 
 func TestParseOpenAIEditFormRejectsMissingImage(t *testing.T) {

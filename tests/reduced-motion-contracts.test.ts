@@ -18,10 +18,18 @@ describe('reduced motion is honoured by programmatic scrolling', () => {
   })
 
   it('drops smooth scrolling in scrollToBottom when the user asked for less motion', () => {
+    // 断言行为而不是字面量：smooth/auto 的落地实现已抽到 utils/scroll-settle 的
+    // scrollElementTo，这里只要确认 scrollToBottom 把它建立在动效偏好之上。
     const block = shell.match(/function scrollToBottom\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
 
     expect(block).toContain('prefersReducedMotion.value')
-    expect(block).toContain("'smooth' : 'auto'")
+    expect(block).toMatch(/scrollElementTo\(/) 
+  })
+
+  it('resolves smooth vs auto inside the shared scroll helper', () => {
+    // 抽出去的那一层要真的做降级，否则上面那条断言就只是形式上的。
+    const helper = readFileSync(resolve(__dirname, '../src/utils/scroll-settle.ts'), 'utf8')
+    expect(helper).toContain("smooth ? 'smooth' : 'auto'")
   })
 
   it('keeps the jumpToMessage fallback it was aligned with', () => {

@@ -20,6 +20,15 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { pickActiveAnchorId } from '../utils/chat-rail'
+import {
+  beginScrollGeneration,
+  createScrollGeneration,
+  createScrollSettleState,
+  invalidateScrollGeneration,
+  isScrollGenerationCurrent,
+  observeScrollFrame,
+  scrollElementTo,
+} from '../utils/scroll-settle'
 import { useReducedMotion } from '../composables/useReducedMotion'
 import AnnouncementPopup from '../components/AnnouncementPopup.vue'
 import AuthPanel from '../components/AuthPanel.vue'
@@ -461,13 +470,60 @@ function handleRetry(msg: Message) {
 // --- Scroll ---
 const chatAreaRef = ref<HTMLElement | null>(null)
 let scrollSmooth = true
+
+/**
+ * 切到某条会话时，等内容真正撑开再定位到底部。
+ *
+ * 消息列表里的 ChatMessage 是异步组件（defineAsyncComponent），切换会话后
+ * 首帧只有旧内容或占位，scrollHeight 还是没撑开的值。原先只等一次 nextTick
+ * 就去滚，那时高度往往还没到位，结果停在会话开头——正是「打开会话看到最老
+ * 的消息」的原因。
+ *
+ * 这里改成连续几帧观察 scrollHeight，高度收敛后再滚到底。判定逻辑放在
+ * utils/scroll-settle 里以便单测覆盖那次时序问题。异步组件、图片与代码块
+ * 撑开都发生在这些帧里。
+ */
+const SETTLE_MAX_FRAMES = 12
+/**
+ * 收敛循环的代际号。
+ *
+ * 每帧都重新读 chatAreaRef，所以用户连着切两次会话时，第一次的循环会拿到第二次
+ * 的容器继续把它拉到底——用户正想看新会话的历史，却被反复拽回底部。每次发起
+ * 定位就自增一代，旧循环发现自己过期后立即退出。
+ */
+const scrollGeneration = createScrollGeneration()
+function scrollToBottomWhenSettled() {
+  const token = beginScrollGeneration(scrollGeneration)
+  const smooth = scrollSmooth && !prefersReducedMotion.value
+  void nextTick(() => {
+    if (!isScrollGenerationCurrent(scrollGeneration, token)) return
+    if (!chatAreaRef.value) return
+    let settleState = createScrollSettleState()
+    const settle = () => {
+      if (!isScrollGenerationCurrent(scrollGeneration, token)) return
+      const target = chatAreaRef.value
+      if (!target) return
+      // 每帧都先贴到底：高度分多帧撑开时，这样能跟着内容走而不是等最后跳一下。
+      scrollElementTo(target, target.scrollHeight)
+      const result = observeScrollFrame(settleState, target.scrollHeight, SETTLE_MAX_FRAMES)
+      settleState = result.state
+      if (result.settled) {
+        // 收敛后按用户的动效偏好对齐最终位置。
+        scrollElementTo(target, target.scrollHeight, smooth)
+        return
+      }
+      requestAnimationFrame(settle)
+    }
+    settle()
+  })
+}
+
 function scrollToBottom() {
   nextTick(() => {
-    chatAreaRef.value?.scrollTo({
-      top: chatAreaRef.value.scrollHeight,
-      // 开了「减少动效」就不再平滑滚动,和 jumpToMessage 的降级保持一致。
-      behavior: scrollSmooth && !prefersReducedMotion.value ? 'smooth' : 'auto',
-    })
+    const target = chatAreaRef.value
+    if (!target) return
+    // 开了「减少动效」就不再平滑滚动，和 jumpToMessage 的降级保持一致。
+    scrollElementTo(target, target.scrollHeight, scrollSmooth && !prefersReducedMotion.value)
   })
 }
 
@@ -475,7 +531,16 @@ watch(() => messages.value.length, () => scrollToBottom())
 watch(() => messages.value[messages.value.length - 1]?.content, () => {
   if (messages.value[messages.value.length - 1]?.role === 'assistant') scrollToBottom()
 })
-watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottom() })
+watch(activeConversationId, () => { showSystemEditor.value = false; scrollToBottomWhenSettled() })
+
+// 首次进入对话页（含刷新）时也定位到底部：消息要等认证就绪后才从本地存储
+// 读出来，此刻组件同样还在异步加载，所以走同一套「等稳定」的流程。
+let didInitialScroll = false
+watch([() => messages.value.length, isAuthReady], () => {
+  if (didInitialScroll || !isAuthReady.value || messages.value.length === 0) return
+  didInitialScroll = true
+  scrollToBottomWhenSettled()
+})
 watch(isLoading, (v) => { scrollSmooth = !v })
 watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
 onMounted(() => { void nextTick(updateActiveRailMessage) })
@@ -506,6 +571,8 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('paste', onPaste)
   stopGeneration()
+  // 让仍在排队的收敛循环失效：组件已卸载，继续滚动只会操作游离的节点。
+  invalidateScrollGeneration(scrollGeneration)
 })
 
 function handleChangeModel(m: ModelOption) { currentModel.value = m }

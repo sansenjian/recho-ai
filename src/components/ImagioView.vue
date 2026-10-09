@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles } from '@lucide/vue'
 import {
@@ -179,11 +180,64 @@ function useStarter(prompt: string) {
   promptText.value = prompt
 }
 
+/**
+ * 打开工作台对话时定位到最后一条消息。
+ *
+ * 这里原先没有任何滚动逻辑，浏览器就停在默认位置——列表顶部，也就是最老的一条。
+ * 用户每次进来都要手动拉到底，长会话尤其难受。
+ *
+ * 不能只等一次 nextTick：消息里的图片是异步加载的，首帧高度还没撑开，那时滚到底
+ * 会停在半路。改成连续几帧观察高度，收敛后再定位（判定逻辑见 utils/scroll-settle）。
+ */
+const CONVERSATION_SETTLE_MAX_FRAMES = 12
+/**
+ * 是否已经做过「初次定位到底部」。
+ *
+ * 用 afterLatestScroll 而不是在调用处判断：挂载与列表首次有内容都会触发滚动，
+ * 标记必须由滚动本身维护，否则两者各判一次会让首屏滚两遍。
+ */
+let conversationSettledOnce = false
+function scrollConversationToLatest() {
+  // 列表还是空的就什么都别做，也不要消耗标记。
+  //
+  // 挂载那一刻历史数据往往还没到，v-if 不渲染 .imagio-conversation，容器是 null。
+  // 若在这里就置位标记，等数据到达、watcher 再调用时会被「已经定位过」挡掉，
+  // 结果是打开工作台永远不滚动——正是这条路径最容易出的错。
+  if (!conversationItems.value.length) return
+  // 有内容才置位，且置在 nextTick 之前：nextTick 前若又触发一次调用，
+  // 两轮 settle 会同时排队，各自把视图拉到底。
+  conversationSettledOnce = true
+  void nextTick(() => {
+    if (!conversationRef.value) return
+    let settleState = createScrollSettleState()
+    const settle = () => {
+      const scroller = conversationRef.value
+      if (!scroller) return
+      // 每帧都先贴到底，高度分多帧撑开时能跟着内容走而不是最后跳一下。
+      scrollElementTo(scroller, scroller.scrollHeight)
+      const result = observeScrollFrame(settleState, scroller.scrollHeight, CONVERSATION_SETTLE_MAX_FRAMES)
+      settleState = result.state
+      if (result.settled) {
+        updateActiveTurn()
+        return
+      }
+      requestAnimationFrame(settle)
+    }
+    settle()
+  })
+}
+
 watch(conversationItems, () => {
   void nextTick(updateActiveTurn)
+  // 只在还没有内容时补一次定位：挂载那一刻列表可能还是空的，真正的内容要等
+  // 历史数据到位。定位过后不再介入，否则用户往回翻历史时会被强行拉回底部。
+  if (!conversationSettledOnce) scrollConversationToLatest()
 })
 
-onMounted(updateActiveTurn)
+onMounted(() => {
+  updateActiveTurn()
+  scrollConversationToLatest()
+})
 
 function canDisplayGeneratedImage(image: GeneratedImage) {
   return hasImageSource(image, 'preview')
@@ -312,6 +366,8 @@ async function handleGenerate() {
   })
   if (results?.length) {
     pendingReferences.value = []
+    // 新图追加在列表末尾，把它带进视野，省得用户再手动拉一次。
+    scrollConversationToLatest()
   }
 }
 

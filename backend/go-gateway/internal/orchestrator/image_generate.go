@@ -881,7 +881,6 @@ func (o *ImageOrchestrator) resolveImageProvider(ctx context.Context, model stri
 	return o.provider.ImageProvider(ctx, model)
 }
 
-
 // persistenceAwaitTimeout 是外部端点在返回前等待图片落存储的上限。
 //
 // 超时后不再等待：宁可退回临时 data URI 也不让调用方无限期挂起。
@@ -1171,7 +1170,7 @@ func (o *ImageOrchestrator) callImageAPI(ctx context.Context, req GenRequest, co
 	if usesEdits {
 		urlPath = "/images/edits"
 		bodyFactory = func() (io.Reader, string, error) {
-			return o.imageEditBody(ctx, apiReq, req.References)
+			return o.imageEditBody(ctx, apiReq, req.References, req.Mask)
 		}
 	} else {
 		reqBody, err := json.Marshal(apiReq)
@@ -1351,7 +1350,7 @@ func (o *ImageOrchestrator) callLucenImageAPIConcurrently(
 	return images, nil
 }
 
-func (o *ImageOrchestrator) imageEditBody(ctx context.Context, fields map[string]any, references []GenReference) (io.Reader, string, error) {
+func (o *ImageOrchestrator) imageEditBody(ctx context.Context, fields map[string]any, references []GenReference, mask *GenReference) (io.Reader, string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -1370,11 +1369,23 @@ func (o *ImageOrchestrator) imageEditBody(ctx context.Context, fields map[string
 		if fileName == "" {
 			fileName = fmt.Sprintf("reference_%d.%s", index+1, extensionForMime(mime))
 		}
-		part, err := writer.CreateFormFile("image[]", fileName)
-		if err != nil {
+		if err := writeMultipartFile(writer, "image[]", fileName, data); err != nil {
 			return nil, "", err
 		}
-		if _, err := part.Write(data); err != nil {
+	}
+
+	// mask 必须作为独立字段下发，不能混进 image[]：官方语义里它是「哪里要改」，
+	// 混进参考图数组会被上游当成又一张输入图，导致整体重绘而不是局部重绘。
+	if mask != nil {
+		data, _, err := o.referenceImageBytes(ctx, *mask)
+		if err != nil {
+			return nil, "", fmt.Errorf("读取蒙版失败：%w", err)
+		}
+		fileName := mask.FileName
+		if fileName == "" {
+			fileName = "mask.png"
+		}
+		if err := writeMultipartFile(writer, "mask", fileName, data); err != nil {
 			return nil, "", err
 		}
 	}
@@ -1383,6 +1394,16 @@ func (o *ImageOrchestrator) imageEditBody(ctx context.Context, fields map[string
 		return nil, "", err
 	}
 	return bytes.NewReader(body.Bytes()), writer.FormDataContentType(), nil
+}
+
+// writeMultipartFile 写一个文件类型的 multipart 字段。
+func writeMultipartFile(writer *multipart.Writer, field, fileName string, data []byte) error {
+	part, err := writer.CreateFormFile(field, fileName)
+	if err != nil {
+		return err
+	}
+	_, err = part.Write(data)
+	return err
 }
 
 func (o *ImageOrchestrator) referenceImageBytes(ctx context.Context, reference GenReference) ([]byte, string, error) {
