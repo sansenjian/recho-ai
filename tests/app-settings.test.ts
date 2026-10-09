@@ -165,6 +165,21 @@ describe('app settings service', () => {
     ])
   })
 
+  it('ignores a leftover image_responses_model row entirely', async () => {
+    // 弃用后库里可能还留着这一行。它不能被读进任何字段——上面那条用例同时提供了
+    // image_responses_image_model，后者会覆盖前者，会把「读回已弃用键」这种回归
+    // 掩盖掉。这里只放已弃用的键，一旦被读回就会直接暴露。
+    appSettingRows = [
+      { key: 'image_responses_model', value: 'stale-model' },
+    ]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    const settings = await getAppSettings({ refresh: true })
+
+    expect(settings).not.toHaveProperty('imageResponsesModel')
+    expect(settings.imageResponsesImageModel).not.toBe('stale-model')
+  })
+
   it('loads per-model image prices and exposes them in the public config', async () => {
     appSettingRows = [
       { key: 'image_credit_cost_per_image', value: 1 },
