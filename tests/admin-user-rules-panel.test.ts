@@ -164,9 +164,10 @@ describe('admin user rules panel', () => {
   })
 
 
-  it('rejects a toggle while a create request is still in flight', async () => {
-    // 两个接口都返回完整规则列表。并发执行时先发出的请求可能后返回，父组件会用
-    // 旧列表覆盖新列表，直到下次刷新才恢复。
+  it('disables the toggle buttons while a create request is in flight', async () => {
+    // writePending 的真正作用在界面上：新增在途时，启停按钮必须一并禁用，
+    // 否则两个接口的响应可能乱序返回，父组件用旧列表覆盖新列表。
+    // 只测守卫函数验不到这一点——它们各自还有独立的拦截。
     let releaseCreate: (() => void) | null = null
     adminApiJsonMock.mockImplementationOnce(() => new Promise(resolve => {
       releaseCreate = () => resolve({ adminUsers: [], adminAccess: access })
@@ -178,19 +179,24 @@ describe('admin user rules panel', () => {
     const wrapper = mountPanel([rule])
     const vm = wrapper.vm as unknown as {
       createRule: () => Promise<void>
-      toggleRule: (r: AdminUserRule) => void
+      form: { userId: string; email: string; note: string }
     }
+    // createRule 会在身份为空时提前返回，先填上身份才会真正发请求。
+    vm.form = { userId: '', email: 'ops@example.test', note: '' }
+
+    // 按钮没有 title，按可见文案定位。
+    const toggle = () => wrapper.findAll('button').find(b => b.text() === '启用')
+    expect(toggle()?.attributes('disabled')).toBeUndefined()
 
     void vm.createRule()
     await nextTick()
-    vm.toggleRule(rule)
 
-    // 创建在途时，切换不该发出第二个请求。
-    expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
+    // 新增在途：启停按钮必须一并禁用。
+    expect(toggle()?.attributes('disabled')).toBeDefined()
     releaseCreate?.()
   })
 
-  it('rejects a create while a toggle is still in flight', async () => {
+  it('disables the create button while a toggle request is in flight', async () => {
     let releaseToggle: (() => void) | null = null
     adminApiJsonMock.mockImplementationOnce(() => new Promise(resolve => {
       releaseToggle = () => resolve({ adminUsers: [], adminAccess: access })
@@ -200,16 +206,15 @@ describe('admin user rules panel', () => {
       source: 'database', enabled: false, note: null, updatedAt: null,
     }
     const wrapper = mountPanel([rule])
-    const vm = wrapper.vm as unknown as {
-      createRule: () => Promise<void>
-      toggleRule: (r: AdminUserRule) => void
-    }
+    const vm = wrapper.vm as unknown as { applyEnabled: (r: AdminUserRule) => Promise<void> }
 
-    vm.toggleRule(rule)
+    const submit = () => wrapper.find('button[type="submit"]')
+    expect(submit().attributes('disabled')).toBeUndefined()
+
+    void vm.applyEnabled(rule)
     await nextTick()
-    void vm.createRule()
 
-    expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
+    expect(submit().attributes('disabled')).toBeDefined()
     releaseToggle?.()
   })
 
