@@ -114,6 +114,33 @@ describe('admin view auth guard', () => {
     expect(adminApiJsonMock).toHaveBeenCalledWith('/api/admin/credits/me')
   })
 
+
+  it('re-checks when the identity changes while a check is in flight', async () => {
+    // 安全相关：A 的请求还在途时切成 B，若直接复用 A 那个 Promise，B 会拿到 A 的
+    // 权限结果——普通用户照样看到管理员面板。
+    let releaseA: (() => void) | null = null
+    adminApiJsonMock.mockImplementationOnce(() => new Promise(resolve => {
+      releaseA = () => resolve({ admin: true, currentAdminRole: 'operator' })
+    }))
+    adminApiJsonMock.mockResolvedValue({ admin: false, currentAdminRole: 'operator' })
+
+    mountAdmin()
+    refs().user.value = { id: 'user-a', email: 'a@example.test' } as never
+    await nextTick()
+    const callsForA = adminApiJsonMock.mock.calls.length
+    expect(callsForA).toBeGreaterThan(0)
+
+    // A 的请求还没回来就换成 B。
+    refs().user.value = { id: 'user-b', email: 'b@example.test' } as never
+    await nextTick()
+
+    releaseA!()
+    await flushPromises()
+
+    // B 必须自己再查一次，而不是沿用 A 的结果。
+    expect(adminApiJsonMock.mock.calls.length).toBeGreaterThan(callsForA)
+  })
+
   it('re-checks after a login that happens while the page is open', async () => {
     // 原先只在 onMounted 查一次：用户在这个页面完成登录时，user 变了但没人再查，
     // 页面会一直停在「请先登录」，非刷新不可。

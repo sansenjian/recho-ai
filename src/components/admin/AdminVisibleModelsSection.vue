@@ -22,6 +22,13 @@ const rows = defineModel<VisibleModelRow[]>({ required: true })
 
 const { t } = useI18n()
 
+/**
+ * 宽屏下的列宽：模型 ID、展示名、删除按钮。
+ *
+ * 窄屏放不下这些固定宽度，由模板上的 max-sm: 类切成单列；这里只负责宽屏形态。
+ */
+const wideRowStyle = 'grid-template-columns: minmax(180px, 320px) minmax(160px, 280px) 32px;'
+
 function isAvailable(modelId: string) {
   return props.availableIds.includes(modelId.trim())
 }
@@ -60,9 +67,13 @@ function fillFromAvailable() {
       </Button>
     </template>
 
-    <!-- 列宽固定，与定价表右对齐在同一条竖线上；纯 1fr 会把两列各撑到半屏。 -->
+    <!--
+      宽屏用固定列宽，与定价表右对齐在同一条竖线上（纯 1fr 会把两列各撑到半屏）。
+      窄屏放不下 180+160+32 这三列，改为单列堆叠；否则网格横向溢出，删除按钮会
+      被推到可视区域之外，点不到。
+    -->
     <div v-for="(row, index) in rows" :key="index" class="flex flex-col gap-1">
-      <div class="grid items-center gap-2" style="grid-template-columns: minmax(180px, 320px) minmax(160px, 280px) 32px;">
+      <div class="grid items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_32px]" :style="wideRowStyle">
         <Input
           :id="`setting-visible-model-id-${index}`"
           v-model.trim="row.id"

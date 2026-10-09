@@ -118,17 +118,45 @@ function handleDataChanged(source: 'credits' | 'images' | 'announcements' | 'set
   }
 }
 
-/** 在途的权限检查；重复触发时复用它，避免同一份请求被并发发出。 */
-let pendingAdminCheck: Promise<void> | null = null
+/**
+ * 在途的权限检查，连同它是在哪个身份下发起的。
+ *
+ * 复用同一个 Promise 能避免重复请求，但必须记住发起时的 user.id：若 A 的请求还在
+ * 途时切成了 B，直接复用会拿 A 的结果去写 isAdmin——B 是普通用户却看到管理员面板。
+ * 因此结果落地后要核对身份，不一致就再查一次。
+ */
+let pendingAdminCheck: { userId: string; promise: Promise<void> } | null = null
 
 async function checkAdmin() {
-  if (pendingAdminCheck) return pendingAdminCheck
-  pendingAdminCheck = runAdminCheck()
-  try {
-    await pendingAdminCheck
-  } finally {
+  const userId = user.value?.id ?? null
+
+  // 未登录没有身份可言，直接按「无权限」落定，不占用在途标记。
+  if (!userId) {
     pendingAdminCheck = null
+    await runAdminCheck()
+    return
   }
+
+  if (pendingAdminCheck) {
+    // 同一个身份在途：复用它。
+    if (pendingAdminCheck.userId === userId) {
+      await pendingAdminCheck.promise
+      return
+    }
+    // 身份已经变了：等旧的收尾（它的结果会被下面这次覆盖），再为新身份重查。
+    await pendingAdminCheck.promise.catch(() => {})
+  }
+
+  const entry = { userId, promise: runAdminCheck() }
+  pendingAdminCheck = entry
+  try {
+    await entry.promise
+  } finally {
+    if (pendingAdminCheck === entry) pendingAdminCheck = null
+  }
+
+  // 查询期间身份又变了：这次的结果属于旧身份，不能留给新身份用。
+  if ((user.value?.id ?? null) !== userId) await checkAdmin()
 }
 
 async function runAdminCheck() {

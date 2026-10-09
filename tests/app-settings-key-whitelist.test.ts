@@ -50,10 +50,19 @@ function whitelistFrom(sql: string): string[] | null {
 
 /** 该迁移里针对某个键执行了 delete，即移除白名单时一并清理了数据行。 */
 /** 该迁移里针对某个键执行了 delete，即移除白名单时一并清理了数据行。 */
+/** 去掉 SQL 行注释，只留下真正会执行的语句。 */
+function stripSqlComments(sql: string): string {
+  // 迁移里用的都是 -- 行注释；先按行去掉注释部分，再合并空白。
+  return sql
+    .split('\n')
+    .map(line => line.replace(/--.*$/, ''))
+    .join('\n')
+}
+
 function deletesKey(sql: string, key: string): boolean {
-  // 归一化空白，避免换行与缩进影响匹配；用字符串包含而不是正则，
-  // 迁移里的写法是固定的，不必为转义层数再引入一类错误。
-  const flat = sql.replace(/\s+/g, ' ')
+  // 必须先剥掉注释再匹配：否则把 DELETE 注释掉，字符串仍然出现在文件里，
+  // 断言照样通过，而那条数据行其实从没被清理。
+  const flat = stripSqlComments(sql).replace(/\s+/g, ' ')
   return flat.includes("delete from public.app_settings where key = '" + key + "'")
 }
 

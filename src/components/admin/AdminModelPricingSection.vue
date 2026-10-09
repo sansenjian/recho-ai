@@ -25,6 +25,13 @@ const rows = defineModel<ModelPriceRow[]>({ required: true })
 
 const { t } = useI18n()
 
+/**
+ * 宽屏下的列宽：模型 ID、单价、「生效」标签、删除按钮。
+ *
+ * 窄屏放不下这些固定宽度，由模板上的 max-sm: 类切成单列；这里只负责宽屏形态。
+ */
+const wideRowStyle = 'grid-template-columns: minmax(180px, 320px) 96px 72px 32px;'
+
 const canFill = computed(() => props.candidates.length > 0)
 
 function addRow() {
@@ -71,8 +78,8 @@ function fillFromCandidates() {
     <div
       v-for="(row, index) in rows"
       :key="index"
-      class="grid items-center gap-2"
-      style="grid-template-columns: minmax(180px, 320px) 96px 72px 32px;"
+      class="grid items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_72px_32px]"
+      :style="wideRowStyle"
     >
       <Input
         :id="`setting-model-price-id-${index}`"

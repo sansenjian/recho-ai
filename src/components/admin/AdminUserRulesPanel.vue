@@ -37,6 +37,15 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const actionLoading = ref(false)
 const actionId = ref<string | null>(null)
+
+/**
+ * 是否有写操作在途。
+ *
+ * 新增与启停走的是两个接口，但都返回完整规则列表。若并发执行，先发出的请求可能
+ * 后返回，父组件就会用旧列表覆盖新列表，直到下次刷新才恢复。因此任一种在途时，
+ * 另一种也要禁用，而不是各管各的。
+ */
+const writePending = computed(() => actionLoading.value || actionId.value !== null)
 const confirm = useConfirmAction()
 const form = ref({ userId: '', email: '', note: '' })
 
@@ -65,6 +74,9 @@ async function createRule() {
   if (!form.value.userId.trim() && !form.value.email.trim()) {
     return emit('error', t('feedback.enterUserIdOrEmail'))
   }
+  // 已有写操作在途时不再受理：两个接口都返回完整列表，并发执行可能让先发出的
+  // 请求后返回，用旧列表覆盖掉新列表。
+  if (writePending.value) return
   actionLoading.value = true
   emit('clear')
   try {
@@ -90,9 +102,9 @@ async function createRule() {
 }
 
 async function applyEnabled(rule: AdminUserRule) {
-  // 一次只处理一条：actionId 只能记住最后一个，若放任并发，先完成的那个请求会在
-  // finally 里把它清空，另一条规则还没回来按钮就已经可以再点一次。
-  if (actionId.value) return
+  // 一次只处理一个写操作：actionId 只能记住最后一个，若放任并发，先完成的那个请求
+  // 会在 finally 里把它清空，另一条规则还没回来按钮就已经可以再点一次。新增同理。
+  if (writePending.value) return
   const next = !rule.enabled
   actionId.value = rule.id
   // 先清掉上一次留下的横幅，否则旧错误会盖住这次的成功提示。
@@ -115,7 +127,7 @@ async function applyEnabled(rule: AdminUserRule) {
 function toggleRule(rule: AdminUserRule) {
   // 有操作在途时不再受理：否则连续点击会叠出多个确认弹窗，后一个覆盖前一个的 pending，
   // 管理员点「确认」执行的是最后那条规则，与眼前看到的弹窗对不上。
-  if (actionId.value) return
+  if (writePending.value) return
   if (rule.enabled) {
     confirm.request(() => applyEnabled(rule))
     return
@@ -147,7 +159,7 @@ function toggleRule(rule: AdminUserRule) {
         <span class="text-xs text-[var(--text-muted)]">{{ t('settings.adminNote') }}</span>
         <Input id="admin-user-note" v-model.trim="form.note" :placeholder="t('settings.adminNote')" class="min-h-[30px] text-xs" />
       </label>
-      <Button type="submit" :disabled="actionLoading">{{ t('common.add') }}</Button>
+      <Button type="submit" :disabled="writePending">{{ t('common.add') }}</Button>
     </form>
     <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
 
@@ -177,7 +189,7 @@ function toggleRule(rule: AdminUserRule) {
               <Button
                 variant="ghost"
                 size="sm"
-                :disabled="!canManage || rule.source !== 'database' || actionId === rule.id"
+                :disabled="!canManage || rule.source !== 'database' || writePending"
                 @click="toggleRule(rule)"
               >
                 {{ rule.enabled ? t('common.disable') : t('common.enable') }}

@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import AdminUserRulesPanel from '../src/components/admin/AdminUserRulesPanel.vue'
 import en from '../src/i18n/en'
 import zh from '../src/i18n/zh'
@@ -160,6 +161,56 @@ describe('admin user rules panel', () => {
 
     expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
     release?.()
+  })
+
+
+  it('rejects a toggle while a create request is still in flight', async () => {
+    // 两个接口都返回完整规则列表。并发执行时先发出的请求可能后返回，父组件会用
+    // 旧列表覆盖新列表，直到下次刷新才恢复。
+    let releaseCreate: (() => void) | null = null
+    adminApiJsonMock.mockImplementationOnce(() => new Promise(resolve => {
+      releaseCreate = () => resolve({ adminUsers: [], adminAccess: access })
+    }))
+    const rule: AdminUserRule = {
+      id: 'rule-1', userId: null, email: 'ops@example.test', role: 'operator',
+      source: 'database', enabled: false, note: null, updatedAt: null,
+    }
+    const wrapper = mountPanel([rule])
+    const vm = wrapper.vm as unknown as {
+      createRule: () => Promise<void>
+      toggleRule: (r: AdminUserRule) => void
+    }
+
+    void vm.createRule()
+    await nextTick()
+    vm.toggleRule(rule)
+
+    // 创建在途时，切换不该发出第二个请求。
+    expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
+    releaseCreate?.()
+  })
+
+  it('rejects a create while a toggle is still in flight', async () => {
+    let releaseToggle: (() => void) | null = null
+    adminApiJsonMock.mockImplementationOnce(() => new Promise(resolve => {
+      releaseToggle = () => resolve({ adminUsers: [], adminAccess: access })
+    }))
+    const rule: AdminUserRule = {
+      id: 'rule-1', userId: null, email: 'ops@example.test', role: 'operator',
+      source: 'database', enabled: false, note: null, updatedAt: null,
+    }
+    const wrapper = mountPanel([rule])
+    const vm = wrapper.vm as unknown as {
+      createRule: () => Promise<void>
+      toggleRule: (r: AdminUserRule) => void
+    }
+
+    vm.toggleRule(rule)
+    await nextTick()
+    void vm.createRule()
+
+    expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
+    releaseToggle?.()
   })
 
   it('allows the next toggle once the previous one finished', async () => {
