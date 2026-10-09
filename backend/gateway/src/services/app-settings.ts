@@ -8,7 +8,6 @@ import {
   IMAGE_CREDIT_COST_PER_IMAGE,
   IMAGE_EVENTS_ENABLED,
   IMAGE_RESPONSES_IMAGE_MODEL,
-  IMAGE_RESPONSES_MODEL,
   OPENAI_B64_JSON_ENABLED,
 } from '../config.js'
 import { getSupabaseAdminClient } from '../clients/supabase.js'
@@ -30,6 +29,7 @@ const ADMIN_USERS_CACHE_MS = 15_000
 type AppSettingKey =
   | 'image_credit_cost_per_image'
   | 'image_analytics_enabled'
+  // 已弃用：库里可能还留着这一行，读入时要能忽略它，但不再对外暴露也不再接受写入。
   | 'image_responses_model'
   | 'image_responses_image_model'
   | 'image_events_enabled'
@@ -59,7 +59,6 @@ export interface ChatModelEntry {
 export interface AppSettings {
   imageCreditCostPerImage: number
   imageAnalyticsEnabled: boolean
-  imageResponsesModel: string
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean
@@ -111,7 +110,6 @@ export class AppSettingsError extends Error {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   imageCreditCostPerImage: IMAGE_CREDIT_COST_PER_IMAGE,
   imageAnalyticsEnabled: IMAGE_ANALYTICS_ENABLED,
-  imageResponsesModel: IMAGE_RESPONSES_MODEL,
   imageResponsesImageModel: IMAGE_RESPONSES_IMAGE_MODEL,
   imageEventsEnabled: IMAGE_EVENTS_ENABLED,
   canvasContextEnabled: CANVAS_CONTEXT_ENABLED,
@@ -122,10 +120,19 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   openaiB64JsonEnabled: OPENAI_B64_JSON_ENABLED,
 }
 
-const settingKeyToProperty: Record<AppSettingKey, keyof AppSettings> = {
+/**
+ * 已弃用但仍保留在 AppSettingKey 里的键。
+ *
+ * 它们还存在于库里（旧行、旧约束），读取时要能识别并整行跳过，所以不能从类型里
+ * 抹掉；但它们不再对应任何字段，也不接受写入。从映射类型里排除，可以让「每个活跃
+ * 键都必须有映射」这条编译期保证继续生效。
+ */
+type RetiredAppSettingKey = 'image_responses_model'
+
+const settingKeyToProperty: Record<Exclude<AppSettingKey, RetiredAppSettingKey>, keyof AppSettings> = {
   image_credit_cost_per_image: 'imageCreditCostPerImage',
   image_analytics_enabled: 'imageAnalyticsEnabled',
-  image_responses_model: 'imageResponsesModel',
+  // image_responses_model 已弃用，不再映射到任何字段：读到它时整行跳过。
   image_responses_image_model: 'imageResponsesImageModel',
   image_events_enabled: 'imageEventsEnabled',
   canvas_context_enabled: 'canvasContextEnabled',
@@ -336,8 +343,10 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
   const settings: AppSettings = { ...DEFAULT_APP_SETTINGS }
 
   for (const row of rows) {
-    const key = String(row.key || '') as AppSettingKey
-    const property = settingKeyToProperty[key]
+    // 键来自数据库，可能包含已弃用的条目，所以先按宽松类型取出再查映射表。
+    // 查不到映射就整行跳过——这正是 image_responses_model 被忽略的方式。
+    const key = String(row.key || '')
+    const property = (settingKeyToProperty as Record<string, keyof AppSettings | undefined>)[key]
     if (!property) continue
     const value = row.value
 
@@ -345,7 +354,7 @@ function appSettingsFromRows(rows: Array<Record<string, unknown>>): AppSettings 
       settings[property] = normalizeImageCreditCostPerImage(value)
     } else if (property === 'imageAnalyticsEnabled' || property === 'imageEventsEnabled' || property === 'canvasContextEnabled' || property === 'freeGenerationEnabled' || property === 'guestGenerationEnabled' || property === 'openaiB64JsonEnabled') {
       settings[property] = normalizeBoolean(value, settings[property])
-    } else if (property === 'imageResponsesModel' || property === 'imageResponsesImageModel') {
+    } else if (property === 'imageResponsesImageModel') {
       settings[property] = normalizeModelName(value, settings[property])
     } else if (property === 'availableImageModels') {
       settings[property] = normalizeImageModelList(value, settings[property])
@@ -371,11 +380,6 @@ function validateAppSettingsUpdate(input: Record<string, unknown>): Partial<AppS
   }
   if ('imageAnalyticsEnabled' in input) {
     next.imageAnalyticsEnabled = normalizeBoolean(input.imageAnalyticsEnabled, DEFAULT_APP_SETTINGS.imageAnalyticsEnabled)
-  }
-  if ('imageResponsesModel' in input) {
-    const model = normalizeModelName(input.imageResponsesModel, '')
-    if (!model) throw new AppSettingsError('invalid_image_responses_model')
-    next.imageResponsesModel = model
   }
   if ('imageResponsesImageModel' in input) {
     const model = normalizeModelName(input.imageResponsesImageModel, '')

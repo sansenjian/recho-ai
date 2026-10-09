@@ -71,7 +71,6 @@ func resolveTencentCosBucket(bucket, appID string) string {
 var ImageGenAPIKey = os.Getenv("IMAGE_GEN_API_KEY")
 var ImageGenBaseURL = parseEnvString("IMAGE_GEN_BASE_URL", "https://lucen.plus/v1")
 var ImageCreditCostPerImage = parseEnvFloat("IMAGE_CREDIT_COST_PER_IMAGE", 0.5)
-var ImageResponsesModel = parseEnvString("IMAGE_RESPONSES_MODEL", "gpt-image-2")
 var ImageResponsesImageModel = parseEnvString("IMAGE_RESPONSES_IMAGE_MODEL", "gpt-image-2")
 
 // Chat providers mirrored by the Node gateway's environment-backed provider list.

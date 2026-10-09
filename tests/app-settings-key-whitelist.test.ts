@@ -48,6 +48,15 @@ function whitelistFrom(sql: string): string[] | null {
   return [...block[1].matchAll(/'([a-z][a-z0-9_]*)'/g)].map(match => match[1])
 }
 
+/** 该迁移里针对某个键执行了 delete，即移除白名单时一并清理了数据行。 */
+/** 该迁移里针对某个键执行了 delete，即移除白名单时一并清理了数据行。 */
+function deletesKey(sql: string, key: string): boolean {
+  // 归一化空白，避免换行与缩进影响匹配；用字符串包含而不是正则，
+  // 迁移里的写法是固定的，不必为转义层数再引入一类错误。
+  const flat = sql.replace(/\s+/g, ' ')
+  return flat.includes("delete from public.app_settings where key = '" + key + "'")
+}
+
 function orderedMigrations(): Array<{ name: string; sql: string }> {
   return readdirSync(migrationsDir)
     .filter(name => name.endsWith('.sql'))
@@ -56,10 +65,20 @@ function orderedMigrations(): Array<{ name: string; sql: string }> {
 }
 
 /** Every revision that restated the whitelist, oldest first. */
+/** Every revision that restated the whitelist, oldest first. */
 function whitelistRevisions() {
-  return orderedMigrations()
+  const revisions = orderedMigrations()
     .map(migration => ({ ...migration, keys: whitelistFrom(migration.sql) }))
     .filter((revision): revision is { name: string; sql: string; keys: string[] } => Boolean(revision.keys))
+
+  // deletes 记录的是「上一版有、这一版没有」的键：只看本版的 keys 列表永远看不到
+  // 被移除的键，因为它已经不在里面了。
+  return revisions.map((revision, index) => ({
+    ...revision,
+    deletes: (revisions[index - 1]?.keys ?? [])
+      .filter(key => !revision.keys.includes(key))
+      .filter(key => deletesKey(revision.sql, key)),
+  }))
 }
 
 const revisions = whitelistRevisions()
@@ -70,17 +89,24 @@ describe('app_settings key whitelist', () => {
     expect(revisions.length).toBeGreaterThan(0)
     expect(latest).toBeDefined()
 
-    // The whitelist can only grow, so compare every adjacent pair rather than just
-    // the newest one: a key dropped by an earlier migration and restored later
-    // would otherwise slip through, even though rows written in between are
-    // rejected. A key may never be removed -- existing rows would become unwritable.
-    const drops = revisions.slice(1).flatMap((revision, index) =>
-      revisions[index].keys
-        .filter(key => !revision.keys.includes(key))
-        .map(key => `${revisions[index].name} -> ${revision.name} drops ${key}`),
-    )
+    // 比较每一对相邻版本，而不只是最新一个：早先被删、后来又加回来的键会从
+    // 「只看最新」的检查里溜过去，而中间那段时间写入的行其实是被拒绝的。
+    //
+    // 键可以移除，但必须先把数据清掉：白名单是写入约束，键一旦被移除，库里残留
+    // 的该行就再也删不掉也改不了（约束连删除语句本身都会拒绝）。所以每条移除都
+    // 要在同一个迁移里带上 delete，否则那条记录就永久卡在库里。
+    const removals = revisions.slice(1).flatMap((revision, index) => {
+      const dropped = revisions[index].keys.filter(key => !revision.keys.includes(key))
+      return dropped.map(key => ({
+        key,
+        migration: revision.name,
+        // 在同一个迁移文件里就该看到针对该键的 delete。
+        deletesRow: revision.deletes.includes(key),
+      }))
+    })
 
-    expect(drops).toEqual([])
+    const withoutCleanup = removals.filter(entry => !entry.deletesRow)
+    expect(withoutCleanup).toEqual([])
   })
 
   it('allows every key the gateway can write', () => {

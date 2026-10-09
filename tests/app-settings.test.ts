@@ -127,14 +127,17 @@ describe('app settings service', () => {
     }]
     const { getAppSettings, publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
 
-    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+    const settings = await getAppSettings({ refresh: true })
+    expect(settings).toMatchObject({
       imageCreditCostPerImage: 0.25,
       imageAnalyticsEnabled: true,
-      imageResponsesModel: 'gpt-image-2',
       imageResponsesImageModel: 'custom-image-model',
       imageEventsEnabled: true,
       canvasContextEnabled: true,
     })
+    // image_responses_model 已弃用：库里残留的行要被整行跳过，而不是读进某个字段。
+    // 这里特意在 rows 里放一条，确保它不会被悄悄带回配置里。
+    expect(settings).not.toHaveProperty('imageResponsesModel')
 
     const publicConfig = await publicAppConfig()
     expect(publicConfig).toEqual({

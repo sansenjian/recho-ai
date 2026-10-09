@@ -238,7 +238,6 @@ export interface AdminAppSettings {
   imageCreditCostPerImage: number
   imageModelCreditCosts: AdminImageModelCreditCost[]
   imageAnalyticsEnabled: boolean
-  imageResponsesModel: string
   imageResponsesImageModel: string
   imageEventsEnabled: boolean
   canvasContextEnabled: boolean

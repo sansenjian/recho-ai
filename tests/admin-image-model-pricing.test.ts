@@ -97,6 +97,19 @@ async function mountPanel() {
   return wrapper
 }
 
+/**
+ * 取「生图模型」那一行的提示文本。
+ *
+ * 用具体容器而不是整页文本：页面别处也有「回退兜底价」这类措辞，整页匹配会误判。
+ */
+function defaultModelNotice(wrapper: ReturnType<typeof mount>): string {
+  const field = wrapper.findAll('[for="setting-image-model"]')[0]
+  if (!field) return ''
+  // 提示行是字段里唯一的 <p>；标签与说明都是 <span>，据此把两者分开。
+  const hint = field.findAll('p')[0]
+  return hint ? hint.text() : ''
+}
+
 describe('runtime config per-model image pricing', () => {
   beforeEach(() => {
     adminApiJsonMock.mockReset()
@@ -227,8 +240,66 @@ describe('runtime config per-model image pricing', () => {
       'imageEventsEnabled',
       'imageModelCreditCosts',
       'imageResponsesImageModel',
-      'imageResponsesModel',
     ])
+  })
+
+
+  it('no longer renders the retired responses-model field', async () => {
+    // image_responses_model 已弃用：它只被存回库里，没有任何地方读它去决定模型。
+    // 留一个配了不生效的输入框比没有更容易误导。
+    const wrapper = await mountPanel()
+
+    expect(wrapper.find('#setting-response-model').exists()).toBe(false)
+    expect(wrapper.find('#setting-image-model').exists()).toBe(true)
+  })
+
+  it('warns when the default image model is not user-visible', async () => {
+    // 后端要求默认模型落在可见列表里，否则回退到列表首项。配了却不生效最容易
+    // 被当成故障，所以界面上要直接说明实际会生效的是哪个。
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/admin/settings') {
+        return {
+          ...settingsResponse({
+            ...baseSettings,
+            imageResponsesImageModel: 'hidden-model',
+            availableImageModels: [{ id: 'visible-model', name: '', supportsTransparent: false }],
+          }),
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = await mountPanel()
+
+    const notice = defaultModelNotice(wrapper)
+    expect(notice).toContain('hidden-model')
+    expect(notice).toContain('visible-model')
+  })
+
+  it('stays quiet when the default image model is visible', async () => {
+    adminApiJsonMock.mockReset()
+    adminApiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/admin/settings') {
+        return {
+          ...settingsResponse({
+            ...baseSettings,
+            imageResponsesImageModel: 'visible-model',
+            availableImageModels: [{ id: 'visible-model', name: '', supportsTransparent: false }],
+          }),
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = await mountPanel()
+
+    expect(defaultModelNotice(wrapper)).toBe('')
+  })
+
+  it('stays quiet when the visible list is empty, since the gateway decides', async () => {
+    // 空列表表示跟随 Provider，本地无从判断该提示什么。
+    const wrapper = await mountPanel()
+
+    expect(defaultModelNotice(wrapper)).toBe('')
   })
 
   it('includes a per-row catalog edit model in the billable model candidates', async () => {

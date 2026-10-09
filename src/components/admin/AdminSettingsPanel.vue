@@ -71,7 +71,6 @@ const settingsForm = ref<SettingsForm>({
   imageCreditCostPerImage: 1,
   imageModelCreditCosts: [],
   imageAnalyticsEnabled: false,
-  imageResponsesModel: 'gpt-image-2',
   imageResponsesImageModel: 'gpt-image-2',
   imageEventsEnabled: false,
   canvasContextEnabled: false,
@@ -146,6 +145,27 @@ const enabledImageModelIds = computed(() => {
 
 const canManageAdminUsers = computed(() => currentAdminRole.value === 'senior')
 
+/**
+ * 默认生图模型的提示语。
+ *
+ * 后端要求默认模型落在可见列表内，否则回退到列表首项（见 app-settings 的
+ * resolveDefaultImageModel）。配了却不生效最容易让人以为是坏了，所以这里把
+ * 实际会生效的模型直接写出来。
+ */
+const defaultImageModelNotice = computed(() => {
+  const configured = settingsForm.value.imageResponsesImageModel.trim()
+  const visible = settingsForm.value.availableImageModels.map(row => row.id.trim()).filter(Boolean)
+  // 可见列表为空表示跟随 Provider，此时无法在本地判断，交给后端决定。
+  if (!visible.length) return ''
+  if (!configured) {
+    return t('settings.imageModelFallback', { model: visible[0] })
+  }
+  if (!visible.includes(configured)) {
+    return t('settings.imageModelNotVisible', { model: configured, fallback: visible[0] })
+  }
+  return ''
+})
+
 /** 开关字段的渲染顺序与文案键，避免在模板里写一长串三元表达式。 */
 const TOGGLE_FIELDS = [
   { field: 'imageAnalyticsEnabled', labelKey: 'settings.analytics' },
@@ -217,7 +237,6 @@ async function saveSettings() {
         imageCreditCostPerImage: settingsPricePerImage.value,
         imageModelCreditCosts: normalizeModelPriceRows(settingsForm.value.imageModelCreditCosts),
         imageAnalyticsEnabled: Boolean(settingsForm.value.imageAnalyticsEnabled),
-        imageResponsesModel: settingsForm.value.imageResponsesModel,
         imageResponsesImageModel: settingsForm.value.imageResponsesImageModel,
         imageEventsEnabled: Boolean(settingsForm.value.imageEventsEnabled),
         canvasContextEnabled: Boolean(settingsForm.value.canvasContextEnabled),
@@ -314,15 +333,25 @@ onMounted(refreshSettings)
               :available-ids="enabledImageModelIds"
             />
 
-            <div class="grid gap-3 sm:grid-cols-2">
-              <AdminField id="setting-response-model" :label="t('settings.responseModel')">
-                <Input id="setting-response-model" v-model.trim="settingsForm.imageResponsesModel" />
-              </AdminField>
-
-              <AdminField id="setting-image-model" :label="t('settings.imageModel')">
-                <Input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" />
-              </AdminField>
-            </div>
+            <AdminField
+              id="setting-image-model"
+              :label="t('settings.imageModel')"
+              :hint="t('settings.imageModelHint')"
+            >
+              <Input id="setting-image-model" v-model.trim="settingsForm.imageResponsesImageModel" />
+              <template #after>
+                <!--
+                  默认模型必须落在可见列表里，否则后端会回退到列表首项——管理员配了却
+                  看不到效果，正是这条规则造成的困惑，所以在界面上直接说清楚。
+                -->
+                <p
+                  v-if="defaultImageModelNotice"
+                  class="mt-1.5 text-[11px] text-[var(--text-muted)]"
+                >
+                  {{ defaultImageModelNotice }}
+                </p>
+              </template>
+            </AdminField>
           </AdminSettingsGroup>
 
           <AdminSettingsGroup
