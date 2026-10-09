@@ -122,10 +122,12 @@ describe('admin user rules panel', () => {
       release = () => resolve({ adminUsers: [], adminAccess: access })
     }))
     const wrapper = mountPanel([ruleA, ruleB])
-    const vm = wrapper.vm as unknown as { toggleRule: (rule: AdminUserRule) => void }
+    // 直接调 applyEnabled：toggleRule 自己也有一道守卫，走它的话这一条验不出
+    // applyEnabled 的守卫是否还在。
+    const vm = wrapper.vm as unknown as { applyEnabled: (rule: AdminUserRule) => Promise<void> }
 
-    vm.toggleRule(ruleA)
-    vm.toggleRule(ruleB)
+    void vm.applyEnabled(ruleA)
+    void vm.applyEnabled(ruleB)
 
     // 第二个请求不该发出去。
     expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
@@ -133,6 +135,31 @@ describe('admin user rules panel', () => {
     await vi.waitFor(() => {
       expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
     })
+  })
+
+
+  it('ignores a second toggleRule while one is in flight', async () => {
+    // 走 toggleRule 这条路径：它自己的守卫若被移除，两次调用都会进到 applyEnabled。
+    const ruleA: AdminUserRule = {
+      id: 'rule-a', userId: null, email: 'a@example.test', role: 'operator',
+      source: 'database', enabled: false, note: null, updatedAt: null,
+    }
+    const ruleB: AdminUserRule = {
+      id: 'rule-b', userId: null, email: 'b@example.test', role: 'operator',
+      source: 'database', enabled: false, note: null, updatedAt: null,
+    }
+    let release: (() => void) | null = null
+    adminApiJsonMock.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve({ adminUsers: [], adminAccess: access })
+    }))
+    const wrapper = mountPanel([ruleA, ruleB])
+    const vm = wrapper.vm as unknown as { toggleRule: (rule: AdminUserRule) => void }
+
+    vm.toggleRule(ruleA)
+    vm.toggleRule(ruleB)
+
+    expect(adminApiJsonMock).toHaveBeenCalledTimes(1)
+    release?.()
   })
 
   it('allows the next toggle once the previous one finished', async () => {
