@@ -79,6 +79,14 @@ function mountAdmin() {
   })
 }
 
+/**
+ * 这组用例守的是「未登录不发权限请求」与「登录后自动补查」两个行为。
+ *
+ * 已知覆盖盲区：真实的无限请求循环（checkAdmin → getSession → onAuthStateChange
+ * → user 被赋新对象 → watch 再次触发）复现不出来——这里的 adminApiJson 是替换过的，
+ * 不会真的回调 supabase 的 auth 监听。所以 watch 必须按 user.id 比较、而不是监听
+ * 整个对象这件事，只有靠注释和真机验证保障，测试抓不到退回原写法。
+ */
 describe('admin view auth guard', () => {
   beforeEach(() => {
     adminApiJsonMock.mockReset()
