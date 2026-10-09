@@ -90,6 +90,9 @@ async function createRule() {
 }
 
 async function applyEnabled(rule: AdminUserRule) {
+  // 一次只处理一条：actionId 只能记住最后一个，若放任并发，先完成的那个请求会在
+  // finally 里把它清空，另一条规则还没回来按钮就已经可以再点一次。
+  if (actionId.value) return
   const next = !rule.enabled
   actionId.value = rule.id
   // 先清掉上一次留下的横幅，否则旧错误会盖住这次的成功提示。
@@ -110,6 +113,9 @@ async function applyEnabled(rule: AdminUserRule) {
 
 /** 停用要二次确认：它是唯一会让当前管理员失去权限的操作。 */
 function toggleRule(rule: AdminUserRule) {
+  // 有操作在途时不再受理：否则连续点击会叠出多个确认弹窗，后一个覆盖前一个的 pending，
+  // 管理员点「确认」执行的是最后那条规则，与眼前看到的弹窗对不上。
+  if (actionId.value) return
   if (rule.enabled) {
     confirm.request(() => applyEnabled(rule))
     return
