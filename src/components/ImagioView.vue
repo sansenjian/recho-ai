@@ -511,53 +511,54 @@ async function handleGenerate() {
               </div>
             <!--
               操作栏：复制、评价、下载、费用、时间。
-              常驻显示而不是悬停才出现：这几个动作是看完图自然想做的事。
+              尺寸与显隐对齐 DSH 的 IconActions：按钮 28px、图标 15px、间距 8px，
+              默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
             -->
-            <div class="mt-2 flex flex-wrap items-center gap-0.5 text-[11px] text-muted-foreground">
-              <Button variant="ghost" size="icon" class="h-6 w-6" :title="t('chat.copy')" :aria-label="t('chat.copy')" @click="copyTurnPrompt(item)">
-                <Copy class="h-3 w-3" />
+            <div class="mt-2 flex flex-wrap items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
+              <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground" :title="t('chat.copy')" :aria-label="t('chat.copy')" @click="copyTurnPrompt(item)">
+                <Copy class="h-[15px] w-[15px]" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-6 w-6"
-                :class="{ 'text-primary': feedback.values.value[item.id] === 1 }"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === 1 }"
                 :title="t('chat.like')"
                 :aria-label="t('chat.like')"
                 :aria-pressed="feedback.values.value[item.id] === 1"
                 @click="rateTurn(item.id, 1)"
               >
-                <ThumbsUp class="h-3 w-3" />
+                <ThumbsUp class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === 1 ? 'currentColor' : 'none'" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-6 w-6"
-                :class="{ 'text-primary': feedback.values.value[item.id] === -1 }"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === -1 }"
                 :title="t('chat.dislike')"
                 :aria-label="t('chat.dislike')"
                 :aria-pressed="feedback.values.value[item.id] === -1"
                 @click="rateTurn(item.id, -1)"
               >
-                <ThumbsDown class="h-3 w-3" />
+                <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === -1 ? 'currentColor' : 'none'" />
               </Button>
               <Button
                 v-if="item.images.length"
                 variant="ghost"
                 size="icon"
-                class="h-6 w-6"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
                 :disabled="downloadingImageId === item.images[0].id"
                 :title="t('common.download')"
                 :aria-label="t('common.download')"
                 @click="downloadGeneratedImage(item.images[0])"
               >
-                <Download class="h-3 w-3" />
+                <Download class="h-[15px] w-[15px]" />
               </Button>
-              <!-- 费用与时间：用左侧分隔线和动作按钮区分开，避免被看成可点的按钮。 -->
-              <span v-if="turnCreditCost(item.images) > 0" class="ml-1 border-l border-border pl-2 tabular-nums">
+              <!-- 费用与时间用左侧分隔线和动作按钮区分开，避免被看成可点的按钮。 -->
+              <span v-if="turnCreditCost(item.images) > 0" class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground">
                 {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
               </span>
-              <span class="ml-1 border-l border-border pl-2 tabular-nums" :title="item.timestamp">
+              <span class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
                 {{ item.timestamp }}
               </span>
             </div>

@@ -119,56 +119,58 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
       <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
 
       <!--
-        操作栏常驻显示而不是只在悬停时出现：这几个动作是读完之后自然想做的事，
-        藏起来要先发现「悬停才会浮出来」才用得上。
+        操作栏对齐 DSH 的 IconActions 规格：按钮 28px、图标 15px、间距 8px，
+        默认透明、悬停或键盘聚焦时才浮现（与 DSH 一致，让正文保持干净）。
+        已评价的图标换成实心，信号不再依赖颜色，鼠标移开也看得出来。
       -->
-      <div class="mt-1.5 flex items-center gap-0.5">
+      <div class="mt-1.5 flex h-7 items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
-          :class="{ 'text-primary': copyFeedback }"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': copyFeedback }"
           :title="t('chat.copy')"
+          :aria-label="t('chat.copy')"
           @click="$emit('copy')"
         >
-          <Check v-if="copyFeedback" class="h-3 w-3" />
-          <Copy v-else class="h-3 w-3" />
+          <Check v-if="copyFeedback" class="h-[15px] w-[15px]" />
+          <Copy v-else class="h-[15px] w-[15px]" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
-          :class="{ 'text-primary': feedback === 1 }"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': feedback === 1 }"
           :title="t('chat.like')"
           :aria-label="t('chat.like')"
           :aria-pressed="feedback === 1"
           @click="$emit('feedback', feedback === 1 ? 0 : 1)"
         >
-          <ThumbsUp class="h-3 w-3" />
+          <ThumbsUp class="h-[15px] w-[15px]" :fill="feedback === 1 ? 'currentColor' : 'none'" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
-          :class="{ 'text-primary': feedback === -1 }"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': feedback === -1 }"
           :title="t('chat.dislike')"
           :aria-label="t('chat.dislike')"
           :aria-pressed="feedback === -1"
           @click="$emit('feedback', feedback === -1 ? 0 : -1)"
         >
-          <ThumbsDown class="h-3 w-3" />
+          <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback === -1 ? 'currentColor' : 'none'" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
           :title="t('chat.retry')"
+          :aria-label="t('chat.retry')"
           @click="$emit('retry')"
         >
-          <RefreshCw class="h-3 w-3" />
+          <RefreshCw class="h-[15px] w-[15px]" />
         </Button>
-        <!-- 时间常驻显示在操作栏右侧，鼠标悬停能看到完整时刻。 -->
-        <span class="ml-1 text-[11px] text-muted-foreground tabular-nums" :title="msg.timestamp">
+        <span class="text-[11px] tabular-nums text-muted-foreground" :title="msg.timestamp">
           {{ displayTimestamp }}
         </span>
       </div>
