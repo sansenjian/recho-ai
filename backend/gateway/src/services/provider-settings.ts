@@ -640,14 +640,27 @@ export async function fetchUpstreamModels(input: {
   let apiKey = (input.apiKey || '').trim()
   if (!apiKey && input.providerId) {
     // 表单没填 key（编辑时留空表示保持原值）就取库里那条解密。
+    //
+    // 用库里的密钥时，地址也必须来自库里那一行：baseUrl 来自请求体，两者若各自
+    // 独立，调用方就能拿 A 行的密钥去请求任意主机——把 baseUrl 换成自己的站点即可
+    // 收走明文密钥，换成内网地址还能探测内网。
     const client = getSupabaseAdminClient()
     if (client) {
-      const { data } = await client
+      const { data, error } = await client
         .from(PROVIDER_SETTINGS_TABLE)
-        .select('api_key_encrypted')
+        .select('api_key_encrypted, base_url')
         .eq('id', input.providerId)
         .is('deleted_at', null)
         .maybeSingle()
+      // 查询失败要说清是数据库的问题：丢掉 error 后调用方只会看到下面那句
+      // 「请先填写 API Key」，把一次故障误导成填写遗漏。
+      if (error) throw error
+      const storedBaseUrl = typeof data?.base_url === 'string' ? data.base_url.trim().replace(/\/+$/, '') : ''
+      if (storedBaseUrl && storedBaseUrl !== baseUrl) {
+        throw new ProviderSettingsError('provider_base_url_mismatch', {
+          publicMessage: '使用已保存的 API Key 时，Base URL 必须与该 Provider 保存的一致。',
+        })
+      }
       const encrypted = typeof data?.api_key_encrypted === 'string' ? data.api_key_encrypted.trim() : ''
       if (encrypted) apiKey = decryptSecret(encrypted)
     }

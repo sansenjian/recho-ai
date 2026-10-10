@@ -530,6 +530,7 @@ export default {
   providerGroupAdvanced: '高级',
   providerGroupAdvancedHint: '低频参数，按需展开。',
   providerEditModelHint: '行内未指定编辑模型时用它兜底。',
+  providerModelEnableAria: '启用第 {index} 个模型',
   providerProbe: '从上游拉取',
   providerProbing: '拉取中…',
   providerProbeDone: '上游共 {total} 个模型，新增 {added} 个。',

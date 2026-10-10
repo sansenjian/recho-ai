@@ -530,6 +530,7 @@ export default {
     providerGroupAdvanced: 'Advanced',
     providerGroupAdvancedHint: 'Low-frequency options.',
     providerEditModelHint: 'Fallback when a row leaves the edit model blank.',
+    providerModelEnableAria: 'Enable model {index}',
     providerProbe: 'Fetch from upstream',
     providerProbing: 'Fetching…',
     providerProbeDone: 'Upstream has {total} models, {added} added.',

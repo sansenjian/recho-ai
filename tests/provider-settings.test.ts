@@ -170,6 +170,29 @@ describe('provider settings service', () => {
       .toEqual([{ id: 'wrapped-model', name: 'Wrapped' }])
   })
 
+  it('refuses to send a stored key to a different host', async () => {
+    // 安全：baseUrl 来自请求体，密钥来自库里。两者若各自独立，调用方就能把 A 行的
+    // 密钥发到自己的站点，或者拿去探测内网。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'should-not-be-reached' }] })
+    await expect(fetchUpstreamModels({
+      baseUrl: 'https://attacker.test/v1',
+      providerId: defaultProviderRow.id,
+    })).rejects.toMatchObject({ message: 'provider_base_url_mismatch' })
+    // 请求根本不该发出去。
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  it('does not block a probe that carries its own key', async () => {
+    // 表单里直接填了密钥时不进库，也就没有「用谁的密钥」的问题，不能被上面的校验误伤。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'ok-model' }] })
+    const probe = await fetchUpstreamModels({
+      baseUrl: 'https://another-host.test/v1',
+      apiKey: 'sk-from-form',
+    })
+    expect(probe.models).toEqual([{ id: 'ok-model', name: 'ok-model' }])
+  })
   it('deduplicates repeated model ids and drops blank ones', async () => {
     const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
     stubUpstream({ data: [{ id: 'dup', name: 'First' }, { id: 'dup', name: 'Second' }, { id: '' }] })
