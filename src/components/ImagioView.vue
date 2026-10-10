@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
+import { formatMessageTime } from '../utils/time'
+import { imageDownloadFileName } from '../lib/image-download-name'
 import { useI18n } from 'vue-i18n'
-import { Plus, X, Sparkles } from '@lucide/vue'
+import { Plus, X, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
   clipboardImageFile,
   compressReferenceImageDataUrl,
@@ -25,6 +27,8 @@ import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
+import { useMessageFeedback } from '../composables/useMessageFeedback'
+import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
@@ -94,7 +98,125 @@ const conversationItems = computed(() => {
   return [...groups.values()]
 })
 
-const { t } = useI18n()
+
+/** 正在下载的图片 id，避免重复点击叠出多个下载。 */
+const downloadingImageId = ref<string | null>(null)
+
+/** 生图结果的评价状态（按生成批次 id 记录）。 */
+const feedback = useMessageFeedback('image')
+
+/**
+ * 一轮生成的费用合计。
+ *
+ * 一轮可能出多张图，每张各自记了 creditCost，这里求和后展示——按单张显示会让
+ * 「这轮花了多少」要自己加。
+ */
+function turnCreditCost(images: GeneratedImage[]) {
+  return images.reduce((sum, image) => sum + (typeof image.creditCost === 'number' ? image.creditCost : 0), 0)
+}
+
+
+/** 刚复制成功的轮次 id，用于把图标短暂换成勾。 */
+const copiedTurnId = ref<string | null>(null)
+
+/**
+ * 复制这一轮的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应当是复制图片本身——用户要的是把这张图贴进聊天窗口或文档。
+ * 复制提示词是另一个需求，改用右键或下载文件名即可拿到。
+ */
+async function copyTurnImage(item: { id: string; images: GeneratedImage[] }) {
+  const image = item.images[0]
+  if (!image) return
+  const ok = await copyGeneratedImage(image)
+  if (!ok) return
+  copiedTurnId.value = item.id
+  window.setTimeout(() => { if (copiedTurnId.value === item.id) copiedTurnId.value = null }, 1500)
+}
+
+/** 评价这一轮生成；再点已选中的那项表示撤销。 */
+async function rateTurn(turnId: string, value: number) {
+  const current = feedback.values.value[turnId] ?? 0
+  await feedback.submit(turnId, current === value ? 0 : value)
+}
+/** 展示成两位小数，避免 0.30000000000000004 这类浮点尾数。 */
+function formatCredits(value: number) {
+  return (Math.round(value * 100) / 100).toString()
+}
+
+
+/**
+ * 复制一张生成的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应该是复制图片本身：用户要的是把这张图贴进聊天窗口或文档，
+ * 而不是拿到当初的提示词。复制提示词的需求更低频，另外提供入口。
+ *
+ * 剪贴板只在安全上下文（https / localhost）可用，且部分浏览器只接受 PNG。
+ * 拿不到就返回 false，由调用方决定是否提示。
+ */
+async function copyGeneratedImage(image: GeneratedImage) {
+  const path = image.storagePath || ''
+  if (!path) return false
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
+  try {
+    const blob = await fetchAuthenticatedImageBlob(path)
+    // 从存储服务取回的不一定是 PNG；剪贴板对格式挑食，统一转一次更稳。
+    const png = blob.type === 'image/png' ? blob : await convertToPng(blob)
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 借 canvas 把任意位图转成 PNG；转换失败时原样返回，让剪贴板自己判断。 */
+async function convertToPng(blob: Blob) {
+  try {
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) return blob
+    context.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob(result => resolve(result ?? blob), 'image/png')
+    })
+  } catch {
+    return blob
+  }
+}
+/**
+ * 下载一张生成的图片。
+ *
+ * 图片是私有的，必须走鉴权代理拿 blob 再存盘：直接把 storagePath 丢给 <a download>
+ * 会拿到 401，而公开 URL 对未登录的访客也不成立。
+ */
+async function downloadGeneratedImage(image: GeneratedImage) {
+  if (downloadingImageId.value) return
+  const path = image.storagePath || ''
+  if (!path) return
+  downloadingImageId.value = image.id
+  try {
+    const objectUrl = await fetchAuthenticatedImageObjectUrl(path)
+    if (!objectUrl) return
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = imageDownloadFileName(image)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    // 交给浏览器读取后再释放，立刻 revoke 会让下载中断。
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+  } catch {
+    // 下载失败不打断浏览，与复制等轻交互的约定一致。
+  } finally {
+    downloadingImageId.value = null
+  }
+}
+
+const { t, locale } = useI18n()
 
 /**
  * 工作台按生成批次分轮，所以镜像对话页的语义：一格 = 一条提问。
@@ -403,7 +525,7 @@ async function handleGenerate() {
           v-for="item in conversationItems"
           :key="item.id"
           :ref="element => setTurnElement(item.id, element as Element | null)"
-          class="conversation-turn"
+          class="conversation-turn group"
         >
           <div class="conversation-user">
 <div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
@@ -437,6 +559,68 @@ async function handleGenerate() {
 <span v-else class="conversation-image-placeholder">{{ t('imagio.imagePending') }}</span>
                 </div>
               </div>
+            <!--
+              操作栏：复制、评价、下载、费用、时间。
+              尺寸与显隐对齐 DSH 的 IconActions：按钮 28px、图标 15px、间距 8px，
+              默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
+            -->
+            <div class="mt-2 flex items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
+              <Button
+                v-if="item.images.length"
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :title="t('imagio.copyImage')"
+                :aria-label="t('imagio.copyImage')"
+                @click="copyTurnImage(item)"
+              >
+                <Check v-if="copiedTurnId === item.id" class="h-[15px] w-[15px]" />
+                <Copy v-else class="h-[15px] w-[15px]" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === 1 }"
+                :title="t('chat.like')"
+                :aria-label="t('chat.like')"
+                :aria-pressed="feedback.values.value[item.id] === 1"
+                @click="rateTurn(item.id, 1)"
+              >
+                <ThumbsUp class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === 1 ? 'currentColor' : 'none'" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === -1 }"
+                :title="t('chat.dislike')"
+                :aria-label="t('chat.dislike')"
+                :aria-pressed="feedback.values.value[item.id] === -1"
+                @click="rateTurn(item.id, -1)"
+              >
+                <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === -1 ? 'currentColor' : 'none'" />
+              </Button>
+              <Button
+                v-if="item.images.length"
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :disabled="downloadingImageId === item.images[0].id"
+                :title="t('common.download')"
+                :aria-label="t('common.download')"
+                @click="downloadGeneratedImage(item.images[0])"
+              >
+                <Download class="h-[15px] w-[15px]" />
+              </Button>
+              <!-- 费用与时间用左侧分隔线和动作按钮区分开，避免被看成可点的按钮。 -->
+              <span v-if="turnCreditCost(item.images) > 0" class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground">
+                {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
+              </span>
+              <span class="text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
+                {{ formatMessageTime(item.timestamp, locale) }}
+              </span>
+            </div>
             </div>
           </div>
         </div>

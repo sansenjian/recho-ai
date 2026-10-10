@@ -111,11 +111,26 @@ describe('formatTurnClock', () => {
     expect(turnClockLocale('fr')).toBe('en-US')
   })
 
-  it('formats a timestamp with the clock of the active locale', () => {
-    expect(formatTurnClock(AT, 'zh')).toBe(
-      new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(Date.parse(AT)),
-    )
-    expect(formatTurnClock(AT, 'zh')).toMatch(/^\d{1,2}:\d{2}/)
+  it('shows only the clock for a message from today', () => {
+    // 同一屏几乎都是今天的消息，重复的日期是噪声。
+    const now = Date.parse('2026-09-28T12:00:00.000Z')
+    const clock = formatTurnClock(AT, 'zh', now)
+    expect(clock).toMatch(/^\d{1,2}:\d{2}$/)
+  })
+
+  it('adds the date for a message from another day', () => {
+    // 否则一串 01:01 之间分不出先后，用户看不出这是今天聊的还是上周的。
+    const now = Date.parse('2026-10-05T12:00:00.000Z')
+    const clock = formatTurnClock(AT, 'zh', now)
+    expect(clock).toContain('月')
+    expect(clock).toMatch(/\d{1,2}:\d{2}/)
+  })
+
+  it('splits on the local calendar day, not on a 24 hour window', () => {
+    // 23:00 与次日 01:00 只差两小时，却分属两天，必须带上日期。
+    const lateNight = '2026-09-28T23:30:00'
+    const nextMorning = Date.parse('2026-09-29T01:00:00')
+    expect(formatTurnClock(lateNight, 'zh', nextMorning)).toContain('月')
   })
 
   it('returns an empty clock for an unparsable timestamp', () => {

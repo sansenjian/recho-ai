@@ -4,28 +4,32 @@ import { useI18n } from 'vue-i18n'
 import type { Message, MessageBlock } from '../types'
 import { getRendered, getRenderedText } from '../utils/markdown'
 import { stripThinking } from '../utils/messageText'
-import { relativeTime } from '../utils/time'
+import { formatMessageTime } from '../utils/time'
 import { extractLinkPreview } from '../utils/linkPreview'
 import ToolActivity from './ToolActivity.vue'
 import ThinkingActivity from './ThinkingActivity.vue'
 import LinkPreviewCard from './LinkPreviewCard.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Copy, Check, RefreshCw } from '@lucide/vue'
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from '@lucide/vue'
 import { cn } from '@/lib/utils'
 
 const props = defineProps<{
   msg: Message
   copyFeedback?: boolean
   assistantIndex?: number
+  /** 当前用户对这条消息的评价：1 好评、-1 差评、0 未评价。 */
+  feedback?: number
 }>()
 
 defineEmits<{
   copy: []
   retry: []
+  /** 传 0 表示撤销评价。 */
+  feedback: [value: number]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const blocks = computed(() => props.msg.blocks ?? [])
 const hasBlocks = computed(() => props.msg.role === 'assistant' && blocks.value.length > 0)
@@ -37,7 +41,8 @@ const shouldShowThinkingPlaceholder = computed(() =>
   !hasThinkingBlock.value,
 )
 const renderedMessage = computed(() => getRendered(props.msg))
-const displayTimestamp = computed(() => relativeTime(props.msg.timestamp))
+// 时间按界面语言与「是否当天」格式化：当天只给时分，跨天补上日期。
+const displayTimestamp = computed(() => formatMessageTime(props.msg.timestamp, locale.value))
 const linkPreview = computed(() => extractLinkPreview(props.msg.content))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
@@ -114,28 +119,61 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 
       <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
 
-      <!-- Action bar -->
-      <div class="mt-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <!--
+        操作栏对齐 DSH 的 IconActions 规格：按钮 28px、图标 15px、间距 8px，
+        默认透明、悬停或键盘聚焦时才浮现（与 DSH 一致，让正文保持干净）。
+        已评价的图标换成实心，信号不再依赖颜色，鼠标移开也看得出来。
+      -->
+      <div class="mt-1.5 flex h-7 items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
-          :class="{ 'text-primary opacity-100': copyFeedback }"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': copyFeedback }"
           :title="t('chat.copy')"
+          :aria-label="t('chat.copy')"
           @click="$emit('copy')"
         >
-          <Check v-if="copyFeedback" class="h-3 w-3" />
-          <Copy v-else class="h-3 w-3" />
+          <Check v-if="copyFeedback" class="h-[15px] w-[15px]" />
+          <Copy v-else class="h-[15px] w-[15px]" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': feedback === 1 }"
+          :title="t('chat.like')"
+          :aria-label="t('chat.like')"
+          :aria-pressed="feedback === 1"
+          @click="$emit('feedback', feedback === 1 ? 0 : 1)"
+        >
+          <ThumbsUp class="h-[15px] w-[15px]" :fill="feedback === 1 ? 'currentColor' : 'none'" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :class="{ 'text-foreground': feedback === -1 }"
+          :title="t('chat.dislike')"
+          :aria-label="t('chat.dislike')"
+          :aria-pressed="feedback === -1"
+          @click="$emit('feedback', feedback === -1 ? 0 : -1)"
+        >
+          <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback === -1 ? 'currentColor' : 'none'" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
           :title="t('chat.retry')"
+          :aria-label="t('chat.retry')"
           @click="$emit('retry')"
         >
-          <RefreshCw class="h-3 w-3" />
+          <RefreshCw class="h-[15px] w-[15px]" />
         </Button>
+        <span class="text-[11px] tabular-nums text-muted-foreground" :title="msg.timestamp">
+          {{ displayTimestamp }}
+        </span>
       </div>
     </div>
   </div>
