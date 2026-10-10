@@ -310,3 +310,42 @@ func TestImageCreditCostPerModelFallsBackWithoutDatabase(t *testing.T) {
 		t.Fatalf("expected positive fallback cost, got %v", got)
 	}
 }
+
+func TestResolveDefaultImageModel(t *testing.T) {
+	// 回退规则必须与 Node 侧一致：先认配置值，它不可见才回退到可见列表首项，
+	// 最后才考虑 Provider 的首个模型。原先 Go 侧无条件取 providerModels[0]，
+	// 等于让「生图模型」这个设置彻底失效——管理员改多少次都会被覆盖。
+	available := []ImageModelOption{{ID: "visible-a"}, {ID: "visible-b"}}
+	provider := []ImageModelOption{{ID: "provider-x"}, {ID: "provider-y"}}
+
+	t.Run("keeps the configured model when it is visible", func(t *testing.T) {
+		if got := resolveDefaultImageModel("visible-b", available, provider); got != "visible-b" {
+			t.Errorf("got %q, want visible-b", got)
+		}
+	})
+
+	t.Run("falls back to the first visible model when the configured one is hidden", func(t *testing.T) {
+		if got := resolveDefaultImageModel("provider-x", available, provider); got != "visible-a" {
+			t.Errorf("got %q, want visible-a", got)
+		}
+	})
+
+	t.Run("falls back to the first provider model when nothing is visible", func(t *testing.T) {
+		if got := resolveDefaultImageModel("", nil, provider); got != "provider-x" {
+			t.Errorf("got %q, want provider-x", got)
+		}
+	})
+
+	t.Run("trims the configured value before comparing", func(t *testing.T) {
+		// 存库的值可能带空白，不 trim 会被判成不可见而白白回退。
+		if got := resolveDefaultImageModel("  visible-b  ", available, provider); got != "visible-b" {
+			t.Errorf("got %q, want visible-b", got)
+		}
+	})
+
+	t.Run("returns the configured value when nothing else is known", func(t *testing.T) {
+		if got := resolveDefaultImageModel("only-option", nil, nil); got != "only-option" {
+			t.Errorf("got %q, want only-option", got)
+		}
+	})
+}

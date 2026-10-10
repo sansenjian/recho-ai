@@ -127,14 +127,17 @@ describe('app settings service', () => {
     }]
     const { getAppSettings, publicAppConfig } = await import('../backend/gateway/src/services/app-settings')
 
-    await expect(getAppSettings({ refresh: true })).resolves.toMatchObject({
+    const settings = await getAppSettings({ refresh: true })
+    expect(settings).toMatchObject({
       imageCreditCostPerImage: 0.25,
       imageAnalyticsEnabled: true,
-      imageResponsesModel: 'gpt-image-2',
       imageResponsesImageModel: 'custom-image-model',
       imageEventsEnabled: true,
       canvasContextEnabled: true,
     })
+    // image_responses_model 已弃用：库里残留的行要被整行跳过，而不是读进某个字段。
+    // 这里特意在 rows 里放一条，确保它不会被悄悄带回配置里。
+    expect(settings).not.toHaveProperty('imageResponsesModel')
 
     const publicConfig = await publicAppConfig()
     expect(publicConfig).toEqual({
@@ -160,6 +163,21 @@ describe('app settings service', () => {
       'imageEventsEnabled',
       'imageModelCreditCosts',
     ])
+  })
+
+  it('ignores a leftover image_responses_model row entirely', async () => {
+    // 弃用后库里可能还留着这一行。它不能被读进任何字段——上面那条用例同时提供了
+    // image_responses_image_model，后者会覆盖前者，会把「读回已弃用键」这种回归
+    // 掩盖掉。这里只放已弃用的键，一旦被读回就会直接暴露。
+    appSettingRows = [
+      { key: 'image_responses_model', value: 'stale-model' },
+    ]
+    const { getAppSettings } = await import('../backend/gateway/src/services/app-settings')
+
+    const settings = await getAppSettings({ refresh: true })
+
+    expect(settings).not.toHaveProperty('imageResponsesModel')
+    expect(settings.imageResponsesImageModel).not.toBe('stale-model')
   })
 
   it('loads per-model image prices and exposes them in the public config', async () => {

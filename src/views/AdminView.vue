@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, type Component } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch, type Component } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -118,8 +118,62 @@ function handleDataChanged(source: 'credits' | 'images' | 'announcements' | 'set
   }
 }
 
+/**
+ * 在途的权限检查，连同它是在哪个身份下发起的。
+ *
+ * 复用同一个 Promise 能避免重复请求，但必须记住发起时的 user.id：若 A 的请求还在
+ * 途时切成了 B，直接复用会拿 A 的结果去写 isAdmin——B 是普通用户却看到管理员面板。
+ * 因此结果落地后要核对身份，不一致就再查一次。
+ */
+let pendingAdminCheck: { userId: string; promise: Promise<void> } | null = null
+
 async function checkAdmin() {
+  const userId = user.value?.id ?? null
+
+  // 未登录没有身份可言，直接按「无权限」落定，不占用在途标记。
+  if (!userId) {
+    pendingAdminCheck = null
+    await runAdminCheck()
+    return
+  }
+
+  if (pendingAdminCheck) {
+    // 同一个身份在途：复用它。
+    if (pendingAdminCheck.userId === userId) {
+      await pendingAdminCheck.promise
+      return
+    }
+    // 身份已经变了：等旧的收尾（它的结果会被下面这次覆盖），再为新身份重查。
+    await pendingAdminCheck.promise.catch(() => {})
+  }
+
+  const entry = { userId, promise: runAdminCheck() }
+  pendingAdminCheck = entry
+  try {
+    await entry.promise
+  } finally {
+    if (pendingAdminCheck === entry) pendingAdminCheck = null
+  }
+
+  // 查询期间身份又变了：这次的结果属于旧身份，不能留给新身份用。
+  if ((user.value?.id ?? null) !== userId) await checkAdmin()
+}
+
+async function runAdminCheck() {
   errorMessage.value = ''
+
+  // 未登录时不必问权限：adminApiJson 会因为没有 access token 直接抛「请先登录」，
+  // 那个错误被下面的 catch 收成 errorMessage 后，看起来就像「没权限」——两件事被
+  // 混在一起，排查时会往权限配置上白费功夫。
+  //
+  // 这里先认登录状态，并且不把 adminChecked 置位：等用户登录后 watch 会重新触发，
+  // 那时才真正去问服务端。若此时置位，界面会停在「请登录」且不再自愈，只能手动刷新。
+  if (!user.value) {
+    isAdmin.value = false
+    currentAdminRole.value = 'operator'
+    return
+  }
+
   adminChecked.value = false
   try {
     const data = await adminApiJson<{ admin: boolean; currentAdminRole?: AdminRole | null }>('/api/admin/credits/me')
@@ -136,6 +190,23 @@ async function checkAdmin() {
 onMounted(async () => {
   await initAuth()
   await checkAdmin()
+})
+
+/**
+ * 登录状态变化后重新问一次权限。
+ *
+ * 原先只在 onMounted 查一次：用户在这个页面完成登录时，user 变了但没人再查，
+ * 页面会一直停在「请登录」，非刷新不可。登出同理——不清掉 isAdmin 的话，
+ * 面板会继续以管理员身份渲染。
+ *
+ * 必须按「有没有登录」这个布尔量来比，不能直接 watch(user)：Supabase 每次
+ * 刷新令牌都会给 user 赋一个内容相同的新对象，引用一变就触发，而 checkAdmin
+ * 自己又要调 getSession() → 又触发一次 onAuthStateChange，于是请求被反复中止
+ * 重发，页面永远停在「正在检查权限」。
+ */
+watch(() => user.value?.id ?? null, (userId, previous) => {
+  if (userId === previous) return
+  void checkAdmin()
 })
 </script>
 
@@ -173,8 +244,14 @@ onMounted(async () => {
         <h1 class="text-base font-semibold">{{ t(`nav.${activeView}`) }}</h1>
       </header>
 
-      <div v-if="!isAuthReady || !adminChecked" class="flex min-h-[400px] flex-col items-center justify-center gap-3 text-center"><span class="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary" /><strong>{{ t('auth.checking') }}</strong></div>
+      <!--
+        顺序不能颠倒：先认「认证是否就绪」，再认「登录与否」，最后才是「权限检查是否跑完」。
+        未登录时 checkAdmin 会直接返回而不置位 adminChecked，若把 !adminChecked 排在前面，
+        页面会永远停在加载中。
+      -->
+      <div v-if="!isAuthReady" class="flex min-h-[400px] flex-col items-center justify-center gap-3 text-center"><span class="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary" /><strong>{{ t('auth.checking') }}</strong></div>
       <div v-else-if="!user" class="flex min-h-[400px] flex-col items-center justify-center gap-3 text-center"><strong>{{ t('auth.loginRequired') }}</strong><RouterLink to="/image" class="inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-[var(--surface)] px-3 text-[13px] font-medium text-[var(--text-primary)] no-underline">{{ t('auth.loginLink') }}</RouterLink></div>
+      <div v-else-if="!adminChecked" class="flex min-h-[400px] flex-col items-center justify-center gap-3 text-center"><span class="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary" /><strong>{{ t('auth.checking') }}</strong></div>
       <div v-else-if="!isAdmin" class="flex min-h-[400px] flex-col items-center justify-center gap-3 text-center"><strong>{{ errorMessage || t('auth.noAccess') }}</strong><span class="text-[var(--text-muted)]">{{ userEmail }}</span></div>
 
       <main v-else class="mx-auto w-full max-w-[1400px] p-6 max-md:p-4">

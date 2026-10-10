@@ -44,11 +44,11 @@ type providerModelOption struct {
 }
 
 type PublicAppConfig struct {
-	ChatModels              []ChatModelOption  `json:"chatModels"`
-	ImageEventsEnabled      bool               `json:"imageEventsEnabled"`
-	CanvasContextEnabled    bool               `json:"canvasContextEnabled"`
-	GuestGenerationEnabled  bool               `json:"guestGenerationEnabled"`
-	ImageCreditCostPerImage float64            `json:"imageCreditCostPerImage"`
+	ChatModels              []ChatModelOption `json:"chatModels"`
+	ImageEventsEnabled      bool              `json:"imageEventsEnabled"`
+	CanvasContextEnabled    bool              `json:"canvasContextEnabled"`
+	GuestGenerationEnabled  bool              `json:"guestGenerationEnabled"`
+	ImageCreditCostPerImage float64           `json:"imageCreditCostPerImage"`
 	// ImageModelCreditCosts 是兜底价之外的按模型覆盖价；未命中覆盖价的模型回退
 	// ImageCreditCostPerImage。形状与 Node 侧 publicAppConfig 保持一致（数组）。
 	ImageModelCreditCosts []ImageModelCreditCostEntry `json:"imageModelCreditCosts"`
@@ -154,9 +154,18 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 		providerImageModels = environmentImageModels()
 	}
 	cfg.AvailableImageModels = mergeImageModels(providerImageModels, cfg.AvailableImageModels)
-	if len(providerImageModels) > 0 {
-		cfg.DefaultImageModel = providerImageModels[0].ID
-	}
+
+	// 默认模型要落在可见列表内，配的值可用就保留它，不可用才回退到列表首项。
+	//
+	// 这里原先无条件取 providerImageModels[0]，等于让「生图模型」这个设置彻底失效：
+	// 管理员改多少次都会被覆盖，而前台展示的默认选中项也就永远跟配置无关。
+	// 回退规则必须与 Node 侧一致——两边算出不同的默认值，用户看到的和实际选中的
+	// 就不是同一个模型了。
+	cfg.DefaultImageModel = resolveDefaultImageModel(
+		cfg.DefaultImageModel,
+		cfg.AvailableImageModels,
+		providerImageModels,
+	)
 
 	chatModels, err := s.loadChatModels(ctx)
 	if err != nil {
@@ -306,6 +315,30 @@ func environmentImageModels() []ImageModelOption {
 		return nil
 	}
 	return []ImageModelOption{{ID: model, Name: model}}
+}
+
+// resolveDefaultImageModel 挑出前台默认选中的生图模型。
+//
+// 顺序与 Node 侧 resolveDefaultImageModel 保持一致：先认配置值，它不在可见列表里
+// 才回退到可见列表首项，最后才考虑 Provider 的首个模型。两边算出不同的默认值，
+// 界面显示的选中项就会和实际使用的模型对不上。
+//
+// 注意这个值只服务站内前台。外部 OpenAI 兼容接口必须由调用方显式传 model，
+// 不读这里（见 handler.validateRequestedModel）。
+func resolveDefaultImageModel(configured string, available, providerModels []ImageModelOption) string {
+	want := normalizeModelName(configured, "")
+	for _, model := range available {
+		if model.ID == want {
+			return want
+		}
+	}
+	if len(available) > 0 {
+		return available[0].ID
+	}
+	if len(providerModels) > 0 {
+		return providerModels[0].ID
+	}
+	return want
 }
 
 func mergeImageModels(primary, fallback []ImageModelOption) []ImageModelOption {

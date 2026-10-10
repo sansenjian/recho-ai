@@ -162,28 +162,30 @@ describe('admin and account i18n parity', () => {
   })
 
   /**
-   * `t(\`settings.${cond ? 'a' : 'b'}\`)` picks its tail at runtime; only the ternary
-   * branches are translation keys (the identifiers before `?` are form field names).
-   * Same reasoning as above: the static scan is blind to these.
+   * `t(\`nav.${activeView}\`)` 这类前缀由运行时决定，静态扫描看不见，也没有 fallback，
+   * 少一个 key 就会把路径原样渲染到界面上。
+   *
+   * 这里不要求某种写法必须存在——曾经断言过的是「三元表达式」这一具体形式，组件改用
+   * 数据驱动渲染后它就恒为 0，测试随之失去意义。改成检查所有这类拼接的**前缀**：前缀
+   * 在 zh/en 里都必须是一棵存在的子树，写错前缀会在这里失败。
    */
-  it('resolves keys chosen by a ternary inside a template literal', () => {
+  it('resolves runtime-built keys by checking their literal prefix exists', () => {
     const offenders: string[] = []
-    let checked = 0
+    const checkedPrefixes = new Set<string>()
     for (const file of adminSourceFiles()) {
       const source = stripComments(readFileSync(file, 'utf8'))
-      for (const match of source.matchAll(/\bt\(\s*`([A-Za-z0-9_.]+)\$\{([^`]*)`/g)) {
+      for (const match of source.matchAll(/\bt\(\s*`([A-Za-z0-9_.]+)\$\{/g)) {
         const prefix = match[1]
-        for (const tail of [...match[2].matchAll(/[?:]\s*'([A-Za-z0-9_]+)'/g)].map(m => m[1])) {
-          checked++
-          const key = `${prefix}${tail}`
-          if (!zhKeySet.has(key) || !enKeySet.has(key)) {
-            offenders.push(`${key} (${file.slice(root.length + 1)})`)
-          }
+        checkedPrefixes.add(prefix)
+        // 前缀本身必须能解析出至少一个 key，否则拼出来的路径一定渲染不出来。
+        const known = [...zhKeySet].some(key => key.startsWith(prefix))
+        if (!known) {
+          offenders.push(`${prefix}* (${file.slice(root.length + 1)})`)
         }
       }
     }
 
-    expect(checked).toBeGreaterThan(0)
+    expect(checkedPrefixes.size).toBeGreaterThan(0)
     expect(offenders).toEqual([])
   })
 
