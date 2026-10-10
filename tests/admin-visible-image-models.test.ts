@@ -61,6 +61,7 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
       }
       if (table === 'provider_settings') {
         const chain: Record<string, unknown> = {
+          is: vi.fn(() => chain),
           order: vi.fn(() => chain),
           then: (resolve: (value: unknown) => void) => resolve({ data: providerSettingRows, error: null }),
         }

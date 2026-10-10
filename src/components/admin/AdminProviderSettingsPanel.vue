@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
+import { useConfirmAction } from '../../composables/useConfirmAction'
 import { adminErrorMessage } from '../../utils/admin-format'
 import { providerModelCatalogRows } from '../../utils/admin-providers'
 import AdminField from './AdminField.vue'
 import AdminSettingsGroup from './AdminSettingsGroup.vue'
 import AdminSettingsSection from './AdminSettingsSection.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 import type {
   AdminProviderModel,
   AdminProviderSetting,
@@ -137,6 +139,43 @@ function providerCompatibilityLabel(provider: AdminProviderSetting) {
   if (provider.imageCompatibilityMode === 'openai') return t('settings.providerCompatOpenai')
   if (provider.imageCompatibilityMode === 'lucen') return 'Lucen / sub2api'
   return t('settings.providerCompatAuto')
+}
+
+/** 删除确认：删掉后该 Provider 立刻从列表与生图链路消失，所以要二次确认。 */
+const confirm = useConfirmAction()
+const deletingId = ref<string | null>(null)
+
+/**
+ * 软删除一个 Provider。
+ *
+ * 只对数据库来源的行可用：环境变量兜底的 Provider 没有表记录，它的启停由部署
+ * 配置决定，后台不该改写它。
+ */
+function requestDeleteProvider(provider: AdminProviderSetting) {
+  if (!props.canManage) return emit('error', t('settings.onlySeniorCanManage'))
+  if (provider.source !== 'database') return
+  if (deletingId.value) return
+  confirm.request(() => deleteProvider(provider))
+}
+
+async function deleteProvider(provider: AdminProviderSetting) {
+  deletingId.value = provider.id
+  emit('clear')
+  try {
+    const data = await adminApiJson<{ providerSettings: AdminProviderSettingsState }>(
+      `/api/admin/settings/providers/${encodeURIComponent(provider.id)}`,
+      { method: 'DELETE' },
+    )
+    emit('saved', data.providerSettings)
+    // 删掉的正是正在编辑的那条时清空表单，否则保存会打到已下线的记录上。
+    if (providerForm.value.id === provider.id) resetProviderForm(providerForm.value.kind)
+    emit('notice', t('settings.providerDeleted', { name: provider.name }))
+    emit('dataChanged')
+  } catch (error) {
+    emit('error', adminErrorMessage(error, t('feedback.providerDeleteFailed')))
+  } finally {
+    deletingId.value = null
+  }
 }
 
 async function saveProvider() {
@@ -272,5 +311,13 @@ async function saveProvider() {
     <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
     <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.providerTable.kind'),t('settings.providerTable.name'),t('settings.providerTable.models'),t('settings.providerTable.compat'),t('settings.providerTable.key'),t('settings.providerTable.status'),t('settings.providerTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ t('settings.providerPriority') }} {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || t('settings.providerApiKeyConfigured') : t('settings.providerApiKeyUnconfigured') }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !props.canManage || formBusy" @click="editProvider(provider)">{{ t('common.edit') }}</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.providerNoRows') }}</td></tr></tbody></table></div>
     <div class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border"><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Image Providers</span><strong class="block text-xl">{{ imageProviderRows.length }}</strong></div><div class="bg-[var(--surface)] p-3"><span class="text-[11px] text-[var(--text-muted)]">Chat Providers</span><strong class="block text-xl">{{ chatProviderRows.length }}</strong></div></div>
+    <ConfirmDialog
+      v-model:open="confirm.open.value"
+      :title="t('settings.confirmDeleteProviderTitle')"
+      :description="t('settings.confirmDeleteProviderDetail')"
+      :confirm-label="t('settings.confirmDeleteProviderAction')"
+      destructive
+      @confirm="confirm.confirm()"
+    />
   </div>
 </template>

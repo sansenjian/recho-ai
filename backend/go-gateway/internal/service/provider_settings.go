@@ -80,6 +80,8 @@ var imageProviderQuery = fmt.Sprintf(`
 	from public.provider_settings ps
 	where ps.kind = 'image'
 		and ps.enabled = true
+		-- 软删除：后台删掉的行仍留在表里，不能继续参与生图。
+		and ps.deleted_at is null
 		and %s
 	order by ps.priority asc, ps.updated_at desc
 `, imageProviderEncryptedAPIKeySQL, imageProviderLegacyAPIKeySQL, imageProviderAPIKeyFilterSQL())

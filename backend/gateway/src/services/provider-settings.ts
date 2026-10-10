@@ -602,6 +602,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
       .order('kind', { ascending: true })
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
+      .is('deleted_at', null)
 
     const fallbackMode = modelColumnFallbackMode(error)
     if (fallbackMode) {
@@ -611,6 +612,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
         .order('kind', { ascending: true })
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
       data = legacy.data
       error = legacy.error
       if (modelColumnFallbackMode(error)) {
@@ -620,6 +622,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
           .order('kind', { ascending: true })
           .order('priority', { ascending: true })
           .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
         data = minimal.data
         error = minimal.error
       }
@@ -742,6 +745,55 @@ export async function updateProviderSetting(providerId: string, input: Record<st
   return providerFromRow(data as unknown as Record<string, unknown>)
 }
 
+
+/**
+ * 软删除一个 Provider。
+ *
+ * 不真删行：provider_settings 里存着加密后的密钥，真删之后「谁在何时下线了它」
+ * 无从追溯，误删也无法恢复。这里只写 deleted_at/deleted_by，列表查询与生图链路
+ * 都按 deleted_at is null 过滤，所以对使用者而言它立刻消失。
+ *
+ * 环境变量兜底的 Provider 没有数据库行，不在本函数的处理范围内——它们的启停由
+ * 部署配置决定，不该由后台界面改写。
+ */
+export async function deleteProviderSetting(providerId: string, adminUser: RequestUser) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(providerId)) {
+    throw new ProviderSettingsError('invalid_provider_id')
+  }
+
+  const client = getSupabaseAdminClient()
+  if (!client) throw new ProviderSettingsError('provider_settings_unavailable', {
+    status: 503,
+    publicMessage: 'Provider 配置服务暂时不可用。',
+  })
+
+  // 已删除的行不该被再次删除：重复调用会改写 deleted_at，让审计时间失真。
+  const existing = await client
+    .from(PROVIDER_SETTINGS_TABLE)
+    .select('id, deleted_at')
+    .eq('id', providerId)
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (existing.error) throw existing.error
+  if (!existing.data) throw new ProviderSettingsError('invalid_provider_id')
+
+  const { error } = await client
+    .from(PROVIDER_SETTINGS_TABLE)
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: adminUser.id,
+      updated_at: new Date().toISOString(),
+      updated_by: adminUser.id,
+      // 停掉它，避免任何仍然只按 enabled 过滤的旧查询继续命中。
+      enabled: false,
+    })
+    .eq('id', providerId)
+    .is('deleted_at', null)
+  if (error) throw error
+
+  providerSettingsCache = null
+}
+
 export async function getRuntimeChatProvider(
   model: string,
   options: { strict?: boolean } = {},
@@ -766,6 +818,7 @@ export async function getRuntimeChatProvider(
       .not('api_key_encrypted', 'is', null)
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
+      .is('deleted_at', null)
 
     const fallbackMode = modelColumnFallbackMode(error)
     if (fallbackMode) {
@@ -777,6 +830,7 @@ export async function getRuntimeChatProvider(
         .not('api_key_encrypted', 'is', null)
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
       data = legacy.data
       error = legacy.error
       if (modelColumnFallbackMode(error)) {
@@ -788,6 +842,7 @@ export async function getRuntimeChatProvider(
           .not('api_key_encrypted', 'is', null)
           .order('priority', { ascending: true })
           .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
         data = minimal.data
         error = minimal.error
       }
