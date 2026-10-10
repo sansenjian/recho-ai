@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { Message, MessageBlock } from '../types'
 import { getRendered, getRenderedText } from '../utils/markdown'
 import { stripThinking } from '../utils/messageText'
-import { relativeTime } from '../utils/time'
+import { formatMessageTime } from '../utils/time'
 import { extractLinkPreview } from '../utils/linkPreview'
 import ToolActivity from './ToolActivity.vue'
 import ThinkingActivity from './ThinkingActivity.vue'
@@ -29,7 +29,7 @@ defineEmits<{
   feedback: [value: number]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const blocks = computed(() => props.msg.blocks ?? [])
 const hasBlocks = computed(() => props.msg.role === 'assistant' && blocks.value.length > 0)
@@ -41,7 +41,8 @@ const shouldShowThinkingPlaceholder = computed(() =>
   !hasThinkingBlock.value,
 )
 const renderedMessage = computed(() => getRendered(props.msg))
-const displayTimestamp = computed(() => relativeTime(props.msg.timestamp))
+// 时间按界面语言与「是否当天」格式化：当天只给时分，跨天补上日期。
+const displayTimestamp = computed(() => formatMessageTime(props.msg.timestamp, locale.value))
 const linkPreview = computed(() => extractLinkPreview(props.msg.content))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
-import { relativeTime } from '../utils/time'
+import { formatMessageTime } from '../utils/time'
 import { imageDownloadFileName } from '../lib/image-download-name'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
@@ -216,7 +216,7 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   }
 }
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 /**
  * 工作台按生成批次分轮，所以镜像对话页的语义：一格 = 一条提问。
@@ -618,7 +618,7 @@ async function handleGenerate() {
                 {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
               </span>
               <span class="text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
-                {{ relativeTime(item.timestamp) }}
+                {{ formatMessageTime(item.timestamp, locale) }}
               </span>
             </div>
             </div>
