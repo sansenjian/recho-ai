@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { relativeTime } from '../utils/time'
+import { imageDownloadFileName } from '../lib/image-download-name'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles, Copy, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
@@ -149,7 +150,7 @@ async function downloadGeneratedImage(image: GeneratedImage) {
     if (!objectUrl) return
     const link = document.createElement('a')
     link.href = objectUrl
-    link.download = downloadFileName(image)
+    link.download = imageDownloadFileName(image)
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -162,11 +163,6 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   }
 }
 
-/** 文件名用提示词前若干字符，便于在下载目录里认出是哪张图。 */
-function downloadFileName(image: GeneratedImage) {
-  const base = (image.userPrompt || image.prompt || 'image').replace(/[\\/:*?"<>|\n\r]+/g, ' ').trim().slice(0, 40)
-  return `${base || 'image'}-${image.id}.png`
-}
 const { t } = useI18n()
 
 /**
