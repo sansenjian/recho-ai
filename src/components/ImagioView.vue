@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
+import { relativeTime } from '../utils/time'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles, Copy, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
@@ -475,7 +476,7 @@ async function handleGenerate() {
           v-for="item in conversationItems"
           :key="item.id"
           :ref="element => setTurnElement(item.id, element as Element | null)"
-          class="conversation-turn"
+          class="conversation-turn group"
         >
           <div class="conversation-user">
 <div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
@@ -514,7 +515,7 @@ async function handleGenerate() {
               尺寸与显隐对齐 DSH 的 IconActions：按钮 28px、图标 15px、间距 8px，
               默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
             -->
-            <div class="mt-2 flex flex-wrap items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div class="mt-2 flex items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
               <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground" :title="t('chat.copy')" :aria-label="t('chat.copy')" @click="copyTurnPrompt(item)">
                 <Copy class="h-[15px] w-[15px]" />
               </Button>
@@ -558,8 +559,8 @@ async function handleGenerate() {
               <span v-if="turnCreditCost(item.images) > 0" class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground">
                 {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
               </span>
-              <span class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
-                {{ item.timestamp }}
+              <span class="text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
+                {{ relativeTime(item.timestamp) }}
               </span>
             </div>
             </div>
