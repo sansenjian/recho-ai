@@ -576,6 +576,130 @@ async function loadProviderRow(client: any, providerId: string) {
   return response.data as Record<string, unknown> | null
 }
 
+
+/** 从上游拉取模型列表时的响应体形状，见 fetchUpstreamModels 的注释。 */
+export type UpstreamModelProbe = {
+  models: Array<{ id: string; name: string }>
+  /** 实际请求的地址，便于管理员核对打到了哪里。 */
+  endpoint: string
+}
+
+/**
+ * 解析上游 /v1/models 的响应。
+ *
+ * 中转站的返回格式并不统一，实测至少三种：标准 OpenAI 的 {data:[{id}]}、
+ * 裸数组 [{id}]、以及 {models:[...]}。只认第一种会让相当一部分站点「拉不到模型」，
+ * 而管理员无法从界面上分辨是站点不支持还是自己填错了地址。
+ */
+function parseUpstreamModels(payload: unknown): Array<{ id: string; name: string }> {
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { data?: unknown })?.data)
+      ? (payload as { data: unknown[] }).data
+      : Array.isArray((payload as { models?: unknown })?.models)
+        ? (payload as { models: unknown[] }).models
+        : []
+
+  const seen = new Set<string>()
+  const models: Array<{ id: string; name: string }> = []
+  for (const row of rows) {
+    // 每项可能是字符串，也可能是 {id, name} / {model, title} 这类对象。
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>
+    const id = typeof row === 'string'
+      ? row.trim()
+      : String(record.id ?? record.model ?? record.name ?? '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : id
+    models.push({ id, name })
+  }
+  return models
+}
+
+/**
+ * 向某个 Provider 的上游请求模型列表。
+ *
+ * 密钥在后端解密后使用，不下发到浏览器：管理员填的 key 往往能访问该站全部模型，
+ * 让它经由前端发请求既会撞 CORS，也等于把它暴露在页面里。
+ *
+ * 允许传入尚未保存的表单值（baseUrl/apiKey），这样新建 Provider 时就能先试拉。
+ */
+export async function fetchUpstreamModels(input: {
+  baseUrl: string
+  apiKey?: string
+  providerId?: string
+  timeoutMs?: number
+}): Promise<UpstreamModelProbe> {
+  const baseUrl = input.baseUrl.trim().replace(/\/+$/, '')
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    throw new ProviderSettingsError('invalid_provider_base_url', {
+      publicMessage: 'Base URL 需要以 http:// 或 https:// 开头。',
+    })
+  }
+
+  let apiKey = (input.apiKey || '').trim()
+  if (!apiKey && input.providerId) {
+    // 表单没填 key（编辑时留空表示保持原值）就取库里那条解密。
+    //
+    // 用库里的密钥时，地址也必须来自库里那一行：baseUrl 来自请求体，两者若各自
+    // 独立，调用方就能拿 A 行的密钥去请求任意主机——把 baseUrl 换成自己的站点即可
+    // 收走明文密钥，换成内网地址还能探测内网。
+    const client = getSupabaseAdminClient()
+    if (client) {
+      const { data, error } = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select('api_key_encrypted, base_url')
+        .eq('id', input.providerId)
+        .is('deleted_at', null)
+        .maybeSingle()
+      // 查询失败要说清是数据库的问题：丢掉 error 后调用方只会看到下面那句
+      // 「请先填写 API Key」，把一次故障误导成填写遗漏。
+      if (error) throw error
+      const storedBaseUrl = typeof data?.base_url === 'string' ? data.base_url.trim().replace(/\/+$/, '') : ''
+      if (storedBaseUrl && storedBaseUrl !== baseUrl) {
+        throw new ProviderSettingsError('provider_base_url_mismatch', {
+          publicMessage: '使用已保存的 API Key 时，Base URL 必须与该 Provider 保存的一致。',
+        })
+      }
+      const encrypted = typeof data?.api_key_encrypted === 'string' ? data.api_key_encrypted.trim() : ''
+      if (encrypted) apiKey = decryptSecret(encrypted)
+    }
+  }
+  if (!apiKey) {
+    throw new ProviderSettingsError('provider_api_key_required', {
+      publicMessage: '请先填写 API Key，或保存后再拉取。',
+    })
+  }
+
+  const endpoint = baseUrl + '/models'
+  const controller = new AbortController()
+  // 上游可能很慢，但不能无限等；3-30 秒足够拉一次模型列表。
+  const timeout = Math.min(Math.max(input.timeoutMs ?? 15_000, 3_000), 30_000)
+  const timer = setTimeout(() => controller.abort(), timeout)
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new ProviderSettingsError('upstream_models_failed', {
+        publicMessage: '上游返回 ' + response.status + '。请确认 Base URL 与 API Key 是否正确。',
+      })
+    }
+    const payload = await response.json().catch(() => null)
+    return { models: parseUpstreamModels(payload), endpoint }
+  } catch (error) {
+    if (error instanceof ProviderSettingsError) throw error
+    const aborted = (error as { name?: string })?.name === 'AbortError'
+    throw new ProviderSettingsError('upstream_models_failed', {
+      publicMessage: aborted
+        ? '请求上游超时。请确认该站点可访问，或稍后重试。'
+        : '无法连接上游。请确认 Base URL 是否正确、该站点是否可从服务器访问。',
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 export function clearProviderSettingsCache() {
   providerSettingsCache = null
 }
@@ -602,6 +726,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
       .order('kind', { ascending: true })
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
+      .is('deleted_at', null)
 
     const fallbackMode = modelColumnFallbackMode(error)
     if (fallbackMode) {
@@ -611,6 +736,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
         .order('kind', { ascending: true })
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
       data = legacy.data
       error = legacy.error
       if (modelColumnFallbackMode(error)) {
@@ -620,6 +746,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
           .order('kind', { ascending: true })
           .order('priority', { ascending: true })
           .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
         data = minimal.data
         error = minimal.error
       }
@@ -742,6 +869,55 @@ export async function updateProviderSetting(providerId: string, input: Record<st
   return providerFromRow(data as unknown as Record<string, unknown>)
 }
 
+
+/**
+ * 软删除一个 Provider。
+ *
+ * 不真删行：provider_settings 里存着加密后的密钥，真删之后「谁在何时下线了它」
+ * 无从追溯，误删也无法恢复。这里只写 deleted_at/deleted_by，列表查询与生图链路
+ * 都按 deleted_at is null 过滤，所以对使用者而言它立刻消失。
+ *
+ * 环境变量兜底的 Provider 没有数据库行，不在本函数的处理范围内——它们的启停由
+ * 部署配置决定，不该由后台界面改写。
+ */
+export async function deleteProviderSetting(providerId: string, adminUser: RequestUser) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(providerId)) {
+    throw new ProviderSettingsError('invalid_provider_id')
+  }
+
+  const client = getSupabaseAdminClient()
+  if (!client) throw new ProviderSettingsError('provider_settings_unavailable', {
+    status: 503,
+    publicMessage: 'Provider 配置服务暂时不可用。',
+  })
+
+  // 已删除的行不该被再次删除：重复调用会改写 deleted_at，让审计时间失真。
+  const existing = await client
+    .from(PROVIDER_SETTINGS_TABLE)
+    .select('id, deleted_at')
+    .eq('id', providerId)
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (existing.error) throw existing.error
+  if (!existing.data) throw new ProviderSettingsError('invalid_provider_id')
+
+  const { error } = await client
+    .from(PROVIDER_SETTINGS_TABLE)
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: adminUser.id,
+      updated_at: new Date().toISOString(),
+      updated_by: adminUser.id,
+      // 停掉它，避免任何仍然只按 enabled 过滤的旧查询继续命中。
+      enabled: false,
+    })
+    .eq('id', providerId)
+    .is('deleted_at', null)
+  if (error) throw error
+
+  providerSettingsCache = null
+}
+
 export async function getRuntimeChatProvider(
   model: string,
   options: { strict?: boolean } = {},
@@ -766,6 +942,7 @@ export async function getRuntimeChatProvider(
       .not('api_key_encrypted', 'is', null)
       .order('priority', { ascending: true })
       .order('updated_at', { ascending: false })
+      .is('deleted_at', null)
 
     const fallbackMode = modelColumnFallbackMode(error)
     if (fallbackMode) {
@@ -777,6 +954,7 @@ export async function getRuntimeChatProvider(
         .not('api_key_encrypted', 'is', null)
         .order('priority', { ascending: true })
         .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
       data = legacy.data
       error = legacy.error
       if (modelColumnFallbackMode(error)) {
@@ -788,6 +966,7 @@ export async function getRuntimeChatProvider(
           .not('api_key_encrypted', 'is', null)
           .order('priority', { ascending: true })
           .order('updated_at', { ascending: false })
+        .is('deleted_at', null)
         data = minimal.data
         error = minimal.error
       }

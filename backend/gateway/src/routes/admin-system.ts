@@ -18,6 +18,8 @@ import {
   createProviderSetting,
   listProviderSettings,
   updateProviderSetting,
+  deleteProviderSetting,
+  fetchUpstreamModels,
 } from '../services/provider-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
@@ -166,6 +168,44 @@ router.patch('/admin/settings/providers/:providerId', async (req: Request, res: 
   } catch (err) {
     console.error('[admin-settings] provider update failed:', safeErrorDetail(err))
     const response = adminSystemErrorResponse(err, 'Provider 配置更新失败，请稍后重试。')
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.post('/admin/settings/providers/models/probe', async (req: Request, res: Response) => {
+  try {
+    const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
+    const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown; providerId?: unknown; timeoutMs?: unknown }
+    const probe = await fetchUpstreamModels({
+      baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
+      apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
+      providerId: typeof body.providerId === 'string' ? body.providerId : undefined,
+      timeoutMs: typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+    })
+    res.json(probe)
+  } catch (err) {
+    console.error('[admin-settings] upstream model probe failed:', safeErrorDetail(err))
+    const response = adminSystemErrorResponse(err, '拉取上游模型失败，请稍后重试。')
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+router.delete('/admin/settings/providers/:providerId', async (req: Request, res: Response) => {
+  try {
+    const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
+    await deleteProviderSetting(routeParam(req.params.providerId), adminUser)
+    const providerSettings = await listProviderSettings({ refresh: true })
+    res.json({
+      providerSettings: {
+        providers: providerSettings.providers,
+        tableAvailable: providerSettings.tableAvailable,
+      },
+    })
+  } catch (err) {
+    console.error('[admin-settings] provider delete failed:', safeErrorDetail(err))
+    const response = adminSystemErrorResponse(err, 'Provider 删除失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })

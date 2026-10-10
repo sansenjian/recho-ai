@@ -59,6 +59,7 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
       })
       const chain: Record<string, unknown> = {
         eq: vi.fn(() => chain),
+        is: vi.fn(() => chain),
         not: vi.fn(() => chain),
         order: vi.fn(() => chain),
         then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) =>
@@ -113,18 +114,31 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
             updated_at: row.updated_at,
             ...row,
           }
-          return {
-            eq: vi.fn(() => ({
-              select: vi.fn(() => ({
-                maybeSingle: vi.fn(async () => ({ data: saved, error: null })),
-              })),
+          // 软删除走 update(...).eq(..).is(..)：eq 之后还要能接 is，
+          // 所以链上共用同一个对象，并且需要一个 then 让 await 能直接结束。
+          const updateChain: Record<string, unknown> = {
+            eq: vi.fn(() => updateChain),
+            is: vi.fn(() => updateChain),
+            select: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => ({ data: saved, error: null })),
             })),
+            then: (resolve: (value: unknown) => void) => resolve({ data: null, error: null }),
           }
+          return updateChain
         }),
       }
     },
   }),
 }))
+
+
+/** 让下一次上游请求返回给定 payload；fetchUpstreamModels 用的是全局 fetch。 */
+function stubUpstream(payload: unknown, status = 200) {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })))
+}
 
 describe('provider settings service', () => {
   beforeEach(() => {
@@ -136,6 +150,87 @@ describe('provider settings service', () => {
     vi.resetModules()
   })
 
+  it('parses the standard OpenAI model list shape', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'gpt-image-2.5-flare', object: 'model' }], object: 'list' })
+    const probe = await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk-test' })
+    expect(probe.models).toEqual([{ id: 'gpt-image-2.5-flare', name: 'gpt-image-2.5-flare' }])
+    expect(probe.endpoint).toBe('https://upstream.test/v1/models')
+  })
+
+  it('parses a bare array and a models collection', async () => {
+    // 中转站的返回格式并不统一，只认标准形状会让不少站点「拉不到模型」。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream([{ id: 'bare-model' }])
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'bare-model', name: 'bare-model' }])
+
+    stubUpstream({ models: [{ id: 'wrapped-model', name: 'Wrapped' }] })
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'wrapped-model', name: 'Wrapped' }])
+  })
+
+  it('refuses to send a stored key to a different host', async () => {
+    // 安全：baseUrl 来自请求体，密钥来自库里。两者若各自独立，调用方就能把 A 行的
+    // 密钥发到自己的站点，或者拿去探测内网。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'should-not-be-reached' }] })
+    await expect(fetchUpstreamModels({
+      baseUrl: 'https://attacker.test/v1',
+      providerId: defaultProviderRow.id,
+    })).rejects.toMatchObject({ message: 'provider_base_url_mismatch' })
+    // 请求根本不该发出去。
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  it('does not block a probe that carries its own key', async () => {
+    // 表单里直接填了密钥时不进库，也就没有「用谁的密钥」的问题，不能被上面的校验误伤。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'ok-model' }] })
+    const probe = await fetchUpstreamModels({
+      baseUrl: 'https://another-host.test/v1',
+      apiKey: 'sk-from-form',
+    })
+    expect(probe.models).toEqual([{ id: 'ok-model', name: 'ok-model' }])
+  })
+  it('deduplicates repeated model ids and drops blank ones', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'dup', name: 'First' }, { id: 'dup', name: 'Second' }, { id: '' }] })
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'dup', name: 'First' }])
+  })
+
+  it('requires a usable base url and an api key', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    await expect(fetchUpstreamModels({ baseUrl: 'not-a-url', apiKey: 'sk' }))
+      .rejects.toMatchObject({ message: 'invalid_provider_base_url' })
+    await expect(fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1' }))
+      .rejects.toMatchObject({ message: 'provider_api_key_required' })
+  })
+
+  it('reports a non-2xx upstream response as a probe failure', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ error: 'nope' }, 401)
+    await expect(fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' }))
+      .rejects.toMatchObject({ message: 'upstream_models_failed' })
+  })
+  it('soft-deletes a provider instead of removing the row', async () => {
+    // 真删会丢掉「谁在何时下线了它」，也无法还原；这里确认写的是 deleted_at。
+    providerRows = [defaultProviderRow]
+    const { deleteProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+    await deleteProviderSetting(defaultProviderRow.id, { id: 'admin-1' } as never)
+
+    expect(updatedRow?.deleted_at).toEqual(expect.any(String))
+    expect(updatedRow?.deleted_by).toBe('admin-1')
+    // 同时停用，避免只按 enabled 过滤的旧查询继续命中它。
+    expect(updatedRow?.enabled).toBe(false)
+  })
+
+  it('rejects a malformed provider id before touching the database', async () => {
+    const { deleteProviderSetting } = await import('../backend/gateway/src/services/provider-settings')
+    await expect(deleteProviderSetting('not-a-uuid', { id: 'admin-1' } as never))
+      .rejects.toMatchObject({ message: 'invalid_provider_id' })
+  })
   it('lists database providers without exposing raw api keys', async () => {
     providerRows = [{
       id: '11111111-1111-4111-8111-111111111111',

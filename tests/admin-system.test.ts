@@ -88,16 +88,15 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
                 error: tableErrors[table] ?? null,
               })
             }
-            return {
-              order: vi.fn(() => ({
-                order: vi.fn(() => ({
-                  order: vi.fn(async () => ({
-                    data: providerRows,
-                    error: tableErrors[table] ?? null,
-                  })),
-                })),
-              })),
+            // 服务层的查询链是 select().order().order().order().is()，
+            // 每一步都要能继续接下去，所以链上用同一个对象。
+            const chain: Record<string, unknown> = {
+              order: vi.fn(() => chain),
+              is: vi.fn(() => chain),
+              then: (resolve: (value: unknown) => void) =>
+                resolve({ data: providerRows, error: tableErrors[table] ?? null }),
             }
+            return chain
           }),
         }
       }
