@@ -530,6 +530,9 @@ export default {
     providerGroupAdvanced: 'Advanced',
     providerGroupAdvancedHint: 'Low-frequency options.',
     providerEditModelHint: 'Fallback when a row leaves the edit model blank.',
+    providerProbe: 'Fetch from upstream',
+    providerProbing: 'Fetching…',
+    providerProbeDone: 'Upstream has {total} models, {added} added.',
     providerDelete: 'Delete provider',
     providerDeleted: 'Deleted provider "{name}".',
     providerDeleteAria: 'Delete {name}',
@@ -624,6 +627,7 @@ export default {
     systemFailed: 'Failed to load system status, please try again.',
     providerSaveFailed: 'Failed to save provider config, please try again.',
     providerDeleteFailed: 'Failed to delete the provider. Try again later.',
+    providerProbeFailed: 'Failed to fetch models from upstream.',
   },
   chat: {
     login: 'Log in',

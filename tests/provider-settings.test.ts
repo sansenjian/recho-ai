@@ -131,6 +131,15 @@ vi.mock('../backend/gateway/src/clients/supabase', () => ({
   }),
 }))
 
+
+/** 让下一次上游请求返回给定 payload；fetchUpstreamModels 用的是全局 fetch。 */
+function stubUpstream(payload: unknown, status = 200) {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })))
+}
+
 describe('provider settings service', () => {
   beforeEach(() => {
     providerRows = []
@@ -141,6 +150,47 @@ describe('provider settings service', () => {
     vi.resetModules()
   })
 
+  it('parses the standard OpenAI model list shape', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'gpt-image-2.5-flare', object: 'model' }], object: 'list' })
+    const probe = await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk-test' })
+    expect(probe.models).toEqual([{ id: 'gpt-image-2.5-flare', name: 'gpt-image-2.5-flare' }])
+    expect(probe.endpoint).toBe('https://upstream.test/v1/models')
+  })
+
+  it('parses a bare array and a models collection', async () => {
+    // 中转站的返回格式并不统一，只认标准形状会让不少站点「拉不到模型」。
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream([{ id: 'bare-model' }])
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'bare-model', name: 'bare-model' }])
+
+    stubUpstream({ models: [{ id: 'wrapped-model', name: 'Wrapped' }] })
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'wrapped-model', name: 'Wrapped' }])
+  })
+
+  it('deduplicates repeated model ids and drops blank ones', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ data: [{ id: 'dup', name: 'First' }, { id: 'dup', name: 'Second' }, { id: '' }] })
+    expect((await fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' })).models)
+      .toEqual([{ id: 'dup', name: 'First' }])
+  })
+
+  it('requires a usable base url and an api key', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    await expect(fetchUpstreamModels({ baseUrl: 'not-a-url', apiKey: 'sk' }))
+      .rejects.toMatchObject({ message: 'invalid_provider_base_url' })
+    await expect(fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1' }))
+      .rejects.toMatchObject({ message: 'provider_api_key_required' })
+  })
+
+  it('reports a non-2xx upstream response as a probe failure', async () => {
+    const { fetchUpstreamModels } = await import('../backend/gateway/src/services/provider-settings')
+    stubUpstream({ error: 'nope' }, 401)
+    await expect(fetchUpstreamModels({ baseUrl: 'https://upstream.test/v1', apiKey: 'sk' }))
+      .rejects.toMatchObject({ message: 'upstream_models_failed' })
+  })
   it('soft-deletes a provider instead of removing the row', async () => {
     // 真删会丢掉「谁在何时下线了它」，也无法还原；这里确认写的是 deleted_at。
     providerRows = [defaultProviderRow]

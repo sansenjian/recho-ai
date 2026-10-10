@@ -530,6 +530,9 @@ export default {
   providerGroupAdvanced: '高级',
   providerGroupAdvancedHint: '低频参数，按需展开。',
   providerEditModelHint: '行内未指定编辑模型时用它兜底。',
+  providerProbe: '从上游拉取',
+  providerProbing: '拉取中…',
+  providerProbeDone: '上游共 {total} 个模型，新增 {added} 个。',
   providerDelete: '删除 Provider',
   providerDeleted: '已删除 Provider「{name}」。',
   providerDeleteAria: '删除 {name}',
@@ -624,6 +627,7 @@ export default {
     systemFailed: '系统状态加载失败，请稍后重试。',
     providerSaveFailed: 'Provider 配置保存失败，请稍后重试。',
   providerDeleteFailed: 'Provider 删除失败，请稍后重试。',
+  providerProbeFailed: '拉取上游模型失败。',
   },
   chat: {
     login: '登录',

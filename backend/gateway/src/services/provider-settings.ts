@@ -576,6 +576,117 @@ async function loadProviderRow(client: any, providerId: string) {
   return response.data as Record<string, unknown> | null
 }
 
+
+/** 从上游拉取模型列表时的响应体形状，见 fetchUpstreamModels 的注释。 */
+export type UpstreamModelProbe = {
+  models: Array<{ id: string; name: string }>
+  /** 实际请求的地址，便于管理员核对打到了哪里。 */
+  endpoint: string
+}
+
+/**
+ * 解析上游 /v1/models 的响应。
+ *
+ * 中转站的返回格式并不统一，实测至少三种：标准 OpenAI 的 {data:[{id}]}、
+ * 裸数组 [{id}]、以及 {models:[...]}。只认第一种会让相当一部分站点「拉不到模型」，
+ * 而管理员无法从界面上分辨是站点不支持还是自己填错了地址。
+ */
+function parseUpstreamModels(payload: unknown): Array<{ id: string; name: string }> {
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { data?: unknown })?.data)
+      ? (payload as { data: unknown[] }).data
+      : Array.isArray((payload as { models?: unknown })?.models)
+        ? (payload as { models: unknown[] }).models
+        : []
+
+  const seen = new Set<string>()
+  const models: Array<{ id: string; name: string }> = []
+  for (const row of rows) {
+    // 每项可能是字符串，也可能是 {id, name} / {model, title} 这类对象。
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>
+    const id = typeof row === 'string'
+      ? row.trim()
+      : String(record.id ?? record.model ?? record.name ?? '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : id
+    models.push({ id, name })
+  }
+  return models
+}
+
+/**
+ * 向某个 Provider 的上游请求模型列表。
+ *
+ * 密钥在后端解密后使用，不下发到浏览器：管理员填的 key 往往能访问该站全部模型，
+ * 让它经由前端发请求既会撞 CORS，也等于把它暴露在页面里。
+ *
+ * 允许传入尚未保存的表单值（baseUrl/apiKey），这样新建 Provider 时就能先试拉。
+ */
+export async function fetchUpstreamModels(input: {
+  baseUrl: string
+  apiKey?: string
+  providerId?: string
+  timeoutMs?: number
+}): Promise<UpstreamModelProbe> {
+  const baseUrl = input.baseUrl.trim().replace(/\/+$/, '')
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    throw new ProviderSettingsError('invalid_provider_base_url', {
+      publicMessage: 'Base URL 需要以 http:// 或 https:// 开头。',
+    })
+  }
+
+  let apiKey = (input.apiKey || '').trim()
+  if (!apiKey && input.providerId) {
+    // 表单没填 key（编辑时留空表示保持原值）就取库里那条解密。
+    const client = getSupabaseAdminClient()
+    if (client) {
+      const { data } = await client
+        .from(PROVIDER_SETTINGS_TABLE)
+        .select('api_key_encrypted')
+        .eq('id', input.providerId)
+        .is('deleted_at', null)
+        .maybeSingle()
+      const encrypted = typeof data?.api_key_encrypted === 'string' ? data.api_key_encrypted.trim() : ''
+      if (encrypted) apiKey = decryptSecret(encrypted)
+    }
+  }
+  if (!apiKey) {
+    throw new ProviderSettingsError('provider_api_key_required', {
+      publicMessage: '请先填写 API Key，或保存后再拉取。',
+    })
+  }
+
+  const endpoint = baseUrl + '/models'
+  const controller = new AbortController()
+  // 上游可能很慢，但不能无限等；3-30 秒足够拉一次模型列表。
+  const timeout = Math.min(Math.max(input.timeoutMs ?? 15_000, 3_000), 30_000)
+  const timer = setTimeout(() => controller.abort(), timeout)
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + apiKey, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new ProviderSettingsError('upstream_models_failed', {
+        publicMessage: '上游返回 ' + response.status + '。请确认 Base URL 与 API Key 是否正确。',
+      })
+    }
+    const payload = await response.json().catch(() => null)
+    return { models: parseUpstreamModels(payload), endpoint }
+  } catch (error) {
+    if (error instanceof ProviderSettingsError) throw error
+    const aborted = (error as { name?: string })?.name === 'AbortError'
+    throw new ProviderSettingsError('upstream_models_failed', {
+      publicMessage: aborted
+        ? '请求上游超时。请确认该站点可访问，或稍后重试。'
+        : '无法连接上游。请确认 Base URL 是否正确、该站点是否可从服务器访问。',
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 export function clearProviderSettingsCache() {
   providerSettingsCache = null
 }

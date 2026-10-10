@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2 } from '@lucide/vue'
+import { Download, Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
 import { useConfirmAction } from '../../composables/useConfirmAction'
 import { adminErrorMessage } from '../../utils/admin-format'
@@ -120,6 +120,56 @@ function editProvider(provider: AdminProviderSetting) {
   }
 }
 
+
+/** 拉取上游模型时的状态，用于禁用按钮并给出反馈。 */
+const probing = ref(false)
+
+/**
+ * 从上游 /v1/models 拉取模型并合并进当前目录。
+ *
+ * 已存在的模型保留管理员填过的展示名与开关状态，只做补全：上游新增的模型默认启用，
+ * 已经手工调过的不会被覆盖——否则每次拉取都会把配置重置一遍。
+ */
+async function probeUpstreamModels() {
+  if (probing.value || formBusy.value) return
+  if (!props.canManage) return emit('error', t('settings.onlySeniorCanManage'))
+  probing.value = true
+  emit('clear')
+  try {
+    const data = await adminApiJson<{ models: Array<{ id: string; name: string }>; endpoint: string }>(
+      '/api/admin/settings/providers/models/probe',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          baseUrl: providerForm.value.baseUrl,
+          apiKey: providerForm.value.apiKey,
+          providerId: providerForm.value.id || undefined,
+          timeoutMs: providerForm.value.timeoutMs,
+        }),
+      },
+    )
+    const existing = new Map(providerForm.value.modelCatalog.map(model => [model.id.trim(), model]))
+    let added = 0
+    for (const model of data.models) {
+      if (existing.has(model.id)) continue
+      providerForm.value.modelCatalog.push({
+        id: model.id,
+        name: model.name,
+        enabled: true,
+        editModel: null,
+        supportsTransparent: false,
+      })
+      added++
+    }
+    // 表单里可能只有空行，拉取后要清掉，否则会留一行没填完的空白。
+    providerForm.value.modelCatalog = providerForm.value.modelCatalog.filter(model => model.id.trim())
+    emit('notice', t('settings.providerProbeDone', { total: data.models.length, added }))
+  } catch (error) {
+    emit('error', adminErrorMessage(error, t('feedback.providerProbeFailed')))
+  } finally {
+    probing.value = false
+  }
+}
 function addProviderModel() {
   providerForm.value.modelCatalog.push({ id: '', name: '', enabled: true, editModel: null, supportsTransparent: false })
 }
@@ -247,6 +297,10 @@ async function saveProvider() {
           :empty="!providerForm.modelCatalog.length"
         >
           <template #actions>
+            <!-- 从上游拉取：手动逐个填模型 id 容易漏掉对方新增的模型。 -->
+            <Button type="button" variant="outline" size="sm" :disabled="formBusy || probing" @click="probeUpstreamModels">
+              <Download class="mr-1 h-4 w-4" />{{ probing ? t('settings.providerProbing') : t('settings.providerProbe') }}
+            </Button>
             <Button type="button" variant="outline" size="sm" :disabled="formBusy" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button>
           </template>
         <div v-if="providerForm.modelCatalog.length" class="grid items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_32px]" :style="modelGridStyle">
