@@ -7,6 +7,9 @@ import { Plus, Trash2 } from '@lucide/vue'
 import { adminApiJson } from '../../composables/useAdminApi'
 import { adminErrorMessage } from '../../utils/admin-format'
 import { providerModelCatalogRows } from '../../utils/admin-providers'
+import AdminField from './AdminField.vue'
+import AdminSettingsGroup from './AdminSettingsGroup.vue'
+import AdminSettingsSection from './AdminSettingsSection.vue'
 import type {
   AdminProviderModel,
   AdminProviderSetting,
@@ -58,12 +61,16 @@ const providerForm = ref({
 const providerRows = computed(() => props.providerSettings?.providers || [])
 const imageProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'image'))
 const chatProviderRows = computed(() => providerRows.value.filter(provider => provider.kind === 'chat'))
-// Image rows grow a third input (the per-row edit model); chat rows keep the
-// historical id + display-name pair. The header row reuses the same template so
-// the labels stay aligned with the inputs.
-const providerModelGridClass = computed(() => providerForm.value.kind === 'image'
-  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto]'
-  : 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]')
+/**
+ * 模型行的列宽。
+ *
+ * 生图行多一个「编辑模型」输入，Chat 行只有 ID + 展示名。列头与数据行共用同一份
+ * 定义，标签才会和输入框对齐。窄屏放不下这些固定宽度，由模板上的 max-sm: 类切成
+ * 单列——否则网格横向溢出，删除按钮会被推出可视区域。
+ */
+const modelGridStyle = computed(() => providerForm.value.kind === 'image'
+  ? 'grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr) minmax(110px, 1fr) 76px 56px 32px;'
+  : 'grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) 56px 32px;')
 
 const editingProvider = computed(() => providerForm.value.id
   ? providerRows.value.find(provider => provider.id === providerForm.value.id) || null
@@ -175,16 +182,35 @@ async function saveProvider() {
 <template>
   <div class="rounded-md border border-border bg-[var(--surface)] p-5 shadow-sm">
     <div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-sm font-semibold">{{ t('settings.providerSection') }}</h2><span class="mt-0.5 block text-xs text-[var(--text-muted)]">{{ props.providerSettings?.tableAvailable ? t('settings.providerSourceDb') : t('settings.providerSourceEnv') }}</span></div><Button variant="outline" size="sm" :disabled="props.loading" @click="emit('refresh')">{{ t('common.refresh') }}</Button></div>
-    <form v-if="props.canManage" class="flex flex-col gap-3" @submit.prevent="saveProvider">
-      <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerKind') }}</span><select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id) || formBusy" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select></label>
-      <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerName') }}</span><input id="provider-name" :disabled="formBusy" v-model.trim="providerForm.name" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-      <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">Base URL</span><input id="provider-base-url" :disabled="formBusy" v-model.trim="providerForm.baseUrl" type="url" required class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-      <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerApiKey') }}</span><input id="provider-api-key" :disabled="formBusy" v-model.trim="providerForm.apiKey" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? t('settings.providerApiKeyKeep', { preview: editingProvider.apiKeyPreview || '' }) : t('settings.providerApiKeyPlaceholder')" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-      <label v-if="editingProvider?.apiKeyConfigured" class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-clear-api-key" :disabled="formBusy" v-model="providerForm.clearApiKey" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerClearApiKey') }}</span></label>
-      <div class="grid grid-cols-3 gap-2 max-md:grid-cols-1"><label v-for="field in ['priority','timeoutMs','retryCount'] as const" :key="field" class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ field === 'priority' ? t('settings.providerPriority') : field === 'timeoutMs' ? t('settings.providerTimeoutMs') : t('settings.providerRetry') }}</span><input :id="`provider-${field}`" :disabled="formBusy" v-model.number="providerForm[field]" type="number" min="0" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label></div>
-      <div class="flex flex-col gap-2">
-        <div class="flex items-center justify-between"><span class="text-xs text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerChatModels') : t('settings.providerImageModels') }}</span><Button type="button" variant="outline" size="sm" :disabled="formBusy" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button></div>
-        <div v-if="providerForm.modelCatalog.length" class="grid gap-2" :class="providerModelGridClass">
+    <form v-if="props.canManage" class="flex flex-col px-5 py-2" @submit.prevent="saveProvider">
+      <AdminSettingsGroup :title="t('settings.providerGroupConnection')" :hint="t('settings.providerGroupConnectionHint')">
+        <AdminField id="provider-kind" :label="t('settings.providerKind')">
+          <select id="provider-kind" v-model="providerForm.kind" :disabled="Boolean(providerForm.id) || formBusy" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]" @change="resetProviderForm(providerForm.kind)"><option value="image">Image</option><option value="chat">Chat</option></select>
+        </AdminField>
+        <AdminField id="provider-name" :label="t('settings.providerName')">
+          <input id="provider-name" v-model.trim="providerForm.name" :disabled="formBusy" required class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+        </AdminField>
+        <AdminField id="provider-base-url" label="Base URL">
+          <input id="provider-base-url" v-model.trim="providerForm.baseUrl" :disabled="formBusy" type="url" required class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+        </AdminField>
+        <AdminField id="provider-api-key" :label="t('settings.providerApiKey')">
+          <input id="provider-api-key" v-model.trim="providerForm.apiKey" :disabled="formBusy" type="password" autocomplete="new-password" :placeholder="editingProvider?.apiKeyConfigured ? t('settings.providerApiKeyKeep', { preview: editingProvider.apiKeyPreview || '' }) : t('settings.providerApiKeyPlaceholder')" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+          <label v-if="editingProvider?.apiKeyConfigured" class="mt-1.5 flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-2.5">
+            <input id="provider-clear-api-key" v-model="providerForm.clearApiKey" :disabled="formBusy" type="checkbox" class="min-h-auto w-auto">
+            <span class="text-[13px]">{{ t('settings.providerClearApiKey') }}</span>
+          </label>
+        </AdminField>
+      </AdminSettingsGroup>
+      <AdminSettingsGroup :title="t('settings.providerGroupModels')" :hint="t('settings.providerGroupModelsHint')">
+        <AdminSettingsSection
+          :title="providerForm.kind === 'chat' ? t('settings.providerChatModels') : t('settings.providerImageModels')"
+          :hint="t('settings.providerModelHint') + (providerForm.kind === 'image' ? t('settings.providerImageDefaultHint') : '')"
+          :empty="!providerForm.modelCatalog.length"
+        >
+          <template #actions>
+            <Button type="button" variant="outline" size="sm" :disabled="formBusy" @click="addProviderModel"><Plus class="mr-1 h-4 w-4" />{{ t('settings.providerAddModel') }}</Button>
+          </template>
+        <div v-if="providerForm.modelCatalog.length" class="grid items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_32px]" :style="modelGridStyle">
           <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ providerForm.kind === 'chat' ? t('settings.providerColumnChatModel') : t('settings.providerColumnImageModel') }}</span>
           <span v-if="providerForm.kind === 'image'" class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnEditModel') }}</span>
           <span class="text-[11px] font-medium text-[var(--text-muted)]">{{ t('settings.providerColumnName') }}</span>
@@ -192,7 +218,7 @@ async function saveProvider() {
           <span aria-hidden="true"></span>
           <span aria-hidden="true"></span>
         </div>
-        <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid items-center gap-2" :class="providerModelGridClass">
+        <div v-for="(model, index) in providerForm.modelCatalog" :key="index" class="grid items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_32px]" :style="modelGridStyle">
           <input :id="`provider-model-id-${index}`" :disabled="formBusy" v-model.trim="model.id" :placeholder="index === 0 ? t('settings.providerModelIdExample', { example: providerForm.kind === 'chat' ? 'gpt-4o-mini' : 'gpt-image-2' }) : t('settings.providerModelId')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
           <input v-if="providerForm.kind === 'image'" :id="`provider-model-edit-${index}`" :disabled="formBusy" v-model.trim="model.editModel" :placeholder="index === 0 ? t('settings.providerModelEditExample', { example: 'gpt-image-2' }) : t('settings.providerModelEdit')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
           <input :id="`provider-model-name-${index}`" :disabled="formBusy" v-model.trim="model.name" :placeholder="index === 0 ? t('settings.providerModelNameExample', { example: providerForm.kind === 'chat' ? 'GPT-4o Mini' : 'GPT Image 2' }) : t('settings.providerModelName')" class="min-h-8 min-w-0 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
@@ -200,16 +226,48 @@ async function saveProvider() {
           <label class="flex items-center gap-1 text-xs text-[var(--text-muted)]"><input :disabled="formBusy" v-model="model.enabled" type="checkbox" class="min-h-auto w-auto">{{ t('common.enable') }}</label>
           <Button type="button" variant="ghost" size="icon" :disabled="providerForm.modelCatalog.length <= 1 || formBusy" :aria-label="t('settings.providerRemoveModelAria', { index: index + 1 })" :title="t('settings.providerRemoveModel')" @click="removeProviderModel(index)"><Trash2 class="h-4 w-4" /></Button>
         </div>
-        <span class="text-[11px] text-[var(--text-muted)]">{{ t('settings.providerModelHint') }}{{ providerForm.kind === 'image' ? t('settings.providerImageDefaultHint') : '' }}</span>
-      </div>
-      <template v-if="providerForm.kind === 'image'">
-        <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerEditModel') }}</span><input id="provider-edit-model" :disabled="formBusy" v-model.trim="providerForm.editModel" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-        <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('settings.providerCompatMode') }}</span><select id="provider-compat-mode" :disabled="formBusy" v-model="providerForm.imageCompatibilityMode" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"><option value="auto">{{ t('settings.providerCompatAuto') }}</option><option value="openai">{{ t('settings.providerCompatOpenai') }}</option><option value="lucen">Lucen / sub2api OAuth</option></select></label>
-        <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-webp-refs" :disabled="formBusy" v-model="providerForm.supportsWebpReferences" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerWebpRefs') }}</span></label>
-      </template>
-      <label class="flex flex-col gap-1"><span class="text-xs text-[var(--text-muted)]">{{ t('common.note') }}</span><input id="provider-notes" :disabled="formBusy" v-model.trim="providerForm.notes" class="min-h-8 rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]"></label>
-      <label class="flex min-h-9 items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-3"><input id="provider-enabled" :disabled="formBusy" v-model="providerForm.enabled" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('common.enable') }}</span></label>
-      <div class="flex flex-wrap gap-2"><Button type="submit" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? t('settings.providerSave') : t('settings.providerCreate') }}</Button><Button variant="outline" type="button" :disabled="formBusy" @click="resetProviderForm(providerForm.kind)">{{ t('settings.providerReset') }}</Button></div>
+        <AdminField id="provider-edit-model" :label="t('settings.providerEditModel')" :hint="t('settings.providerEditModelHint')">
+          <input id="provider-edit-model" v-model.trim="providerForm.editModel" :disabled="formBusy" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+        </AdminField>
+        <span aria-hidden="true" />
+      </AdminSettingsSection>
+      </AdminSettingsGroup>
+
+        <!-- 低频参数收进「高级」；主列只留真正会改的东西。 -->
+        <AdminSettingsGroup :title="t('settings.providerGroupAdvanced')" :hint="t('settings.providerGroupAdvancedHint')" :default-open="false">
+          <AdminField id="provider-priority" :label="t('settings.providerPriority')">
+            <input id="provider-priority" v-model.number="providerForm.priority" :disabled="formBusy" type="number" min="0" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+          </AdminField>
+          <AdminField id="provider-timeout" :label="t('settings.providerTimeoutMs')">
+            <input id="provider-timeout" v-model.number="providerForm.timeoutMs" :disabled="formBusy" type="number" min="0" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+          </AdminField>
+          <AdminField id="provider-retry" :label="t('settings.providerRetry')">
+            <input id="provider-retry" v-model.number="providerForm.retryCount" :disabled="formBusy" type="number" min="0" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+          </AdminField>
+          <AdminField id="provider-compat-mode" :label="t('settings.providerCompatMode')" :class="providerForm.kind === 'image' ? '' : 'hidden'">
+            <select id="provider-compat-mode" v-model="providerForm.imageCompatibilityMode" :disabled="formBusy" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+              <option value="auto">{{ t('settings.providerCompatAuto') }}</option>
+              <option value="openai">{{ t('settings.providerCompatOpenai') }}</option>
+              <option value="lucen">Lucen / sub2api OAuth</option>
+            </select>
+          </AdminField>
+          <AdminField id="provider-notes" :label="t('common.note')">
+            <input id="provider-notes" v-model.trim="providerForm.notes" :disabled="formBusy" class="min-h-8 w-full rounded-md border border-border bg-[var(--surface)] px-2.5 text-[13px]">
+          </AdminField>
+          <AdminField id="provider-enabled" :label="t('common.enable')">
+            <label class="flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-2.5"><input id="provider-enabled" v-model="providerForm.enabled" :disabled="formBusy" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('common.enable') }}</span></label>
+          </AdminField>
+          <AdminField v-if="providerForm.kind === 'image'" id="provider-webp-refs" :label="t('settings.providerWebpRefs')">
+            <label class="flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md border border-border bg-[var(--bubble-bg)] px-2.5"><input id="provider-webp-refs" v-model="providerForm.supportsWebpReferences" :disabled="formBusy" type="checkbox" class="min-h-auto w-auto"><span class="text-[13px]">{{ t('settings.providerWebpRefs') }}</span></label>
+          </AdminField>
+        </AdminSettingsGroup>
+
+
+        <!-- 保存按钮靠右收窄，与运行时配置一致。 -->
+        <div class="flex items-center justify-end gap-3 border-t border-border py-3">
+          <Button variant="outline" type="button" size="sm" :disabled="formBusy" @click="resetProviderForm(providerForm.kind)">{{ t('settings.providerReset') }}</Button>
+          <Button type="submit" size="sm" :disabled="Boolean(providerActionId)">{{ providerActionId ? t('common.saving') : providerForm.id ? t('settings.providerSave') : t('settings.providerCreate') }}</Button>
+        </div>
     </form>
     <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
     <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.providerTable.kind'),t('settings.providerTable.name'),t('settings.providerTable.models'),t('settings.providerTable.compat'),t('settings.providerTable.key'),t('settings.providerTable.status'),t('settings.providerTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ t('settings.providerPriority') }} {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || t('settings.providerApiKeyConfigured') : t('settings.providerApiKeyUnconfigured') }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2"><Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !props.canManage || formBusy" @click="editProvider(provider)">{{ t('common.edit') }}</Button></td></tr><tr v-if="!providerRows.length"><td colspan="7" class="px-3 py-6 text-center text-[var(--text-muted)]">{{ t('settings.providerNoRows') }}</td></tr></tbody></table></div>
