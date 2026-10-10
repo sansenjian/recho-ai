@@ -78,7 +78,13 @@ export function imageStorageProxyUrl(storagePath: string) {
   return imageApiUrl(`/api/image/storage/${encodeURIComponent(storagePath)}`)
 }
 
-export async function fetchAuthenticatedImageObjectUrl(storagePath: string, signal?: AbortSignal) {
+/**
+ * 取回受保护图片的二进制内容。
+ *
+ * 下载与复制到剪贴板都需要 blob 本身，而不是一个 object URL——剪贴板要的是数据。
+ * 两条路径共用这里，避免各写一份鉴权与错误处理。
+ */
+export async function fetchAuthenticatedImageBlob(storagePath: string, signal?: AbortSignal) {
   const token = await getAuthAccessToken()
   const res = await fetch(imageStorageProxyUrl(storagePath), {
     cache: 'force-cache',
@@ -92,5 +98,10 @@ export async function fetchAuthenticatedImageObjectUrl(storagePath: string, sign
   if (!blob.size) {
     throw new Error('image storage proxy returned empty body')
   }
+  return blob
+}
+
+export async function fetchAuthenticatedImageObjectUrl(storagePath: string, signal?: AbortSignal) {
+  const blob = await fetchAuthenticatedImageBlob(storagePath, signal)
   return URL.createObjectURL(blob)
 }

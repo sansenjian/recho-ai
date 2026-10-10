@@ -4,7 +4,7 @@ import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '..
 import { relativeTime } from '../utils/time'
 import { imageDownloadFileName } from '../lib/image-download-name'
 import { useI18n } from 'vue-i18n'
-import { Plus, X, Sparkles, Copy, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
+import { Plus, X, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
   clipboardImageFile,
   compressReferenceImageDataUrl,
@@ -28,7 +28,7 @@ import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
-import { fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
+import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
@@ -116,12 +116,22 @@ function turnCreditCost(images: GeneratedImage[]) {
 }
 
 
-/** 复制这一轮的提示词，便于拿去别处复用。 */
-async function copyTurnPrompt(item: { prompt: string; images: GeneratedImage[] }) {
-  const text = item.images[0]?.userPrompt || item.prompt
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch { /* denied */ }
+/** 刚复制成功的轮次 id，用于把图标短暂换成勾。 */
+const copiedTurnId = ref<string | null>(null)
+
+/**
+ * 复制这一轮的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应当是复制图片本身——用户要的是把这张图贴进聊天窗口或文档。
+ * 复制提示词是另一个需求，改用右键或下载文件名即可拿到。
+ */
+async function copyTurnImage(item: { id: string; images: GeneratedImage[] }) {
+  const image = item.images[0]
+  if (!image) return
+  const ok = await copyGeneratedImage(image)
+  if (!ok) return
+  copiedTurnId.value = item.id
+  window.setTimeout(() => { if (copiedTurnId.value === item.id) copiedTurnId.value = null }, 1500)
 }
 
 /** 评价这一轮生成；再点已选中的那项表示撤销。 */
@@ -134,6 +144,49 @@ function formatCredits(value: number) {
   return (Math.round(value * 100) / 100).toString()
 }
 
+
+/**
+ * 复制一张生成的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应该是复制图片本身：用户要的是把这张图贴进聊天窗口或文档，
+ * 而不是拿到当初的提示词。复制提示词的需求更低频，另外提供入口。
+ *
+ * 剪贴板只在安全上下文（https / localhost）可用，且部分浏览器只接受 PNG。
+ * 拿不到就返回 false，由调用方决定是否提示。
+ */
+async function copyGeneratedImage(image: GeneratedImage) {
+  const path = image.storagePath || ''
+  if (!path) return false
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
+  try {
+    const blob = await fetchAuthenticatedImageBlob(path)
+    // 从存储服务取回的不一定是 PNG；剪贴板对格式挑食，统一转一次更稳。
+    const png = blob.type === 'image/png' ? blob : await convertToPng(blob)
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 借 canvas 把任意位图转成 PNG；转换失败时原样返回，让剪贴板自己判断。 */
+async function convertToPng(blob: Blob) {
+  try {
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) return blob
+    context.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob(result => resolve(result ?? blob), 'image/png')
+    })
+  } catch {
+    return blob
+  }
+}
 /**
  * 下载一张生成的图片。
  *
@@ -512,8 +565,17 @@ async function handleGenerate() {
               默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
             -->
             <div class="mt-2 flex items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
-              <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground" :title="t('chat.copy')" :aria-label="t('chat.copy')" @click="copyTurnPrompt(item)">
-                <Copy class="h-[15px] w-[15px]" />
+              <Button
+                v-if="item.images.length"
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :title="t('imagio.copyImage')"
+                :aria-label="t('imagio.copyImage')"
+                @click="copyTurnImage(item)"
+              >
+                <Check v-if="copiedTurnId === item.id" class="h-[15px] w-[15px]" />
+                <Copy v-else class="h-[15px] w-[15px]" />
               </Button>
               <Button
                 variant="ghost"

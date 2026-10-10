@@ -743,6 +743,7 @@ export default {
     transcriptAria: 'Image generation conversation',
     outputLabel: 'Result',
     turnCost: '{cost} credits',
+    copyImage: 'Copy image',
     imagePending: 'Processing image...',
     referencesAria: 'Reference images',
     referenceTitle: 'Reference {index}',
