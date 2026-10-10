@@ -19,6 +19,7 @@ import ToolActivity from '../components/ToolActivity.vue'
 import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
+import { useMessageFeedback } from '../composables/useMessageFeedback'
 import { pickActiveAnchorId } from '../utils/chat-rail'
 import {
   beginScrollGeneration,
@@ -462,6 +463,18 @@ async function handleCopy(msg: Message) {
   } catch { /* denied */ }
 }
 
+/**
+ * 消息评价：状态按消息 id 缓存，服务端只保留每个用户对每条消息的最新值。
+ *
+ * 提交失败时由 composable 回滚本地状态，这里不再额外提示——与 handleCopy 的
+ * 约定一致：这类轻交互失败不打断阅读。
+ */
+const feedback = useMessageFeedback('chat')
+
+async function handleFeedback(msg: Message, value: number) {
+  await feedback.submit(msg.id, value)
+}
+
 function handleRetry(msg: Message) {
   if (msg.images?.length) pendingImages.value = [...msg.images]
   handleSubmit(msg.content)
@@ -543,6 +556,20 @@ watch([() => messages.value.length, isAuthReady], () => {
 })
 watch(isLoading, (v) => { scrollSmooth = !v })
 watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
+
+/**
+ * 拉取当前会话已有评价。
+ *
+ * 只查还没缓存过的消息 id：切换会话或在流式输出中 messages 会频繁变化，
+ * 每次都全量回查会把同一个请求打很多遍。
+ */
+watch([() => messages.value.map(msg => msg.id).join(','), () => user.value?.id || null], () => {
+  const pending = messages.value
+    .filter(msg => msg.role === 'assistant' && !(msg.id in feedback.values.value))
+    .map(msg => msg.id)
+  if (pending.length) void feedback.load(pending)
+}, { immediate: true })
+
 onMounted(() => { void nextTick(updateActiveRailMessage) })
 watch([() => route.meta.workspace, () => user.value?.id || null, isAuthReady], () => {
   void syncWorkspaceFromRoute()
@@ -721,8 +748,10 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
                   :msg="msg"
                   :copy-feedback="copyFeedbackId === msg.id"
                   :assistant-index="assistantMessageIndex(msg.id)"
+                  :feedback="feedback.values.value[msg.id] ?? 0"
                   @copy="handleCopy(msg)"
                   @retry="handleRetry(msg)"
+                  @feedback="handleFeedback(msg, $event)"
                 />
               </div>
             </div>

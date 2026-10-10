@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { useI18n } from 'vue-i18n'
-import { Plus, X, Sparkles } from '@lucide/vue'
+import { Plus, X, Sparkles, Copy, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
   clipboardImageFile,
   compressReferenceImageDataUrl,
@@ -25,6 +25,8 @@ import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
+import { useMessageFeedback } from '../composables/useMessageFeedback'
+import { fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
@@ -94,6 +96,76 @@ const conversationItems = computed(() => {
   return [...groups.values()]
 })
 
+
+/** 正在下载的图片 id，避免重复点击叠出多个下载。 */
+const downloadingImageId = ref<string | null>(null)
+
+/** 生图结果的评价状态（按生成批次 id 记录）。 */
+const feedback = useMessageFeedback('image')
+
+/**
+ * 一轮生成的费用合计。
+ *
+ * 一轮可能出多张图，每张各自记了 creditCost，这里求和后展示——按单张显示会让
+ * 「这轮花了多少」要自己加。
+ */
+function turnCreditCost(images: GeneratedImage[]) {
+  return images.reduce((sum, image) => sum + (typeof image.creditCost === 'number' ? image.creditCost : 0), 0)
+}
+
+
+/** 复制这一轮的提示词，便于拿去别处复用。 */
+async function copyTurnPrompt(item: { prompt: string; images: GeneratedImage[] }) {
+  const text = item.images[0]?.userPrompt || item.prompt
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch { /* denied */ }
+}
+
+/** 评价这一轮生成；再点已选中的那项表示撤销。 */
+async function rateTurn(turnId: string, value: number) {
+  const current = feedback.values.value[turnId] ?? 0
+  await feedback.submit(turnId, current === value ? 0 : value)
+}
+/** 展示成两位小数，避免 0.30000000000000004 这类浮点尾数。 */
+function formatCredits(value: number) {
+  return (Math.round(value * 100) / 100).toString()
+}
+
+/**
+ * 下载一张生成的图片。
+ *
+ * 图片是私有的，必须走鉴权代理拿 blob 再存盘：直接把 storagePath 丢给 <a download>
+ * 会拿到 401，而公开 URL 对未登录的访客也不成立。
+ */
+async function downloadGeneratedImage(image: GeneratedImage) {
+  if (downloadingImageId.value) return
+  const path = image.storagePath || ''
+  if (!path) return
+  downloadingImageId.value = image.id
+  try {
+    const objectUrl = await fetchAuthenticatedImageObjectUrl(path)
+    if (!objectUrl) return
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = downloadFileName(image)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    // 交给浏览器读取后再释放，立刻 revoke 会让下载中断。
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+  } catch {
+    // 下载失败不打断浏览，与复制等轻交互的约定一致。
+  } finally {
+    downloadingImageId.value = null
+  }
+}
+
+/** 文件名用提示词前若干字符，便于在下载目录里认出是哪张图。 */
+function downloadFileName(image: GeneratedImage) {
+  const base = (image.userPrompt || image.prompt || 'image').replace(/[\\/:*?"<>|\n\r]+/g, ' ').trim().slice(0, 40)
+  return `${base || 'image'}-${image.id}.png`
+}
 const { t } = useI18n()
 
 /**
@@ -437,6 +509,58 @@ async function handleGenerate() {
 <span v-else class="conversation-image-placeholder">{{ t('imagio.imagePending') }}</span>
                 </div>
               </div>
+            <!--
+              操作栏：复制、评价、下载、费用、时间。
+              常驻显示而不是悬停才出现：这几个动作是看完图自然想做的事。
+            -->
+            <div class="mt-2 flex flex-wrap items-center gap-0.5 text-[11px] text-muted-foreground">
+              <Button variant="ghost" size="icon" class="h-6 w-6" :title="t('chat.copy')" :aria-label="t('chat.copy')" @click="copyTurnPrompt(item)">
+                <Copy class="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-6 w-6"
+                :class="{ 'text-primary': feedback.values.value[item.id] === 1 }"
+                :title="t('chat.like')"
+                :aria-label="t('chat.like')"
+                :aria-pressed="feedback.values.value[item.id] === 1"
+                @click="rateTurn(item.id, 1)"
+              >
+                <ThumbsUp class="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-6 w-6"
+                :class="{ 'text-primary': feedback.values.value[item.id] === -1 }"
+                :title="t('chat.dislike')"
+                :aria-label="t('chat.dislike')"
+                :aria-pressed="feedback.values.value[item.id] === -1"
+                @click="rateTurn(item.id, -1)"
+              >
+                <ThumbsDown class="h-3 w-3" />
+              </Button>
+              <Button
+                v-if="item.images.length"
+                variant="ghost"
+                size="icon"
+                class="h-6 w-6"
+                :disabled="downloadingImageId === item.images[0].id"
+                :title="t('common.download')"
+                :aria-label="t('common.download')"
+                @click="downloadGeneratedImage(item.images[0])"
+              >
+                <Download class="h-3 w-3" />
+              </Button>
+              <!-- 费用与时间：用左侧分隔线和动作按钮区分开，避免被看成可点的按钮。 -->
+              <span v-if="turnCreditCost(item.images) > 0" class="ml-1 border-l border-border pl-2 tabular-nums">
+                {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
+              </span>
+              <span class="ml-1 border-l border-border pl-2 tabular-nums" :title="item.timestamp">
+                {{ item.timestamp }}
+              </span>
+            </div>
             </div>
           </div>
         </div>

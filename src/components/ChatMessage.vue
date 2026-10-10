@@ -11,18 +11,22 @@ import ThinkingActivity from './ThinkingActivity.vue'
 import LinkPreviewCard from './LinkPreviewCard.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Copy, Check, RefreshCw } from '@lucide/vue'
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from '@lucide/vue'
 import { cn } from '@/lib/utils'
 
 const props = defineProps<{
   msg: Message
   copyFeedback?: boolean
   assistantIndex?: number
+  /** 当前用户对这条消息的评价：1 好评、-1 差评、0 未评价。 */
+  feedback?: number
 }>()
 
 defineEmits<{
   copy: []
   retry: []
+  /** 传 0 表示撤销评价。 */
+  feedback: [value: number]
 }>()
 
 const { t } = useI18n()
@@ -114,13 +118,16 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
 
       <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
 
-      <!-- Action bar -->
-      <div class="mt-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <!--
+        操作栏常驻显示而不是只在悬停时出现：这几个动作是读完之后自然想做的事，
+        藏起来要先发现「悬停才会浮出来」才用得上。
+      -->
+      <div class="mt-1.5 flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="icon"
           class="h-6 w-6"
-          :class="{ 'text-primary opacity-100': copyFeedback }"
+          :class="{ 'text-primary': copyFeedback }"
           :title="t('chat.copy')"
           @click="$emit('copy')"
         >
@@ -131,11 +138,39 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
           variant="ghost"
           size="icon"
           class="h-6 w-6"
+          :class="{ 'text-primary': feedback === 1 }"
+          :title="t('chat.like')"
+          :aria-label="t('chat.like')"
+          :aria-pressed="feedback === 1"
+          @click="$emit('feedback', feedback === 1 ? 0 : 1)"
+        >
+          <ThumbsUp class="h-3 w-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-6 w-6"
+          :class="{ 'text-primary': feedback === -1 }"
+          :title="t('chat.dislike')"
+          :aria-label="t('chat.dislike')"
+          :aria-pressed="feedback === -1"
+          @click="$emit('feedback', feedback === -1 ? 0 : -1)"
+        >
+          <ThumbsDown class="h-3 w-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-6 w-6"
           :title="t('chat.retry')"
           @click="$emit('retry')"
         >
           <RefreshCw class="h-3 w-3" />
         </Button>
+        <!-- 时间常驻显示在操作栏右侧，鼠标悬停能看到完整时刻。 -->
+        <span class="ml-1 text-[11px] text-muted-foreground tabular-nums" :title="msg.timestamp">
+          {{ displayTimestamp }}
+        </span>
       </div>
     </div>
   </div>
