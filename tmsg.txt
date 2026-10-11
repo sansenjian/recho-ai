@@ -1,0 +1,7 @@
+fix(chat): 合并冲突的过渡属性，让边框与阴影都能过渡
+
+transition-colors 与 transition-shadow 都设置 transition-property，CSS 级联只保留
+后者，于是边框颜色直接跳变。改用 transition-[border-color,box-shadow]。
+
+验证：预览页读取计算样式为 "border-color, box-shadow"、0.2s；聚焦时边框由
+oklab(0.2625) 变为 oklab(0.2044)，阴影两档不同。
