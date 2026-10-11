@@ -152,7 +152,8 @@ function actionableImages(item: { images: GeneratedImage[] }) {
  * 复制提示词是另一个需求，改用右键或下载文件名即可拿到。
  */
 async function copyTurnImage(item: { id: string; images: GeneratedImage[] }) {
-  const image = item.images[0]
+  // 与按钮的显示条件取同一张：首张可能还在处理，可用的是后面那张。
+  const image = actionableImages(item)[0]
   if (!image) return
   const ok = await copyGeneratedImage(image)
   if (!ok) return
@@ -687,10 +688,10 @@ async function handleGenerate() {
                 variant="ghost"
                 size="icon"
                 class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
-                :disabled="downloadingImageId === item.images[0].id"
+                :disabled="downloadingImageId === actionableImages(item)[0]?.id"
                 :title="t('common.download')"
                 :aria-label="t('common.download')"
-                @click="downloadGeneratedImage(item.images[0])"
+                @click="actionableImages(item)[0] && downloadGeneratedImage(actionableImages(item)[0])"
               >
                 <Download class="h-[15px] w-[15px]" />
               </Button>

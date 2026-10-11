@@ -66,6 +66,33 @@ describe('useMessageFeedback', () => {
     expect(feedback.values.value.m1).toBe(-1)
   })
 
+  it('keeps a newer success even when an older request fails afterwards', async () => {
+    // 评论指出的时序：好评(A) → 差评(B) → B 先成功 → A 后失败。
+    // 按「还有几个在跑」判断会误以为 A 是最后一笔，把界面回滚成未评价，
+    // 而服务端存的是 B 的差评。只有比较序号才能挡住。
+    stubAuth('token')
+    let failFirst: (() => void) | null = null
+    const firstGate = new Promise<void>(resolve => { failFirst = resolve })
+    let call = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      call++
+      if (call === 1) { await firstGate; return new Response('nope', { status: 500 }) }
+      return new Response('{}', { status: 200 })
+    }))
+
+    const { useMessageFeedback } = await import('../src/composables/useMessageFeedback')
+    const feedback = useMessageFeedback('chat')
+
+    const a = feedback.submit('m1', 1)
+    const b = feedback.submit('m1', -1)
+    await b            // B 先结束（成功）
+    failFirst!()       // 之后 A 才失败
+    const okA = await a
+    expect(okA).toBe(false)
+    // 界面必须保留 B 的结果。
+    expect(feedback.values.value.m1).toBe(-1)
+  })
+
   it('queries by repeated keys so a key containing a comma still resolves', async () => {
     stubAuth('token')
     const urls: string[] = []

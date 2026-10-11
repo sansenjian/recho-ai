@@ -12,7 +12,11 @@ describe('formatMessageTime', () => {
 
   it('adds the date when the message is from another day', () => {
     // 否则一串 01:01 之间分不出先后。
-    expect(formatMessageTime('2026-10-08T23:20:00', 'zh', now)).toBe('10月8日 23:20')
+    // 不写死整串：Intl 在不同 Node/ICU 版本下月日与时间之间的分隔可能不同，
+    // 精确匹配会让 CI 之间结果不一致。分别断言日期与时刻是否出现。
+    const out = formatMessageTime('2026-10-08T23:20:00', 'zh', now)
+    expect(out).toContain('10月8日')
+    expect(out).toContain('23:20')
   })
 
   it('uses the local calendar day rather than a 24 hour window', () => {

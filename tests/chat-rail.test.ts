@@ -113,15 +113,18 @@ describe('formatTurnClock', () => {
 
   it('shows only the clock for a message from today', () => {
     // 同一屏几乎都是今天的消息，重复的日期是噪声。
-    const now = Date.parse('2026-09-28T12:00:00.000Z')
-    const clock = formatTurnClock(AT, 'zh', now)
-    expect(clock).toMatch(/^\d{1,2}:\d{2}$/)
+    // 用不带时区后缀的本地时间构造：formatTurnClock 按本地日历日比较，
+    // 写成 UTC 的话在 UTC+12 以东 AT 与 now 会落到不同的日期上。
+    const at = new Date(2026, 8, 28, 6, 32)
+    const now = new Date(2026, 8, 28, 12, 0).getTime()
+    expect(formatTurnClock(at.toISOString(), 'zh', now)).toMatch(/^\d{1,2}:\d{2}$/)
   })
 
   it('adds the date for a message from another day', () => {
     // 否则一串 01:01 之间分不出先后，用户看不出这是今天聊的还是上周的。
-    const now = Date.parse('2026-10-05T12:00:00.000Z')
-    const clock = formatTurnClock(AT, 'zh', now)
+    const at = new Date(2026, 8, 28, 6, 32)
+    const now = new Date(2026, 9, 5, 12, 0).getTime()
+    const clock = formatTurnClock(at.toISOString(), 'zh', now)
     expect(clock).toContain('月')
     expect(clock).toMatch(/\d{1,2}:\d{2}/)
   })

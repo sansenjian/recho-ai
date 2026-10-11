@@ -16,13 +16,18 @@ export function useMessageFeedback(surface: FeedbackSurface) {
   const values = ref<Record<string, number>>({})
 
   /**
-   * 每个消息键上正在进行的提交次数。
+   * 每个消息键上最近一次提交的序号。
    *
-   * 连点好评再点差评会并发出两个请求，服务端最终值取决于谁先到；失败回滚时还会
-   * 用旧的 previous 覆盖第二次点击的乐观值。计数器让回滚只在「本次仍是最后一笔」
-   * 时生效：计数不为 0 说明后面还有提交在路上，此时不该回滚。
+   * 连点好评再点差评会并发出两个请求，两次提交可能以任意顺序结束，所以
+   * 「数一数还有几个在跑」判断不了该不该回滚：
+   *
+   *   好评(A) → 差评(B) → B 成功 → A 失败
+   *
+   * 此时 A 结束时计数只剩它自己，按计数就会把界面回滚成未评价，而服务端存的是
+   * B 的差评。改为比较序号：只有本次仍是这个键上的最新一笔时才允许回滚。
    */
-  const inFlight = new Map<string, number>()
+  const latestSeq = new Map<string, number>()
+  let seqCounter = 0
 
   async function request(path: string, init: RequestInit = {}) {
     const token = await getAuthAccessToken()
@@ -70,7 +75,8 @@ export function useMessageFeedback(surface: FeedbackSurface) {
       values.value = { ...values.value, [messageKey]: value }
     }
 
-    inFlight.set(messageKey, (inFlight.get(messageKey) ?? 0) + 1)
+    const seq = ++seqCounter
+    latestSeq.set(messageKey, seq)
     try {
       if (value === 0) {
         await request(`/api/message-feedback/${encodeURIComponent(messageKey)}`, { method: 'DELETE' })
@@ -82,9 +88,9 @@ export function useMessageFeedback(surface: FeedbackSurface) {
       }
       return true
     } catch {
-      // 只有「最后一笔」才回滚：期间又有新点击时，本地值已经是更新后的意图，
-      // 用旧的 previous 覆盖它会让界面回到一个用户没选过的状态。
-      if ((inFlight.get(messageKey) ?? 1) <= 1) {
+      // 只有本次仍是这个键上的最新一笔才回滚。晚到的失败不该抹掉用户后来的选择：
+      // 好评请求失败时，若之后点过差评且已成功，界面必须保留差评。
+      if (latestSeq.get(messageKey) === seq) {
         values.value = { ...values.value, [messageKey]: previous }
         if (previous === 0) {
           const next = { ...values.value }
@@ -93,10 +99,6 @@ export function useMessageFeedback(surface: FeedbackSurface) {
         }
       }
       return false
-    } finally {
-      const left = (inFlight.get(messageKey) ?? 1) - 1
-      if (left <= 0) inFlight.delete(messageKey)
-      else inFlight.set(messageKey, left)
     }
   }
 
