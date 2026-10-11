@@ -69,6 +69,18 @@ describe('ImageViewerModal keyboard', () => {
     expect(multi.emitted('previous')).toHaveLength(1)
   })
 
+  it('ignores shortcuts that carry a modifier key', async () => {
+    // Ctrl/Cmd + 是浏览器的页面缩放，不该被图片缩放吃掉。
+    const w = mountViewer()
+    for (const key of ['+', '-', '0']) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true, cancelable: true }))
+    }
+    await w.vm.$nextTick()
+    expect(w.emitted('zoom')).toBeUndefined()
+    expect(w.emitted('reset-zoom')).toBeUndefined()
+  })
+
   it('stops listening after unmount', async () => {
     const w = mountViewer()
     w.unmount()
@@ -99,6 +111,20 @@ describe('ImageViewerModal paging hint', () => {
     await w.find('[aria-label="上一张"]').trigger('click')
     expect(w.emitted('next')).toHaveLength(1)
     expect(w.emitted('previous')).toHaveLength(1)
+  })
+})
+
+describe('ImageViewerModal zoom sizing', () => {
+  it('sizes the image instead of only capping it', async () => {
+    // max-width 只限制上限：一张小于视口的图，无论百分比怎么调都不会变大，
+    // 放大按钮看上去毫无反应。
+    const w = mountViewer()
+    const style = () => w.find('img').attributes('style') ?? ''
+    expect(style()).toContain('width: 100%')
+    expect(style()).not.toContain('max-width')
+
+    await w.setProps({ viewer: { ...w.props('viewer'), zoom: 2 } })
+    expect(style()).toContain('width: 200%')
   })
 })
 
