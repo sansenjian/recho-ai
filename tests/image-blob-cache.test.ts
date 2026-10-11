@@ -124,6 +124,47 @@ describe('image blob cache', () => {
     expect(await mod.readImageBlob('user-a:preview:new')).not.toBeNull()
   })
 
+  it('drops a write that started before the account was cleared', async () => {
+    // 时序：请求发出时记下代次 → 期间登出清了这个账号 → 响应才回来。
+    // 不拦的话刚清掉的图会被写回去，登出等于没清。
+    const mod = await freshModule()
+    const key = mod.imageBlobCacheKey('user-a', 'x.webp', 'preview')
+
+    const generation = mod.currentCacheGeneration()
+    await mod.clearImageBlobsForOwner('user-a')
+    await mod.writeImageBlob(key, blobOf('late'), generation)
+
+    expect(await mod.readImageBlob(key)).toBeNull()
+  })
+
+  it('accepts a write when nothing was cleared meanwhile', async () => {
+    // 反向确认上一条不是"永远不写"：代次没变时写入必须生效。
+    const mod = await freshModule()
+    const key = mod.imageBlobCacheKey('user-a', 'x.webp', 'preview')
+
+    const generation = mod.currentCacheGeneration()
+    await mod.writeImageBlob(key, blobOf('fresh'), generation)
+
+    expect(await mod.readImageBlob(key)).not.toBeNull()
+  })
+
+  it('survives an indexedDB that throws on access', async () => {
+    // 隐私模式下访问 indexedDB 会抛 SecurityError。缓存只是加速手段，
+    // 拿不到就该安静地返回空，而不是让取图链路挂死、连网络回退都做不到。
+    vi.resetModules()
+    const original = Object.getOwnPropertyDescriptor(window, 'indexedDB')
+    Object.defineProperty(window, 'indexedDB', {
+      configurable: true,
+      get() { throw new Error('SecurityError: storage is disabled') },
+    })
+
+    const mod = await import('../src/lib/image-blob-cache')
+    await expect(mod.readImageBlob('anything')).resolves.toBeNull()
+    await expect(mod.writeImageBlob('anything', blobOf('x'))).resolves.toBeUndefined()
+
+    if (original) Object.defineProperty(window, 'indexedDB', original)
+  })
+
   it('clears everything on sign-out', async () => {
     const mod = await freshModule()
     await mod.writeImageBlob('a', blobOf('1'))
