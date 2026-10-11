@@ -20,6 +20,7 @@ import StreamingStatus from '../components/StreamingStatus.vue'
 import ThinkingActivity from '../components/ThinkingActivity.vue'
 import ChatMessageRail from '../components/ChatMessageRail.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
+import { useCopyFeedback } from '../composables/useCopyFeedback'
 import { pickActiveAnchorId } from '../utils/chat-rail'
 import {
   beginScrollGeneration,
@@ -454,12 +455,11 @@ async function handleSubmit(value: string) {
 function handleStop() { stopGeneration() }
 
 // --- Copy / Retry ---
-const copyFeedbackId = ref<string | null>(null)
+const { copiedId: copyFeedbackId, markCopied } = useCopyFeedback()
 async function handleCopy(msg: Message) {
   try {
     await navigator.clipboard.writeText(msg.content)
-    copyFeedbackId.value = msg.id
-    setTimeout(() => { if (copyFeedbackId.value === msg.id) copyFeedbackId.value = null }, 1500)
+    markCopied(msg.id)
   } catch { /* denied */ }
 }
 

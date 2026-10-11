@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { formatMessageTime } from '../utils/time'
 import { imageDownloadFileName } from '../lib/image-download-name'
+import { saveImageBlob } from '../lib/browser-download'
+import { useCopyFeedback } from '../composables/useCopyFeedback'
 import { useI18n } from 'vue-i18n'
 import { Plus, X, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
@@ -29,7 +31,7 @@ import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import ImageViewerModal from './ImageViewerModal.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
-import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
+import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl, imageStoragePath } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import type { ImageViewerState } from '../lib/image-canvas-model'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
@@ -130,8 +132,8 @@ function turnCreditCost(images: GeneratedImage[]) {
 }
 
 
-/** 刚复制成功的轮次 id，用于把图标短暂换成勾。 */
-const copiedTurnId = ref<string | null>(null)
+/** 复制成功的短暂反馈：显示勾 1.5 秒。 */
+const { isCopied, markCopied } = useCopyFeedback()
 
 /**
  * 这一轮里能复制/下载的图片。
@@ -140,7 +142,7 @@ const copiedTurnId = ref<string | null>(null)
  * 一个没有任何反馈的空操作，所以直接从候选里排除。
  */
 function actionableImages(item: { images: GeneratedImage[] }) {
-  return item.images.filter(image => Boolean(image.storagePath))
+  return item.images.filter(image => canDisplayGeneratedImage(image) && Boolean(imageStoragePath(image, 'preview')))
 }
 
 /**
@@ -154,8 +156,7 @@ async function copyTurnImage(item: { id: string; images: GeneratedImage[] }) {
   if (!image) return
   const ok = await copyGeneratedImage(image)
   if (!ok) return
-  copiedTurnId.value = item.id
-  window.setTimeout(() => { if (copiedTurnId.value === item.id) copiedTurnId.value = null }, 1500)
+  markCopied(item.id)
 }
 
 /** 评价这一轮生成；再点已选中的那项表示撤销。 */
@@ -181,7 +182,7 @@ const viewerZoom = ref(1)
  * 只读预览，不做编辑。
  */
 function openImage(image: GeneratedImage) {
-  if (!image.storagePath) return
+  if (!imageStoragePath(image, 'preview')) return
   viewerImage.value = image
   viewerZoom.value = 1
 }
@@ -284,16 +285,7 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   downloadingImageId.value = image.id
   try {
     // 取 blob 而不是 object URL：扩展名要按真实类型给，代理返回的可能是 webp。
-    const blob = await fetchAuthenticatedImageBlob(path)
-    const objectUrl = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.download = imageDownloadFileName(image, blob.type)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    // 交给浏览器读取后再释放，立刻 revoke 会让下载中断。
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    saveImageBlob(await fetchAuthenticatedImageBlob(path), image)
   } catch {
     // 下载失败不打断浏览，与复制等轻交互的约定一致。
   } finally {
@@ -636,7 +628,7 @@ async function handleGenerate() {
                   class="conversation-image"
                   :title="t('imagio.openImage')"
                   :aria-label="t('imagio.openImage')"
-                  :disabled="!image.storagePath"
+                  :disabled="!imageStoragePath(image, 'preview')"
                   @click="openImage(image)"
                 >
                   <AuthenticatedImage
@@ -663,7 +655,7 @@ async function handleGenerate() {
                 :aria-label="t('imagio.copyImage')"
                 @click="copyTurnImage(item)"
               >
-                <Check v-if="copiedTurnId === item.id" class="h-[15px] w-[15px]" />
+                <Check v-if="isCopied(item.id)" class="h-[15px] w-[15px]" />
                 <Copy v-else class="h-[15px] w-[15px]" />
               </Button>
               <Button
