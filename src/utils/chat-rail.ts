@@ -1,4 +1,5 @@
 import type { Message } from '../types'
+import { formatMessageTime } from './time'
 
 /** 轨道上的一格：一条用户提问，以及它引出的回复。 */
 export interface RailTurn {
@@ -94,16 +95,20 @@ export function pickActiveAnchorId(anchors: readonly ActiveAnchor[], scrollTop: 
   return active ?? anchors[0]?.id ?? null
 }
 
+
 /** 卡片上的时间按当前界面语言格式化。 */
 export function turnClockLocale(locale: string): string {
   return locale === 'zh' ? 'zh-CN' : 'en-US'
 }
 
-/** 把 ISO 时间戳格式化为「时:分」；解析不了就返回空串，由调用方决定是否隐藏。 */
-export function formatTurnClock(timestamp: string, locale: string): string {
-  const at = Date.parse(timestamp)
-  if (!Number.isFinite(at)) return ''
-  return new Intl.DateTimeFormat(turnClockLocale(locale), { hour: '2-digit', minute: '2-digit' }).format(at)
+/**
+ * 卡片上的时间。
+ *
+ * 规则与消息时间一致（见 formatMessageTime）：当天只给时分，跨天补上月日。
+ * 两处共用一份实现，避免轨道卡片和消息列表对同一时刻给出不同写法。
+ */
+export function formatTurnClock(timestamp: string, locale: string, now: number = Date.now()): string {
+  return formatMessageTime(timestamp, locale, now)
 }
 
 /**

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { triggerFileDownload } from '../../lib/browser-download'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -215,11 +216,9 @@ async function copyCreatedCsv() {
 function downloadCreatedCsv() {
   const blob = new Blob([`${createdCsv.value}\n`], { type: 'text/csv;charset=utf-8' })
   const downloadUrl = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = downloadUrl
-  link.download = `recho-credit-codes-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
-  link.click()
-  URL.revokeObjectURL(downloadUrl)
+  triggerFileDownload(downloadUrl, `recho-credit-codes-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`)
+  // 立刻 revoke 会中断下载：浏览器还没读完就失效了。
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 10_000)
 }
 
 onMounted(() => Promise.all([refreshUsers(), refreshCodes()]))

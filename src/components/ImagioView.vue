@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
+import { formatMessageTime } from '../utils/time'
+import { imageDownloadFileName } from '../lib/image-download-name'
+import { saveImageBlob } from '../lib/browser-download'
+import { useCopyFeedback } from '../composables/useCopyFeedback'
 import { useI18n } from 'vue-i18n'
-import { Plus, X, Sparkles } from '@lucide/vue'
+import { Plus, X, Sparkles, Copy, Check, ThumbsUp, ThumbsDown, Download } from '@lucide/vue'
 import {
   clipboardImageFile,
   compressReferenceImageDataUrl,
@@ -25,7 +29,11 @@ import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
+import ImageViewerModal from './ImageViewerModal.vue'
+import { useMessageFeedback } from '../composables/useMessageFeedback'
+import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl, imageStoragePath } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
+import type { ImageViewerState } from '../lib/image-canvas-model'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
 
@@ -94,7 +102,202 @@ const conversationItems = computed(() => {
   return [...groups.values()]
 })
 
-const { t } = useI18n()
+
+/** 正在下载的图片 id，避免重复点击叠出多个下载。 */
+const downloadingImageId = ref<string | null>(null)
+
+/** 生图结果的评价状态（按生成批次 id 记录）。 */
+const feedback = useMessageFeedback('image')
+
+/**
+ * 拉取已有评价。
+ *
+ * 不查的话刷新后按钮一律显示「未评价」，用户再点一次会被当成首次评价去覆盖服务端
+ * 的值，而不是撤销——明明是同一张图，行为却和刚点过时不一样。
+ * 只查缓存里没有的 id，避免流式生成期间反复回查同一批。
+ */
+watch(conversationItems, items => {
+  const pending = items.map(item => item.id).filter(id => !(id in feedback.values.value))
+  if (pending.length) void feedback.load(pending)
+}, { immediate: true })
+
+/**
+ * 一轮生成的费用合计。
+ *
+ * 一轮可能出多张图，每张各自记了 creditCost，这里求和后展示——按单张显示会让
+ * 「这轮花了多少」要自己加。
+ */
+function turnCreditCost(images: GeneratedImage[]) {
+  return images.reduce((sum, image) => sum + (typeof image.creditCost === 'number' ? image.creditCost : 0), 0)
+}
+
+
+/** 复制成功的短暂反馈：显示勾 1.5 秒。 */
+const { isCopied, markCopied } = useCopyFeedback()
+
+/**
+ * 这一轮里能复制/下载的图片。
+ *
+ * 只有拿到 storagePath 的图才能走鉴权代理取回；还在处理的图没有路径，按钮会给
+ * 一个没有任何反馈的空操作，所以直接从候选里排除。
+ */
+function actionableImages(item: { images: GeneratedImage[] }) {
+  return item.images.filter(image => canDisplayGeneratedImage(image) && Boolean(imageStoragePath(image, 'preview')))
+}
+
+/**
+ * 复制这一轮的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应当是复制图片本身——用户要的是把这张图贴进聊天窗口或文档。
+ * 复制提示词是另一个需求，改用右键或下载文件名即可拿到。
+ */
+async function copyTurnImage(item: { id: string; images: GeneratedImage[] }) {
+  // 与按钮的显示条件取同一张：首张可能还在处理，可用的是后面那张。
+  const image = actionableImages(item)[0]
+  if (!image) return
+  const ok = await copyGeneratedImage(image)
+  if (!ok) return
+  markCopied(item.id)
+}
+
+/** 评价这一轮生成；再点已选中的那项表示撤销。 */
+async function rateTurn(turnId: string, value: number) {
+  const current = feedback.values.value[turnId] ?? 0
+  await feedback.submit(turnId, current === value ? 0 : value)
+}
+/** 展示成两位小数，避免 0.30000000000000004 这类浮点尾数。 */
+function formatCredits(value: number) {
+  return (Math.round(value * 100) / 100).toString()
+}
+
+
+
+/** 当前放大的图片；null 表示查看器关闭。 */
+const viewerImage = ref<GeneratedImage | null>(null)
+const viewerZoom = ref(1)
+
+/**
+ * 打开大图查看器。
+ *
+ * 缩略图只有几百像素，看不清细节；点开可以放大、查看完整提示词，也能直接下载。
+ * 只读预览，不做编辑。
+ */
+function openImage(image: GeneratedImage) {
+  if (!imageStoragePath(image, 'preview')) return
+  viewerImage.value = image
+  viewerZoom.value = 1
+}
+
+function closeImageViewer() {
+  viewerImage.value = null
+  viewerZoom.value = 1
+}
+
+function zoomImageViewer(step: number) {
+  // 与画布查看器同范围，避免拖到极端值时用户不知道怎么回去。
+  viewerZoom.value = Math.min(3, Math.max(0.4, viewerZoom.value + step))
+}
+
+function resetImageViewerZoom() {
+  viewerZoom.value = 1
+}
+
+/** 把当前查看的图片组装成 ImageViewerModal 需要的形状。 */
+const viewerState = computed<ImageViewerState | null>(() => {
+  const image = viewerImage.value
+  if (!image) return null
+  return {
+    imageUrl: '',
+    ...(image.storagePath ? { storagePath: image.storagePath } : {}),
+    ...(image.previewPath ? { previewPath: image.previewPath } : {}),
+    ...(image.thumbnailPath ? { thumbnailPath: image.thumbnailPath } : {}),
+    title: imageDownloadFileName(image, 'image/png').replace(/\.[a-z0-9]+$/i, ''),
+    caption: image.userPrompt || image.prompt,
+    zoom: viewerZoom.value,
+  }
+})
+/**
+ * 复制一张生成的图片到剪贴板。
+ *
+ * 生图消息下的「复制」应该是复制图片本身：用户要的是把这张图贴进聊天窗口或文档，
+ * 而不是拿到当初的提示词。复制提示词的需求更低频，另外提供入口。
+ *
+ * 剪贴板只在安全上下文（https / localhost）可用，且部分浏览器只接受 PNG。
+ * 拿不到就返回 false，由调用方决定是否提示。
+ */
+async function copyGeneratedImage(image: GeneratedImage) {
+  // 与 actionableImages 取同一个来源：只有 previewPath 的图也能操作，
+  // 否则按钮会显示但点击没有任何反应。
+  const path = imageStoragePath(image, 'preview')
+  if (!path) return false
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
+
+  // Safari 只在用户激活期内允许写剪贴板，而取图要走一次网络。把取图与转码放进
+  // ClipboardItem 的值（浏览器接受 Promise<Blob>），write 本身留在点击这一拍里调用。
+  const pending = (async () => {
+    const blob = await fetchAuthenticatedImageBlob(path)
+    // 取回的不一定是 PNG；剪贴板对格式挑食，统一转一次更稳。
+    return blob.type === 'image/png' ? blob : await convertToPng(blob)
+  })()
+
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pending })])
+    return true
+  } catch {
+    // 个别实现不接受 Promise 值，退回先取好再写。
+    try {
+      const blob = await pending
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+/** 借 canvas 把任意位图转成 PNG；转换失败时原样返回，让剪贴板自己判断。 */
+async function convertToPng(blob: Blob) {
+  try {
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) return blob
+    context.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob(result => resolve(result ?? blob), 'image/png')
+    })
+  } catch {
+    return blob
+  }
+}
+/**
+ * 下载一张生成的图片。
+ *
+ * 图片是私有的，必须走鉴权代理拿 blob 再存盘：直接把 storagePath 丢给 <a download>
+ * 会拿到 401，而公开 URL 对未登录的访客也不成立。
+ *
+ * 存盘不做格式转换，所以文件名后缀取自 blob 的真实 MIME——代理可能给 webp。
+ */
+async function downloadGeneratedImage(image: GeneratedImage) {
+  if (downloadingImageId.value) return
+  // 与 actionableImages 取同一个来源。
+  const path = imageStoragePath(image, 'preview')
+  if (!path) return
+  downloadingImageId.value = image.id
+  try {
+    // 取 blob 而不是 object URL：扩展名要按真实类型给，代理返回的可能是 webp。
+    saveImageBlob(await fetchAuthenticatedImageBlob(path), image)
+  } catch {
+    // 下载失败不打断浏览，与复制等轻交互的约定一致。
+  } finally {
+    downloadingImageId.value = null
+  }
+}
+
+const { t, locale } = useI18n()
 
 /**
  * 工作台按生成批次分轮，所以镜像对话页的语义：一格 = 一条提问。
@@ -403,7 +606,7 @@ async function handleGenerate() {
           v-for="item in conversationItems"
           :key="item.id"
           :ref="element => setTurnElement(item.id, element as Element | null)"
-          class="conversation-turn"
+          class="conversation-turn group"
         >
           <div class="conversation-user">
 <div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
@@ -422,11 +625,15 @@ async function handleGenerate() {
             <div class="conversation-output">
 <div class="conversation-label">{{ t('imagio.outputLabel') }}</div>
               <div class="conversation-image-grid">
-                <div
+                <button
                   v-for="image in item.images"
                   :key="image.id"
+                  type="button"
                   class="conversation-image"
-                  :title="image.prompt"
+                  :title="t('imagio.openImage')"
+                  :aria-label="t('imagio.openImage')"
+                  :disabled="!imageStoragePath(image, 'preview')"
+                  @click="openImage(image)"
                 >
                   <AuthenticatedImage
                     v-if="canDisplayGeneratedImage(image)"
@@ -435,12 +642,84 @@ async function handleGenerate() {
                     :alt="image.prompt"
                   />
 <span v-else class="conversation-image-placeholder">{{ t('imagio.imagePending') }}</span>
-                </div>
+                </button>
               </div>
+            <!--
+              操作栏：复制、评价、下载、费用、时间。
+              尺寸与显隐对齐 DSH 的 IconActions：按钮 28px、图标 15px、间距 8px，
+              默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
+            -->
+            <div class="mt-2 flex items-center gap-2 transition-opacity duration-75 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
+              <Button
+                v-if="actionableImages(item).length"
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :title="t('imagio.copyImage')"
+                :aria-label="t('imagio.copyImage')"
+                @click="copyTurnImage(item)"
+              >
+                <Check v-if="isCopied(item.id)" class="h-[15px] w-[15px]" />
+                <Copy v-else class="h-[15px] w-[15px]" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === 1 }"
+                :title="t('chat.like')"
+                :aria-label="t('chat.like')"
+                :aria-pressed="feedback.values.value[item.id] === 1"
+                @click="rateTurn(item.id, 1)"
+              >
+                <ThumbsUp class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === 1 ? 'currentColor' : 'none'" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :class="{ 'text-foreground': feedback.values.value[item.id] === -1 }"
+                :title="t('chat.dislike')"
+                :aria-label="t('chat.dislike')"
+                :aria-pressed="feedback.values.value[item.id] === -1"
+                @click="rateTurn(item.id, -1)"
+              >
+                <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === -1 ? 'currentColor' : 'none'" />
+              </Button>
+              <Button
+                v-if="actionableImages(item).length"
+                variant="ghost"
+                size="icon"
+                class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
+                :disabled="downloadingImageId === actionableImages(item)[0]?.id"
+                :title="t('common.download')"
+                :aria-label="t('common.download')"
+                @click="actionableImages(item)[0] && downloadGeneratedImage(actionableImages(item)[0])"
+              >
+                <Download class="h-[15px] w-[15px]" />
+              </Button>
+              <!-- 费用与时间用左侧分隔线和动作按钮区分开，避免被看成可点的按钮。 -->
+              <span v-if="turnCreditCost(item.images) > 0" class="border-l border-border pl-2 text-[11px] tabular-nums text-muted-foreground">
+                {{ t('imagio.turnCost', { cost: formatCredits(turnCreditCost(item.images)) }) }}
+              </span>
+              <span class="text-[11px] tabular-nums text-muted-foreground" :title="item.timestamp">
+                {{ formatMessageTime(item.timestamp, locale) }}
+              </span>
+            </div>
             </div>
           </div>
         </div>
       </div>
+<!-- 大图查看器：点图片或按回车打开，支持缩放与下载。 -->
+<ImageViewerModal
+  v-if="viewerState"
+  :viewer="viewerState"
+  :is-downloading="Boolean(downloadingImageId)"
+  @close="closeImageViewer"
+  @zoom="zoomImageViewer"
+  @reset-zoom="resetImageViewerZoom"
+  @download="viewerImage && downloadGeneratedImage(viewerImage)"
+/>
 <ChatMessageRail
 :turns="railTurns"
 :active-turn-id="activeTurnId"

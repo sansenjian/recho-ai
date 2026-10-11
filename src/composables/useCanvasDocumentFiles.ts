@@ -1,3 +1,4 @@
+import { triggerFileDownload } from '../lib/browser-download'
 import {
   buildCanvasExportDocument,
   parseCanvasExportDocument,
@@ -24,14 +25,6 @@ function safeCanvasFileName() {
   return `recho-canvas-${date}.json`
 }
 
-function triggerDownload(href: string, fileName: string) {
-  const a = document.createElement('a')
-  a.href = href
-  a.download = fileName
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-}
 
 export function useCanvasDocumentFiles(options: UseCanvasDocumentFilesOptions) {
   function buildDocument() {
@@ -48,7 +41,7 @@ export function useCanvasDocumentFiles(options: UseCanvasDocumentFilesOptions) {
   function exportCanvasToFile() {
     const json = JSON.stringify(buildDocument(), null, 2)
     const objectUrl = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
-    triggerDownload(objectUrl, safeCanvasFileName())
+    triggerFileDownload(objectUrl, safeCanvasFileName())
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
   }
 

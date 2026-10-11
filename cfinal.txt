@@ -1,0 +1,8 @@
+fix: 图片处理函数改用与显示条件一致的取图路径
+
+actionableImages 用 imageStoragePath（会看 previewPath / thumbnailPath）决定是否
+显示按钮，copyGeneratedImage 与 downloadGeneratedImage 却只读 storagePath。
+只有 previewPath 的图因此会显示按钮、点击却没有任何反应。
+
+两处处理函数改用 imageStoragePath(image, 'preview')，并补一条会真正发起取图
+请求的用例——只断言按钮可见测不出这个不一致。

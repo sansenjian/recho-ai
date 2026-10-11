@@ -1,3 +1,5 @@
+import { triggerFileDownload } from './browser-download'
+
 const PNG_MIME_TYPE = 'image/png'
 const PNG_EXTENSION = 'png'
 const DEFAULT_OBJECT_URL_REVOKE_DELAY_MS = 5 * 60_000
@@ -69,14 +71,6 @@ function abortSignalWithTimeout(timeoutMs: number) {
   }
 }
 
-function triggerBrowserDownload(href: string, fileName: string) {
-  const anchor = document.createElement('a')
-  anchor.href = href
-  anchor.download = fileName
-  document.body.appendChild(anchor)
-  anchor.click()
-  document.body.removeChild(anchor)
-}
 
 async function fetchImageBlob(imageUrl: string, timeoutMs: number) {
   const timeout = abortSignalWithTimeout(timeoutMs)
@@ -348,7 +342,7 @@ export async function downloadImage(options: DownloadImageOptions) {
   const { pngBlob } = await prepareImageDownload(options)
   const objectUrl = URL.createObjectURL(pngBlob)
   try {
-    triggerBrowserDownload(objectUrl, safeImageDownloadFileName(title))
+    triggerFileDownload(objectUrl, safeImageDownloadFileName(title))
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), revokeDelayMs)
   }
