@@ -558,6 +558,16 @@ watch(isLoading, (v) => { scrollSmooth = !v })
 watch(messages, () => nextTick(updateActiveRailMessage), { deep: true })
 
 /**
+ * 换用户时清空评价缓存。
+ *
+ * 缓存里留着上一个人的评价，新用户的 pending 会把这些 id 排除掉，于是把别人的
+ * 态度显示成他自己的。
+ */
+watch(() => user.value?.id ?? null, () => {
+  feedback.values.value = {}
+})
+
+/**
  * 拉取当前会话已有评价。
  *
  * 只查还没缓存过的消息 id：切换会话或在流式输出中 messages 会频繁变化，

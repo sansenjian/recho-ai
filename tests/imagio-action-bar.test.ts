@@ -26,6 +26,8 @@ function mountView() {
         size: '1024x1024',
         timestamp: new Date().toISOString(),
         creditCost: 0.3,
+        // 复制与下载要走鉴权代理取图，没有 storagePath 的图不会渲染这两个按钮。
+        storagePath: 'supabase://x.png',
       }],
     },
     global: {

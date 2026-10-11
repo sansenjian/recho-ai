@@ -124,7 +124,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
         默认透明、悬停或键盘聚焦时才浮现（与 DSH 一致，让正文保持干净）。
         已评价的图标换成实心，信号不再依赖颜色，鼠标移开也看得出来。
       -->
-      <div class="mt-1.5 flex h-7 items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
+      <div class="mt-1.5 flex h-7 items-center gap-2 transition-opacity duration-75 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
         <Button
           variant="ghost"
           size="icon"

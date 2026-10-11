@@ -37,10 +37,9 @@ router.get('/message-feedback', async (req: Request, res: Response) => {
   try {
     const user = await requireUser(req)
     const raw = req.query.keys
-    // 支持 ?keys=a,b,c；也支持重复参数 ?keys=a&keys=b。
-    const keys = Array.isArray(raw)
-      ? raw.flatMap(item => String(item).split(','))
-      : typeof raw === 'string' ? raw.split(',') : []
+    // 只认重复参数（?keys=a&keys=b）。早先用逗号连接，但消息键是前端生成的字符串，
+    // 本身可能含逗号，那样一个键会被拆成两个、查不回来。
+    const keys = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : []
     res.json({ feedback: await listMessageFeedback(user.id, keys) })
   } catch (err) {
     console.error('[message-feedback] list failed:', safeErrorDetail(err))
@@ -50,6 +49,24 @@ router.get('/message-feedback', async (req: Request, res: Response) => {
 })
 
 router.put('/message-feedback', async (req: Request, res: Response) => {
+  try {
+    const user = await requireUser(req)
+    const body = (req.body || {}) as { messageKey?: unknown; value?: unknown; surface?: unknown }
+    const record = await saveMessageFeedback(user.id, {
+      messageKey: body.messageKey,
+      value: body.value,
+      surface: body.surface,
+    })
+    res.json({ feedback: record })
+  } catch (err) {
+    console.error('[message-feedback] save failed:', safeErrorDetail(err))
+    const response = feedbackErrorResponse(err)
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+// 与 PUT 同义：有的客户端把「新建评价」写成 POST，两者都接受。
+router.post('/message-feedback', async (req: Request, res: Response) => {
   try {
     const user = await requireUser(req)
     const body = (req.body || {}) as { messageKey?: unknown; value?: unknown; surface?: unknown }

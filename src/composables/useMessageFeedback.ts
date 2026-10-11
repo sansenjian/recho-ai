@@ -15,9 +15,20 @@ export type FeedbackSurface = 'chat' | 'image'
 export function useMessageFeedback(surface: FeedbackSurface) {
   const values = ref<Record<string, number>>({})
 
+  /**
+   * 每个消息键上正在进行的提交次数。
+   *
+   * 连点好评再点差评会并发出两个请求，服务端最终值取决于谁先到；失败回滚时还会
+   * 用旧的 previous 覆盖第二次点击的乐观值。计数器让回滚只在「本次仍是最后一笔」
+   * 时生效：计数不为 0 说明后面还有提交在路上，此时不该回滚。
+   */
+  const inFlight = new Map<string, number>()
+
   async function request(path: string, init: RequestInit = {}) {
     const token = await getAuthAccessToken()
-    if (!token) return null
+    // 没有 token 时必须抛错：返回 null 会让 submit 以为写入成功，界面留在一个
+    // 从未存到服务端的状态上，刷新后凭空消失。访客也能进工作台，这条路径会走到。
+    if (!token) throw new Error('feedback requires sign-in')
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${token}`)
     if (init.body) headers.set('Content-Type', 'application/json')
@@ -31,7 +42,9 @@ export function useMessageFeedback(surface: FeedbackSurface) {
     const wanted = keys.filter(Boolean)
     if (!wanted.length) return
     try {
-      const data = await request(`/api/message-feedback?keys=${encodeURIComponent(wanted.join(','))}`)
+      // 用重复参数而不是逗号连接：消息键是前端生成的字符串，本身可能含逗号。
+      const query = wanted.map(key => `keys=${encodeURIComponent(key)}`).join('&')
+      const data = await request(`/api/message-feedback?${query}`)
       const feedback = (data as { feedback?: Record<string, number> } | null)?.feedback
       if (feedback) values.value = { ...values.value, ...feedback }
     } catch {
@@ -47,6 +60,7 @@ export function useMessageFeedback(surface: FeedbackSurface) {
   async function submit(messageKey: string, value: number) {
     const previous = values.value[messageKey] ?? 0
     if (value === previous && value !== 0) return true
+
     // 先改本地再发请求：按钮要立刻响应。
     if (value === 0) {
       const next = { ...values.value }
@@ -55,6 +69,8 @@ export function useMessageFeedback(surface: FeedbackSurface) {
     } else {
       values.value = { ...values.value, [messageKey]: value }
     }
+
+    inFlight.set(messageKey, (inFlight.get(messageKey) ?? 0) + 1)
     try {
       if (value === 0) {
         await request(`/api/message-feedback/${encodeURIComponent(messageKey)}`, { method: 'DELETE' })
@@ -66,14 +82,21 @@ export function useMessageFeedback(surface: FeedbackSurface) {
       }
       return true
     } catch {
-      // 失败回滚，避免界面显示一个并没存进服务端的状态。
-      values.value = { ...values.value, [messageKey]: previous }
-      if (previous === 0) {
-        const next = { ...values.value }
-        delete next[messageKey]
-        values.value = next
+      // 只有「最后一笔」才回滚：期间又有新点击时，本地值已经是更新后的意图，
+      // 用旧的 previous 覆盖它会让界面回到一个用户没选过的状态。
+      if ((inFlight.get(messageKey) ?? 1) <= 1) {
+        values.value = { ...values.value, [messageKey]: previous }
+        if (previous === 0) {
+          const next = { ...values.value }
+          delete next[messageKey]
+          values.value = next
+        }
       }
       return false
+    } finally {
+      const left = (inFlight.get(messageKey) ?? 1) - 1
+      if (left <= 0) inFlight.delete(messageKey)
+      else inFlight.set(messageKey, left)
     }
   }
 

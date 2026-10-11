@@ -20,8 +20,18 @@ export class MessageFeedbackError extends Error {
   }
 }
 
+/**
+ * 校验评价场景。
+ *
+ * 只在字段缺省时回落到 'chat'：把无效值静默改成 'chat' 会把生图评价计进对话
+ * 场景，统计口径从此就不可信了，而且调用方拿不到任何提示。
+ */
 function normalizeSurface(value: unknown): FeedbackSurface {
-  return value === 'image' ? 'image' : 'chat'
+  if (value === undefined || value === null || value === '') return 'chat'
+  if (value === 'image' || value === 'chat') return value
+  throw new MessageFeedbackError('invalid_feedback_surface', {
+    publicMessage: '评价场景只能是 chat 或 image。',
+  })
 }
 
 function normalizeValue(value: unknown): FeedbackValue {

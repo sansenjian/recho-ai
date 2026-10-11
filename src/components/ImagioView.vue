@@ -106,6 +106,18 @@ const downloadingImageId = ref<string | null>(null)
 const feedback = useMessageFeedback('image')
 
 /**
+ * 拉取已有评价。
+ *
+ * 不查的话刷新后按钮一律显示「未评价」，用户再点一次会被当成首次评价去覆盖服务端
+ * 的值，而不是撤销——明明是同一张图，行为却和刚点过时不一样。
+ * 只查缓存里没有的 id，避免流式生成期间反复回查同一批。
+ */
+watch(conversationItems, items => {
+  const pending = items.map(item => item.id).filter(id => !(id in feedback.values.value))
+  if (pending.length) void feedback.load(pending)
+}, { immediate: true })
+
+/**
  * 一轮生成的费用合计。
  *
  * 一轮可能出多张图，每张各自记了 creditCost，这里求和后展示——按单张显示会让
@@ -118,6 +130,16 @@ function turnCreditCost(images: GeneratedImage[]) {
 
 /** 刚复制成功的轮次 id，用于把图标短暂换成勾。 */
 const copiedTurnId = ref<string | null>(null)
+
+/**
+ * 这一轮里能复制/下载的图片。
+ *
+ * 只有拿到 storagePath 的图才能走鉴权代理取回；还在处理的图没有路径，按钮会给
+ * 一个没有任何反馈的空操作，所以直接从候选里排除。
+ */
+function actionableImages(item: { images: GeneratedImage[] }) {
+  return item.images.filter(image => Boolean(image.storagePath))
+}
 
 /**
  * 复制这一轮的图片到剪贴板。
@@ -158,14 +180,27 @@ async function copyGeneratedImage(image: GeneratedImage) {
   const path = image.storagePath || ''
   if (!path) return false
   if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
-  try {
+
+  // Safari 只在用户激活期内允许写剪贴板，而取图要走一次网络。把取图与转码放进
+  // ClipboardItem 的值（浏览器接受 Promise<Blob>），write 本身留在点击这一拍里调用。
+  const pending = (async () => {
     const blob = await fetchAuthenticatedImageBlob(path)
-    // 从存储服务取回的不一定是 PNG；剪贴板对格式挑食，统一转一次更稳。
-    const png = blob.type === 'image/png' ? blob : await convertToPng(blob)
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    // 取回的不一定是 PNG；剪贴板对格式挑食，统一转一次更稳。
+    return blob.type === 'image/png' ? blob : await convertToPng(blob)
+  })()
+
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pending })])
     return true
   } catch {
-    return false
+    // 个别实现不接受 Promise 值，退回先取好再写。
+    try {
+      const blob = await pending
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
@@ -192,6 +227,8 @@ async function convertToPng(blob: Blob) {
  *
  * 图片是私有的，必须走鉴权代理拿 blob 再存盘：直接把 storagePath 丢给 <a download>
  * 会拿到 401，而公开 URL 对未登录的访客也不成立。
+ *
+ * 存盘不做格式转换，所以文件名后缀取自 blob 的真实 MIME——代理可能给 webp。
  */
 async function downloadGeneratedImage(image: GeneratedImage) {
   if (downloadingImageId.value) return
@@ -199,11 +236,12 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   if (!path) return
   downloadingImageId.value = image.id
   try {
-    const objectUrl = await fetchAuthenticatedImageObjectUrl(path)
-    if (!objectUrl) return
+    // 取 blob 而不是 object URL：扩展名要按真实类型给，代理返回的可能是 webp。
+    const blob = await fetchAuthenticatedImageBlob(path)
+    const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = objectUrl
-    link.download = imageDownloadFileName(image)
+    link.download = imageDownloadFileName(image, blob.type)
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -564,9 +602,9 @@ async function handleGenerate() {
               尺寸与显隐对齐 DSH 的 IconActions：按钮 28px、图标 15px、间距 8px，
               默认透明、悬停或键盘聚焦时才浮现。已评价的图标换成实心。
             -->
-            <div class="mt-2 flex items-center gap-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div class="mt-2 flex items-center gap-2 transition-opacity duration-75 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
               <Button
-                v-if="item.images.length"
+                v-if="actionableImages(item).length"
                 variant="ghost"
                 size="icon"
                 class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -602,7 +640,7 @@ async function handleGenerate() {
                 <ThumbsDown class="h-[15px] w-[15px]" :fill="feedback.values.value[item.id] === -1 ? 'currentColor' : 'none'" />
               </Button>
               <Button
-                v-if="item.images.length"
+                v-if="actionableImages(item).length"
                 variant="ghost"
                 size="icon"
                 class="h-7 w-7 text-muted-foreground hover:bg-accent hover:text-foreground"
