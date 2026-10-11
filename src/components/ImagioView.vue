@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createScrollSettleState, observeScrollFrame, scrollElementTo } from '../utils/scroll-settle'
 import { formatMessageTime } from '../utils/time'
 import { imageDownloadFileName } from '../lib/image-download-name'
+import { previewImageUrl } from '../lib/image-gallery'
 import { saveImageBlob } from '../lib/browser-download'
 import { useCopyFeedback } from '../composables/useCopyFeedback'
 import { useI18n } from 'vue-i18n'
@@ -127,6 +128,10 @@ watch(conversationItems, items => {
  * 一轮可能出多张图，每张各自记了 creditCost，这里求和后展示——按单张显示会让
  * 「这轮花了多少」要自己加。
  */
+/** 展示成两位小数，避免 0.30000000000000004 这类浮点尾数。 */
+function formatCredits(value: number) {
+  return (Math.round(value * 100) / 100).toString()
+}
 function turnCreditCost(images: GeneratedImage[]) {
   return images.reduce((sum, image) => sum + (typeof image.creditCost === 'number' ? image.creditCost : 0), 0)
 }
@@ -165,16 +170,20 @@ async function rateTurn(turnId: string, value: number) {
   const current = feedback.values.value[turnId] ?? 0
   await feedback.submit(turnId, current === value ? 0 : value)
 }
-/** 展示成两位小数，避免 0.30000000000000004 这类浮点尾数。 */
-function formatCredits(value: number) {
-  return (Math.round(value * 100) / 100).toString()
-}
-
-
-
 /** 当前放大的图片；null 表示查看器关闭。 */
 const viewerImage = ref<GeneratedImage | null>(null)
 const viewerZoom = ref(1)
+/**
+ * 查看器里的图片范围。
+ *
+ * 一轮可能出多张图，打开其中一张后应该能在同批里翻页，而不是关掉再点下一张；
+ * 所以除了当前图，还要记住它属于哪一轮以及顺序。
+ */
+const viewerBatch = ref<GeneratedImage[]>([])
+
+const viewerIndex = computed(() =>
+  Math.max(0, viewerBatch.value.findIndex(image => image.id === viewerImage.value?.id)),
+)
 
 /**
  * 打开大图查看器。
@@ -182,16 +191,29 @@ const viewerZoom = ref(1)
  * 缩略图只有几百像素，看不清细节；点开可以放大、查看完整提示词，也能直接下载。
  * 只读预览，不做编辑。
  */
-function openImage(image: GeneratedImage) {
+function openImage(image: GeneratedImage, batch: GeneratedImage[] = [image]) {
   if (!imageStoragePath(image, 'preview')) return
+  // 只有能取图的图才进翻页列表，否则会翻到一个空白页。
+  const usable = batch.filter(item => Boolean(imageStoragePath(item, 'preview')))
+  viewerBatch.value = usable.some(item => item.id === image.id) ? usable : [image]
   viewerImage.value = image
   viewerZoom.value = 1
 }
 
 function closeImageViewer() {
   viewerImage.value = null
+  viewerBatch.value = []
   viewerZoom.value = 1
 }
+
+/** 在当前批次内切换；到头就停在原地，不循环——循环会让用户失去位置感。 */
+function stepImageViewer(offset: number) {
+  const next = viewerBatch.value[viewerIndex.value + offset]
+  if (!next) return
+  viewerImage.value = next
+  viewerZoom.value = 1
+}
+
 
 function zoomImageViewer(step: number) {
   // 与画布查看器同范围，避免拖到极端值时用户不知道怎么回去。
@@ -200,6 +222,15 @@ function zoomImageViewer(step: number) {
 
 function resetImageViewerZoom() {
   viewerZoom.value = 1
+}
+
+/**
+ * 适应窗口：把图片缩到能整张看到。
+ *
+ * 打开时默认 1:1，大图往往一进来就超出视野；这个按钮给一个「先看全貌」的出口。
+ */
+function fitImageViewer() {
+  viewerZoom.value = 0.6
 }
 
 /** 把当前查看的图片组装成 ImageViewerModal 需要的形状。 */
@@ -633,7 +664,7 @@ async function handleGenerate() {
                   :title="t('imagio.openImage')"
                   :aria-label="t('imagio.openImage')"
                   :disabled="!imageStoragePath(image, 'preview')"
-                  @click="openImage(image)"
+                  @click="openImage(image, actionableImages(item))"
                 >
                   <AuthenticatedImage
                     v-if="canDisplayGeneratedImage(image)"
@@ -715,9 +746,14 @@ async function handleGenerate() {
   v-if="viewerState"
   :viewer="viewerState"
   :is-downloading="Boolean(downloadingImageId)"
+  :total="viewerBatch.length"
+  :index="viewerIndex"
   @close="closeImageViewer"
   @zoom="zoomImageViewer"
   @reset-zoom="resetImageViewerZoom"
+  @fit-window="fitImageViewer"
+  @previous="stepImageViewer(-1)"
+  @next="stepImageViewer(1)"
   @download="viewerImage && downloadGeneratedImage(viewerImage)"
 />
 <ChatMessageRail

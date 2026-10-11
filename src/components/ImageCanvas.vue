@@ -1689,13 +1689,18 @@ onUnmounted(() => {
       @send-to-chat="sendGalleryDetailToChat"
     />
 
+    <!-- 画布查看器一次只看一张，所以 total 固定 1、缩略图条为空。 -->
     <ImageViewerModal
       v-if="imageViewer"
       :viewer="imageViewer"
       :is-downloading="isDownloadingImage(viewerDownloadKey())"
+      :total="1"
+      :index="0"
+      :thumbnails="[]"
       @close="closeImageViewer"
       @zoom="zoomImageViewer"
       @reset-zoom="resetImageViewerZoom"
+      @fit-window="resetImageViewerZoom"
       @preload-download="preloadViewerImageDownload"
       @download="downloadImageViewerImage"
     />
