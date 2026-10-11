@@ -1,0 +1,15 @@
+fix(imagio): 参考图改走鉴权代理，不再直连对象存储
+
+参考图原先直接绑 previewUrl 显示，而对象存储对直连设置了防盗链与强制下载：
+浏览器请求带 Referer 时返回 403，即便放行也会因为 content-disposition: attachment
+而不内联渲染。结果参考图一直是裂图。
+
+生成图没有这个问题，因为它们走的是 /api/image/storage 代理。参考图改用同一个
+AuthenticatedImage 组件，只有本地刚选、还没上传的图（dataUrl）才直用。
+
+顺带修掉 AuthenticatedImage 自身的同类问题：它原本先把 props.src 绑到 img 再请求
+代理，所以即使走组件，带 storagePath 的图仍会先发一次必然失败的直链请求。改为
+只在没有可代理路径、或代理失败后才回退到远程 URL，来源为空时不渲染 img。
+
+验证：本地起 Go/Node 网关后，参考图的 img 拿到 blob: 地址，naturalWidth 1024，
+此前为 0。

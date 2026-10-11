@@ -640,13 +640,19 @@ async function handleGenerate() {
           class="conversation-turn group"
         >
           <div class="conversation-user">
-<div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
-              <img
+<!--
+              参考图同样要走鉴权代理：COS 对直连设置了防盗链与强制下载，直接绑 URL
+              会得到 403 的裂图。只有本地刚选的图（还没上传）才有 dataUrl 可直用。
+            -->
+            <div v-if="item.references.length" class="conversation-reference-list" :aria-label="t('imagio.referencesAria')">
+              <AuthenticatedImage
                 v-for="reference in item.references"
                 :key="reference.id"
+                :source="reference"
                 :src="reference.previewUrl || reference.thumbnailUrl || reference.dataUrl"
+                mode="thumbnail"
                 :alt="reference.title"
-              >
+              />
             </div>
             <p>{{ item.prompt }}</p>
           </div>
