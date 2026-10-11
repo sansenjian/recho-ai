@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -490,6 +491,102 @@ func (u *S3Uploader) listREST(ctx context.Context, prefix string) ([]StorageObje
 		}
 		cursor = page.NextCursor
 	}
+}
+
+// StatObject 检查对象是否存在，用来定位它真正住在哪个 provider 上。
+//
+// 只需要存在性，所以刻意用 HeadObject 而不是下载：探测应当便宜。
+func (u *S3Uploader) StatObject(ctx context.Context, key string) (*ObjectStat, error) {
+	if u == nil {
+		return nil, fmt.Errorf("uploader not initialized")
+	}
+	// REST 兜底路径（Supabase Storage）没有 S3 客户端，但同样要能判断存在性，
+	// 否则探测会跳过它、把地址签给错误的 provider。
+	if u.client == nil {
+		if u.restClient == nil {
+			return nil, fmt.Errorf("object stat requires a configured storage client")
+		}
+		return u.statREST(ctx, key)
+	}
+
+	resp, err := u.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(u.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	stat := &ObjectStat{}
+	if resp.ContentLength != nil {
+		stat.Size = *resp.ContentLength
+	}
+	if resp.ContentType != nil {
+		stat.Mime = *resp.ContentType
+	}
+	return stat, nil
+}
+
+// statREST 用 HEAD 判断对象是否存在。
+func (u *S3Uploader) statREST(ctx context.Context, key string) (*ObjectStat, error) {
+	req, err := u.newRESTRequest(ctx, http.MethodHead, u.objectRESTURL(key), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := u.restClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat %s via Supabase REST: %w", key, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("failed to stat %s via Supabase REST: %s", key, readRESTError(resp))
+	}
+
+	stat := &ObjectStat{}
+	if size := resp.Header.Get("Content-Length"); size != "" {
+		if parsed, parseErr := strconv.ParseInt(size, 10, 64); parseErr == nil {
+			stat.Size = parsed
+		}
+	}
+	stat.Mime = resp.Header.Get("Content-Type")
+	return stat, nil
+}
+
+// ObjectStat 是对象存在时能拿到的少量元数据。
+type ObjectStat struct {
+	Size int64
+	Mime string
+}
+
+// PresignedURL 生成一个带时效的直连地址，让浏览器绕过服务端直接向对象存储取图。
+//
+// 为什么需要它：走代理意味着每张图都从服务器转发一次，图片是二进制大文件，流量
+// 成本直接压在后端出口上。签名地址把这段流量交给对象存储，服务端只签发一个小
+// 字符串。
+//
+// 调用方必须先做鉴权（私有图只签发给属主），因为一旦签名发出，对象存储不再知道
+// 请求来自谁。
+func (u *S3Uploader) PresignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if u == nil {
+		return "", fmt.Errorf("uploader not initialized")
+	}
+	if u.client == nil {
+		// REST 兜底路径没有预签名能力，调用方据此回落到代理。
+		return "", fmt.Errorf("presigning requires the S3 client")
+	}
+	if ttl <= 0 {
+		return "", fmt.Errorf("presign ttl must be positive")
+	}
+
+	client := s3.NewPresignClient(u.client)
+	presigned, err := client.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(u.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("failed to presign %s: %w", key, err)
+	}
+	return presigned.URL, nil
 }
 
 // Download retrieves an object using either S3 or the Supabase REST API.

@@ -139,6 +139,10 @@ func (s *testStorageService) GetImageVisibilityByPath(ctx context.Context, stora
 	return "", "", nil
 }
 
+func (s *testStorageService) PresignStorageURL(context.Context, string, time.Duration) (string, error) {
+	return "", fmt.Errorf("presigning is not supported by this test storage")
+}
+
 func (s *testStorageService) DeleteImageHistory(ctx context.Context, id, userID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

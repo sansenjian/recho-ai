@@ -7,6 +7,14 @@ import i18n from '../src/i18n'
 import { fetchAuthenticatedImageObjectUrl } from '../src/lib/authenticated-image-source'
 import type { GeneratedImage } from '../src/types/image'
 
+// 签名优先：默认让它失败，于是既有用例继续走代理这条回落路径；单独验证签名的
+// 用例会自己覆盖返回值。
+const presignMock = vi.fn().mockResolvedValue(null)
+vi.mock('../src/composables/usePresignedImage', () => ({
+  requestPresignedImageUrl: (path: string) => presignMock(path),
+  fetchPresignedImageUrls: async () => new Map(),
+}))
+
 // Keep the guard and storage-path resolution real, but never touch the network.
 vi.mock('../src/lib/authenticated-image-source', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/authenticated-image-source')>()
@@ -207,7 +215,23 @@ describe('Imagio conversation turns', () => {
       'user/image-1.png',
     ])
     // 第三个参数是取图模式，缓存键靠它区分缩略图与预览图，必须传对。
-    expect(fetchMock).toHaveBeenCalledWith('preview/image-1.png', expect.anything(), 'preview')
+    expect(fetchMock).toHaveBeenCalledWith('preview/image-1.png', undefined, 'preview')
+  })
+
+  it('prefers a presigned url over the storage proxy', async () => {
+    // 签名地址由对象存储直供，不经过本服务：图片是二进制大文件，走代理意味着每张图
+    // 都从服务器转发一次。代理保留为回落路径，但不该是首选。
+    presignMock.mockResolvedValue({ url: 'https://cos.example/signed.webp', expiresAt: 0 })
+    const fetchMock = vi.mocked(fetchAuthenticatedImageObjectUrl)
+    fetchMock.mockClear()
+
+    const view = mountView([generatedImage({ storagePath: 'user/image-1.png' })])
+    await flushPromises()
+
+    const image = view.findComponent(AuthenticatedImage)
+    expect(image.find('img').attributes('src')).toBe('https://cos.example/signed.webp')
+    expect(fetchMock).not.toHaveBeenCalled()
+    presignMock.mockReset()
   })
 
   it('keeps the placeholder when a result has no image source at all', () => {

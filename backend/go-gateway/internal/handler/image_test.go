@@ -65,6 +65,8 @@ type stubImageStorageService struct {
 	owner          string
 	visibilityFunc func(ctx context.Context, storagePath string) (string, string, error)
 	visErr         error
+	presignFunc    func(ctx context.Context, storagePath string, ttl time.Duration) (string, error)
+	presignErr     error
 }
 
 func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error) {
@@ -153,6 +155,16 @@ func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, 
 		return "", "", s.visErr
 	}
 	return s.visibility, s.owner, nil
+}
+
+func (s *stubImageStorageService) PresignStorageURL(ctx context.Context, storagePath string, ttl time.Duration) (string, error) {
+	if s.presignFunc != nil {
+		return s.presignFunc(ctx, storagePath, ttl)
+	}
+	if s.presignErr != nil {
+		return "", s.presignErr
+	}
+	return "https://storage.test/" + storagePath + "?signed=1", nil
 }
 
 func (s *stubImageStorageService) CleanupObjects(paths ...string) {
@@ -1009,5 +1021,132 @@ func TestImageGenerateUsesCreditServicePrice(t *testing.T) {
 	}
 	if len(creditSvc.reserveCalls) != 1 || creditSvc.reserveCalls[0] != 2 {
 		t.Fatalf("expected one reserve call for 2 images, got %#v", creditSvc.reserveCalls)
+	}
+}
+
+// presignTestResponse 只解出测试关心的字段。
+type presignTestResponse struct {
+	Items []struct {
+		Path      string `json:"path"`
+		URL       string `json:"url"`
+		ExpiresAt int64  `json:"expiresAt"`
+		Error     string `json:"error"`
+	} `json:"items"`
+}
+
+func performPresignRequest(t *testing.T, storageSvc *stubImageStorageService, paths []string, userID string) (*httptest.ResponseRecorder, presignTestResponse) {
+	t.Helper()
+	h := NewImageHandler(nil, storageSvc, nil)
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	body, err := json.Marshal(map[string]any{"paths": paths})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/storage/presign", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if userID != "" {
+		req = req.WithContext(middleware.WithUser(req.Context(), &middleware.User{ID: userID}))
+	}
+	res := httptest.NewRecorder()
+	r.ServeHTTP(res, req)
+
+	var parsed presignTestResponse
+	if res.Code == http.StatusOK {
+		if err := json.Unmarshal(res.Body.Bytes(), &parsed); err != nil {
+			t.Fatalf("decode response: %v body=%s", err, res.Body.String())
+		}
+	}
+	return res, parsed
+}
+
+func TestPresignStorageRefusesPrivateImageForOtherUsers(t *testing.T) {
+	// 签名一旦发出，对象存储不再知道请求来自谁，所以这里是唯一的拦截点。
+	// 放行等于把私有图直接变成公开直链。
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(_ context.Context, storagePath string) (string, string, error) {
+			return "private", "owner_123", nil
+		},
+	}
+
+	res, parsed := performPresignRequest(t, storageSvc, []string{"generated/test.preview.webp"}, "someone_else")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	if len(parsed.Items) != 1 {
+		t.Fatalf("expected 1 item, got %#v", parsed.Items)
+	}
+	if parsed.Items[0].URL != "" {
+		t.Fatalf("private image must not be presigned for another user, got %q", parsed.Items[0].URL)
+	}
+	if parsed.Items[0].Error != "forbidden" {
+		t.Fatalf("expected forbidden, got %q", parsed.Items[0].Error)
+	}
+}
+
+func TestPresignStorageAllowsOwnerOfPrivateImage(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(_ context.Context, storagePath string) (string, string, error) {
+			return "private", "owner_123", nil
+		},
+	}
+
+	_, parsed := performPresignRequest(t, storageSvc, []string{"generated/test.preview.webp"}, "owner_123")
+
+	if len(parsed.Items) != 1 || parsed.Items[0].URL == "" {
+		t.Fatalf("owner should get a presigned url, got %#v", parsed.Items)
+	}
+	if parsed.Items[0].ExpiresAt == 0 {
+		t.Fatalf("expected an expiry, got %#v", parsed.Items[0])
+	}
+}
+
+func TestPresignStorageAllowsAnonymousForPublicImage(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(_ context.Context, storagePath string) (string, string, error) {
+			return "public", "", nil
+		},
+	}
+
+	_, parsed := performPresignRequest(t, storageSvc, []string{"generated/test.preview.webp"}, "")
+
+	if len(parsed.Items) != 1 || parsed.Items[0].URL == "" {
+		t.Fatalf("public image should be presigned anonymously, got %#v", parsed.Items)
+	}
+}
+
+func TestPresignStorageReportsUnsupportedInsteadOfFailing(t *testing.T) {
+	// 存储后端不支持预签名时（如 REST 兜底），前端要能据此回落到代理，
+	// 而不是让整页图片加载失败。
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(_ context.Context, storagePath string) (string, string, error) {
+			return "public", "", nil
+		},
+		presignErr: errors.New("presigning requires the S3 client"),
+	}
+
+	res, parsed := performPresignRequest(t, storageSvc, []string{"generated/test.preview.webp"}, "")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if len(parsed.Items) != 1 || parsed.Items[0].Error != "unsupported" {
+		t.Fatalf("expected unsupported, got %#v", parsed.Items)
+	}
+}
+
+func TestPresignStorageRejectsOversizedBatch(t *testing.T) {
+	storageSvc := &stubImageStorageService{}
+	paths := make([]string, presignMaxPaths+1)
+	for i := range paths {
+		paths[i] = "generated/x.webp"
+	}
+
+	res, _ := performPresignRequest(t, storageSvc, paths, "")
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
 	}
 }

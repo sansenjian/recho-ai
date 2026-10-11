@@ -7,6 +7,7 @@ import {
   type AuthenticatedImageMode,
   type AuthenticatedImageSource,
 } from '../lib/authenticated-image-source'
+import { requestPresignedImageUrl } from '../composables/usePresignedImage'
 
 const props = withDefaults(defineProps<{
   source?: AuthenticatedImageSource | null
@@ -19,13 +20,15 @@ const props = withDefaults(defineProps<{
 })
 
 // 初始留空：watch 的 immediate 回调是异步的，先填 props.src 会让第一帧就渲染远程
-// 地址并发出请求（对象存储有防盗链，那次请求必然失败）。回调里会按有没有可代理的
+// 地址并发出请求（对象存储有防盗链，那次请求必然失败）。回调里会按有没有可取图的
 // 路径决定填什么。
 const resolvedSrc = ref('')
 const storagePathCandidates = computed(() => imageStoragePathCandidates(props.source, props.mode))
 let objectUrl = ''
 let loadSeq = 0
-let controller: AbortController | null = null
+/** 当前生效的签名地址；它由对象存储直供，不需要 revoke。 */
+let presignedUrl = ''
+let presignTimer: number | null = null
 
 function revokeObjectUrl() {
   if (objectUrl) {
@@ -34,11 +37,43 @@ function revokeObjectUrl() {
   }
 }
 
-function abortPendingFetch() {
-  if (controller) {
-    controller.abort()
-    controller = null
+function clearPresignTimer() {
+  if (presignTimer !== null) {
+    window.clearTimeout(presignTimer)
+    presignTimer = null
   }
+}
+
+/**
+ * 到期前重新签发。
+ *
+ * 页面可能开着很久（用户把标签页晾在那儿），签名过期后图片会变成裂图。提前一分钟
+ * 换新，留出签发本身的耗时。
+ */
+function schedulePresignRefresh(storagePath: string, expiresAt: number) {
+  clearPresignTimer()
+  if (!expiresAt) return
+  const msUntilExpiry = expiresAt * 1000 - Date.now() - 60_000
+  if (msUntilExpiry <= 0) return
+
+  const seq = loadSeq
+  presignTimer = window.setTimeout(() => {
+    void applyPresigned(storagePath, seq, true)
+  }, msUntilExpiry)
+}
+
+/** 取签名地址并显示；失败返回 false，调用方回落到代理。 */
+async function applyPresigned(storagePath: string, seq: number, isRefresh: boolean): Promise<boolean> {
+  const signed = await requestPresignedImageUrl(storagePath)
+  if (!signed) return false
+  // 期间换过图或组件已卸载，这次结果作废。
+  if (seq !== loadSeq) return false
+  if (isRefresh) clearPresignTimer()
+  revokeObjectUrl()
+  presignedUrl = signed.url
+  resolvedSrc.value = signed.url
+  schedulePresignRefresh(storagePath, signed.expiresAt)
+  return true
 }
 
 watch(
@@ -51,30 +86,36 @@ watch(
     const seq = ++loadSeq
     const fallbackSrc = props.src || imageSourceUrl(props.source, props.mode)
     const paths = storagePathCandidates.value
-    abortPendingFetch()
+    clearPresignTimer()
+    presignedUrl = ''
     revokeObjectUrl()
 
-    // 有 storagePath 时不要先绑远程 URL：那个地址（如 COS 直链）多半带防盗链，
-    // 请求必然失败，既浪费一次往返也在控制台留下 403。等代理取回 blob 再显示，
-    // 只有确实没有可代理的路径时才回退到远程 URL 或本地 dataUrl。
+    // 没有可取的存储路径时，远程 URL 或本地 dataUrl 是唯一来源。
     if (!paths.length) {
       resolvedSrc.value = fallbackSrc
       return
     }
     resolvedSrc.value = ''
 
-    controller = new AbortController()
-    const signal = controller.signal
+    // 优先用签名地址：对象存储直供，不经过本服务。图片是二进制大文件，走代理意味着
+    // 每张图都从服务器转发一次，出口流量全压在后端上。
+    for (const path of paths) {
+      if (await applyPresigned(path, seq, false)) return
+    }
+    if (seq !== loadSeq) return
+
+    // 签发不可用时（存储不支持、未登录、网络异常）回落到代理。这条路径始终保留，
+    // 任何一步出问题都不会让图片全挂。
     try {
       let nextObjectUrl = ''
       for (const path of paths) {
         try {
           // 把 mode 带进去：同一张图的缩略图与预览图是两份不同大小的内容，
           // 缓存键必须区分，否则点开大图会拿到网格里的低清版本。
-          nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, signal, props.mode)
+          nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, undefined, props.mode)
           break
-        } catch (err) {
-          if (signal.aborted) throw err
+        } catch {
+          // 换下一个候选路径。
         }
       }
       if (!nextObjectUrl) {
@@ -84,17 +125,12 @@ watch(
         URL.revokeObjectURL(nextObjectUrl)
         return
       }
-      controller = null
       revokeObjectUrl()
       objectUrl = nextObjectUrl
       resolvedSrc.value = nextObjectUrl
     } catch {
       if (seq === loadSeq) {
         resolvedSrc.value = fallbackSrc
-      }
-    } finally {
-      if (controller?.signal === signal) {
-        controller = null
       }
     }
   },
@@ -103,7 +139,7 @@ watch(
 
 onBeforeUnmount(() => {
   loadSeq += 1
-  abortPendingFetch()
+  clearPresignTimer()
   revokeObjectUrl()
 })
 </script>
