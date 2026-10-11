@@ -1,5 +1,6 @@
-import { getAuthAccessToken } from '../composables/useAuthSession'
+import { getAuthIdentity } from '../composables/useAuthSession'
 import { imageApiUrl } from './api-base'
+import { ANONYMOUS_OWNER, currentCacheGeneration, imageBlobCacheKey, readImageBlob, writeImageBlob } from './image-blob-cache'
 
 export type AuthenticatedImageMode = 'thumbnail' | 'preview' | 'original'
 
@@ -84,8 +85,25 @@ export function imageStorageProxyUrl(storagePath: string) {
  * 下载与复制到剪贴板都需要 blob 本身，而不是一个 object URL——剪贴板要的是数据。
  * 两条路径共用这里，避免各写一份鉴权与错误处理。
  */
-export async function fetchAuthenticatedImageBlob(storagePath: string, signal?: AbortSignal) {
-  const token = await getAuthAccessToken()
+export async function fetchAuthenticatedImageBlob(
+  storagePath: string,
+  signal?: AbortSignal,
+  mode: AuthenticatedImageMode = 'original',
+) {
+  // 身份要一次拿到手：缓存键用它隔离账号，请求头用它做鉴权。分两次取会在两次
+  // 之间发生登录/登出时把 A 的图写进 B 的缓存。
+  const identity = await getAuthIdentity()
+  const owner = identity.userId || ANONYMOUS_OWNER
+  // 记下开始时的代次，写回前用它判断期间有没有发生过账号缓存清理。
+  const generation = currentCacheGeneration()
+
+  // 先查本地缓存。断网时这是唯一能让图库显示出来的路径，所以即便后面网络失败也
+  // 要先试缓存，而不是反过来。
+  const cacheKey = imageBlobCacheKey(owner, storagePath, mode)
+  const cached = await readImageBlob(cacheKey)
+  if (cached) return cached
+
+  const token = identity.accessToken
   const res = await fetch(imageStorageProxyUrl(storagePath), {
     cache: 'force-cache',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -98,10 +116,17 @@ export async function fetchAuthenticatedImageBlob(storagePath: string, signal?: 
   if (!blob.size) {
     throw new Error('image storage proxy returned empty body')
   }
+  // 带上代次：如果请求期间用户登出、这个账号的缓存被清过，这次写回会被丢弃。
+  // 不带的话，晚回来的响应会把刚清掉的图又写回去，登出就等于没清。
+  void writeImageBlob(cacheKey, blob, generation)
   return blob
 }
 
-export async function fetchAuthenticatedImageObjectUrl(storagePath: string, signal?: AbortSignal) {
-  const blob = await fetchAuthenticatedImageBlob(storagePath, signal)
+export async function fetchAuthenticatedImageObjectUrl(
+  storagePath: string,
+  signal?: AbortSignal,
+  mode: AuthenticatedImageMode = 'original',
+) {
+  const blob = await fetchAuthenticatedImageBlob(storagePath, signal, mode)
   return URL.createObjectURL(blob)
 }

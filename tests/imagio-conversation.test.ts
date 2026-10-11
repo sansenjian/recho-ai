@@ -182,7 +182,8 @@ describe('Imagio conversation turns', () => {
       'preview/image-1.png',
       'user/image-1.png',
     ])
-    expect(fetchMock).toHaveBeenCalledWith('preview/image-1.png', expect.anything())
+    // 第三个参数是取图模式，缓存键靠它区分缩略图与预览图，必须传对。
+    expect(fetchMock).toHaveBeenCalledWith('preview/image-1.png', expect.anything(), 'preview')
   })
 
   it('keeps the placeholder when a result has no image source at all', () => {
