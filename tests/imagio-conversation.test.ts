@@ -44,6 +44,30 @@ describe('Imagio conversation turns', () => {
   })
 
 
+  it('renders references through the authenticated component, not a raw src', async () => {
+    // COS 对直连设置了防盗链与强制下载，裸 <img :src="previewUrl"> 只会得到 403 裂图。
+    // 参考图必须和生成图一样走鉴权代理。文件里另一个 previewUrl 直链测试无法发现这一点，
+    // 因为它只断言 src 属性，不管这个 src 能不能加载。
+    const view = mountView([generatedImage({
+      references: [{
+        id: 'ref-1',
+        title: '参考图 1',
+        previewUrl: 'https://example.invalid/direct.webp',
+        storagePath: 'cos://references/uploads/u/x.webp',
+      }],
+    })])
+
+    const list = view.find('.conversation-reference-list')
+    expect(list.exists()).toBe(true)
+
+    // 走组件意味着"先取鉴权 blob 再显示"，直链只是取不到时的兜底。
+    const image = list.findComponent(AuthenticatedImage)
+    expect(image.exists()).toBe(true)
+    expect(image.props('source')).toMatchObject({
+      storagePath: 'cos://references/uploads/u/x.webp',
+    })
+  })
+
   it('scrolls the conversation to the latest message on mount', async () => {
     // 打开工作台对话时原先没有任何滚动逻辑，浏览器停在默认位置——列表顶部，
     // 也就是最老的一条。长会话每次都要手动拉到底。
