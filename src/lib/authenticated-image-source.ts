@@ -1,6 +1,6 @@
 import { getAuthIdentity } from '../composables/useAuthSession'
 import { imageApiUrl } from './api-base'
-import { ANONYMOUS_OWNER, imageBlobCacheKey, readImageBlob, writeImageBlob } from './image-blob-cache'
+import { ANONYMOUS_OWNER, currentCacheGeneration, imageBlobCacheKey, readImageBlob, writeImageBlob } from './image-blob-cache'
 
 export type AuthenticatedImageMode = 'thumbnail' | 'preview' | 'original'
 
@@ -94,6 +94,8 @@ export async function fetchAuthenticatedImageBlob(
   // 之间发生登录/登出时把 A 的图写进 B 的缓存。
   const identity = await getAuthIdentity()
   const owner = identity.userId || ANONYMOUS_OWNER
+  // 记下开始时的代次，写回前用它判断期间有没有发生过账号缓存清理。
+  const generation = currentCacheGeneration()
 
   // 先查本地缓存。断网时这是唯一能让图库显示出来的路径，所以即便后面网络失败也
   // 要先试缓存，而不是反过来。
@@ -114,8 +116,9 @@ export async function fetchAuthenticatedImageBlob(
   if (!blob.size) {
     throw new Error('image storage proxy returned empty body')
   }
-  // 写回失败不该让已经拿到的图白拿，所以不 await 结果以外的错误。
-  void writeImageBlob(cacheKey, blob)
+  // 带上代次：如果请求期间用户登出、这个账号的缓存被清过，这次写回会被丢弃。
+  // 不带的话，晚回来的响应会把刚清掉的图又写回去，登出就等于没清。
+  void writeImageBlob(cacheKey, blob, generation)
   return blob
 }
 
