@@ -200,7 +200,12 @@ function skillIcon(name: string) {
 
 <template>
   <footer class="shrink-0 border-t-0 bg-background/96 px-5 pb-4 pt-3 backdrop-blur-[14px] max-sm:px-2.5 max-sm:pb-2.5 max-sm:pt-2">
-    <div class="relative mx-auto w-full max-w-[760px] overflow-visible rounded-[20px] border border-b-0 border-border bg-card shadow-[0_2px_8px_hsl(var(--foreground)/0.04),0_4px_80px_8px_hsl(var(--foreground)/0.024)] max-sm:rounded-[11px] max-sm:shadow-[0_2px_8px_hsl(var(--foreground)/0.04),0_4px_40px_8px_hsl(var(--foreground)/0.024)]">
+    <!--
+        输入框的阴影分两档：未聚焦时也要能看出这是一个可输入的框（原先 0.04 的
+        透明度几乎等于没有），聚焦后再加一档，让当前在哪儿一目了然。
+        group 是给内部元素（如光标、placeholder）留的联动钩子。
+      -->
+      <div class="group relative mx-auto w-full max-w-[760px] overflow-visible rounded-[20px] border border-b-0 border-border bg-card focus-within:border-foreground/20 shadow-[0_1px_2px_hsl(var(--foreground)/0.06),0_6px_16px_-4px_hsl(var(--foreground)/0.10),0_16px_48px_-8px_hsl(var(--foreground)/0.08)] transition-[border-color,box-shadow] duration-200 focus-within:shadow-[0_1px_3px_hsl(var(--foreground)/0.08),0_8px_24px_-4px_hsl(var(--foreground)/0.14),0_20px_60px_-8px_hsl(var(--foreground)/0.10)] max-sm:rounded-[11px]">
       <div class="relative">
         <div v-if="pendingImages && pendingImages.length > 0" class="flex flex-wrap gap-1.5 px-3 pt-2.5">
           <div v-for="(img, idx) in pendingImages" :key="idx" class="relative h-[58px] w-[58px] overflow-hidden rounded-lg border border-border bg-muted">
