@@ -320,7 +320,7 @@ async function downloadGeneratedImage(image: GeneratedImage) {
   downloadingImageId.value = image.id
   try {
     // 取 blob 而不是 object URL：扩展名要按真实类型给，代理返回的可能是 webp。
-    saveImageBlob(await fetchAuthenticatedImageBlob(path), image)
+    saveImageBlob(await fetchAuthenticatedImageBlob(path, undefined, 'original'), image)
   } catch {
     // 下载失败不打断浏览，与复制等轻交互的约定一致。
   } finally {

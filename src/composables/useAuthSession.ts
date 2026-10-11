@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
+import { clearImageBlobsForOwner } from '../lib/image-blob-cache'
 import { getSupabaseClient } from '../lib/supabase'
 import i18n from '../i18n'
 
@@ -177,9 +178,14 @@ export function useAuthSession() {
 
     isAuthLoading.value = true
     try {
+      // 必须在 signOut 之前读：登出后 session 就没了，拿不到刚才是谁。
+      const owner = (await getAuthIdentity()).userId
       const { error } = await client.auth.signOut()
       if (error) throw error
       user.value = null
+      // 只清这个账号的缓存。清空整表会让用户换回来时又要全部重新下载，而这个
+      // 账号的图本来就只该它自己看到——缓存键里已经带了 owner。
+      if (owner) void clearImageBlobsForOwner(owner)
     } catch (err) {
       authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.signOutFailed')
     } finally {

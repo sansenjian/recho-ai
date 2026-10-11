@@ -60,7 +60,9 @@ watch(
       let nextObjectUrl = ''
       for (const path of paths) {
         try {
-          nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, signal)
+          // 把 mode 带进去：同一张图的缩略图与预览图是两份不同大小的内容，
+          // 缓存键必须区分，否则点开大图会拿到网格里的低清版本。
+          nextObjectUrl = await fetchAuthenticatedImageObjectUrl(path, signal, props.mode)
           break
         } catch (err) {
           if (signal.aborted) throw err
