@@ -226,7 +226,9 @@ const viewerState = computed<ImageViewerState | null>(() => {
  * 拿不到就返回 false，由调用方决定是否提示。
  */
 async function copyGeneratedImage(image: GeneratedImage) {
-  const path = image.storagePath || ''
+  // 与 actionableImages 取同一个来源：只有 previewPath 的图也能操作，
+  // 否则按钮会显示但点击没有任何反应。
+  const path = imageStoragePath(image, 'preview')
   if (!path) return false
   if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
 
@@ -281,7 +283,8 @@ async function convertToPng(blob: Blob) {
  */
 async function downloadGeneratedImage(image: GeneratedImage) {
   if (downloadingImageId.value) return
-  const path = image.storagePath || ''
+  // 与 actionableImages 取同一个来源。
+  const path = imageStoragePath(image, 'preview')
   if (!path) return
   downloadingImageId.value = image.id
   try {
