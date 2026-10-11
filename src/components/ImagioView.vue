@@ -27,9 +27,11 @@ import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
+import ImageViewerModal from './ImageViewerModal.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
 import { fetchAuthenticatedImageBlob, fetchAuthenticatedImageObjectUrl } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
+import type { ImageViewerState } from '../lib/image-canvas-model'
 import { pickActiveAnchorId, type RailTurn } from '../utils/chat-rail'
 import { useReducedMotion } from '../composables/useReducedMotion'
 
@@ -167,6 +169,51 @@ function formatCredits(value: number) {
 }
 
 
+
+/** 当前放大的图片；null 表示查看器关闭。 */
+const viewerImage = ref<GeneratedImage | null>(null)
+const viewerZoom = ref(1)
+
+/**
+ * 打开大图查看器。
+ *
+ * 缩略图只有几百像素，看不清细节；点开可以放大、查看完整提示词，也能直接下载。
+ * 只读预览，不做编辑。
+ */
+function openImage(image: GeneratedImage) {
+  if (!image.storagePath) return
+  viewerImage.value = image
+  viewerZoom.value = 1
+}
+
+function closeImageViewer() {
+  viewerImage.value = null
+  viewerZoom.value = 1
+}
+
+function zoomImageViewer(step: number) {
+  // 与画布查看器同范围，避免拖到极端值时用户不知道怎么回去。
+  viewerZoom.value = Math.min(3, Math.max(0.4, viewerZoom.value + step))
+}
+
+function resetImageViewerZoom() {
+  viewerZoom.value = 1
+}
+
+/** 把当前查看的图片组装成 ImageViewerModal 需要的形状。 */
+const viewerState = computed<ImageViewerState | null>(() => {
+  const image = viewerImage.value
+  if (!image) return null
+  return {
+    imageUrl: '',
+    ...(image.storagePath ? { storagePath: image.storagePath } : {}),
+    ...(image.previewPath ? { previewPath: image.previewPath } : {}),
+    ...(image.thumbnailPath ? { thumbnailPath: image.thumbnailPath } : {}),
+    title: imageDownloadFileName(image, 'image/png').replace(/\.[a-z0-9]+$/i, ''),
+    caption: image.userPrompt || image.prompt,
+    zoom: viewerZoom.value,
+  }
+})
 /**
  * 复制一张生成的图片到剪贴板。
  *
@@ -582,11 +629,15 @@ async function handleGenerate() {
             <div class="conversation-output">
 <div class="conversation-label">{{ t('imagio.outputLabel') }}</div>
               <div class="conversation-image-grid">
-                <div
+                <button
                   v-for="image in item.images"
                   :key="image.id"
+                  type="button"
                   class="conversation-image"
-                  :title="image.prompt"
+                  :title="t('imagio.openImage')"
+                  :aria-label="t('imagio.openImage')"
+                  :disabled="!image.storagePath"
+                  @click="openImage(image)"
                 >
                   <AuthenticatedImage
                     v-if="canDisplayGeneratedImage(image)"
@@ -595,7 +646,7 @@ async function handleGenerate() {
                     :alt="image.prompt"
                   />
 <span v-else class="conversation-image-placeholder">{{ t('imagio.imagePending') }}</span>
-                </div>
+                </button>
               </div>
             <!--
               操作栏：复制、评价、下载、费用、时间。
@@ -663,6 +714,16 @@ async function handleGenerate() {
           </div>
         </div>
       </div>
+<!-- 大图查看器：点图片或按回车打开，支持缩放与下载。 -->
+<ImageViewerModal
+  v-if="viewerState"
+  :viewer="viewerState"
+  :is-downloading="Boolean(downloadingImageId)"
+  @close="closeImageViewer"
+  @zoom="zoomImageViewer"
+  @reset-zoom="resetImageViewerZoom"
+  @download="viewerImage && downloadGeneratedImage(viewerImage)"
+/>
 <ChatMessageRail
 :turns="railTurns"
 :active-turn-id="activeTurnId"

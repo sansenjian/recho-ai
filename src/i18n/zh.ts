@@ -744,6 +744,7 @@ export default {
     outputLabel: '生成结果',
     turnCost: '花费 {cost} 额度',
     copyImage: '复制图片',
+    openImage: '查看大图',
     imagePending: '图片处理中...',
     referencesAria: '参考图',
     referenceTitle: '参考图 {index}',

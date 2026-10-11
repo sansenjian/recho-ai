@@ -744,6 +744,7 @@ export default {
     outputLabel: 'Result',
     turnCost: '{cost} credits',
     copyImage: 'Copy image',
+    openImage: 'View image',
     imagePending: 'Processing image...',
     referencesAria: 'Reference images',
     referenceTitle: 'Reference {index}',
