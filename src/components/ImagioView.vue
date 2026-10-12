@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import ImageModelSelect from './ImageModelSelect.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
+import PromptBox from './PromptBox.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import ImageViewerModal from './ImageViewerModal.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
@@ -788,103 +789,103 @@ class="starter-card"
 </button>
 </div>
 </div>
-      <div class="prompt-area">
-          <textarea
-            v-model="promptText"
-:aria-label="t('imagio.promptAria')"
-            class="prompt-input"
-:placeholder="t('imagio.promptPlaceholder')"
-            rows="4"
-            :disabled="isGenerating"
-          />
-
-          <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
-          <p v-if="error" class="reference-error">{{ error }}</p>
-
-          <div class="prompt-actions">
-            <div class="prompt-reference">
-              <button
-                class="reference-add"
-                type="button"
-                :disabled="isGenerating"
-:title="t('imagio.referenceAdd')"
-@click="openReferencePicker"
-              >
-                <Plus :size="16" stroke-width="1.7" />
-<span>{{ t('imagio.referenceAdd') }}</span>
-              </button>
-              <input
-                ref="fileInputRef"
-                class="reference-file-input"
-:aria-label="t('imagio.referenceAdd')"
-                type="file"
-                accept="image/*"
-                multiple
-                @change="handleReferenceInput"
-              >
-<div v-if="pendingReferences.length" class="reference-list" :aria-label="t('imagio.referencesAria')">
-                <div
-                  v-for="(reference, index) in pendingReferences"
-                  :key="reference.id"
-                  class="reference-item"
+      <PromptBox
+        v-model="promptText"
+        :aria-label="t('imagio.promptAria')"
+        :placeholder="t('imagio.promptPlaceholder')"
+        :disabled="isGenerating"
+        min-height="108px"
+        class="mx-auto mt-auto w-full max-w-[920px]"
+        @submit="handleGenerate"
+      >
+        <template #above>
+            <p v-if="pasteMessage" class="reference-error">{{ pasteMessage }}</p>
+            <p v-if="error" class="reference-error">{{ error }}</p>
+        </template>
+        <template #actions-left>
+              <div class="prompt-reference">
+                <button
+                  class="reference-add"
+                  type="button"
+                  :disabled="isGenerating"
+  :title="t('imagio.referenceAdd')"
+  @click="openReferencePicker"
                 >
-                  <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
-<button type="button" :title="t('imagio.referenceRemove')" @click="removeReference(index)">
-                    <X :size="12" stroke-width="2" />
-                  </button>
+                  <Plus :size="16" stroke-width="1.7" />
+  <span>{{ t('imagio.referenceAdd') }}</span>
+                </button>
+                <input
+                  ref="fileInputRef"
+                  class="reference-file-input"
+  :aria-label="t('imagio.referenceAdd')"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  @change="handleReferenceInput"
+                >
+  <div v-if="pendingReferences.length" class="reference-list" :aria-label="t('imagio.referencesAria')">
+                  <div
+                    v-for="(reference, index) in pendingReferences"
+                    :key="reference.id"
+                    class="reference-item"
+                  >
+                    <img v-if="reference.dataUrl || reference.previewUrl" :src="reference.dataUrl || reference.previewUrl" :alt="reference.title">
+  <button type="button" :title="t('imagio.referenceRemove')" @click="removeReference(index)">
+                      <X :size="12" stroke-width="2" />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            <div class="generation-count">
-<span>{{ t('imagio.generationCount') }}</span>
-              <template v-if="canSelectGenerationCount">
-                <button
-                  type="button"
-                  :class="{ active: generationCount === 1 }"
-                  @click="generationCount = 1"
-                >
-                  ×1
-                </button>
-                <button
-                  type="button"
-                  :class="{ active: generationCount === 2 }"
-                  @click="generationCount = 2"
-                >
-                  ×2
-                </button>
-                <button
-                  type="button"
-                  :class="{ active: generationCount === 4 }"
-                  @click="generationCount = 4"
-                >
-                  ×4
-                </button>
-              </template>
-              <span v-else class="count-fixed">×1</span>
-            </div>
-
-            <div class="prompt-actions-end">
-              <div class="prompt-model-select">
-                <ImageModelSelect
-                  :model-value="imageModel"
-                  :default-model="defaultImageModel"
-                  :options="modelOptions"
-                  :disabled="isGenerating"
-                  @update:model-value="emit('update:image-model', $event)"
-                />
+  
+              <div class="generation-count">
+  <span>{{ t('imagio.generationCount') }}</span>
+                <template v-if="canSelectGenerationCount">
+                  <button
+                    type="button"
+                    :class="{ active: generationCount === 1 }"
+                    @click="generationCount = 1"
+                  >
+                    ×1
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: generationCount === 2 }"
+                    @click="generationCount = 2"
+                  >
+                    ×2
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: generationCount === 4 }"
+                    @click="generationCount = 4"
+                  >
+                    ×4
+                  </button>
+                </template>
+                <span v-else class="count-fixed">×1</span>
               </div>
-              <button
-                class="generate-btn"
-                :disabled="!canGenerate"
-                @click="handleGenerate"
-              >
-                <Sparkles :size="18" stroke-width="2" />
-{{ isGenerating ? t('imagio.generating') : t('imagio.generate') }}
-              </button>
-            </div>
-          </div>
-      </div>
+  
+        </template>
+        <template #actions-right>
+                <div class="prompt-model-select">
+                  <ImageModelSelect
+                    :model-value="imageModel"
+                    :default-model="defaultImageModel"
+                    :options="modelOptions"
+                    :disabled="isGenerating"
+                    @update:model-value="emit('update:image-model', $event)"
+                  />
+                </div>
+                <button
+                  class="generate-btn"
+                  :disabled="!canGenerate"
+                  @click="handleGenerate"
+                >
+                  <Sparkles :size="18" stroke-width="2" />
+  {{ isGenerating ? t('imagio.generating') : t('imagio.generate') }}
+                </button>
+        </template>
+      </PromptBox>
       </div>
 
     <div class="imagio-options">

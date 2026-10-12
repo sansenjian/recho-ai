@@ -1,0 +1,48 @@
+refactor(ui): 抽出 PromptBox，chat 与工作台共用输入框外壳
+
+两个页面的输入区此前各写一套外框，而且设计意图相反：
+
+  chat（原注释）：「阴影分两档：未聚焦时也要能看出这是一个可输入的框」
+      → rounded-[20px]、18px 字号、三档静态阴影、focus 换另一套阴影
+
+  工作台（原注释）：「输入框是唯一需要『浮起』的表面，焦点环已经承担了这个职责，
+     不需要静态投影」
+      → 8px 圆角、14px 字号、无静态阴影、focus 用 ring
+
+两页都会继续长功能（工作台还要加思考、搜索），差异继续扩散下去只会越来越难收，
+所以把外框、焦点态、底部操作行的排布固定到 PromptBox，各自控件走插槽。
+
+外框规格取工作台那套：边框表达边界，焦点才高亮。chat 原来的三档静态阴影去掉。
+
+## 插槽划分
+
+  #above         输入框上方的提示（chat 的错误、工作台的粘贴提示）
+  #attachments   附件缩略图区
+  default        输入控件本身
+  #actions-left  底部左侧（chat: +上传；工作台: 参考图 + 生成数量）
+  #actions-right 底部右侧（chat: 模型下拉 + 发送；工作台: 模型下拉 + 生成）
+
+default 槽留空时用组件内置的 textarea（工作台用这条路径）；chat 需要自己处理技能菜单
+与回车提交，所以走默认槽装它原本的结构 —— 内部一行没改。
+
+## 行为变化
+
+chat 的输入框外观变了，这是这次改动的目的：20px 圆角 + 三档阴影 → 8px 圆角 + 无阴影。
+尺寸、位置、功能（附件、技能、模型下拉、发送/停止）都不变。
+
+## 测试改动
+
+tests/image-canvas-model-select.test.ts 的 4 处 shallowMount 加了 PromptBox: false。
+shallowMount 默认 stub 掉所有子组件，PromptBox 是新增的，不解除 stub 的话它只渲染成
+空壳，插槽里的 ImageModelSelect 就不存在了 —— 这是 shallowMount 的预期行为，
+原有那行本来就显式解除了 ImagioView 与 ImageModelSelect。
+
+## 验证
+
+- vue-tsc 0 错误
+- vitest --no-file-parallelism → 110 文件 / 748 用例通过
+- SFC 编译器逐个解析三个文件，确认标签配对正确
+  （这一条是补的：中途有次拆插槽多留了一个 </div>，vue-tsc 报 0 错误但 Vite 编译失败，
+   类型检查不覆盖模板标签配对）
+- Playwright 实测两页：chat 输入框外框 radius 9.375px / box-shadow none，
+  附件、模型下拉、发送按钮、技能入口都在；工作台的参考图、生成数量、分辨率面板都在
