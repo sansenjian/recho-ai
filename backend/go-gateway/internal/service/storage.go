@@ -1087,6 +1087,7 @@ func (s *StorageService) PresignStorageURL(ctx context.Context, storagePath stri
 	// 签出一个地址——所以直接签会给出一个指向空气的链接，浏览器拿到 404。
 	// 每张图多一次 HEAD 请求，换来的是签名不会说谎。
 	if s.uploaders != nil && !strings.Contains(storagePath, "://") {
+		var located *S3Uploader
 		for provider, candidate := range s.uploaders {
 			if candidate == nil {
 				continue
@@ -1095,9 +1096,16 @@ func (s *StorageService) PresignStorageURL(ctx context.Context, storagePath stri
 				continue
 			}
 			locator.Provider = provider
-			uploader = candidate
+			located = candidate
 			break
 		}
+		if located == nil {
+			// 一个都没探到，说明对象不存在、或它所在的存储无法探测、或 HEAD 瞬时
+			// 失败。这三种情况都不该签出地址：签了前端就会直接用，不再回落到代理，
+			// 结果是裂图。返回错误让它走代理，至少能看到图。
+			return "", fmt.Errorf("no provider holds %s", locator.Key)
+		}
+		uploader = located
 	}
 
 	return uploader.PresignedURL(ctx, locator.Key, ttl)

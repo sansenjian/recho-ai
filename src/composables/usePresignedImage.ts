@@ -57,8 +57,10 @@ export async function fetchPresignedImageUrls(
   const result = new Map<string, PresignedImageUrl>()
   if (!storagePaths.length) return result
 
-  const token = await getAuthAccessToken()
   try {
+    // 取 token 必须在 try 内：它自己会走一次会话读取，抛错时若逃出去，调用方的
+    // watch 回调会在半途中断，连代理回落都不会执行，图片就完全不显示了。
+    const token = await getAuthAccessToken()
     const res = await fetch(imageApiUrl('/api/image/storage/presign'), {
       method: 'POST',
       headers: {
