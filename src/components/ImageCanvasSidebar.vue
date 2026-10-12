@@ -6,6 +6,7 @@ import { hasDisplayImage } from '../lib/image-gallery'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import WorkspaceList from './WorkspaceList.vue'
+import SegmentedSwitch from './SegmentedSwitch.vue'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Type, Image, Sparkles } from '@lucide/vue'
@@ -71,29 +72,13 @@ function onRenameWorkspace(id: string, name: string) {
 
 <template>
   <aside class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-lg:w-[220px] max-md:hidden">
-    <!-- Mode switch: 对话 / 画布 -->
-    <div class="flex items-center gap-2 mx-3.5 my-[18px] p-1 border border-border rounded-lg bg-muted">
-      <button
-        type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
-        ]"
-        @click="emit('select-image-mode', 'imagio')"
-      >
-        对话
-      </button>
-      <button
-        type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
-        ]"
-        @click="emit('select-image-mode', 'canvas')"
-      >
-        画布
-      </button>
-    </div>
+    <!-- 模式切换：Agent / 画布 -->
+    <SegmentedSwitch
+      :model-value="imageMode || 'imagio'"
+      :options="[{ value: 'imagio', label: 'Agent' }, { value: 'canvas', label: '画布' }]"
+      container-class="mx-3.5 my-[18px]"
+      @update:model-value="emit('select-image-mode', $event as 'imagio' | 'canvas')"
+    />
 
     <!-- Workspace list -->
     <WorkspaceList
