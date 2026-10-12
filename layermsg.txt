@@ -1,0 +1,42 @@
+fix(ui): focus 轮廓包进 @layer base，让 utility 能覆盖它
+
+工作台的输入框聚焦后出现一圈 2px 黑框，不是设计里有的。根因是层叠层（cascade layer）：
+
+  style.css 里的 button/input/textarea:focus-visible 规则**不在任何 @layer 里**
+  Tailwind v4 的 utilities 在 @layer utilities 里
+
+按 CSS 规范，未分层的样式优先于任何 @layer 内的样式 —— 与选择器优先级无关。
+所以哪怕 .focus-visible:outline-none 的优先级更高，也赢不过它。
+
+## 为什么以前看不见
+
+工作台原来的输入框样式写在组件自己的 <style scoped> 里：
+
+  .prompt-input:focus { outline: none; }
+
+组件的 <style scoped> 同样在层外 —— 层外打层外才比优先级，它带 data-v 属性，赢。
+
+抽出 PromptBox 后改用 Tailwind 的 outline-none / focus-visible:outline-none，
+这两条进了 @layer utilities，于是输给层外的那条。
+
+## 修法
+
+把这条规则包进 @layer base，而不是在组件里补一段手写 CSS：
+
+  @layer base {
+    button:focus-visible, input:focus-visible, textarea:focus-visible { ... }
+  }
+
+它是基础样式，进 base 层后 utility 能按预期覆盖，同时保留了「未声明 outline 的控件仍有
+焦点环」这个可访问性行为。
+
+## 验证
+
+Playwright 实测：
+
+  带 outline-none 的 textarea  →  outline-style: none      （黑框消失）
+  未声明的 textarea            →  outline-style: solid 2px （焦点环保留）
+
+工作台输入框聚焦后的计算样式为 outline: rgb(23,23,23) none 2px。
+
+vue-tsc 0 错误；vitest --no-file-parallelism → 110 文件 / 748 用例通过。

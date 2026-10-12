@@ -47,7 +47,7 @@ function handleInput(event: Event) {
     <slot>
       <textarea
         data-slot="prompt-input"
-        class="prompt-input block w-full resize-none border-0 bg-transparent p-1 text-sm leading-[1.7] text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
+        class="prompt-input block w-full resize-none border-0 bg-transparent p-1 text-sm leading-[1.7] text-foreground outline-none focus-visible:outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
         :style="{ minHeight }"
         :value="modelValue"
         :placeholder="placeholder"
