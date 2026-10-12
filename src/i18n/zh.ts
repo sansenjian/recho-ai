@@ -536,6 +536,8 @@ export default {
   providerProbeDone: '上游共 {total} 个模型，新增 {added} 个。',
   providerDelete: '删除 Provider',
   providerDeleted: '已删除 Provider「{name}」。',
+  envProviderDisabled: '已停用「{name}」，它不再出现在模型列表里。',
+  envProviderEnabled: '已启用「{name}」。',
   providerDeleteAria: '删除 {name}',
   confirmDeleteProviderTitle: '删除这个 Provider？',
   confirmDeleteProviderDetail: '删除后它会立刻从列表与生图链路移除，使用它的请求会失败。数据会保留，必要时可以还原。',
@@ -628,6 +630,7 @@ export default {
     systemFailed: '系统状态加载失败，请稍后重试。',
     providerSaveFailed: 'Provider 配置保存失败，请稍后重试。',
   providerDeleteFailed: 'Provider 删除失败，请稍后重试。',
+  providerToggleFailed: 'Provider 开关保存失败，请稍后重试。',
   providerProbeFailed: '拉取上游模型失败。',
   },
   chat: {

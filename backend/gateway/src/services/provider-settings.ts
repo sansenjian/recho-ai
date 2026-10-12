@@ -244,7 +244,54 @@ function maskApiKey(value: unknown) {
   return `${key.slice(0, 3)}...${key.slice(-4)}`
 }
 
-function envProviderRows(): ProviderSetting[] {
+/**
+ * 读取被停用的环境变量兜底 Provider id。
+ *
+ * 这些 Provider 由 .env 组装而来，没有数据库行也没有 enabled 字段可改；停用清单
+ * 记在 app_settings 里，环境变量本身不动，想再开就把它从清单里移除。
+ *
+ * 读取失败返回 null，而不是空集合：这两者对写入路径的含义完全不同——空集合会被当成
+ * 「当前没有停用项」原样写回，把别的管理员停用的项一并抹掉。调用方必须自己决定降级
+ * 还是报错。
+ */
+async function readDisabledEnvProviders(): Promise<Set<string> | null> {
+  try {
+    const client = getSupabaseAdminClient()
+    if (!client) return null
+    const { data, error } = await client
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'disabled_env_providers')
+      .maybeSingle()
+    if (error) {
+      console.warn('[provider-settings] disabled_env_providers read failed:', safeErrorDetail(error))
+      return null
+    }
+    // 形状必须唯一：这个键由 Node 与 Go 两侧共读，单字符串或对象都该被忽略。
+    const disabled = new Set<string>()
+    if (!Array.isArray(data?.value)) return disabled
+    for (const item of data.value) {
+      if (typeof item !== 'string') continue
+      const id = item.trim()
+      if (id) disabled.add(id)
+    }
+    return disabled
+  } catch (err) {
+    console.warn('[provider-settings] disabled_env_providers read failed:', safeErrorDetail(err))
+    return null
+  }
+}
+
+/**
+ * 展示路径用的版本：读不到就当没有停用项。
+ *
+ * 这里可以降级——拿不到清单只该让兜底 Provider 照常出现，而不是让整个列表打不开。
+ */
+async function getDisabledEnvProviders(): Promise<Set<string>> {
+  return (await readDisabledEnvProviders()) ?? new Set<string>()
+}
+
+async function envProviderRows(): Promise<ProviderSetting[]> {
   const providers: ProviderSetting[] = []
   if (IMAGE_GEN_API_KEY && IMAGE_GEN_BASE_URL) {
     providers.push({
@@ -321,7 +368,17 @@ function envProviderRows(): ProviderSetting[] {
       updatedAt: null,
     })
   }
-  return providers
+  // 停用清单记在 app_settings 里，环境变量本身不动：关掉一个兜底 Provider 不该
+  // 弄丢它的 key，否则想再开就得改配置并重启。
+  //
+  // 停用的行要留着并标记 enabled: false，不能直接过滤掉：管理界面只渲染这份列表，
+  // 行一消失，那一行的「启用」按钮也跟着消失，管理员就再也开不回来了。运行时本来
+  // 就按 enabled 过滤，标记成 false 的效果等同于停用。
+  const disabled = await getDisabledEnvProviders()
+  if (!disabled.size) return providers
+  return providers.map(provider => disabled.has(provider.id)
+    ? { ...provider, enabled: false }
+    : provider)
 }
 
 function providerFromRow(row: Record<string, unknown>): ProviderSetting {
@@ -704,6 +761,70 @@ export function clearProviderSettingsCache() {
   providerSettingsCache = null
 }
 
+
+/**
+ * 停用或启用一个环境变量兜底 Provider。
+ *
+ * 这类 Provider 没有数据库行，不能改 enabled 字段，也不该让人去动 .env——那会连带
+ * 弄丢 key。这里只维护 app_settings 里的一份停用清单。
+ *
+ * 写入后立即清掉 Provider 缓存，否则界面刷新了、后端还在用旧列表。
+ */
+export async function setEnvProviderEnabled(
+  providerId: string,
+  enabled: boolean,
+  adminUser: RequestUser,
+): Promise<void> {
+  const id = providerId.trim()
+  if (!id.startsWith('env:')) {
+    throw new ProviderSettingsError('invalid_env_provider_id', {
+      publicMessage: '只能停用环境变量兜底的 Provider。',
+    })
+  }
+
+  const client = getSupabaseAdminClient()
+  if (!client) {
+    throw new ProviderSettingsError('settings_unavailable', {
+      publicMessage: '数据库不可用，无法保存设置。',
+    })
+  }
+
+  // 先读再写：这个键是数组，读-改-写才能保证不把管理员同时改的另一项覆盖掉。
+  // 用 strict 版本读：这里读到的值会被原样写回，读失败若退化成空集合，
+  // 就会把别的管理员停用的项一并抹掉。展示路径可以降级，写入路径不行。
+  const disabled = await readDisabledEnvProviders()
+  if (disabled === null) {
+    throw new ProviderSettingsError('settings_read_failed', {
+      publicMessage: '读取当前设置失败，请稍后重试。',
+    })
+  }
+  if (enabled) {
+    disabled.delete(id)
+  } else {
+    disabled.add(id)
+  }
+
+  const { error } = await client
+    .from('app_settings')
+    .upsert(
+      {
+        key: 'disabled_env_providers',
+        value: [...disabled].sort(),
+        description: '被停用的环境变量兜底 Provider id 列表（如 env:chat:openai）；只影响是否出现在列表中。',
+        updated_at: new Date().toISOString(),
+        updated_by: adminUser.id,
+      },
+      { onConflict: 'key' },
+    )
+  if (error) {
+    throw new ProviderSettingsError('settings_write_failed', {
+      publicMessage: '保存失败，请稍后重试。',
+    })
+  }
+
+  providerSettingsCache = null
+}
+
 export async function listProviderSettings(options: { refresh?: boolean } = {}) {
   const now = Date.now()
   if (!options.refresh && providerSettingsCache && providerSettingsCache.expiresAt > now) {
@@ -714,7 +835,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
   if (!client) {
     return {
       expiresAt: now + PROVIDER_SETTINGS_CACHE_MS,
-      providers: envProviderRows(),
+      providers: await envProviderRows(),
       tableAvailable: false,
     }
   }
@@ -756,7 +877,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
       expiresAt: now + PROVIDER_SETTINGS_CACHE_MS,
       providers: [
         ...((data || []) as unknown as Array<Record<string, unknown>>).map(providerFromRow),
-        ...envProviderRows(),
+        ...(await envProviderRows()),
       ],
       tableAvailable: true,
     }
@@ -766,7 +887,7 @@ export async function listProviderSettings(options: { refresh?: boolean } = {}) 
     console.warn('[provider-settings] using env fallback:', safeErrorDetail(err))
     const cache = {
       expiresAt: now + PROVIDER_SETTINGS_CACHE_MS,
-      providers: envProviderRows(),
+      providers: await envProviderRows(),
       tableAvailable: false,
     }
     providerSettingsCache = cache
