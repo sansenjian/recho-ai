@@ -635,7 +635,7 @@ export default {
   },
   chat: {
     login: '登录',
-    chat: '对话',
+    chat: 'Agent',
     checking: '检查中',
     loginRequiredForChat: '登录管理员账号后进入 Chat',
     checkingChatAccess: '正在检查 Chat 权限',

@@ -635,7 +635,7 @@ export default {
   },
   chat: {
     login: 'Log in',
-    chat: 'Chat',
+    chat: 'Agent',
     checking: 'Checking',
     loginRequiredForChat: 'Log in as admin to enter Chat',
     checkingChatAccess: 'Checking Chat access',
