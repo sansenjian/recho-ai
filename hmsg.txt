@@ -1,0 +1,20 @@
+refactor(chat): 顶栏工作区切换用 v-for 收掉三份重复的按钮标记
+
+「对话 / 工作台 / 作品广场」三个按钮此前是同一段样式标记抄三遍，只差图标、文案与选中
+条件——那条 h-7 min-w-[68px] 加四条 max-[420px] 响应式的 class 出现了三次，改一处要记得
+改另外两处。
+
+收成 workspaceTabs 数据后，模板只留一个 v-for，样式与选中态只有一份。
+
+没有新建组件：这三个按钮的样式（h-7 min-w-[68px]、选中反色 bg-foreground）与侧栏那个
+分段切换器（flex-1 min-h-[34px]、选中 bg-background）差异够大，硬合会变成一堆开关 prop。
+这里的重复是 v-for 就能解决的，不需要新抽象。
+
+行为不变：三个按钮的文案、图标、aria-pressed、disabled、title 与点击行为逐一对齐原实现。
+在权限检查期间，第一个按钮仍显示「检查中」而不是「Agent」。
+
+验证：
+
+- vue-tsc 0 错误
+- vitest --no-file-parallelism → 109 文件 / 745 用例通过
+- Playwright 实测：三个按钮都在、图标都在、aria-pressed 正确（工作台为选中态）
