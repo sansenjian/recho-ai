@@ -717,3 +717,16 @@ func TestPresignStorageURLReportsUnsupportedWhenNothingCanSign(t *testing.T) {
 		t.Fatal("expected an error when no uploader can presign")
 	}
 }
+
+func TestPresignStorageURLFailsWhenNoProviderHoldsTheObject(t *testing.T) {
+	// 探测全失败仍然签发的话，前端会拿到一个指向空气的地址并直接使用，
+	// 不再回落到代理——结果是裂图。宁可返回错误让它走代理。
+	storage := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      statOnlyUploader(StorageProviderCos, false),
+		StorageProviderSupabase: statOnlyUploader(StorageProviderSupabase, false),
+	})
+
+	if _, err := storage.PresignStorageURL(context.Background(), "images/missing.png", time.Hour); err == nil {
+		t.Fatal("expected an error when no provider holds the object")
+	}
+}
