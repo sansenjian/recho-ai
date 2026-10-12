@@ -74,6 +74,46 @@ function handleChatButtonClick() {
   emit('toggleImagePanel')
 }
 
+/**
+ * 顶栏的工作区切换项。
+ *
+ * 三个按钮此前是同一段样式标记抄三遍，只差图标、文案与选中条件——改一处样式要记得改
+ * 另外两处。收成数据后模板只留一个 v-for。
+ */
+const workspaceTabs = computed(() => [
+  {
+    key: 'chat',
+    icon: MessageSquare,
+    // 检查权限时按钮上要显示「检查中」，否则是「Agent」。
+    label: props.showImagePanel && props.authEmail && props.isCheckingChatAccess
+      ? t('chat.checking')
+      : t('chat.chat'),
+    active: !props.showImagePanel,
+    disabled: chatButtonDisabled.value,
+    title: chatButtonTitle.value,
+    onClick: handleChatButtonClick,
+  },
+  {
+    key: 'canvas',
+    icon: Image,
+    label: t('chat.canvas'),
+    active: props.showImagePanel && props.imageWorkspace === 'canvas',
+    disabled: false,
+    title: undefined,
+    onClick: () => emit('openImage'),
+  },
+  {
+    key: 'gallery',
+    icon: Image,
+    label: t('chat.gallery'),
+    active: props.showImagePanel && props.imageWorkspace === 'gallery',
+    disabled: false,
+    title: undefined,
+    onClick: () => emit('openGallery'),
+  },
+])
+
+
 </script>
 
 <template>
@@ -103,51 +143,23 @@ function handleChatButtonClick() {
         :aria-label="t('chat.workspaceSwitch')"
       >
         <Button
+          v-for="tab in workspaceTabs"
+          :key="tab.key"
           variant="ghost"
           size="sm"
           class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
           :class="cn(
-            !showImagePanel
+            tab.active
               ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
               : 'text-muted-foreground hover:bg-background hover:text-foreground',
           )"
-          :aria-pressed="!showImagePanel"
-          :disabled="chatButtonDisabled"
-          :title="chatButtonTitle"
-          @click="handleChatButtonClick"
+          :aria-pressed="tab.active"
+          :disabled="tab.disabled"
+          :title="tab.title"
+          @click="tab.onClick"
         >
-          <MessageSquare class="h-3.5 w-3.5" />
-          <span>{{ showImagePanel && authEmail && isCheckingChatAccess ? t('chat.checking') : t('chat.chat') }}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
-          :class="cn(
-            showImagePanel && imageWorkspace === 'canvas'
-              ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
-              : 'text-muted-foreground hover:bg-background hover:text-foreground',
-          )"
-          :aria-pressed="showImagePanel && imageWorkspace === 'canvas'"
-          @click="$emit('openImage')"
-        >
-          <Image class="h-3.5 w-3.5" />
-          <span>{{ t('chat.canvas') }}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-7 min-w-[68px] gap-1.5 rounded-[var(--radius-md,7px)] px-3 text-[13px] leading-none max-[420px]:min-w-0 max-[420px]:gap-1 max-[420px]:px-1 max-[420px]:text-[11px]"
-          :class="cn(
-            showImagePanel && imageWorkspace === 'gallery'
-              ? 'bg-foreground text-background shadow-sm hover:bg-foreground hover:text-background'
-              : 'text-muted-foreground hover:bg-background hover:text-foreground',
-          )"
-          :aria-pressed="showImagePanel && imageWorkspace === 'gallery'"
-          @click="$emit('openGallery')"
-        >
-          <Image class="h-3.5 w-3.5" />
-          <span>{{ t('chat.gallery') }}</span>
+          <component :is="tab.icon" class="h-3.5 w-3.5" />
+          <span>{{ tab.label }}</span>
         </Button>
       </div>
 
