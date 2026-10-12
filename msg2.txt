@@ -1,0 +1,40 @@
+feat(admin): 环境变量兜底的 Provider 支持启停
+
+这批 Provider 由 .env 组装而来（Env OpenAI provider / Env Kimi provider / Env image
+provider），没有数据库行：它们的 enabled 是硬编码 true，管理后台的「编辑」按钮对它们
+是禁用的，「删除」按钮干脆不渲染。结果是只要 .env 里有 key，它们就永远启用——想关掉
+只能去删环境变量，而那会连 key 一起弄丢，想再开还得改配置并重启。
+
+改为单独记一份「被停用的 env Provider id」清单：
+
+- 新增迁移写入 app_settings.disabled_env_providers（JSON 数组），环境变量保持原样
+- Node 组装 envProviderRows 时把停用行的 enabled 置为 false
+- Go 的 environmentChatModels 读同一份清单并跳过停用的 Provider
+- 新增 PATCH /api/admin/settings/env-providers/:providerId，只收 env: 前缀的 id
+- 管理后台那行的「编辑」换成「停用 / 启用」，与数据库 Provider 的编辑按钮区分
+
+三处容易写错的地方：
+
+- **停用的行要留着并标记 enabled: false，不能直接过滤掉**。管理界面只渲染这份列表，
+  行一消失，那一行的「启用」按钮也跟着消失，管理员就再也开不回来了。
+- **写入路径读失败必须报错**。读取失败退化成空集合，会被 upsert 当成「当前没有停用
+  项」原样写回，把别的管理员停用的项一并抹掉。展示路径可以降级，写入路径不行。
+- **迁移必须先扩展 app_settings_key_check 再 insert**。这是写入白名单，新键不在里面
+  时 insert 会被约束拒绝，迁移直接失败。
+
+两侧读同一份清单：只在 Node 过滤的话，前台模型列表里看不到它，但 Go 侧的配置接口仍会
+把它供出去，用户换台设备或直接打接口就又见到了。两侧语义不同是对的——Go 输出的是
+「可选模型列表」（停用的就不该被选，过滤正确），Node 输出的是「管理列表」（要能恢复，
+所以保留并标记）。
+
+读清单的实现刻意留在 provider-settings.ts 内，没有 import app-settings.ts：后者会带进一
+批 config 常量，把 provider-settings 的测试拖进无关的 mock 依赖里（实测会让 41 条用例集体
+失败）。
+
+测试：
+
+- 新增 env-provider-toggle.test.ts 4 条：停用后行仍在且 enabled 为 false、读失败拒绝写入、
+  增删不影响其他项、非 env id 被拒
+- Go 新增 TestEnvironmentChatModelsSkipsDisabledProviders
+- 变异测试：退回「过滤整行」→ 用例失败；退回「读失败当空集合」→ 用例失败；
+  Go 侧过滤条件改恒假 → 用例失败

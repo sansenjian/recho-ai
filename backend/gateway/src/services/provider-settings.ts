@@ -250,14 +250,14 @@ function maskApiKey(value: unknown) {
  * 这些 Provider 由 .env 组装而来，没有数据库行也没有 enabled 字段可改；停用清单
  * 记在 app_settings 里，环境变量本身不动，想再开就把它从清单里移除。
  *
- * 读失败时返回空集合：拿不到清单只该让兜底 Provider 照常出现，而不是让整个列表
- * 打不开。
+ * 读取失败返回 null，而不是空集合：这两者对写入路径的含义完全不同——空集合会被当成
+ * 「当前没有停用项」原样写回，把别的管理员停用的项一并抹掉。调用方必须自己决定降级
+ * 还是报错。
  */
-async function getDisabledEnvProviders(): Promise<Set<string>> {
-  const disabled = new Set<string>()
+async function readDisabledEnvProviders(): Promise<Set<string> | null> {
   try {
     const client = getSupabaseAdminClient()
-    if (!client) return disabled
+    if (!client) return null
     const { data, error } = await client
       .from('app_settings')
       .select('value')
@@ -265,20 +265,32 @@ async function getDisabledEnvProviders(): Promise<Set<string>> {
       .maybeSingle()
     if (error) {
       console.warn('[provider-settings] disabled_env_providers read failed:', safeErrorDetail(error))
-      return disabled
+      return null
     }
     // 形状必须唯一：这个键由 Node 与 Go 两侧共读，单字符串或对象都该被忽略。
+    const disabled = new Set<string>()
     if (!Array.isArray(data?.value)) return disabled
     for (const item of data.value) {
       if (typeof item !== 'string') continue
       const id = item.trim()
       if (id) disabled.add(id)
     }
+    return disabled
   } catch (err) {
     console.warn('[provider-settings] disabled_env_providers read failed:', safeErrorDetail(err))
+    return null
   }
-  return disabled
 }
+
+/**
+ * 展示路径用的版本：读不到就当没有停用项。
+ *
+ * 这里可以降级——拿不到清单只该让兜底 Provider 照常出现，而不是让整个列表打不开。
+ */
+async function getDisabledEnvProviders(): Promise<Set<string>> {
+  return (await readDisabledEnvProviders()) ?? new Set<string>()
+}
+
 async function envProviderRows(): Promise<ProviderSetting[]> {
   const providers: ProviderSetting[] = []
   if (IMAGE_GEN_API_KEY && IMAGE_GEN_BASE_URL) {
@@ -358,8 +370,15 @@ async function envProviderRows(): Promise<ProviderSetting[]> {
   }
   // 停用清单记在 app_settings 里，环境变量本身不动：关掉一个兜底 Provider 不该
   // 弄丢它的 key，否则想再开就得改配置并重启。
+  //
+  // 停用的行要留着并标记 enabled: false，不能直接过滤掉：管理界面只渲染这份列表，
+  // 行一消失，那一行的「启用」按钮也跟着消失，管理员就再也开不回来了。运行时本来
+  // 就按 enabled 过滤，标记成 false 的效果等同于停用。
   const disabled = await getDisabledEnvProviders()
-  return disabled.size ? providers.filter(provider => !disabled.has(provider.id)) : providers
+  if (!disabled.size) return providers
+  return providers.map(provider => disabled.has(provider.id)
+    ? { ...provider, enabled: false }
+    : provider)
 }
 
 function providerFromRow(row: Record<string, unknown>): ProviderSetting {
@@ -771,7 +790,14 @@ export async function setEnvProviderEnabled(
   }
 
   // 先读再写：这个键是数组，读-改-写才能保证不把管理员同时改的另一项覆盖掉。
-  const disabled = await getDisabledEnvProviders()
+  // 用 strict 版本读：这里读到的值会被原样写回，读失败若退化成空集合，
+  // 就会把别的管理员停用的项一并抹掉。展示路径可以降级，写入路径不行。
+  const disabled = await readDisabledEnvProviders()
+  if (disabled === null) {
+    throw new ProviderSettingsError('settings_read_failed', {
+      publicMessage: '读取当前设置失败，请稍后重试。',
+    })
+  }
   if (enabled) {
     disabled.delete(id)
   } else {
