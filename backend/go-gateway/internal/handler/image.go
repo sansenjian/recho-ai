@@ -164,11 +164,24 @@ func (h *ImageHandler) WithIdempotencyService(svc orchestrator.IdempotencyServic
 	return h
 }
 
+// presignResult 是单个路径的签发结果。失败时只带 Error，前端据此回落到代理取图，
+// 不把一次签发失败变成整页图片加载失败。
+type presignResult struct {
+	Path      string `json:"path"`
+	URL       string `json:"url,omitempty"`
+	ExpiresAt int64  `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
 type referenceUploadResponse struct {
 	Reference ImageGenReference `json:"reference"`
 }
 
 const referenceUploadMaxBytes = 12 * 1024 * 1024
+// 预签名相关。TTL 取 6 小时：短到泄露窗口有限，长到一次浏览不会中途失效
+// （用户可能把页面晾着）。前端会在到期前重新签发。
+const presignTTL = 6 * time.Hour
+const presignMaxPaths = 50
+const presignRequestMaxBytes = 32 * 1024
 const imageGenerateMaxBytes = 2 * 1024 * 1024
 
 // Generate handles POST /api/image/generate
@@ -312,6 +325,84 @@ func (h *ImageHandler) UploadReference(w http.ResponseWriter, r *http.Request) {
 			FileName:    fileName,
 		},
 	})
+}
+
+// PresignStorage handles POST /api/image/storage/presign.
+//
+// 返回一个带时效的直连地址，让浏览器绕过本服务直接向对象存储取图。
+//
+// 为什么需要它：走代理意味着每张图都从服务端转发一次，图片是二进制大文件，出口
+// 流量成本直接压在后端上。签名地址把这段流量交还给对象存储，服务端只负责签发。
+//
+// 鉴权与 ProxyStorage 完全一致：私有图只签发给属主。签名一旦发出，对象存储不再
+// 知道请求来自谁，所以这里是唯一的拦截点。
+func (h *ImageHandler) PresignStorage(w http.ResponseWriter, r *http.Request) {
+	if h.storageService == nil {
+		response.Error(w, http.StatusServiceUnavailable, "图片存储服务暂时不可用。")
+		return
+	}
+
+	var payload struct {
+		Paths []string `json:"paths"`
+		Mode  string   `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, presignRequestMaxBytes)).Decode(&payload); err != nil {
+		response.Error(w, http.StatusBadRequest, "请求格式不正确。")
+		return
+	}
+	if len(payload.Paths) == 0 {
+		response.Error(w, http.StatusBadRequest, "缺少 paths。")
+		return
+	}
+	if len(payload.Paths) > presignMaxPaths {
+		response.Error(w, http.StatusBadRequest, "一次最多签发 50 个路径。")
+		return
+	}
+
+	user := middleware.GetUserFromRequest(r)
+	results := make([]presignResult, 0, len(payload.Paths))
+	for _, raw := range payload.Paths {
+		storagePath, ok := safeProxyStoragePath(strings.TrimPrefix(raw, "/"))
+		if !ok {
+			results = append(results, presignResult{Path: raw, Error: "invalid_path"})
+			continue
+		}
+
+		// 逐个候选路径做可见性校验：缩略图缺失会回落到私有的原图路径，
+		// 那条同样要求属主。
+		allowed := false
+		var target string
+		for _, candidate := range proxyStorageCandidatePaths(storagePath) {
+			visibility, ownerID, err := h.storageService.GetImageVisibilityByPath(r.Context(), candidate)
+			if err != nil {
+				break
+			}
+			if visibility == "private" && (user == nil || user.ID != ownerID) {
+				break
+			}
+			allowed = true
+			target = candidate
+			break
+		}
+		if !allowed {
+			results = append(results, presignResult{Path: raw, Error: "forbidden"})
+			continue
+		}
+
+		url, err := h.storageService.PresignStorageURL(r.Context(), target, presignTTL)
+		if err != nil {
+			// 存储不支持预签名（如 REST 兜底）时让前端回落到代理，不是错误。
+			results = append(results, presignResult{Path: raw, Error: "unsupported"})
+			continue
+		}
+		results = append(results, presignResult{
+			Path:      raw,
+			URL:       url,
+			ExpiresAt: time.Now().Add(presignTTL).Unix(),
+		})
+	}
+
+	response.JSON(w, http.StatusOK, map[string]any{"items": results})
 }
 
 // ProxyStorage handles GET /api/image/storage/{encodedPath}.
@@ -550,6 +641,7 @@ func (h *ImageHandler) ClearHistory(w http.ResponseWriter, r *http.Request) {
 func (h *ImageHandler) RegisterRoutes(r chi.Router) {
 	r.Post("/references", h.UploadReference)
 	r.Get("/storage/*", h.ProxyStorage)
+	r.Post("/storage/presign", h.PresignStorage)
 	r.Post("/generate", h.Generate)
 	r.Get("/history", h.ListHistory)
 	r.Get("/history/{id}", h.GetHistoryDetail)

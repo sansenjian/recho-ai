@@ -649,3 +649,84 @@ func containsStorageDBArg(args []any, want string) bool {
 	}
 	return false
 }
+
+// statOnlyUploader 造一个只能"探测存在性"的 uploader：StatObject 按 exists 决定
+// 成败，预签名返回一个带 provider 名的地址，便于断言签给了谁。
+func statOnlyUploader(provider StorageProvider, exists bool) *S3Uploader {
+	// endpoint 带上 provider 名：签名结果里能看出签给了谁。
+	host := "https://" + string(provider) + ".storage.example.test"
+	uploader := NewS3Uploader(S3Config{
+		Provider:  provider,
+		Endpoint:  host,
+		Region:    "auto",
+		Bucket:    "images",
+		AccessKey: "test",
+		SecretKey: "test",
+	})
+	uploader.client = s3.New(s3.Options{
+		BaseEndpoint: aws.String(host),
+		Region:       "auto",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
+		Retryer: awsretry.NewStandard(func(options *awsretry.StandardOptions) {
+			options.MaxAttempts = 1
+		}),
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			status := http.StatusOK
+			if req.Method == http.MethodHead && !exists {
+				status = http.StatusNotFound
+			}
+			body := ""
+			if status >= http.StatusBadRequest {
+				body = "<Error><Code>NoSuchKey</Code></Error>"
+			}
+			return &http.Response{
+				StatusCode: status,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		})},
+	})
+	return uploader
+}
+
+func TestPresignStorageURLPicksTheProviderThatHoldsTheObject(t *testing.T) {
+	// 无前缀的历史路径多数住在 Supabase，而默认 provider 可能已经是 COS。
+	// 直接按默认 provider 签会给出一个指向空气的地址，浏览器拿到 404。
+	storage := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      statOnlyUploader(StorageProviderCos, false),
+		StorageProviderSupabase: statOnlyUploader(StorageProviderSupabase, true),
+	})
+
+	signed, err := storage.PresignStorageURL(context.Background(), "images/legacy.png", time.Hour)
+	if err != nil {
+		t.Fatalf("PresignStorageURL returned error: %v", err)
+	}
+	if !strings.Contains(signed, string(StorageProviderSupabase)) {
+		t.Fatalf("expected the object's real provider, got %q", signed)
+	}
+}
+
+func TestPresignStorageURLReportsUnsupportedWhenNothingCanSign(t *testing.T) {
+	// 存储后端不支持预签名时调用方要能回落到代理，而不是拿到一个坏地址。
+	storage := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{})
+	storage.uploaders = map[StorageProvider]*S3Uploader{}
+
+	if _, err := storage.PresignStorageURL(context.Background(), "images/x.png", time.Hour); err == nil {
+		t.Fatal("expected an error when no uploader can presign")
+	}
+}
+
+func TestPresignStorageURLFailsWhenNoProviderHoldsTheObject(t *testing.T) {
+	// 探测全失败仍然签发的话，前端会拿到一个指向空气的地址并直接使用，
+	// 不再回落到代理——结果是裂图。宁可返回错误让它走代理。
+	storage := NewStorageServiceWithUploaders(nil, nil, map[StorageProvider]*S3Uploader{
+		StorageProviderCos:      statOnlyUploader(StorageProviderCos, false),
+		StorageProviderSupabase: statOnlyUploader(StorageProviderSupabase, false),
+	})
+
+	if _, err := storage.PresignStorageURL(context.Background(), "images/missing.png", time.Hour); err == nil {
+		t.Fatal("expected an error when no provider holds the object")
+	}
+}

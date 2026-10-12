@@ -43,6 +43,7 @@ type StorageService interface {
 	ListImageHistory(ctx context.Context, userID, scope string, limit, offset int) (*service.ImageHistory, error)
 	GetImageHistory(ctx context.Context, id, userID, scope string) (*service.ImageHistoryItem, error)
 	GetImageVisibilityByPath(ctx context.Context, storagePath string) (visibility string, ownerID string, err error)
+	PresignStorageURL(ctx context.Context, storagePath string, ttl time.Duration) (string, error)
 	DeleteImageHistory(ctx context.Context, id, userID string) (bool, error)
 	ClearImageHistory(ctx context.Context, userID string) (int64, error)
 	CleanupObjects(paths ...string)

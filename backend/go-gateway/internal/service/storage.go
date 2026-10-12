@@ -1065,6 +1065,52 @@ func (s *StorageService) GetImageHistory(ctx context.Context, id, userID, scope 
 	return &item, nil
 }
 
+// PresignStorageURL 为某个存储键生成带时效的直连地址。
+//
+// 返回错误表示当前存储后端不支持预签名（例如 Supabase 的 REST 兜底路径），调用方
+// 应当回落到代理取图，而不是把它当成失败。
+//
+// 无前缀的历史路径需要逐个 provider 试探：它们多数住在 Supabase，而默认 provider
+// 可能已经换成 COS。不试探就会签出一个指向错误存储的地址，浏览器拿到 404——代理
+// 取图（DownloadImage）出于同样的原因也有这段回退。
+func (s *StorageService) PresignStorageURL(ctx context.Context, storagePath string, ttl time.Duration) (string, error) {
+	locator, err := s.writeLocator(storagePath)
+	if err != nil {
+		return "", err
+	}
+	uploader := s.uploaderFor(locator)
+	if uploader == nil {
+		return "", fmt.Errorf("storage uploader is not configured")
+	}
+
+	// 先确认对象真的在这个 provider 上。签名不校验对象存在性——只要密钥有效就能
+	// 签出一个地址——所以直接签会给出一个指向空气的链接，浏览器拿到 404。
+	// 每张图多一次 HEAD 请求，换来的是签名不会说谎。
+	if s.uploaders != nil && !strings.Contains(storagePath, "://") {
+		var located *S3Uploader
+		for provider, candidate := range s.uploaders {
+			if candidate == nil {
+				continue
+			}
+			if _, err := candidate.StatObject(ctx, locator.Key); err != nil {
+				continue
+			}
+			locator.Provider = provider
+			located = candidate
+			break
+		}
+		if located == nil {
+			// 一个都没探到，说明对象不存在、或它所在的存储无法探测、或 HEAD 瞬时
+			// 失败。这三种情况都不该签出地址：签了前端就会直接用，不再回落到代理，
+			// 结果是裂图。返回错误让它走代理，至少能看到图。
+			return "", fmt.Errorf("no provider holds %s", locator.Key)
+		}
+		uploader = located
+	}
+
+	return uploader.PresignedURL(ctx, locator.Key, ttl)
+}
+
 // GetImageVisibilityByPath returns the visibility and owner userID for an image
 // identified by its storage path. Returns nil, nil when no matching DB record
 // exists (e.g. reference images that were stored without a history row).

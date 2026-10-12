@@ -69,6 +69,61 @@ describe('AuthenticatedImage source binding', () => {
     expect(wrapper.find('img').attributes('src')).toBe('https://cos.example/x.webp')
   })
 
+  it('falls back to the proxy when the presigned url fails to load', async () => {
+    // 签发成功不等于能加载：对象可能已删除、存储可能 403、签名也可能在长时间
+    // 挂起的页面上过期。没有这一步，这些情况都会留下永久裂图。
+    vi.resetModules()
+    const presign = vi.fn().mockResolvedValue({ url: 'https://cos.example/expired.webp', expiresAt: 0 })
+    vi.doMock('../src/composables/usePresignedImage', () => ({
+      requestPresignedImageUrl: presign,
+      fetchPresignedImageUrls: async () => new Map(),
+    }))
+    fetchBlob.mockResolvedValue('blob:proxy-fallback')
+
+    const AuthenticatedImage = (await import('../src/components/AuthenticatedImage.vue')).default
+    const wrapper = mount(AuthenticatedImage, {
+      props: { source: { storagePath: 'cos://x.webp' }, mode: 'thumbnail' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(wrapper.find('img').attributes('src')).toBe('https://cos.example/expired.webp')
+
+    // 模拟浏览器加载失败。
+    await wrapper.find('img').trigger('error')
+    await flushPromises()
+    expect(wrapper.find('img').attributes('src')).toBe('blob:proxy-fallback')
+
+    vi.doUnmock('../src/composables/usePresignedImage')
+    vi.resetModules()
+  })
+
+  it('does not loop when the proxy url itself fails', async () => {
+    // 只有当前显示的是签名地址时才补救，否则代理地址失败会反复触发。
+    vi.resetModules()
+    vi.doMock('../src/composables/usePresignedImage', () => ({
+      requestPresignedImageUrl: vi.fn().mockResolvedValue(null),
+      fetchPresignedImageUrls: async () => new Map(),
+    }))
+    fetchBlob.mockResolvedValue('blob:proxy')
+
+    const AuthenticatedImage = (await import('../src/components/AuthenticatedImage.vue')).default
+    const wrapper = mount(AuthenticatedImage, {
+      props: { source: { storagePath: 'cos://x.webp' }, mode: 'thumbnail' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(wrapper.find('img').attributes('src')).toBe('blob:proxy')
+
+    const callsBefore = fetchBlob.mock.calls.length
+    await wrapper.find('img').trigger('error')
+    await flushPromises()
+    // 代理地址失败不该再触发一轮代理请求。
+    expect(fetchBlob.mock.calls.length).toBe(callsBefore)
+
+    vi.doUnmock('../src/composables/usePresignedImage')
+    vi.resetModules()
+  })
+
   it('renders no img at all when nothing resolves', async () => {
     // <img src=""> 会让浏览器按当前页面地址再发一次请求。
     const wrapper = await mountImage({ source: {}, mode: 'thumbnail' })

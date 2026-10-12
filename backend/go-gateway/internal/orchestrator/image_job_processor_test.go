@@ -267,6 +267,9 @@ func (s *processorStorage) GetImageHistory(context.Context, string, string, stri
 func (s *processorStorage) GetImageVisibilityByPath(context.Context, string) (string, string, error) {
 	return "", "", nil
 }
+func (s *processorStorage) PresignStorageURL(context.Context, string, time.Duration) (string, error) {
+	return "", fmt.Errorf("presigning is not supported by this test storage")
+}
 func (s *processorStorage) DeleteImageHistory(context.Context, string, string) (bool, error) {
 	return true, nil
 }
