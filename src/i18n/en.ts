@@ -536,6 +536,8 @@ export default {
     providerProbeDone: 'Upstream has {total} models, {added} added.',
     providerDelete: 'Delete provider',
     providerDeleted: 'Deleted provider "{name}".',
+    envProviderDisabled: '"{name}" is now off and no longer appears in the model list.',
+    envProviderEnabled: '"{name}" is now on.',
     providerDeleteAria: 'Delete {name}',
     confirmDeleteProviderTitle: 'Delete this provider?',
     confirmDeleteProviderDetail: 'It disappears from the list and the generation path immediately, so calls using it will fail. The row is kept and can be restored.',
@@ -628,6 +630,7 @@ export default {
     systemFailed: 'Failed to load system status, please try again.',
     providerSaveFailed: 'Failed to save provider config, please try again.',
     providerDeleteFailed: 'Failed to delete the provider. Try again later.',
+  providerToggleFailed: 'Failed to save the provider switch. Try again later.',
     providerProbeFailed: 'Failed to fetch models from upstream.',
   },
   chat: {

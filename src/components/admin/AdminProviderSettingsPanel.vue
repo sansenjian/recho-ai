@@ -194,6 +194,7 @@ function providerCompatibilityLabel(provider: AdminProviderSetting) {
 /** 删除确认：删掉后该 Provider 立刻从列表与生图链路消失，所以要二次确认。 */
 const confirm = useConfirmAction()
 const deletingId = ref<string | null>(null)
+const togglingEnvId = ref<string | null>(null)
 
 /**
  * 软删除一个 Provider。
@@ -201,6 +202,36 @@ const deletingId = ref<string | null>(null)
  * 只对数据库来源的行可用：环境变量兜底的 Provider 没有表记录，它的启停由部署
  * 配置决定，后台不该改写它。
  */
+
+/**
+ * 启停一个环境变量兜底的 Provider。
+ *
+ * 这类 Provider 由 .env 组装而来，没有数据库行，改不了 enabled，也不该让人去动
+ * 环境变量——那会连 key 一起弄丢，想再开还得改配置并重启。开关记在 app_settings
+ * 里，key 留在原处。
+ */
+async function toggleEnvProvider(provider: AdminProviderSetting) {
+  if (!props.canManage) return emit('error', t('settings.onlySeniorCanManage'))
+  if (provider.source !== 'env' || togglingEnvId.value) return
+  togglingEnvId.value = provider.id
+  emit('clear')
+  try {
+    const data = await adminApiJson<{ providerSettings: AdminProviderSettingsState }>(
+      `/api/admin/settings/env-providers/${encodeURIComponent(provider.id)}`,
+      { method: 'PATCH', body: JSON.stringify({ enabled: !provider.enabled }) },
+    )
+    emit('saved', data.providerSettings)
+    emit('notice', provider.enabled
+      ? t('settings.envProviderDisabled', { name: provider.name })
+      : t('settings.envProviderEnabled', { name: provider.name }))
+    emit('dataChanged')
+  } catch (error) {
+    emit('error', adminErrorMessage(error, t('feedback.providerToggleFailed')))
+  } finally {
+    togglingEnvId.value = null
+  }
+}
+
 function requestDeleteProvider(provider: AdminProviderSetting) {
   if (!props.canManage) return emit('error', t('settings.onlySeniorCanManage'))
   if (provider.source !== 'database') return
@@ -370,7 +401,25 @@ async function saveProvider() {
     <p v-else class="mb-3 text-[13px] text-[var(--text-muted)]">{{ t('settings.noManagePermission') }}</p>
     <div class="mt-4 w-full overflow-x-auto rounded-md border border-border"><table class="w-full min-w-[760px] border-collapse text-[13px]"><thead><tr><th v-for="heading in [t('settings.providerTable.kind'),t('settings.providerTable.name'),t('settings.providerTable.models'),t('settings.providerTable.compat'),t('settings.providerTable.key'),t('settings.providerTable.status'),t('settings.providerTable.actions')]" :key="heading" class="border-b border-border bg-[var(--surface-soft)] px-3 py-2 text-left text-[11px] font-semibold uppercase text-[var(--text-secondary)]">{{ heading }}</th></tr></thead><tbody><tr v-for="provider in providerRows" :key="provider.id" class="border-b border-border"><td class="px-3 py-2">{{ provider.kind }}</td><td class="px-3 py-2"><div class="font-semibold">{{ provider.name }}</div><div class="text-xs text-[var(--text-muted)]">{{ t('settings.providerPriority') }} {{ provider.priority }} · {{ provider.baseUrl }}</div></td><td class="px-3 py-2 text-xs"><div class="flex flex-col gap-0.5"><span v-for="(model, index) in providerModelCatalogRows(provider)" :key="`${model.id}-${index}`" :class="model.enabled ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] line-through'">{{ model.name || model.id }} <span class="text-[10px] text-[var(--text-muted)]">({{ model.id }})</span></span><span v-if="!providerModelCatalogRows(provider).length">{{ provider.defaultModel || provider.imageModel || '-' }}</span></div></td><td class="px-3 py-2 text-xs">{{ providerCompatibilityLabel(provider) }}</td><td class="px-3 py-2">{{ provider.apiKeyConfigured ? provider.apiKeyPreview || t('settings.providerApiKeyConfigured') : t('settings.providerApiKeyUnconfigured') }}</td><td class="px-3 py-2"><Badge :variant="provider.enabled && provider.apiKeyConfigured ? 'default' : 'secondary'">{{ providerStatusLabel(provider) }}</Badge></td><td class="px-3 py-2">
               <div class="flex items-center gap-1">
-                <Button variant="ghost" size="sm" :disabled="provider.source !== 'database' || !props.canManage || formBusy" @click="editProvider(provider)">{{ t('common.edit') }}</Button>
+                  <!-- 数据库 Provider 可编辑；环境变量兜底的没有行可编辑，只给启停开关。 -->
+                  <Button
+                    v-if="provider.source === 'database'"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="!props.canManage || formBusy"
+                    @click="editProvider(provider)"
+                  >
+                    {{ t('common.edit') }}
+                  </Button>
+                  <Button
+                    v-else
+                    variant="ghost"
+                    size="sm"
+                    :disabled="!props.canManage || Boolean(togglingEnvId) || formBusy"
+                    @click="toggleEnvProvider(provider)"
+                  >
+                    {{ provider.enabled ? t('common.disable') : t('common.enable') }}
+                  </Button>
                 <!-- 环境变量兜底的 Provider 没有表记录，删不了，直接不渲染按钮。 -->
                 <Button
                   v-if="provider.source === 'database'"

@@ -113,12 +113,34 @@ func TestEnvironmentChatModelsIncludesConfiguredProviders(t *testing.T) {
 	config.KimiAPIKey = "sk-kimi"
 	config.KimiBaseURL = "https://kimi.example.test/v1"
 
-	models := environmentChatModels()
+	models := environmentChatModels(nil)
 	if len(models) != 2 || models[0].ID != "gpt-4o-mini" || models[1].ID != "kimi-k2-0711-preview" {
 		t.Fatalf("unexpected environment chat models: %#v", models)
 	}
 }
 
+func TestEnvironmentChatModelsSkipsDisabledProviders(t *testing.T) {
+	// 停用清单来自 app_settings，环境变量保持原样；被停用的 Provider 不该再出现在列表里。
+	original := struct {
+		openaiKey, openaiBase, kimiKey, kimiBase string
+	}{config.OpenAIAPIKey, config.OpenAIBaseURL, config.KimiAPIKey, config.KimiBaseURL}
+	t.Cleanup(func() {
+		config.OpenAIAPIKey = original.openaiKey
+		config.OpenAIBaseURL = original.openaiBase
+		config.KimiAPIKey = original.kimiKey
+		config.KimiBaseURL = original.kimiBase
+	})
+
+	config.OpenAIAPIKey = "sk-openai"
+	config.OpenAIBaseURL = "https://openai.example.test/v1"
+	config.KimiAPIKey = "sk-kimi"
+	config.KimiBaseURL = "https://kimi.example.test/v1"
+
+	models := environmentChatModels(map[string]bool{"env:chat:openai": true})
+	if len(models) != 1 || models[0].ID != "kimi-k2-0711-preview" {
+		t.Fatalf("disabled provider should be skipped, got %#v", models)
+	}
+}
 func TestEnvironmentImageModelsIncludesConfiguredProvider(t *testing.T) {
 	original := struct {
 		apiKey, baseURL, model string

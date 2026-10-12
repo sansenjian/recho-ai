@@ -20,6 +20,7 @@ import {
   updateProviderSetting,
   deleteProviderSetting,
   fetchUpstreamModels,
+  setEnvProviderEnabled,
 } from '../services/provider-settings.js'
 import { getRequestUser } from '../services/request-auth.js'
 import { publicErrorMessage, safeErrorDetail } from '../services/safe-error.js'
@@ -206,6 +207,36 @@ router.delete('/admin/settings/providers/:providerId', async (req: Request, res:
   } catch (err) {
     console.error('[admin-settings] provider delete failed:', safeErrorDetail(err))
     const response = adminSystemErrorResponse(err, 'Provider 删除失败，请稍后重试。')
+    res.status(response.status).json({ error: response.error })
+  }
+})
+
+
+/**
+ * 启停一个环境变量兜底 Provider。
+ *
+ * 与数据库 Provider 的 PATCH 分开：那边改的是行上的 enabled，这边改的是
+ * app_settings 里的一份停用清单，两者语义不同，混在一个接口里容易写错。
+ */
+router.patch('/admin/settings/env-providers/:providerId', async (req: Request, res: Response) => {
+  try {
+    const adminUser = await requireAdmin(req)
+    await assertSeniorAdminUser(adminUser)
+    await setEnvProviderEnabled(
+      routeParam(req.params.providerId),
+      req.body?.enabled !== false,
+      adminUser,
+    )
+    const providerSettings = await listProviderSettings({ refresh: true })
+    res.json({
+      providerSettings: {
+        providers: providerSettings.providers,
+        tableAvailable: providerSettings.tableAvailable,
+      },
+    })
+  } catch (err) {
+    console.error('[admin-settings] env provider toggle failed:', safeErrorDetail(err))
+    const response = adminSystemErrorResponse(err, 'Provider 开关保存失败，请稍后重试。')
     res.status(response.status).json({ error: response.error })
   }
 })

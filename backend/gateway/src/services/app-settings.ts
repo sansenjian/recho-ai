@@ -439,6 +439,9 @@ export function clearAppSettingsCache() {
   adminUsersCache = null
 }
 
+
+
+
 export async function getAppSettings(options: { refresh?: boolean } = {}): Promise<AppSettings> {
   const now = Date.now()
   if (!options.refresh && settingsCache && settingsCache.expiresAt > now) return settingsCache.settings

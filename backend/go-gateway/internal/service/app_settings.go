@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-gateway/internal/config"
+	"log"
 )
 
 type ImageModelOption struct {
@@ -169,7 +170,7 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 
 	chatModels, err := s.loadChatModels(ctx)
 	if err != nil {
-		envModels := environmentChatModels()
+		envModels := environmentChatModels(s.loadDisabledEnvProviders(ctx))
 		if isMissingChatModelsSchema(err) || len(envModels) > 0 {
 			cfg.ChatModels = envModels
 			return cfg, nil
@@ -181,13 +182,57 @@ func (s *AppSettingsService) PublicConfig(ctx context.Context) (PublicAppConfig,
 	return cfg, nil
 }
 
+// 读取被停用的环境变量兜底 Provider id。
+//
+// 这些 Provider 由环境变量组装而来，没有数据库行可改 enabled，也不该让人去删环境
+// 变量——那会连 key 一起弄丢。清单单独存在 app_settings 里，两侧（Node 与 Go）读同
+// 一份，界面关掉的 Provider 才不会在另一侧又冒出来。
+//
+// 读失败时返回空集合：拿不到清单只该让兜底 Provider 照常出现，而不是让整个配置接口
+// 挂掉。
+func (s *AppSettingsService) loadDisabledEnvProviders(ctx context.Context) map[string]bool {
+	disabled := make(map[string]bool)
+	rows, err := s.pool.Query(ctx, `
+		select value
+		from public.app_settings
+		where key = 'disabled_env_providers'
+	`)
+	if err != nil {
+		log.Printf("[app-settings] disabled_env_providers read failed: %v", err)
+		return disabled
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			log.Printf("[app-settings] disabled_env_providers scan failed: %v", err)
+			return disabled
+		}
+		var ids []string
+		if err := json.Unmarshal(raw, &ids); err != nil {
+			// 形状必须唯一：这个键由两侧共读，存成单个字符串或对象都会让这里静默失效。
+			log.Printf("[app-settings] disabled_env_providers has unexpected shape: %v", err)
+			return disabled
+		}
+		for _, id := range ids {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				disabled[trimmed] = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[app-settings] disabled_env_providers rows failed: %v", err)
+	}
+	return disabled
+}
 func isMissingChatModelsSchema(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "42703" || pgErr.Code == "42P01")
 }
 
 func (s *AppSettingsService) loadChatModels(ctx context.Context) ([]ChatModelOption, error) {
-	envModels := environmentChatModels()
+	envModels := environmentChatModels(s.loadDisabledEnvProviders(ctx))
 	hasCatalog := true
 	rows, err := s.pool.Query(ctx, `
 		select name, models, model_catalog, default_model
@@ -286,20 +331,25 @@ func parseProviderModelOptions(raw []byte) []providerModelOption {
 	return entries
 }
 
-func environmentChatModels() []ChatModelOption {
+func environmentChatModels(disabled map[string]bool) []ChatModelOption {
 	providers := []struct {
 		apiKey  string
 		baseURL string
 		name    string
 		model   string
+		id      string
 	}{
-		{config.OpenAIAPIKey, config.OpenAIBaseURL, "Env OpenAI provider", "gpt-4o-mini"},
-		{config.KimiAPIKey, config.KimiBaseURL, "Env Kimi provider", "kimi-k2-0711-preview"},
+		{config.OpenAIAPIKey, config.OpenAIBaseURL, "Env OpenAI provider", "gpt-4o-mini", "env:chat:openai"},
+		{config.KimiAPIKey, config.KimiBaseURL, "Env Kimi provider", "kimi-k2-0711-preview", "env:chat:kimi"},
 	}
 
 	result := make([]ChatModelOption, 0, len(providers))
 	for _, provider := range providers {
 		if strings.TrimSpace(provider.apiKey) == "" || strings.TrimSpace(provider.baseURL) == "" {
+			continue
+		}
+		// 被管理员停用的兜底 Provider 不再出现在列表里，环境变量本身保持原样。
+		if disabled[provider.id] {
 			continue
 		}
 		if model := normalizeModelName(provider.model, ""); model != "" {
