@@ -340,6 +340,8 @@ const CHAT_UPLOAD_MAX_EDGE = 1280
 const CHAT_UPLOAD_QUALITY = 0.85
 
 const pendingImages = ref<string[]>([])
+/** 输入框实例：删图时要回调它修正正文里的引用标记。 */
+const chatInputRef = ref<{ handleRemovedImage: (index: number) => void } | null>(null)
 const isDragOver = ref(false)
 let dragCounter = 0
 
@@ -380,6 +382,9 @@ async function addFiles(files: FileList | File[]) {
 }
 
 function removePendingImage(index: number) {
+  // 先让输入框修正正文里的引用标记，再真正删图：标记的 N 是附图下标，删掉中间
+  // 一张会让后面所有标记前移一位并指向错误的图，而长度变化本身推不出删的是哪张。
+  chatInputRef.value?.handleRemovedImage(index)
   pendingImages.value = pendingImages.value.filter((_, i) => i !== index)
 }
 
@@ -781,6 +786,7 @@ function handleImageModeChange(mode: 'imagio' | 'canvas') {
         </div>
 
         <ChatInput
+          ref="chatInputRef"
           :is-loading="isLoading"
           :current-model="currentModel"
           :models="modelOptions"

@@ -2,6 +2,7 @@ import { ref, watch } from 'vue'
 import type { Conversation, ChatGroup, Message } from '../types'
 import { GROUP_COLORS } from '../types'
 import { clearRenderCache } from '../utils/markdown'
+import { stripImageMentions } from '../lib/message-image-mention'
 
 const STORAGE_KEY = 'recho-conversations'
 const GROUPS_KEY = 'recho-groups'
@@ -177,7 +178,11 @@ export function updateConversationTitle(id: string, messages: Message[]) {
   if (!conv || conv.title !== 'New Chat') return
   const firstUser = messages.find(m => m.role === 'user')
   if (firstUser) {
-    conv.title = firstUser.content.slice(0, 30) + (firstUser.content.length > 30 ? '…' : '')
+    // 标题要清掉图片引用标记：{{image:1}} 是结构化写法，不是给人看的文字，
+    // 直接截进标题会变成「参考 {{image:1}} 的风格」这种。截断长度按清理后的
+    // 文本算——否则标记占掉的字符会让标题短得莫名其妙。
+    const title = stripImageMentions(firstUser.content).trim()
+    if (title) conv.title = title.slice(0, 30) + (title.length > 30 ? '…' : '')
   }
 }
 

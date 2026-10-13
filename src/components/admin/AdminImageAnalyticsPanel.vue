@@ -27,6 +27,8 @@ const loading = ref(false)
 const errorMessage = ref('')
 const loadedVersion = ref(-1)
 const windowHours = ref('168')
+/** 请求序号：只让最后发出的那次请求写入状态。 */
+let loadSeq = 0
 
 const windowOptions = [
   { hours: '24', labelKey: 'analytics.window24h' },
@@ -101,19 +103,28 @@ function percent(value: number | null | undefined) {
 }
 
 async function loadAnalytics() {
-  if (loading.value) return
+  // 用请求序号而不是 loading 闸门。
+  //
+  // 之前是 `if (loading.value) return`，这会让「请求进行中切换时间窗」被静默丢弃：
+  // 上一次请求回来后写入的是旧窗口的数据，而按钮已经高亮到新窗口，界面于是长期
+  // 显示一个与标签不符的数字。序号同时解决两件事——新请求照发不误，以及先发后到
+  // 的过期响应不会覆盖更新的结果。
+  const seq = ++loadSeq
   loading.value = true
   errorMessage.value = ''
   try {
     const data = await adminApiJson<{ analytics: AdminImageAnalytics }>(
       `/api/admin/image-analytics?hours=${encodeURIComponent(windowHours.value)}`,
     )
+    if (seq !== loadSeq) return
     analytics.value = data.analytics
     loadedVersion.value = props.refreshVersion ?? 0
   } catch (error) {
+    if (seq !== loadSeq) return
     errorMessage.value = adminErrorMessage(error, t('feedback.analyticsFailed'))
   } finally {
-    loading.value = false
+    // 只有最后一次请求负责收起 loading：更早的请求结束时界面还在等新数据。
+    if (seq === loadSeq) loading.value = false
   }
 }
 
