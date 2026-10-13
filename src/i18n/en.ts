@@ -670,6 +670,9 @@ export default {
     providerProbeFailed: 'Failed to fetch models from upstream.',
   },
   chat: {
+    mentionLabel: 'Image {index}',
+    mentionHint: 'Insert reference tag',
+    mentionOrdinal: 'Uploaded image {index}',
     login: 'Log in',
     chat: 'Chat',
     checking: 'Checking',

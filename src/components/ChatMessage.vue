@@ -12,6 +12,7 @@ import LinkPreviewCard from './LinkPreviewCard.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from '@lucide/vue'
+import { renderImageMentions } from '../lib/message-image-mention'
 
 const props = defineProps<{
   msg: Message
@@ -42,6 +43,19 @@ const shouldShowThinkingPlaceholder = computed(() =>
 const renderedMessage = computed(() => getRendered(props.msg))
 // 时间按界面语言与「是否当天」格式化：当天只给时分，跨天补上日期。
 const displayTimestamp = computed(() => formatMessageTime(props.msg.timestamp, locale.value))
+/**
+ * 正文里 {{image:N}} 的显示文本。
+ *
+ * N 对应这条消息的附图序号，所以用 msg.images.length 做越界判断。助手消息没有
+ * images，此时标记会被清掉——模型复述用户输入时可能带上标记，但那个序号在
+ * 助手这条消息里没有意义。
+ */
+const displayContent = computed(() => renderImageMentions(
+  props.msg.content,
+  props.msg.images?.length ?? 0,
+  index => t('chat.mentionLabel', { index }),
+))
+
 const linkPreview = computed(() => extractLinkPreview(props.msg.content))
 
 function textRendered(block: Extract<MessageBlock, { type: 'assistant_text' }>) {
@@ -113,7 +127,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
       <!-- Fallback: non-block content -->
       <template v-else>
         <div v-if="renderedMessage" class="msg-text md text-[13.5px] leading-[1.7] text-foreground break-words" v-html="renderedMessage" />
-        <div v-else class="msg-text text-[13.5px] leading-[1.7] text-foreground break-words">{{ stripThinking(msg.content) }}</div>
+        <div v-else class="msg-text text-[13.5px] leading-[1.7] text-foreground break-words">{{ renderImageMentions(stripThinking(msg.content), msg.images?.length ?? 0, index => t('chat.mentionLabel', { index })) }}</div>
       </template>
 
       <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
@@ -191,7 +205,7 @@ function toolBlockToCall(block: Extract<MessageBlock, { type: 'tool_use' }>) {
       </div>
       <!-- Text bubble -->
       <div class="msg-text text-[13.5px] leading-[1.65] text-foreground break-words bg-muted py-2 px-3 rounded-lg border border-border">
-        {{ msg.content }}
+        {{ displayContent }}
       </div>
       <LinkPreviewCard v-if="linkPreview" :preview="linkPreview" />
       <!-- Actions -->

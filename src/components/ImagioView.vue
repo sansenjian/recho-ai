@@ -32,6 +32,7 @@ import PromptBox from './PromptBox.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import ImageViewerModal from './ImageViewerModal.vue'
 import { useMessageFeedback } from '../composables/useMessageFeedback'
+import { useImageAnalytics } from '../composables/useImageAnalytics'
 import { fetchAuthenticatedImageBlob, imageStoragePath } from '../lib/authenticated-image-source'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import type { ImageViewerState } from '../lib/image-canvas-model'
@@ -109,6 +110,7 @@ const downloadingImageId = ref<string | null>(null)
 
 /** 生图结果的评价状态（按生成批次 id 记录）。 */
 const feedback = useMessageFeedback('image')
+const { trackGenerated } = useImageAnalytics()
 
 /**
  * 拉取已有评价。
@@ -314,6 +316,8 @@ async function convertToPng(blob: Blob) {
  */
 async function downloadGeneratedImage(image: GeneratedImage) {
   if (downloadingImageId.value) return
+  // 这个面板展示的是生成历史，所以来源固定为 history。
+  trackGenerated('download', image, 'history')
   // 与 actionableImages 取同一个来源。
   const path = imageStoragePath(image, 'preview')
   if (!path) return

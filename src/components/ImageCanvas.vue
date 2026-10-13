@@ -28,6 +28,8 @@ import {
   type CanvasWorkspaceSnapshot,
 } from '../lib/canvas-workspace-cache'
 import { useImageDownload, type ImageDownloadNode, type ImageDownloadViewer } from '../composables/useImageDownload'
+import { useImageAnalytics } from '../composables/useImageAnalytics'
+import type { ImageEventSource, ImageEventType } from '../composables/useImageEvents'
 import {
   CANVAS_EXPORT_VERSION,
   CANVAS_IMPORT_MAX_FILE_BYTES,
@@ -606,6 +608,48 @@ const {
   },
 })
 
+const { track, trackGenerated } = useImageAnalytics()
+
+/**
+ * 查看器里的动作统一按「图片是从哪个入口打开」定来源。
+ *
+ * 查看器本身不知道用户是从画布节点点进来还是从历史记录点进来的，这个信息只在
+ * 打开时那个入口上。所以来源在这里解析一次，而不是在 ImageViewerModal 里判定。
+ */
+function viewerSource(): ImageEventSource {
+  const viewer = imageViewer.value
+  if (!viewer) return 'viewer'
+  return viewer.sourceScope === 'public' ? 'works' : 'viewer'
+}
+
+function trackViewerAction(eventType: ImageEventType) {
+  const viewer = imageViewer.value
+  if (viewer) {
+    const image = historyImageForViewer(viewer)
+    if (image) trackGenerated(eventType, image, viewerSource())
+  }
+}
+
+/** 包一层 openImageViewer：view_detail 是打开查看器时发生的，不是查看器内部。 */
+function openImageViewerTracked(node: CanvasNode) {
+  const image = historyImageForNode(node)
+  if (image) trackGenerated('view_detail', image, 'canvas')
+  openImageViewer(node)
+}
+
+function zoomImageViewerTracked(step: number) {
+  trackViewerAction('zoom')
+  zoomImageViewer(step)
+}
+
+function openGalleryDetailViewerTracked() {
+  const image = galleryDetail.value
+  if (image) {
+    trackGenerated('view_detail', image, galleryActionScope.value === 'public' ? 'works' : 'history')
+  }
+  openGalleryDetailViewer()
+}
+
 const {
   imageViewer,
   openGalleryDetailViewer,
@@ -1039,6 +1083,12 @@ function handleWheel(event: WheelEvent) {
 }
 
 function removeNode(nodeId: string) {
+  // 埋点要在删除前取：删除后节点已经不在文档里，拿不到 sourceImageId 了。
+  const node = nodes.value.find(item => item.id === nodeId)
+  if (node) {
+    const image = historyImageForNode(node)
+    if (image) trackGenerated('delete', image, 'canvas')
+  }
   cleanupMeasuredNodeElement(nodeId)
   removeDocumentNode(nodeId)
 }
@@ -1059,12 +1109,14 @@ function galleryParamItems(image: GeneratedImage) {
 
 function downloadGalleryDetail() {
   if (galleryDetail.value) {
+    trackGenerated('download', galleryDetail.value, galleryActionScope.value === 'public' ? 'works' : 'history')
     void downloadGeneratedImage(galleryDetail.value, galleryDetailScope.value)
   }
 }
 
 function useGalleryDetailImage() {
   if (galleryDetail.value) {
+    trackGenerated('use_as_reference', galleryDetail.value, galleryActionScope.value === 'public' ? 'works' : 'history')
     void useHistoryImage(galleryDetail.value, galleryDetailScope.value)
     closeGalleryDetail()
   }
@@ -1072,6 +1124,7 @@ function useGalleryDetailImage() {
 
 function sendGalleryDetailToChat() {
   if (galleryDetail.value) {
+    trackGenerated('send_to_chat', galleryDetail.value, galleryActionScope.value === 'public' ? 'works' : 'history')
     void sendHistoryImageToChat(galleryDetail.value, galleryDetailScope.value)
   }
 }
@@ -1297,11 +1350,17 @@ function historyImageForNode(node: ImageDownloadNode) {
 
 function handleDownload(node: CanvasNode) {
   if (!hasImageSource(node, 'preview')) return
+  // 画布节点可能还没落库（无 sourceImageId），那就不用埋点——没有 id 的事件
+  // 无法归因到具体图片，只会把表撑大。
+  const image = historyImageForNode(node)
+  if (image) trackGenerated('download', image, 'canvas')
   void downloadTarget(nodeTarget(node))
 }
 
 async function sendNodeImageToChat(node: CanvasNode) {
   if (!hasImageSource(node, 'preview')) return
+  const sourceImage = historyImageForNode(node)
+  if (sourceImage) trackGenerated('send_to_chat', sourceImage, 'canvas')
   const imageUrl = await resolveNodePreviewImageUrl(node)
   if (!imageUrl) {
     error.value = '预览图加载失败，请稍后重试。'
@@ -1311,6 +1370,7 @@ async function sendNodeImageToChat(node: CanvasNode) {
 }
 
 function downloadImageViewerImage() {
+  trackViewerAction('download')
   void downloadTarget(viewerTarget(imageViewer.value))
 }
 
@@ -1577,7 +1637,7 @@ onUnmounted(() => {
                   @finish-connection="finishConnection"
                   @choose-image="chooseImage"
                   @image-load="handleNodeImageLoad"
-                  @open-image-viewer="openImageViewer"
+                  @open-image-viewer="openImageViewerTracked"
                   @update-content="updateNodeContent"
                   @create-continuation="createContinuation"
                   @download="handleDownload"
@@ -1665,7 +1725,7 @@ onUnmounted(() => {
       :is-loading-preview="isGalleryDetailLoadingPreview"
       :is-downloading="isDownloadingImage(imageDownloadKey(galleryDetail, galleryDetailScope))"
       @close="closeGalleryDetail"
-      @open-viewer="openGalleryDetailViewer"
+      @open-viewer="openGalleryDetailViewerTracked"
       @use-image="useGalleryDetailImage"
       @preload-download="preloadGeneratedImageDownload(galleryDetail, galleryDetailScope)"
       @download="downloadGalleryDetail"
@@ -1681,7 +1741,7 @@ onUnmounted(() => {
       :index="0"
       :thumbnails="[]"
       @close="closeImageViewer"
-      @zoom="zoomImageViewer"
+      @zoom="zoomImageViewerTracked"
       @reset-zoom="resetImageViewerZoom"
       @fit-window="resetImageViewerZoom"
       @preload-download="preloadViewerImageDownload"

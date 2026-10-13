@@ -671,6 +671,9 @@ export default {
   providerProbeFailed: '拉取上游模型失败。',
   },
   chat: {
+    mentionLabel: '图{index}',
+    mentionHint: '插入引用标记',
+    mentionOrdinal: '第 {index} 张已上传图片',
     login: '登录',
     chat: '对话',
     checking: '检查中',

@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import type { AgentModeOption, Message, MessageBlock } from '../types'
 import { DEFAULT_SYSTEM_PROMPT } from '../types'
 import type { VisionContent } from '../types/events'
+import { renderImageMentionsAsText } from '../lib/message-image-mention'
 import type { RunState, ToolStatus } from '../types/tools'
 import {
   activeConversationId,
@@ -206,8 +207,12 @@ export function useChatLoop() {
 
   function buildVisionContent(value: string, images?: string[]): string | VisionContent[] {
     if (!images || images.length === 0) return value
+    // 图片引用标记（{{image:N}}）是给界面用的结构化写法，模型不认识它。图片本身
+    // 已经按同一顺序作为 image_url 附在消息里了，所以这里只把标记换成一句模型
+    // 能读懂的位置说明，让它知道用户说的「第 N 张」指哪一张。
+    const text = renderImageMentionsAsText(value, images.length)
     const parts: VisionContent[] = []
-    if (value) parts.push({ type: 'text', text: value })
+    if (text) parts.push({ type: 'text', text })
     for (const url of images) parts.push({ type: 'image_url', image_url: { url } })
     return parts
   }
