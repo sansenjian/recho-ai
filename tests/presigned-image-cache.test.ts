@@ -134,4 +134,47 @@ describe('usePresignedImage', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('does not let an in-flight issue from the old identity refill the cache', async () => {
+    // 竞态：旧账号的签发请求发出 → 用户登出/切号触发清理 → 响应才回来。
+    // 如果这时还往 issued 里写，新账号请求同一路径就会拿到旧账号的地址。
+    // 清 inFlight 只是让后来的调用不再复用那个 Promise，取消不了已发出的请求。
+    let releaseOldRequest: (() => void) | null = null
+    fetchMock.mockImplementationOnce(async (url: string, init?: { body?: string }) => {
+      const body = JSON.parse(init?.body || '{}')
+      await new Promise<void>((resolve) => { releaseOldRequest = resolve })
+      return {
+        ok: true,
+        json: async () => ({
+          items: (body.paths || []).map((path: string) => ({
+            path,
+            url: 'https://storage.test/private/x.webp?sig=OLD',
+            expiresAt: nowSeconds() + 3600,
+          })),
+        }),
+      }
+    })
+
+    const { requestPresignedImageUrl, clearPresignedImageCache } = await loadModule()
+    const oldRequest = requestPresignedImageUrl('private/x.webp')
+
+    // fetch 之前还有一次 await getAuthAccessToken()，要让出几轮 microtask，
+    // 请求才会真正落到 mock 里挂起——否则 clear 发生在请求发出之前，
+    // 这条用例就绕开了它本该覆盖的竞态。
+    while (!releaseOldRequest) await Promise.resolve()
+
+    // 身份切换发生在旧请求返回之前。
+    clearPresignedImageCache()
+    releaseOldRequest()
+    await oldRequest
+
+    // 新身份请求同一路径：必须重新签发，不能命中旧身份的地址。
+    fetchMock.mockResolvedValue(
+      presignResponse('private/x.webp', 'https://storage.test/private/x.webp?sig=NEW', nowSeconds() + 3600),
+    )
+    const afterSwitch = await requestPresignedImageUrl('private/x.webp')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(afterSwitch?.url).toContain('sig=NEW')
+  })
 })
