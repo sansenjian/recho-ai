@@ -369,15 +369,32 @@ func (h *ImageHandler) PresignStorage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 逐个候选路径做可见性校验：缩略图缺失会回落到私有的原图路径，
-		// 那条同样要求属主。
+		// 那条同样要求属主。候选链可能十几个，逐条查库会变成一次全表扫描
+		// 一发——这里一次取回整条链的可见性，下面的判断顺序与短路行为不变。
+		//
+		// 查库失败时退回 forbidden，而不是让整个请求 500：这一批可能有几十个
+		// 路径，一次查询失败不该把其他能签发的图一起拖掉，前端拿到 forbidden
+		// 会走代理取图，图片仍然显示得出来。
+		candidates := proxyStorageCandidatePaths(storagePath)
+		visibilities, lookupErr := h.storageService.GetImageVisibilitiesByPaths(r.Context(), candidates)
+		if lookupErr != nil {
+			log.Printf("[image] PresignStorage: visibility lookup failed: %v", lookupErr)
+			results = append(results, presignResult{Path: raw, Error: "forbidden"})
+			continue
+		}
+
 		allowed := false
 		var target string
-		for _, candidate := range proxyStorageCandidatePaths(storagePath) {
-			visibility, ownerID, err := h.storageService.GetImageVisibilityByPath(r.Context(), candidate)
-			if err != nil {
+		for _, candidate := range candidates {
+			record, found := visibilities[candidate]
+			if !found {
+				// 无访问记录（例如没有历史行的参考图）按公开处理，与单条查询
+				// 返回空可见性时的行为一致。
+				allowed = true
+				target = candidate
 				break
 			}
-			if visibility == "private" && (user == nil || user.ID != ownerID) {
+			if record.Visibility == "private" && (user == nil || user.ID != record.OwnerID) {
 				break
 			}
 			allowed = true
@@ -427,16 +444,22 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 	servedPath := storagePath
 	var image *service.DownloadedImage
 	servedIsPrivate := false
-	for _, candidatePath := range proxyStorageCandidatePaths(storagePath) {
+
+	// 整条候选链的可见性一次取回：逐条查库的代价是一次全表扫描一发，而链上
+	// 可能有十几个候选。取回后仍按原顺序逐个判断，鉴权结论与短路位置不变。
+	candidates := proxyStorageCandidatePaths(storagePath)
+	visibilities, lookupErr := h.storageService.GetImageVisibilitiesByPaths(r.Context(), candidates)
+	if lookupErr != nil {
+		log.Printf("[image] ProxyStorage: visibility lookup failed: %v", lookupErr)
+		response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
+		return
+	}
+
+	for _, candidatePath := range candidates {
 		// Enforce ownership for every candidate. A missing thumbnail may fall
 		// back to a private original path, which must still require its owner.
-		visibility, ownerID, visErr := h.storageService.GetImageVisibilityByPath(r.Context(), candidatePath)
-		if visErr != nil {
-			log.Printf("[image] ProxyStorage: visibility lookup failed: %v", visErr)
-			response.Error(w, http.StatusInternalServerError, "图片访问验证失败。")
-			return
-		}
-		if visibility == "private" && (user == nil || user.ID != ownerID) {
+		record := visibilities[candidatePath]
+		if record.Visibility == "private" && (user == nil || user.ID != record.OwnerID) {
 			response.Error(w, http.StatusForbidden, "无权访问该图片。")
 			return
 		}
@@ -445,7 +468,7 @@ func (h *ImageHandler) ProxyStorage(w http.ResponseWriter, r *http.Request) {
 		if err == nil && downloaded != nil && len(downloaded.Data) > 0 {
 			servedPath = candidatePath
 			image = downloaded
-			servedIsPrivate = visibility == "private"
+			servedIsPrivate = record.Visibility == "private"
 			break
 		}
 	}

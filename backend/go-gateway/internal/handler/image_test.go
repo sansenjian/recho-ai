@@ -67,6 +67,9 @@ type stubImageStorageService struct {
 	visErr         error
 	presignFunc    func(ctx context.Context, storagePath string, ttl time.Duration) (string, error)
 	presignErr     error
+	// batchLookups 记录批量可见性查询被调用了几次、每次带了多少路径。
+	// 候选链会展开成十几个路径，逐条查库与一次批量查库的差别正在这里。
+	batchLookups []int
 }
 
 func (s *stubImageStorageService) StoreFromURL(ctx context.Context, url, pathHint string) (*service.StoredImage, error) {
@@ -155,6 +158,27 @@ func (s *stubImageStorageService) GetImageVisibilityByPath(ctx context.Context, 
 		return "", "", s.visErr
 	}
 	return s.visibility, s.owner, nil
+}
+
+// GetImageVisibilitiesByPaths 复用单条查询的钩子，这样 handler 改走批量路径后，
+// 原有基于 visibilityFunc / visErr 的用例仍然在检验同一套鉴权行为，而不是因为
+// 那个方法不再被调用就静默变成空测试。
+func (s *stubImageStorageService) GetImageVisibilitiesByPaths(ctx context.Context, storagePaths []string) (map[string]service.ImagePathVisibility, error) {
+	s.batchLookups = append(s.batchLookups, len(storagePaths))
+	resolved := make(map[string]service.ImagePathVisibility, len(storagePaths))
+	for _, storagePath := range storagePaths {
+		visibility, owner, err := s.GetImageVisibilityByPath(ctx, storagePath)
+		if err != nil {
+			return resolved, err
+		}
+		if visibility == "" && owner == "" {
+			// 单条查询用空可见性表示「无访问记录」，批量结果用「不在 map 里」
+			// 表示同一件事，两边保持一致。
+			continue
+		}
+		resolved[storagePath] = service.ImagePathVisibility{Visibility: visibility, OwnerID: owner}
+	}
+	return resolved, nil
 }
 
 func (s *stubImageStorageService) PresignStorageURL(ctx context.Context, storagePath string, ttl time.Duration) (string, error) {
@@ -1148,5 +1172,71 @@ func TestPresignStorageRejectsOversizedBatch(t *testing.T) {
 
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+// 一次签发只查一次库。
+//
+// 候选链会把一个缩略图路径展开成十几个候选，逐条查库就是十几次三列 OR 反查；
+// 那条查询用不上单列索引，代价是全表扫描。这里锁定的是「整条链一次查完」，
+// 而不是逐个候选查一次——数字回退说明优化被改掉了。
+func TestPresignStorageResolvesEachCandidateChainInOneLookup(t *testing.T) {
+	storageSvc := &stubImageStorageService{}
+
+	_, parsed := performPresignRequest(t, storageSvc, []string{"generated/test.thumb.webp"}, "owner_123")
+
+	if len(parsed.Items) != 1 {
+		t.Fatalf("expected 1 item, got %#v", parsed.Items)
+	}
+	if len(storageSvc.batchLookups) != 1 {
+		t.Fatalf("expected exactly 1 batched visibility lookup, got %d (%v)",
+			len(storageSvc.batchLookups), storageSvc.batchLookups)
+	}
+	// 候选链本身不止一个路径，否则这条测试会因为「链只有一个候选」而假通过。
+	if storageSvc.batchLookups[0] < 2 {
+		t.Fatalf("expected the candidate chain to hold several paths, got %d",
+			storageSvc.batchLookups[0])
+	}
+}
+
+// 同一批里的每个路径各自解析，不会因为共用一个查询而互相串味。
+func TestPresignStorageKeepsPerPathResultsIndependent(t *testing.T) {
+	storageSvc := &stubImageStorageService{
+		visibilityFunc: func(_ context.Context, storagePath string) (string, string, error) {
+			// 私有图只属于 owner_a；另一个路径公开。
+			if strings.Contains(storagePath, "secret") {
+				return "private", "owner_a", nil
+			}
+			return "public", "", nil
+		},
+	}
+
+	_, parsed := performPresignRequest(t, storageSvc,
+		[]string{"generated/secret.thumb.webp", "generated/open.thumb.webp"}, "owner_b")
+
+	if len(parsed.Items) != 2 {
+		t.Fatalf("expected 2 items, got %#v", parsed.Items)
+	}
+	byPath := make(map[string]struct {
+		URL   string
+		Error string
+	}, len(parsed.Items))
+	for _, item := range parsed.Items {
+		byPath[item.Path] = struct {
+			URL   string
+			Error string
+		}{URL: item.URL, Error: item.Error}
+	}
+	if byPath["generated/secret.thumb.webp"].Error != "forbidden" {
+		t.Fatalf("another user's private image must stay forbidden, got %#v",
+			byPath["generated/secret.thumb.webp"])
+	}
+	if byPath["generated/open.thumb.webp"].URL == "" {
+		t.Fatalf("the public image in the same batch must still be presigned, got %#v",
+			byPath["generated/open.thumb.webp"])
+	}
+	// 两个路径合在一次查询里，而不是各查一次。
+	if len(storageSvc.batchLookups) != 2 {
+		t.Fatalf("expected one lookup per requested path, got %v", storageSvc.batchLookups)
 	}
 }

@@ -139,6 +139,10 @@ func (s *testStorageService) GetImageVisibilityByPath(ctx context.Context, stora
 	return "", "", nil
 }
 
+func (s *testStorageService) GetImageVisibilitiesByPaths(context.Context, []string) (map[string]service.ImagePathVisibility, error) {
+	return map[string]service.ImagePathVisibility{}, nil
+}
+
 func (s *testStorageService) PresignStorageURL(context.Context, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("presigning is not supported by this test storage")
 }

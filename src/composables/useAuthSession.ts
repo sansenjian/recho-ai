@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
 import { clearImageBlobsForOwner } from '../lib/image-blob-cache'
+import { clearPresignedImageCache } from './usePresignedImage'
 import { getSupabaseClient } from '../lib/supabase'
 import i18n from '../i18n'
 
@@ -63,8 +64,16 @@ export function useAuthSession() {
     if (sessionUser && !isEmailConfirmed(sessionUser)) {
       await client.auth.signOut()
       user.value = null
+      clearPresignedImageCache()
       authNotice.value = i18n.global.t('account.errors.emailNotConfirmed')
       return
+    }
+
+    // 会话身份变化时清掉签名缓存。签名不分账号（键只有路径），不清就会让上一个
+    // 账号的私有图地址在有效期内继续可读。这里覆盖登出、切号、会话过期等所有
+    // 路径——它们是同一个汇聚点。
+    if ((user.value?.id || null) !== (sessionUser?.id || null)) {
+      clearPresignedImageCache()
     }
 
     user.value = sessionUser
@@ -185,6 +194,7 @@ export function useAuthSession() {
       user.value = null
       // 只清这个账号的缓存。清空整表会让用户换回来时又要全部重新下载，而这个
       // 账号的图本来就只该它自己看到——缓存键里已经带了 owner。
+      // 签名缓存不在这里清：applySessionUser 会按身份变化统一处理。
       if (owner) void clearImageBlobsForOwner(owner)
     } catch (err) {
       authError.value = err instanceof Error ? err.message : i18n.global.t('account.errors.signOutFailed')
