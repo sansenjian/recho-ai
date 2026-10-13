@@ -32,7 +32,6 @@ const contextWorkspaceId = ref<string | null>(null)
 const editingWorkspaceId = ref<string | null>(null)
 const nameDraft = ref('')
 const nameInput = ref<HTMLInputElement | HTMLInputElement[] | null>(null)
-const listRoot = ref<HTMLElement | null>(null)
 
 function openContextMenu(id: string) {
   editingWorkspaceId.value = null
@@ -85,7 +84,7 @@ function removeHint(workspace: NamedWorkspace): string {
 </script>
 
 <template>
-  <div ref="listRoot" class="px-3.5 pb-[18px] mb-1 border-b border-border">
+  <div class="px-3.5 pb-[18px] mb-1 border-b border-border">
     <div class="flex items-center justify-between mb-2 text-foreground text-xs font-extrabold">
       <span>{{ groupTitle }}</span>
       <Button

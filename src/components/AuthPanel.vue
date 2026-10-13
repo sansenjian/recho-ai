@@ -52,7 +52,6 @@ const redeemCodeDraft = ref('')
 const showPassword = ref(false)
 const touched = ref({ email: false, password: false, redeem: false })
 const dialogRef = ref<HTMLElement | null>(null)
-const closeButtonRef = ref<HTMLButtonElement | null>(null)
 let restoreFocusElement: HTMLElement | null = null
 
 const creditBalanceLabel = computed(() => (
@@ -282,7 +281,6 @@ function onKeydown(e: KeyboardEvent) {
         >
           <!-- Close button -->
           <button
-            ref="closeButtonRef"
             class="absolute top-3 right-3 flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             type="button"
             :aria-label="t('common.close')"

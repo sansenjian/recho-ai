@@ -52,16 +52,8 @@ export function galleryReferenceCount(image: GeneratedImage) {
     : galleryReferences(image).length
 }
 
-export function displayImageUrl(image: GeneratedImage) {
-  return imageSourceUrl(image, 'thumbnail')
-}
-
 export function previewImageUrl(image: GeneratedImage) {
   return imageSourceUrl(image, 'preview')
-}
-
-export function displayReferenceUrl(reference: GalleryReference) {
-  return imageSourceUrl(reference, 'thumbnail')
 }
 
 export function hasDisplayImage(image: GeneratedImage | GalleryReference) {

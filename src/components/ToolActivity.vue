@@ -129,7 +129,7 @@ function isTerminalError(status?: string) {
         <div class="absolute bottom-0 left-0 top-0 border-l border-dashed border-border" />
 
         <article
-          v-for="(tool, idx) in tools"
+          v-for="tool in tools"
           :key="tool.id"
           class="relative mb-1.5 last:mb-0"
         >

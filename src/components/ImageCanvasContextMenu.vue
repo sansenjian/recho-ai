@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
 import type { CanvasNodeType } from '../lib/image-canvas-model'
-import { Pencil, Copy, Trash2, Type, Image, Sparkles } from '@lucide/vue'
+import { Pencil, Copy, Trash2, Image, Sparkles } from '@lucide/vue'
 
 defineProps<{
   x: number

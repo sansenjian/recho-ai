@@ -5,7 +5,6 @@ import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } fr
 import { hasDisplayImage } from '../lib/image-gallery'
 import type { NamedWorkspace } from '../lib/workspace-list'
 import { useCredits } from '../composables/useCredits'
-import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import WorkspaceList from './WorkspaceList.vue'
@@ -33,18 +32,7 @@ const emit = defineEmits<{
   'rename-workspace': [id: string, name: string]
 }>()
 
-const { creditBalance, refreshCredits } = useCredits()
-const { user } = useAuthSession()
-
-const userName = computed(() => {
-  const meta = user.value?.user_metadata as Record<string, unknown> | undefined
-  if (meta && typeof meta.full_name === 'string') return meta.full_name
-  return user.value?.email || ''
-})
-
-const creditDisplay = computed(() => {
-  return creditBalance.value ?? 0
-})
+const { refreshCredits } = useCredits()
 
 const pendingRemoveWorkspaceId = ref<string | null>(null)
 
