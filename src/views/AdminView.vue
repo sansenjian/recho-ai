@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowLeftFromLine,
   ChevronLeft,
+  ChartColumn,
   ChevronRight,
   Coins,
   Globe,
@@ -30,12 +31,13 @@ const AdminOverviewPanel = defineAsyncComponent(() => import('../components/admi
 const AdminCreditsPanel = defineAsyncComponent(() => import('../components/admin/AdminCreditsPanel.vue'))
 const AdminImagesViewPanel = defineAsyncComponent(() => import('../components/admin/AdminImagesViewPanel.vue'))
 const AdminAttemptsViewPanel = defineAsyncComponent(() => import('../components/admin/AdminAttemptsViewPanel.vue'))
+const AdminImageAnalyticsPanel = defineAsyncComponent(() => import('../components/admin/AdminImageAnalyticsPanel.vue'))
 const AdminSystemPanel = defineAsyncComponent(() => import('../components/admin/AdminSystemPanel.vue'))
 const AdminAnnouncementsPanel = defineAsyncComponent(() => import('../components/admin/AdminAnnouncementsPanel.vue'))
 const AdminApiKeysPanel = defineAsyncComponent(() => import('../components/admin/AdminApiKeysPanel.vue'))
 const AdminSettingsPanel = defineAsyncComponent(() => import('../components/admin/AdminSettingsPanel.vue'))
 
-type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'system' | 'announcements' | 'apiKeys' | 'runtime' | 'providers'
+type AdminViewId = 'overview' | 'credits' | 'images' | 'monitor' | 'analytics' | 'system' | 'announcements' | 'apiKeys' | 'runtime' | 'providers'
 
 const { t, locale } = useI18n()
 const { user, userEmail, isAuthReady, initAuth } = useAuthSession()
@@ -57,6 +59,7 @@ const navItems: Array<{ id: AdminViewId; labelKey: string; group: NavGroupId; ic
   { id: 'credits', labelKey: 'nav.credits', group: 'operations', icon: Coins },
   { id: 'images', labelKey: 'nav.images', group: 'operations', icon: Image },
   { id: 'monitor', labelKey: 'nav.monitor', group: 'operations', icon: Activity },
+  { id: 'analytics', labelKey: 'nav.analytics', group: 'operations', icon: ChartColumn },
   { id: 'announcements', labelKey: 'nav.announcements', group: 'operations', icon: Megaphone },
   { id: 'apiKeys', labelKey: 'nav.apiKeys', group: 'operations', icon: KeyRound },
   { id: 'system', labelKey: 'nav.system', group: 'platform', icon: Server },
@@ -83,6 +86,7 @@ const panelComponents: Record<AdminViewId, Component> = {
   credits: AdminCreditsPanel,
   images: AdminImagesViewPanel,
   monitor: AdminAttemptsViewPanel,
+  analytics: AdminImageAnalyticsPanel,
   system: AdminSystemPanel,
   announcements: AdminAnnouncementsPanel,
   apiKeys: AdminApiKeysPanel,
@@ -93,6 +97,7 @@ const activePanel = computed(() => panelComponents[activeView.value])
 const activePanelProps = computed(() => {
   if (activeView.value === 'overview') return { refreshVersion: refreshVersions.value.overview }
   if (activeView.value === 'system') return { refreshVersion: refreshVersions.value.system }
+  if (activeView.value === 'analytics') return { refreshVersion: refreshVersions.value.system }
   if (activeView.value === 'images') return { allowWrite: allowWrite.value }
   if (activeView.value === 'runtime') return { section: 'runtime' }
   if (activeView.value === 'providers') return { section: 'providers' }

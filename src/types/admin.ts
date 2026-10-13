@@ -324,3 +324,54 @@ export interface AdminAnnouncement {
   createdAt: string | null
   updatedAt: string | null
 }
+
+/** 图片分析（image_events / image_generation_contexts）的概览数据。 */
+export interface AdminImageAnalyticsBucket {
+  key: string
+  count: number
+}
+
+export interface AdminImageAnalyticsRecentEvent {
+  id: string
+  eventType: string
+  source: string
+  imageId: string | null
+  sessionId: string | null
+  createdAt: string | null
+}
+
+export interface AdminImageAnalyticsEvents {
+  total: number
+  byType: AdminImageAnalyticsBucket[]
+  bySource: AdminImageAnalyticsBucket[]
+  /** 去重后的会话数：同一 sessionId 下多个事件算一次浏览。 */
+  sessions: number
+  /** 带 sessionId 的事件占比。缺该字段的老数据会让这个值偏低。 */
+  sessionCoverage: number
+  recent: AdminImageAnalyticsRecentEvent[]
+  /** true 表示窗口内事件数超过采样上限，分布按样本计算。 */
+  sampled: boolean
+}
+
+export interface AdminImageAnalyticsContexts {
+  total: number
+  uniqueCanvases: number
+  averageReferences: number | null
+  averageMentionedReferences: number | null
+  averageConnectedReferences: number | null
+  averagePromptChars: number | null
+  promptCharsP50: number | null
+  promptCharsP90: number | null
+  /** 连了提示词节点的生成占比。 */
+  connectedPromptRate: number
+  averageNodes: number | null
+  averageConnections: number | null
+}
+
+export interface AdminImageAnalytics {
+  events: AdminImageAnalyticsEvents
+  contexts: AdminImageAnalyticsContexts
+  users: Array<{ id: string; email: string | null }>
+  windowHours: number
+  generatedAt: string
+}
