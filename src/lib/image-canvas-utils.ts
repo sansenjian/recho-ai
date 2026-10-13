@@ -8,6 +8,7 @@ import {
   type NodeDimensions,
 } from './image-canvas-model'
 import type { GeneratedImage } from '../types/image'
+import { compressImageDataUrl, loadImageElement, readBlobAsDataUrl, readImageFileAsDataUrl } from './image-file'
 
 export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -91,72 +92,19 @@ export function updateNodeImageDimensions(node: CanvasNode, image: HTMLImageElem
   node.imageHeight = dimensions.imageHeight
 }
 
-export function readBlobAsDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-      } else {
-        reject(new Error('图片读取失败'))
-      }
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-export function readImageFileAsDataUrl(file: File) {
-  return readBlobAsDataUrl(file)
-}
-
-export function loadImageElement(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('图片加载失败'))
-    image.src = src
-  })
-}
-
 export async function readImageDimensions(src: string) {
   return naturalImageDimensions(await loadImageElement(src))
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
-  return new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(blob => resolve(blob), type, quality)
+/**
+ * 按画布的参考图上限压缩。上限与编码质量是画布自己的取舍，调用方不该关心，
+ * 所以在这里绑定成具体数值，而不是让每个调用点各传一次。
+ */
+export function compressReferenceImageDataUrl(dataUrl: string) {
+  return compressImageDataUrl(dataUrl, {
+    maxEdge: REFERENCE_IMAGE_MAX_EDGE,
+    quality: REFERENCE_IMAGE_WEBP_QUALITY,
   })
-}
-
-export async function compressReferenceImageDataUrl(dataUrl: string) {
-  if (!isInlineImageDataUrl(dataUrl)) return dataUrl
-
-  try {
-    const image = await loadImageElement(dataUrl)
-    const sourceWidth = image.naturalWidth || image.width
-    const sourceHeight = image.naturalHeight || image.height
-    if (!sourceWidth || !sourceHeight) return dataUrl
-
-    const scale = Math.min(1, REFERENCE_IMAGE_MAX_EDGE / Math.max(sourceWidth, sourceHeight))
-    const width = Math.max(1, Math.round(sourceWidth * scale))
-    const height = Math.max(1, Math.round(sourceHeight * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-
-    const context = canvas.getContext('2d')
-    if (!context) return dataUrl
-
-    context.drawImage(image, 0, 0, width, height)
-    const blob = await canvasToBlob(canvas, 'image/webp', REFERENCE_IMAGE_WEBP_QUALITY)
-    if (!blob) return dataUrl
-
-    const compressed = await readBlobAsDataUrl(blob)
-    return compressed.length < dataUrl.length || scale < 1 ? compressed : dataUrl
-  } catch {
-    return dataUrl
-  }
 }
 
 export async function preloadImageUrl(src: string) {
@@ -181,3 +129,5 @@ export function hasFileTransfer(event: DragEvent) {
   const types = Array.from(event.dataTransfer?.types ?? [])
   return types.includes('Files') || Array.from(event.dataTransfer?.items ?? []).some(item => item.kind === 'file')
 }
+
+export { loadImageElement, readBlobAsDataUrl, readImageFileAsDataUrl }

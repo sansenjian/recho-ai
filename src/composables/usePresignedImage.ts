@@ -30,6 +30,63 @@ export interface PresignedImageUrl {
 const inFlight = new Map<string, Promise<PresignedImageUrl | null>>()
 
 /**
+ * 已签发的地址，按路径缓存到接近到期。
+ *
+ * 上面那张表只在请求在途时有效，一落地就删；而签名本身有 6 小时有效期
+ * （Go 侧 presignTTL）。没有这一层，每次打开查看器、每次左右翻页都会重新
+ * 走一遍签发，服务端也要为同一张图重跑一次访问校验——校验是三列 OR 反查，
+ * 用不上单列索引，代价不低。
+ *
+ * 提前 5 分钟视为过期：签发与展示之间还隔着一次网络往返，卡在到期点上会让
+ * 用户正好拿到一个刚失效的地址，然后走一趟裂图 → 回落的弯路。
+ */
+const PRESIGN_CACHE_SAFETY_WINDOW_MS = 5 * 60_000
+const issued = new Map<string, PresignedImageUrl>()
+
+/**
+ * 身份代次。
+ *
+ * 「清空缓存」挡不住已经在途的签发请求：它可能在清理之后才返回，然后把上一个
+ * 账号的地址重新写进按路径共享的 issued，新账号请求同一路径就拿走了旧地址。
+ * 清 inFlight 只是让后来的调用不再复用那个 Promise，取消不了已发出的请求。
+ *
+ * 所以请求开始时记下代次，写回前比对；不一致说明期间发生过清理，这次结果直接
+ * 丢弃。与 image-blob-cache 里处理同一件事的做法保持一致。
+ */
+let identityGeneration = 0
+
+function readCachedPresign(storagePath: string): PresignedImageUrl | null {
+  const cached = issued.get(storagePath)
+  if (!cached) return null
+  const expiresAtMs = cached.expiresAt * 1000
+  // expiresAt 为 0 表示存储没给出有效期，无法判断何时过期，不缓存。
+  if (!expiresAtMs) {
+    issued.delete(storagePath)
+    return null
+  }
+  if (expiresAtMs - PRESIGN_CACHE_SAFETY_WINDOW_MS <= Date.now()) {
+    issued.delete(storagePath)
+    return null
+  }
+  return cached
+}
+
+/**
+ * 账号切换或登出时清空缓存。
+ *
+ * 缓存本身不校验权限：能不能看某张图在签发那一刻就已经判定了。如果换了账号还
+ * 留着上一个账号的地址，私有图会在有效期内继续可读——鉴权在这个模块里必须靠
+ * 清缓存来兜住。
+ *
+ * 递增代次是这一步的关键：只 clear 的话，清理前发出的请求回来时仍会写进缓存。
+ */
+export function clearPresignedImageCache() {
+  identityGeneration += 1
+  issued.clear()
+  inFlight.clear()
+}
+
+/**
  * 签发单张图。
  *
  * 返回 null 表示这次没拿到（未登录、存储不支持、网络异常、无权限），调用方应当
@@ -38,12 +95,26 @@ const inFlight = new Map<string, Promise<PresignedImageUrl | null>>()
 export function requestPresignedImageUrl(storagePath: string): Promise<PresignedImageUrl | null> {
   if (!storagePath) return Promise.resolve(null)
 
+  const cached = readCachedPresign(storagePath)
+  if (cached) return Promise.resolve(cached)
+
   const pending = inFlight.get(storagePath)
   if (pending) return pending
 
+  // 记下开始时的代次；返回时若已变化，说明这次结果属于上一个身份。
+  const generation = identityGeneration
   const request = (async () => {
-    const issued = await fetchPresignedImageUrls([storagePath])
-    return issued.get(storagePath) ?? null
+    const issuedUrls = await fetchPresignedImageUrls([storagePath])
+    const signed = issuedUrls.get(storagePath) ?? null
+    // 只缓存签发成功的；失败要留下重试机会，否则一次网络抖动会让这张图在
+    // 整个会话里都只能走代理。
+    //
+    // 代次比对放在写入前：期间登出/切号过就丢弃，别把旧身份的地址喂给新身份。
+    // 返回值仍然给出，因为发起它的那次调用属于旧身份，有权拿到自己的地址。
+    if (signed?.expiresAt && generation === identityGeneration) {
+      issued.set(storagePath, signed)
+    }
+    return signed
   })()
   inFlight.set(storagePath, request)
   // 无论成败都要释放，否则一次失败会让这个路径永远拿不到重新签发的机会。

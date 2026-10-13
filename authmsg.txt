@@ -1,0 +1,31 @@
+refactor(auth): 认证两个页面去掉手写 CSS，改用 token 类
+
+AuthCallbackView 与 AuthConfirmView 的 <style scoped> 是逐字重复的两份（只有类名前缀
+不同），合计 174 行，且用的还是 --surface-raised / --text-primary / --accent-strong 这类
+为兼容保留的旧别名（定义在 style.css，注释写明 "mapped to shadcn tokens for backward
+compatibility"）。
+
+这两页因此走的是另一条链路：改主题要同时改 --color-* 与别名，而后者没有类型或构建期
+检查，断了也不报错。改为 Tailwind token 类后与其余界面一致。
+
+顺带修掉一处沿用旧别名的配色：.auth-callback-status.success 用的是 var(--accent-soft) 与
+var(--accent-strong)，两者在浅色下都是近黑（oklch 0.145），"成功"徽标实际看不出绿色。
+改成 accent token。
+
+尺寸按原值逐个对齐，没有顺手"取整"：
+
+  padding 28px / gap 16px / 按钮 min-height 40px / 按钮圆角 7px / 按钮 padding 16px
+
+用 Tailwind 的默认刻度（p-7 / gap-4 / min-h-10 / px-4）会渲染成 26.25 / 15 / 37.5 / 15px，
+所以这里写的是任意值。
+
+唯一有意的视觉变化：卡片圆角 8px → --radius（10px）。全站卡片都用这个 token，这两页
+原本是特例。
+
+行数：
+
+  AuthCallbackView  206 → 136
+  AuthConfirmView   223 → 130
+
+验证：Playwright 逐项读取计算样式与原版对比，两页各 7 项全部一致（padding / gap / 背景 /
+按钮 min-height / 按钮圆角 / 按钮 padding / h1 字号）。

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { ModelOption } from '../types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import PromptBox from './PromptBox.vue'
 import { Plus, ChevronDown, X, Languages, Code, FileText, Search, Square, Send, Check } from '@lucide/vue'
 
 interface SkillOption {
@@ -205,134 +206,138 @@ function skillIcon(name: string) {
         透明度几乎等于没有），聚焦后再加一档，让当前在哪儿一目了然。
         group 是给内部元素（如光标、placeholder）留的联动钩子。
       -->
-      <div class="group relative mx-auto w-full max-w-[760px] overflow-visible rounded-[20px] border border-b-0 border-border bg-card focus-within:border-foreground/20 shadow-[0_1px_2px_hsl(var(--foreground)/0.06),0_6px_16px_-4px_hsl(var(--foreground)/0.10),0_16px_48px_-8px_hsl(var(--foreground)/0.08)] transition-[border-color,box-shadow] duration-200 focus-within:shadow-[0_1px_3px_hsl(var(--foreground)/0.08),0_8px_24px_-4px_hsl(var(--foreground)/0.14),0_20px_60px_-8px_hsl(var(--foreground)/0.10)] max-sm:rounded-[11px]">
-      <div class="relative">
-        <div v-if="pendingImages && pendingImages.length > 0" class="flex flex-wrap gap-1.5 px-3 pt-2.5">
-          <div v-for="(img, idx) in pendingImages" :key="idx" class="relative h-[58px] w-[58px] overflow-hidden rounded-lg border border-border bg-muted">
-            <img :src="img" alt="" class="h-full w-full object-cover" />
-            <button
-              type="button"
-              :title="t('chat.removeImage')"
-              class="absolute right-1 top-1 inline-flex h-[18px] w-[18px] items-center justify-center rounded border-0 bg-background/90 text-foreground"
-              @click="emit('removeImage', idx)"
-            >
-              <X class="h-3 w-3" />
-            </button>
-          </div>
-        </div>
-
-        <Textarea
-          v-model="inputValue"
-          :aria-label="t('chat.messageInput')"
-          class="chat-input min-h-[76px] w-full resize-none border-0 bg-transparent px-5 pb-2 pt-[22px] text-lg leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-[54px] max-sm:px-3 max-sm:pb-2 max-sm:pt-3.5 max-sm:text-[15px]"
-          :placeholder="activeSkill ? t('chat.inputPlaceholder') : t('chat.followUpPlaceholder')"
-          rows="1"
-          :disabled="isLoading"
-          @keydown="handleKeydown"
-          @input="onInput"
-        />
-
-        <div
-          v-if="showSkillMenu && filteredSkills.length > 0"
-          class="absolute -left-px -right-px bottom-[calc(100%+13px)] z-50 max-h-[min(430px,calc(100vh-230px))] overflow-auto rounded-[21px] border border-border bg-popover p-[7px] shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] [scrollbar-color:hsl(var(--muted-foreground)/0.22)_transparent] [scrollbar-width:thin]"
-        >
-          <div
-            v-for="(s, idx) in filteredSkills"
-            :key="s.name"
-            class="flex min-h-[42px] cursor-pointer items-center gap-3 rounded-[14px] px-3.5 py-[7px] hover:bg-muted"
-            :class="{ 'bg-muted': idx === skillHighlight }"
-            @click="pickSkill(s)"
-            @mouseenter="skillHighlight = idx"
-          >
-            <component :is="skillIcon(s.icon)" class="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div class="flex min-w-0 flex-1 items-baseline gap-2">
-              <strong class="shrink-0 text-base font-semibold">/{{ s.name }}</strong>
-              <small class="min-w-0 flex-1 truncate text-[15px] leading-snug text-muted-foreground">{{ s.description }}</small>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex items-center justify-between gap-2 border-t-0 border-b-0 px-3.5 pb-2.5 pt-1.5 max-sm:items-end max-sm:px-2 max-sm:pb-1.5 max-sm:pt-1">
-        <div class="flex shrink-0 items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="text-muted-foreground"
-            :title="t('chat.uploadImage')"
-            @click="emit('upload')"
-          >
-            <Plus class="h-[19px] w-[19px]" />
-          </Button>
-        </div>
-
-        <div class="flex shrink-0 items-center justify-end gap-1.5">
-          <div class="relative inline-flex items-center">
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-7 gap-1.5 px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              :aria-expanded="showModelDropdown"
-              aria-haspopup="listbox"
-              @click="showModelDropdown = !showModelDropdown"
-            >
-              <span class="min-w-0 truncate text-[13px] font-semibold">{{ compactModelLabel }}</span>
-              <span v-if="currentModelStatus" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ currentModelStatus }}</span>
-              <ChevronDown class="h-[13px] w-[13px] opacity-70" />
-            </Button>
-
-            <div
-              v-if="showModelDropdown"
-              class="absolute bottom-[calc(100%+12px)] right-0 z-50 w-[min(300px,calc(100vw-32px))] max-h-80 overflow-auto rounded-2xl border border-border bg-popover p-2 shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] max-sm:-right-12 max-sm:w-[min(300px,calc(100vw-20px))]"
-            >
-              <div class="px-3.5 pb-2 pt-1 text-sm text-muted-foreground">{{ t('chat.model') }}</div>
+      <PromptBox
+        class="mx-auto w-full max-w-[760px] overflow-visible"
+      >
+        <template #default>
+        <div class="relative">
+          <div v-if="pendingImages && pendingImages.length > 0" class="flex flex-wrap gap-1.5 px-3 pt-2.5">
+            <div v-for="(img, idx) in pendingImages" :key="idx" class="relative h-[58px] w-[58px] overflow-hidden rounded-lg border border-border bg-muted">
+              <img :src="img" alt="" class="h-full w-full object-cover" />
               <button
-                v-for="m in models"
-                :key="m.id"
-                class="flex w-full min-h-[44px] items-center gap-3 rounded-[10px] border-0 bg-transparent px-3.5 py-2 text-left text-foreground hover:bg-muted"
-                :class="{ 'bg-muted': m.id === currentModel?.id }"
                 type="button"
-                role="option"
-                :aria-selected="m.id === currentModel?.id"
-                @click.stop="selectModel(m)"
+                :title="t('chat.removeImage')"
+                class="absolute right-1 top-1 inline-flex h-[18px] w-[18px] items-center justify-center rounded border-0 bg-background/90 text-foreground"
+                @click="emit('removeImage', idx)"
               >
-                <span class="flex min-w-0 flex-1 flex-col gap-px">
-                  <span class="truncate text-[15px] font-medium">{{ m.label }}</span>
-                  <small class="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span class="shrink-0">{{ m.provider }}</span>
-                    <span v-if="modelHint(m)" class="min-w-0 truncate">· {{ modelHint(m) }}</span>
-                  </small>
-                </span>
-                <span v-if="modelBadge(m)" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ modelBadge(m) }}</span>
-                <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
-                  <Check v-if="m.id === currentModel?.id" class="h-[18px] w-[18px]" />
-                </span>
+                <X class="h-3 w-3" />
               </button>
             </div>
           </div>
 
-          <Button
-            v-if="isLoading"
-            variant="destructive"
-            size="icon-sm"
-            class="rounded-full"
-            :title="t('chat.stop')"
-            @click="emit('stop')"
+          <Textarea
+            v-model="inputValue"
+            :aria-label="t('chat.messageInput')"
+            class="chat-input min-h-[76px] w-full resize-none border-0 bg-transparent px-5 pb-2 pt-[22px] text-lg leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-[54px] max-sm:px-3 max-sm:pb-2 max-sm:pt-3.5 max-sm:text-[15px]"
+            :placeholder="activeSkill ? t('chat.inputPlaceholder') : t('chat.followUpPlaceholder')"
+            rows="1"
+            :disabled="isLoading"
+            @keydown="handleKeydown"
+            @input="onInput"
+          />
+
+          <div
+            v-if="showSkillMenu && filteredSkills.length > 0"
+            class="absolute -left-px -right-px bottom-[calc(100%+13px)] z-50 max-h-[min(430px,calc(100vh-230px))] overflow-auto rounded-[21px] border border-border bg-popover p-[7px] shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] [scrollbar-color:hsl(var(--muted-foreground)/0.22)_transparent] [scrollbar-width:thin]"
           >
-            <Square class="h-[13px] w-[13px] fill-current" />
-          </Button>
-          <Button
-            v-else
-            size="icon-sm"
-            class="rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!canSubmit || !currentModel"
-            :title="t('chat.send')"
-            @click="handleSubmit"
-          >
-            <Send class="h-[14px] w-[14px] fill-current" />
-          </Button>
+            <div
+              v-for="(s, idx) in filteredSkills"
+              :key="s.name"
+              class="flex min-h-[42px] cursor-pointer items-center gap-3 rounded-[14px] px-3.5 py-[7px] hover:bg-muted"
+              :class="{ 'bg-muted': idx === skillHighlight }"
+              @click="pickSkill(s)"
+              @mouseenter="skillHighlight = idx"
+            >
+              <component :is="skillIcon(s.icon)" class="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div class="flex min-w-0 flex-1 items-baseline gap-2">
+                <strong class="shrink-0 text-base font-semibold">/{{ s.name }}</strong>
+                <small class="min-w-0 flex-1 truncate text-[15px] leading-snug text-muted-foreground">{{ s.description }}</small>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+
+        <div class="flex items-center justify-between gap-2 border-t-0 border-b-0 px-3.5 pb-2.5 pt-1.5 max-sm:items-end max-sm:px-2 max-sm:pb-1.5 max-sm:pt-1">
+          <div class="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="text-muted-foreground"
+              :title="t('chat.uploadImage')"
+              @click="emit('upload')"
+            >
+              <Plus class="h-[19px] w-[19px]" />
+            </Button>
+          </div>
+
+          <div class="flex shrink-0 items-center justify-end gap-1.5">
+            <div class="relative inline-flex items-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 gap-1.5 px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                :aria-expanded="showModelDropdown"
+                aria-haspopup="listbox"
+                @click="showModelDropdown = !showModelDropdown"
+              >
+                <span class="min-w-0 truncate text-[13px] font-semibold">{{ compactModelLabel }}</span>
+                <span v-if="currentModelStatus" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ currentModelStatus }}</span>
+                <ChevronDown class="h-[13px] w-[13px] opacity-70" />
+              </Button>
+
+              <div
+                v-if="showModelDropdown"
+                class="absolute bottom-[calc(100%+12px)] right-0 z-50 w-[min(300px,calc(100vw-32px))] max-h-80 overflow-auto rounded-2xl border border-border bg-popover p-2 shadow-[0_18px_60px_hsl(var(--foreground)/0.14)] max-sm:-right-12 max-sm:w-[min(300px,calc(100vw-20px))]"
+              >
+                <div class="px-3.5 pb-2 pt-1 text-sm text-muted-foreground">{{ t('chat.model') }}</div>
+                <button
+                  v-for="m in models"
+                  :key="m.id"
+                  class="flex w-full min-h-[44px] items-center gap-3 rounded-[10px] border-0 bg-transparent px-3.5 py-2 text-left text-foreground hover:bg-muted"
+                  :class="{ 'bg-muted': m.id === currentModel?.id }"
+                  type="button"
+                  role="option"
+                  :aria-selected="m.id === currentModel?.id"
+                  @click.stop="selectModel(m)"
+                >
+                  <span class="flex min-w-0 flex-1 flex-col gap-px">
+                    <span class="truncate text-[15px] font-medium">{{ m.label }}</span>
+                    <small class="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span class="shrink-0">{{ m.provider }}</span>
+                      <span v-if="modelHint(m)" class="min-w-0 truncate">· {{ modelHint(m) }}</span>
+                    </small>
+                  </span>
+                  <span v-if="modelBadge(m)" class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ modelBadge(m) }}</span>
+                  <span class="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+                    <Check v-if="m.id === currentModel?.id" class="h-[18px] w-[18px]" />
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <Button
+              v-if="isLoading"
+              variant="destructive"
+              size="icon-sm"
+              class="rounded-full"
+              :title="t('chat.stop')"
+              @click="emit('stop')"
+            >
+              <Square class="h-[13px] w-[13px] fill-current" />
+            </Button>
+            <Button
+              v-else
+              size="icon-sm"
+              class="rounded-full bg-primary text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="!canSubmit || !currentModel"
+              :title="t('chat.send')"
+              @click="handleSubmit"
+            >
+              <Send class="h-[14px] w-[14px] fill-current" />
+            </Button>
+          </div>
+        </div>
+        </template>
+      </PromptBox>
   </footer>
 </template>

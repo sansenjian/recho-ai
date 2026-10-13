@@ -9,6 +9,7 @@ import { useAuthSession } from '../composables/useAuthSession'
 import type { GeneratedImage } from '../types/image'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import WorkspaceList from './WorkspaceList.vue'
+import SegmentedSwitch from './SegmentedSwitch.vue'
 
 type Workspace = NamedWorkspace
 
@@ -81,29 +82,13 @@ refreshCredits()
   <aside
     class="w-[286px] shrink-0 flex flex-col border-r border-border bg-background overflow-hidden max-[980px]:w-[220px] max-[760px]:hidden"
   >
-    <!-- Mode switch: 对话 / 画布 -->
-    <div class="flex items-center gap-2 m-[18px_14px_18px] p-1 border border-border rounded-lg bg-muted">
-      <button
-        type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode !== 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
-        ]"
-        @click="emit('select-image-mode', 'imagio')"
-      >
-        对话
-      </button>
-      <button
-        type="button"
-        :class="[
-          'flex-1 min-h-[34px] px-3 py-0 border-0 rounded-md text-[13px] font-extrabold cursor-pointer transition-all duration-200',
-          imageMode === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground',
-        ]"
-        @click="emit('select-image-mode', 'canvas')"
-      >
-        画布
-      </button>
-    </div>
+    <!-- 模式切换：Agent / 画布 -->
+    <SegmentedSwitch
+      :model-value="imageMode || 'imagio'"
+      :options="[{ value: 'imagio', label: 'Agent' }, { value: 'canvas', label: '画布' }]"
+      container-class="m-[18px_14px_18px]"
+      @update:model-value="emit('select-image-mode', $event as 'imagio' | 'canvas')"
+    />
 
     <!-- Workspace section (shared with canvas sidebar) -->
     <WorkspaceList

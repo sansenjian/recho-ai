@@ -27,6 +27,21 @@ const stateLabel = computed(() => {
   return '验证中'
 })
 
+/**
+ * 状态徽标的配色。
+ *
+ * 此前是一段手写 CSS 配三个类名，用的还是 --surface-soft / --accent-strong 这类为兼容
+ * 保留的旧别名；换成 token 后与其余界面走同一条链路，改主题色不会再漏掉这一页。
+ *
+ * 成功态用 --success 而不是 --accent：浅色主题下 --accent 与 --muted 同为 0 0% 96%，
+ * 成功徽标会和「验证中」长得一模一样。
+ */
+const stateClass = computed(() => {
+  if (state.value === 'success') return 'border-success/30 bg-success/10 text-success'
+  if (state.value === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive'
+  return 'border-border bg-muted text-muted-foreground'
+})
+
 function parseAuthParams() {
   const url = new URL(window.location.href)
   const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash
@@ -110,20 +125,26 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="auth-confirm-page">
-    <section class="auth-confirm-card" aria-live="polite">
-      <div class="auth-confirm-status" :class="state">
+  <main class="grid min-h-screen place-items-center bg-background p-4 text-foreground sm:p-6">
+    <section
+      class="grid w-full max-w-[560px] gap-[16px] rounded-lg border border-border bg-secondary p-[28px] max-sm:p-[22px] shadow-md"
+      aria-live="polite"
+    >
+      <div
+        class="w-max rounded-full border px-2.5 py-1 text-[12px] font-black"
+        :class="stateClass"
+      >
         <span>{{ stateLabel }}</span>
       </div>
 
-      <h1>{{ title }}</h1>
-      <p>{{ message }}</p>
+      <h1 class="m-0 text-[26px] leading-[1.2]">{{ title }}</h1>
+      <p class="m-0 text-[14px] text-muted-foreground">{{ message }}</p>
 
-      <div class="auth-confirm-actions">
+      <div class="min-h-[40px]">
         <button
           v-if="state !== 'verifying'"
           type="button"
-          class="auth-confirm-primary"
+          class="min-h-[40px] cursor-pointer rounded-[7px] border border-primary bg-primary px-[16px] text-[13px] font-black text-primary-foreground max-sm:min-h-[44px] max-sm:w-full"
           @click="goHome"
         >
           进入 Recho
@@ -132,92 +153,3 @@ onUnmounted(() => {
     </section>
   </main>
 </template>
-
-<style scoped>
-.auth-confirm-page {
-  display: grid;
-  min-height: 100vh;
-  place-items: center;
-  padding: 24px;
-  background: var(--bg);
-  color: var(--text-primary);
-}
-
-.auth-confirm-card {
-  width: min(560px, 100%);
-  display: grid;
-  gap: 16px;
-  padding: 28px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-md);
-}
-
-.auth-confirm-status {
-  width: max-content;
-  padding: 4px 9px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.auth-confirm-status.success {
-  border-color: rgba(22, 163, 74, 0.28);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.auth-confirm-status.error {
-  border-color: rgba(220, 38, 38, 0.24);
-  background: rgba(220, 38, 38, 0.08);
-  color: var(--color-danger);
-}
-
-.auth-confirm-card h1 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-.auth-confirm-card p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.auth-confirm-actions {
-  min-height: 40px;
-}
-
-.auth-confirm-primary {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 1px solid hsl(var(--primary));
-  border-radius: 7px;
-  background: hsl(var(--primary));
-  color: #fff;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-@media (max-width: 640px) {
-  .auth-confirm-page {
-    padding: 16px;
-  }
-
-  .auth-confirm-card {
-    padding: 22px;
-  }
-
-  .auth-confirm-primary {
-    min-height: 44px;
-    width: 100%;
-  }
-}
-</style>

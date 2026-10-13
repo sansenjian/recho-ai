@@ -26,7 +26,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false, PromptBox: false } },
     })
     await flushPromises()
 
@@ -51,7 +51,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false, PromptBox: false } },
     })
 
     const selector = wrapper.findComponent(ImageModelSelect)
@@ -84,7 +84,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false, PromptBox: false } },
     })
     await flushPromises()
 
@@ -108,7 +108,7 @@ describe('ImageCanvas model selector', () => {
 
     const wrapper = shallowMount(ImageCanvas, {
       props: { workspaceMode: 'canvas', imageMode: 'imagio' },
-      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false } },
+      global: { plugins: [i18n], stubs: { ImagioView: false, ImageModelSelect: false, PromptBox: false } },
     })
 
     const selector = wrapper.findComponent(ImageModelSelect)

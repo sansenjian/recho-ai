@@ -1,0 +1,49 @@
+refactor(image): 下沉图片读取与压缩到 src/lib/image-file.ts
+
+「读文件成 dataURL」和「按上限压缩」这两件事此前有两份实现：
+
+  - src/lib/image-canvas-utils.ts（画布模块）
+      readBlobAsDataUrl / readImageFileAsDataUrl / loadImageElement
+      compressReferenceImageDataUrl —— 依赖画布的 REFERENCE_IMAGE_* 常量
+
+  - src/views/AppShell.vue:341 内联的 fileToBase64（23 行）
+      走 objectURL + canvas，输出 JPEG 0.85，只限宽 1280
+
+两处做的是同一件事，只是参数与返回格式不同。
+
+新增 src/lib/image-file.ts，只放不认识业务的部分：读文件、加载图片、按传入上限压缩。
+压缩的上限由调用方给出，画布与聊天各自的常量留在各自模块里——否则通用工具会反过来
+依赖业务模块（ImagioView 现在就从画布模块 import 这两个函数，方向是反的）。
+
+改完后：
+
+  image-canvas-utils.ts  删掉本地实现，改从 image-file re-export，压缩函数变成
+                         用画布常量调用的 wrapper —— 画布调用点一个没动
+  AppShell.vue           内联实现换成通用函数
+  ImagioView.vue         未改动（仍从 image-canvas-utils import，走 re-export）
+
+## 两处行为变化，都是有意的
+
+1. 输出格式由 JPEG 改为 WebP。后端 originalStorageImage 只对 PNG 转码，其余格式原样
+   保存，所以 WebP 会被直接接收；同质量下体积更小。
+
+2. 尺寸上限由「只限宽 1280」改为「长边 1280」。横图不变，竖图此前不受限（1920 高的竖图
+   会原样上传），现在会缩到 1280。
+
+## 行数
+
+  删除 82 行（两处实现）
+  新增 81 行（含 30 行说明为什么这样切分）
+
+净增 13 行，但消掉一份重复实现，并修正了「生图页依赖画布模块工具」的反向依赖。
+
+## 验证
+
+- vue-tsc 0 错误
+- vitest --no-file-parallelism → 110 文件 / 748 用例通过
+- 新增 3 条测试；做过变异验证（把 isInlineImageDataUrl 改成恒返回 true，3 条挂 2 条）
+- Playwright 实测真实链路：2000x1000 的 PNG → 1280x640 的 WebP，56562 → 2843 字节，
+  页面无错误
+
+有一条路径没有单测：解码失败时回退原值。jsdom 的 Image 既不加载也不触发 onerror，
+断言只能写成超时，所以在浏览器里验证，测试文件里写明了这个取舍。

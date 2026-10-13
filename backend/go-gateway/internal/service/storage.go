@@ -1111,6 +1111,13 @@ func (s *StorageService) PresignStorageURL(ctx context.Context, storagePath stri
 	return uploader.PresignedURL(ctx, locator.Key, ttl)
 }
 
+// ImagePathVisibility is one resolved access record: which image a storage path
+// belongs to, how it may be exposed, and who owns it.
+type ImagePathVisibility struct {
+	Visibility string
+	OwnerID    string
+}
+
 // GetImageVisibilityByPath returns the visibility and owner userID for an image
 // identified by its storage path. Returns nil, nil when no matching DB record
 // exists (e.g. reference images that were stored without a history row).
@@ -1133,6 +1140,63 @@ func (s *StorageService) GetImageVisibilityByPath(ctx context.Context, storagePa
 		return "", "", err
 	}
 	return visibility, ownerID, nil
+}
+
+// GetImageVisibilitiesByPaths resolves the same access records as
+// GetImageVisibilityByPath for many paths in one round trip.
+//
+// A candidate chain (original → preview → thumbnail) can run to a dozen paths,
+// and the per-path lookup used to scan image_generations once per path because
+// the three-column OR defeats every single-column index. Callers that walk a
+// candidate chain should resolve the whole chain here and then keep their
+// existing per-candidate ordering, so short-circuiting and ownership rules stay
+// exactly as they were.
+//
+// Paths with no matching row are absent from the map, which is how callers tell
+// "no access record" (public by default) apart from a lookup failure. The
+// returned error is only for query-level failures; callers must not treat an
+// absent key as a denial.
+func (s *StorageService) GetImageVisibilitiesByPaths(ctx context.Context, storagePaths []string) (map[string]ImagePathVisibility, error) {
+	resolved := make(map[string]ImagePathVisibility, len(storagePaths))
+	if s.pool == nil || len(storagePaths) == 0 {
+		return resolved, nil
+	}
+
+	// Unnest the requested paths and let each one find its own image. Writing it
+	// as a join (rather than a CASE over the row's three columns) keeps the
+	// mapping path → image exact: a row can carry several of the requested paths
+	// as its own storage/preview/thumbnail path, and each of those requested
+	// paths must resolve to that row independently.
+	//
+	// DISTINCT ON keeps the earliest image per path, so repeated calls with the
+	// same path always resolve to the same owner.
+	query := `SELECT DISTINCT ON (requested.path) requested.path, matched.visibility, matched.owner_id
+		FROM unnest($1::text[]) AS requested(path)
+		JOIN LATERAL (
+			SELECT visibility, COALESCE(user_id::text, '') AS owner_id
+			FROM image_generations
+			WHERE storage_path = requested.path
+			   OR preview_path = requested.path
+			   OR thumbnail_path = requested.path
+			ORDER BY generated_at ASC
+			LIMIT 1
+		) AS matched ON TRUE
+		ORDER BY requested.path`
+
+	rows, err := s.pool.Query(ctx, query, storagePaths)
+	if err != nil {
+		return resolved, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path, visibility, ownerID string
+		if err := rows.Scan(&path, &visibility, &ownerID); err != nil {
+			return resolved, err
+		}
+		resolved[path] = ImagePathVisibility{Visibility: visibility, OwnerID: ownerID}
+	}
+	return resolved, rows.Err()
 }
 
 // DeleteImageHistory deletes an image history item
