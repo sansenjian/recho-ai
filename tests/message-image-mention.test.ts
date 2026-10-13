@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   renderImageMentions,
   renderImageMentionsAsText,
+  shiftImageMentionsAfterRemoval,
   stripImageMentions,
 } from '../src/lib/message-image-mention'
 
@@ -72,5 +73,44 @@ describe('stripImageMentions', () => {
 
   it('is safe on text without markers', () => {
     expect(stripImageMentions('普通正文')).toBe('普通正文')
+  })
+})
+
+describe('shiftImageMentionsAfterRemoval', () => {
+  it('shifts every later marker down by one', () => {
+    // 删掉第 1 张（下标 0）后，原来的第 2、3 张变成第 1、2 张。
+    expect(shiftImageMentionsAfterRemoval('{{image:2}} 和 {{image:3}}', 0))
+      .toBe('{{image:1}} 和 {{image:2}}')
+  })
+
+  it('clears the marker that pointed at the removed image', () => {
+    // 指向被删那张的标记失去目标，必须清掉——留着会安静地指到后面那张图上。
+    expect(shiftImageMentionsAfterRemoval('看 {{image:2}}', 1)).toBe('看 ')
+  })
+
+  it('leaves earlier markers untouched', () => {
+    expect(shiftImageMentionsAfterRemoval('{{image:1}} 和 {{image:3}}', 1))
+      .toBe('{{image:1}} 和 {{image:2}}')
+  })
+
+  it('handles removing the last image', () => {
+    expect(shiftImageMentionsAfterRemoval('{{image:1}} {{image:2}}', 1)).toBe('{{image:1}} ')
+  })
+
+  it('is a no-op when the marker points before the removal', () => {
+    expect(shiftImageMentionsAfterRemoval('只看 {{image:1}}', 2)).toBe('只看 {{image:1}}')
+  })
+
+  it('is safe on text without markers', () => {
+    expect(shiftImageMentionsAfterRemoval('普通正文', 0)).toBe('普通正文')
+  })
+
+  it('never leaves a marker pointing at a different image than before', () => {
+    // 这个函数的全部意义：删除前后，每个标记指向的「那张图」必须不变或消失，
+    // 绝不能变成另一张。逐条验证一遍。
+    const content = '{{image:1}} {{image:2}} {{image:3}}'
+    const afterRemoveFirst = shiftImageMentionsAfterRemoval(content, 0)
+    // 原来指第 2 张的标记现在应指第 1 张（也就是原来的第 2 张）。
+    expect(afterRemoveFirst).toBe(' {{image:1}} {{image:2}}')
   })
 })

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { createI18n } from 'vue-i18n'
@@ -178,5 +180,105 @@ describe('ChatInput @ image mention', () => {
     const submitted = wrapper.emitted('submit')?.[0]?.[0] as string
     expect(submitted).toContain('{{image:1}}')
     wrapper.unmount()
+  })
+})
+
+describe('ChatInput mention stays aligned when an image is removed', () => {
+  /**
+   * 附图被移除后，已插入的标记必须跟着修正。
+   *
+   * 这是 CodeRabbit 在 PR #152 上报出的 Major 问题：标记的 N 是附图数组下标，
+   * 从中间删掉一张会让后面所有标记整体前移一位。这种错位比越界更危险——越界会
+   * 被渲染层清掉，错位只是安静地指向另一张图，模型收到错误序号、界面显示错误
+   * 标签，全程没有提示。
+   */
+  it('shifts the marker when an earlier image is removed', async () => {
+    const wrapper = mountInput({ images: ['data:a', 'data:b', 'data:c'] })
+    await type(wrapper, '@')
+    // 选第三项 → 插入 {{image:3}}
+    await textarea(wrapper).trigger('keydown', { key: 'ArrowDown' })
+    await textarea(wrapper).trigger('keydown', { key: 'ArrowDown' })
+    await textarea(wrapper).trigger('keydown', { key: 'Enter' })
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('{{image:3}} ')
+
+    // 移除第 1 张图（下标 0）→ 原来的第 3 张变成第 2 张，标记必须跟着改。
+    // 父组件负责告知删的是哪一张：只看长度推不出来（3 张变 2 张可能是删头也可能是删尾）。
+    ;(wrapper.vm as unknown as { handleRemovedImage: (i: number) => void }).handleRemovedImage(0)
+    await wrapper.setProps({ pendingImages: ['data:b', 'data:c'] })
+    await wrapper.vm.$nextTick()
+
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('{{image:2}} ')
+    wrapper.unmount()
+  })
+
+  it('clears the marker when its own image is removed', async () => {
+    const wrapper = mountInput({ images: ['data:a', 'data:b'] })
+    await type(wrapper, '@')
+    // 选第二项 → {{image:2}}
+    await textarea(wrapper).trigger('keydown', { key: 'ArrowDown' })
+    await textarea(wrapper).trigger('keydown', { key: 'Enter' })
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('{{image:2}} ')
+
+    ;(wrapper.vm as unknown as { handleRemovedImage: (i: number) => void }).handleRemovedImage(1)
+    await wrapper.setProps({ pendingImages: ['data:a'] })
+    await wrapper.vm.$nextTick()
+
+    // 那张图没了，标记也就没有意义；留着会指到第 1 张（另一张图）上。
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).not.toContain('{{image:')
+    wrapper.unmount()
+  })
+
+  it('leaves earlier markers alone when a later image is removed', async () => {
+    const wrapper = mountInput({ images: ['data:a', 'data:b'] })
+    await type(wrapper, '@')
+    await textarea(wrapper).trigger('keydown', { key: 'Enter' })
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('{{image:1}} ')
+
+    ;(wrapper.vm as unknown as { handleRemovedImage: (i: number) => void }).handleRemovedImage(1)
+    await wrapper.setProps({ pendingImages: ['data:a'] })
+    await wrapper.vm.$nextTick()
+
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('{{image:1}} ')
+    wrapper.unmount()
+  })
+
+  it('does not disturb text without markers', async () => {
+    const wrapper = mountInput({ images: ['data:a', 'data:b'] })
+    await type(wrapper, '普通正文')
+    ;(wrapper.vm as unknown as { handleRemovedImage: (i: number) => void }).handleRemovedImage(1)
+    await wrapper.setProps({ pendingImages: ['data:a'] })
+    await wrapper.vm.$nextTick()
+
+    expect((textarea(wrapper).element as HTMLTextAreaElement).value).toBe('普通正文')
+    wrapper.unmount()
+  })
+})
+
+/**
+ * 移除附图这条链路的接线契约。
+ *
+ * 修正逻辑分散在三个文件里（AppShell 通知、ChatInput 重写、chat store 清标题），
+ * 任何一处掉线都会让标记指错图，而组件级测试只覆盖中间那一环。这里按源码钉住
+ * 首尾两处，并检查调用顺序——先修正正文再删数组，反过来的话标记已经指错了。
+ */
+describe('mention alignment wiring stays in place', () => {
+  const appShell = readFileSync(resolve(__dirname, '../src/views/AppShell.vue'), 'utf8')
+  const chatStore = readFileSync(resolve(__dirname, '../src/stores/chat.ts'), 'utf8')
+
+  it('AppShell notifies ChatInput before dropping the image', () => {
+    const fn = appShell.match(/function removePendingImage[\s\S]{0,400}?\n\}/)?.[0] ?? ''
+    expect(fn).toMatch(/handleRemovedImage\(index\)/)
+    expect(fn.indexOf('handleRemovedImage')).toBeLessThan(fn.indexOf('filter('))
+  })
+
+  it('AppShell passes the removal index, not just the new length', () => {
+    // 只看长度推不出删的是哪一张：3 张变 2 张可能是删头也可能是删尾，
+    // 而这两者要做的修正完全不同。
+    expect(appShell).toContain('handleRemovedImage(index)')
+  })
+
+  it('conversation title strips the marker before truncating', () => {
+    // 否则标题会变成「参考 {{image:1}} 的风格」。
+    expect(chatStore).toMatch(/stripImageMentions\(firstUser\.content\)/)
   })
 })

@@ -215,3 +215,109 @@ describe('admin image analytics panel', () => {
     wrapper.unmount()
   })
 })
+
+/**
+ * 请求与窗口切换的时序。
+ *
+ * 这里钉的是一个真实 bug（CodeRabbit 在 #151 上报出、我合并前漏看）：原先
+ * loadAnalytics 开头有 `if (loading.value) return`，于是「请求进行中切换时间窗」
+ * 会被静默丢弃——上一次请求回来后写入的是旧窗口的数据，而按钮已经高亮到新窗口，
+ * 界面长期显示一个与标签不符的数字，而且不会自愈。
+ */
+describe('admin image analytics panel request ordering', () => {
+  afterEach(() => {
+    mocks.adminApiJson.mockReset()
+  })
+
+  /** 手动控制兑现时机的 deferred，用来制造「请求进行中」这个窗口。 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>(inner => { resolve = inner })
+    return { promise, resolve }
+  }
+
+  it('issues a new request when the window changes mid-flight', async () => {
+    const first = deferred<unknown>()
+    mocks.adminApiJson.mockReturnValueOnce(first.promise)
+
+    const wrapper = mount(AdminImageAnalyticsPanel, {
+      props: { refreshVersion: 0 },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    expect(mocks.adminApiJson).toHaveBeenCalledTimes(1)
+
+    // 第一次请求还悬着的时候切到 30 天。
+    const thirtyDay = wrapper.findAll('button').find(button => button.text().includes('30'))
+    await thirtyDay!.trigger('click')
+    await nextTick()
+
+    // 旧实现会在这里直接 return，请求数停在 1。
+    expect(mocks.adminApiJson).toHaveBeenCalledTimes(2)
+    expect(mocks.adminApiJson.mock.calls[1][0]).toBe('/api/admin/image-analytics?hours=720')
+
+    first.resolve({ analytics: emptyAnalytics() })
+    await flush()
+    wrapper.unmount()
+  })
+
+  it('does not let a slow earlier response overwrite a newer one', async () => {
+    const slow = deferred<unknown>()
+    let call = 0
+    // 按调用序号决定返回什么：第一次悬着，第二次立刻给新窗口的数据。
+    // 用 mockImplementation 而不是连续 Once，避免队列顺序被别的用例或顺序变化打乱。
+    mocks.adminApiJson.mockImplementation(() => {
+      call += 1
+      if (call === 1) return slow.promise
+      return Promise.resolve({ analytics: emptyAnalytics({
+        windowHours: 720,
+        events: { total: 42, byType: [{ key: 'download', count: 42 }], bySource: [], sessions: 1, sessionCoverage: 100, recent: [], sampled: false },
+      }) })
+    })
+
+    const wrapper = mount(AdminImageAnalyticsPanel, {
+      props: { refreshVersion: 0 },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    const thirtyDay = wrapper.findAll('button').find(button => button.text().includes('30'))
+    await thirtyDay!.trigger('click')
+    await flush()
+
+    // 第二次已回并渲染 30 天的数据。
+    expect(wrapper.text()).toContain('42')
+
+    // 第一次（旧窗口）才姗姗回来——它必须被丢掉，不能覆盖上面的结果。
+    slow.resolve({ analytics: emptyAnalytics({ windowHours: 24 }) })
+    await flush()
+
+    expect(wrapper.text()).toContain('42')
+    wrapper.unmount()
+  })
+
+  it('keeps loading state until the newest request settles', async () => {
+    const slow = deferred<unknown>()
+    mocks.adminApiJson.mockReturnValueOnce(slow.promise)
+
+    const wrapper = mount(AdminImageAnalyticsPanel, {
+      props: { refreshVersion: 0 },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    const thirtyDay = wrapper.findAll('button').find(button => button.text().includes('30'))
+    await thirtyDay!.trigger('click')
+    await nextTick()
+    mocks.adminApiJson.mockResolvedValueOnce({ analytics: emptyAnalytics({ windowHours: 720 }) })
+    await flush()
+
+    // 第二次已经回来并渲染了数据；第一次还在悬着，但它不该把界面按回「加载中」，
+    // 也不该在它结束时把 loading 收掉——那时界面早就在等别的了。
+    expect(wrapper.text()).not.toContain('正在加载分析数据')
+    slow.resolve({ analytics: emptyAnalytics({ windowHours: 24 }) })
+    await flush()
+    expect(wrapper.text()).not.toContain('正在加载分析数据')
+    wrapper.unmount()
+  })
+})

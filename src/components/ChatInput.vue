@@ -5,6 +5,7 @@ import type { ModelOption } from '../types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import PromptBox from './PromptBox.vue'
+import { shiftImageMentionsAfterRemoval } from '../lib/message-image-mention'
 import { Plus, ChevronDown, X, Languages, Code, FileText, Search, Square, Send, Check } from '@lucide/vue'
 
 interface SkillOption {
@@ -240,6 +241,23 @@ function pickMention(item: { token: string; index: number }) {
     void next
   })
 }
+
+/**
+ * 移除附图时修正正文里已插入的标记序号。
+ *
+ * 标记的 N 是附图数组下标，所以从中间删掉一张会让后面所有标记整体前移一位——
+ * 这种错位比越界更危险：越界会被渲染层清掉，错位只是安静地指向另一张图，模型
+ * 收到错误序号、界面显示错误标签，全程没有提示。
+ *
+ * 必须由父组件显式告知「删掉了哪一张」：只比较数组长度是推不出来的——3 张变 2 张
+ * 可能是删了第一张，也可能是删了最后一张，而这两者要做的修正完全不同。
+ */
+function handleRemovedImage(index: number) {
+  if (!inputValue.value.includes('{{image:')) return
+  inputValue.value = shiftImageMentionsAfterRemoval(inputValue.value, index)
+}
+
+defineExpose({ handleRemovedImage })
 
 function dismissSkill() {
   emit('selectSkill', null)

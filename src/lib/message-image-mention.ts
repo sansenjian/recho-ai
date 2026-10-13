@@ -60,3 +60,31 @@ export function renderImageMentionsAsText(content: string, imageCount: number) {
     return `第 ${index} 张图`
   })
 }
+
+/**
+ * 附图被移除后，修正正文里所有标记的序号。
+ *
+ * 标记的 N 是附图数组的下标，所以一旦从数组中间删掉一张，后面所有标记都会**整体
+ * 前移一位**。这种错位比越界更危险：越界会被清掉，而错位不会——它只是安静地指向
+ * 另一张图，模型收到错误的序号，界面显示错误的标签，全程没有任何提示。
+ *
+ * 所以删除时必须重写正文，而不是等渲染时补救（渲染时已经无从知道原来的对应关系）。
+ *
+ * @param removedIndex 被移除图片在**移除前**数组里的下标（从 0 开始）
+ * @returns 重写后的正文
+ */
+export function shiftImageMentionsAfterRemoval(content: string, removedIndex: number) {
+  if (!content.includes('{{image:')) return content
+
+  const removed = removedIndex + 1
+
+  return content.replace(IMAGE_MENTION_PATTERN, (match, rawIndex: string) => {
+    const index = Number(rawIndex)
+    if (!Number.isInteger(index)) return match
+    // 指向被删掉那张图的标记失去目标，直接清掉——留着会指到后面那张图上。
+    if (index === removed) return ''
+    // 排在它后面的依次前移一位。
+    if (index > removed) return `{{image:${index - 1}}}`
+    return match
+  })
+}
