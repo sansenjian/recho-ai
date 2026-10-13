@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Image } from '@lucide/vue'
 import { useImageGen, type ImageHistoryScope } from '../composables/useImageGen'
 import { useMeasuredCanvasNodes } from '../composables/useMeasuredCanvasNodes'
 import { useCanvasDocumentFiles } from '../composables/useCanvasDocumentFiles'
@@ -80,7 +79,7 @@ import {
   normalizedWheelValue,
   viewportForClientZoom,
 } from '../lib/image-canvas-viewport'
-import type { GeneratedImage, ImageAspectRatio, ImageGenerationCount, ImageQuality, ImageResolution } from '../types/image'
+import type { GeneratedImage, ImageAspectRatio, ImageQuality, ImageResolution } from '../types/image'
 import ImageCanvasBottomToolbar from './ImageCanvasBottomToolbar.vue'
 import ImageCanvasContextMenu from './ImageCanvasContextMenu.vue'
 import ImageCanvasNode from './ImageCanvasNode.vue'
@@ -92,7 +91,6 @@ import ImageViewerModal from './ImageViewerModal.vue'
 import ImagioView from './ImagioView.vue'
 import ImagioSidebar from './ImagioSidebar.vue'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const props = defineProps<{
@@ -330,7 +328,6 @@ const activeWorkspace = ref<WorkspaceMode>('canvas')
 const currentImageMode = ref<'imagio' | 'canvas'>('imagio')
 
 // --- Imagio prompt generation parameters ---
-const generationCount = ref<ImageGenerationCount>(1)
 const resolution = ref<ImageResolution>('auto')
 const aspectRatio = ref<ImageAspectRatio>('auto')
 const quality = ref<ImageQuality>('auto')
@@ -553,10 +550,6 @@ const qualityOptions: Array<{ value: NodeQuality; label: string }> = [
 const contextMenuNode = computed(() => (
   contextMenu.value.targetNodeId ? getNodeById(contextMenu.value.targetNodeId) ?? null : null
 ))
-const selectedNode = computed<CanvasNode | null>(() => (
-  selectedNodeId.value ? getNodeById(selectedNodeId.value) ?? null : null
-))
-
 function historyImageForViewer(viewer: ImageDownloadViewer) {
   if (!viewer.sourceImageId) return null
   const scopedImages = viewer.sourceScope === 'public'
@@ -854,12 +847,6 @@ function copySelectedNode() {
   return copied
 }
 
-function _pasteNodeFromClipboard() {
-  const pasted = pasteDocumentNodeFromClipboard()
-  if (pasted) closeContextMenu()
-  return pasted
-}
-
 function renameContextNode() {
   const node = contextMenuNode.value
   if (!node) {
@@ -1115,10 +1102,6 @@ function handleGallerySendToChat(image: GeneratedImage) {
 
 function preloadGeneratedImageDownload(image: GeneratedImage, scope: ImageHistoryScope = galleryActionScope.value) {
   preloadTarget(generatedImageTarget(image, scope))
-}
-
-function preloadNodeImageDownload(node: CanvasNode) {
-  preloadTarget(nodeTarget(node))
 }
 
 function preloadViewerImageDownload() {

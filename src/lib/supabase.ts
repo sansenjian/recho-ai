@@ -65,8 +65,3 @@ export async function getSupabaseClient() {
 
   return await clientPromise
 }
-
-export function resetSupabaseClientForTests() {
-  client = null
-  clientPromise = null
-}

@@ -12,7 +12,6 @@ import LinkPreviewCard from './LinkPreviewCard.vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown } from '@lucide/vue'
-import { cn } from '@/lib/utils'
 
 const props = defineProps<{
   msg: Message

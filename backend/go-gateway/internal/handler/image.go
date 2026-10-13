@@ -344,7 +344,6 @@ func (h *ImageHandler) PresignStorage(w http.ResponseWriter, r *http.Request) {
 
 	var payload struct {
 		Paths []string `json:"paths"`
-		Mode  string   `json:"mode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, presignRequestMaxBytes)).Decode(&payload); err != nil {
 		response.Error(w, http.StatusBadRequest, "请求格式不正确。")
