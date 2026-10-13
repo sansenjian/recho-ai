@@ -50,6 +50,23 @@ export function isInlineImageDataUrl(value: string) {
   return value.startsWith(INLINE_DATA_URL_PREFIX)
 }
 
+/**
+ * 这个 dataURL 能不能真的解码成图片。
+ *
+ * compressImageDataUrl 把「解码失败」和「压完反而更大」都回退成原值，上传路径因此
+ * 分不清一张图是压过了还是根本打不开。需要拒绝坏文件的调用方用这个先探一次。
+ * 非内联地址（http/blob）不在这里判断，它们不经过本地解码。
+ */
+export async function canDecodeImageDataUrl(dataUrl: string) {
+  if (!isInlineImageDataUrl(dataUrl)) return true
+  try {
+    await loadImageElement(dataUrl)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export interface CompressImageOptions {
   /** 长边上限，超出才缩放。 */
   maxEdge: number

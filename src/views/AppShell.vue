@@ -41,7 +41,7 @@ import { useAnnouncementPopup } from '../composables/useAnnouncementPopup'
 import { useAppConfig } from '../composables/useAppConfig'
 import { apiUrl } from '../lib/api-base'
 import { hasFileTransfer } from '../lib/image-canvas-utils'
-import { compressImageDataUrl, readImageFileAsDataUrl } from '../lib/image-file'
+import { canDecodeImageDataUrl, compressImageDataUrl, readImageFileAsDataUrl } from '../lib/image-file'
 import type { RouteWorkspace } from '../router'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -355,10 +355,14 @@ let dragCounter = 0
  * - 输出由 JPEG 改为 WebP。后端 originalStorageImage 只对 PNG 转码、其余格式原样保存，
  *   所以 WebP 会被直接接收；同质量下体积更小。
  * - 尺寸上限由「只限宽 1280」改为「长边 1280」。横图不变，竖图此前不受限，现在会缩。
+ *
+ * 解码失败仍然拒绝：compressImageDataUrl 两种情况都回退原值——压完没变小，以及根本
+ * 打不开。前者保留原图正确，后者会把损坏文件当成功收进待发送列表，所以这里先探一次。
  */
 async function fileToBase64(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('not an image')
   const dataUrl = await readImageFileAsDataUrl(file)
+  if (!(await canDecodeImageDataUrl(dataUrl))) throw new Error('decode failed')
   return compressImageDataUrl(dataUrl, {
     maxEdge: CHAT_UPLOAD_MAX_EDGE,
     quality: CHAT_UPLOAD_QUALITY,

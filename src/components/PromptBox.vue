@@ -34,6 +34,20 @@ const emit = defineEmits<{
 function handleInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
 }
+
+/**
+ * 内置 textarea 的 Enter 提交。
+ *
+ * 组合输入（中文/日文/韩文）期间按 Enter 是在选定候选词，不是提交。浏览器会在
+ * compositionend 之前先派发一次 isComposing 为 true 的 keydown；也有实现是先
+ * compositionend 再派发最终的 keydown，此时只能靠已废弃的 keyCode === 229 兜底。
+ * 两者都要挡，否则选词就把半截输入发出去了。
+ */
+function handleKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  emit('submit')
+}
 </script>
 
 <template>
@@ -55,13 +69,13 @@ function handleInput(event: Event) {
         :aria-label="ariaLabel"
         rows="1"
         @input="handleInput"
-        @keydown.enter.exact.prevent="emit('submit')"
+        @keydown.enter.exact="handleKeydown"
       />
     </slot>
 
     <div class="mt-2 flex min-w-0 items-center gap-2 max-sm:flex-wrap">
       <slot name="actions-left" />
-      <div class="prompt-actions-end ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 max-sm:w-full max-sm:flex-basis-full">
+      <div class="prompt-actions-end ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 max-sm:w-full max-sm:basis-full">
         <slot name="actions-right" />
       </div>
     </div>

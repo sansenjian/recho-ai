@@ -32,9 +32,12 @@ const stateLabel = computed(() => {
  *
  * 此前是一段手写 CSS 配三个类名，用的还是 --surface-soft / --accent-strong 这类为兼容
  * 保留的旧别名；换成 token 后与其余界面走同一条链路，改主题色不会再漏掉这一页。
+ *
+ * 成功态用 --success 而不是 --accent：浅色主题下 --accent 与 --muted 同为 0 0% 96%，
+ * 成功徽标会和「验证中」长得一模一样。
  */
 const stateClass = computed(() => {
-  if (state.value === 'success') return 'border-accent bg-accent text-accent-foreground'
+  if (state.value === 'success') return 'border-success/30 bg-success/10 text-success'
   if (state.value === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive'
   return 'border-border bg-muted text-muted-foreground'
 })
