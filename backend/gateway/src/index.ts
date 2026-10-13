@@ -14,6 +14,7 @@ import configRouter from './routes/config.js'
 import adminCreditsRouter from './routes/admin-credits.js'
 import adminImagesRouter from './routes/admin-images.js'
 import adminImageAttemptsRouter from './routes/admin-image-attempts.js'
+import adminImageAnalyticsRouter from './routes/admin-image-analytics.js'
 import adminSystemRouter from './routes/admin-system.js'
 import adminAnnouncementsRouter from './routes/admin-announcements.js'
 import apiKeysRouter from './routes/api-keys.js'
@@ -80,6 +81,7 @@ app.use('/api', configRouter)
 app.use('/api', adminCreditsRouter)
 app.use('/api', adminImagesRouter)
 app.use('/api', adminImageAttemptsRouter)
+app.use('/api', adminImageAnalyticsRouter)
 app.use('/api', adminSystemRouter)
 app.use('/api', adminAnnouncementsRouter)
 app.use('/api', apiKeysRouter)

@@ -52,3 +52,6 @@ supabase/.branches/
 *.njsproj
 *.sln
 *.sw?
+
+# 本地视觉验证截图（临时产物，不入库）
+.*-shots/
