@@ -1,5 +1,9 @@
-// @vitest-environment jsdom
+// @vitest-environment node
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+// 静态导入而不是每条用例 await import：被测模块只在调用时读 globalThis.fetch，
+// 不在导入时捕获，所以先导入不会影响 stub 生效；而动态导入每条都要重新走一遍
+// 模块解析（实测首条 323ms，其中大部分是加载），在满载时会被拖成超时。
+import { fetchAuthenticatedImageBlob } from '../src/lib/authenticated-image-source'
 
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -28,14 +32,12 @@ describe('fetchAuthenticatedImageBlob', () => {
 
   it('returns the image bytes for the clipboard to take', async () => {
     fetchMock.mockResolvedValue(fakeResponse(PNG_BYTES))
-    const { fetchAuthenticatedImageBlob } = await import('../src/lib/authenticated-image-source')
     const blob = await fetchAuthenticatedImageBlob('supabase://a.png')
     expect(blob.size).toBe(PNG_BYTES.length)
   })
 
   it('goes through the authenticated storage proxy, not a public URL', async () => {
     fetchMock.mockResolvedValue(fakeResponse(PNG_BYTES))
-    const { fetchAuthenticatedImageBlob } = await import('../src/lib/authenticated-image-source')
     await fetchAuthenticatedImageBlob('supabase://a.png')
     const [url] = fetchMock.mock.calls[0]
     // 私有图走公开地址只会拿到 401，复制到的就是错误页。
@@ -45,13 +47,11 @@ describe('fetchAuthenticatedImageBlob', () => {
 
   it('throws instead of handing an empty image to the clipboard', async () => {
     fetchMock.mockResolvedValue(fakeResponse(new Uint8Array([])))
-    const { fetchAuthenticatedImageBlob } = await import('../src/lib/authenticated-image-source')
     await expect(fetchAuthenticatedImageBlob('supabase://a.png')).rejects.toThrow(/empty/)
   })
 
   it('surfaces a failed proxy response instead of copying nothing', async () => {
     fetchMock.mockResolvedValue(fakeResponse(new Uint8Array([]), 'text/plain', 403))
-    const { fetchAuthenticatedImageBlob } = await import('../src/lib/authenticated-image-source')
     await expect(fetchAuthenticatedImageBlob('supabase://a.png')).rejects.toThrow(/403/)
   })
 })

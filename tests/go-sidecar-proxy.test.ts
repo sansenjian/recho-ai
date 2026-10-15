@@ -224,7 +224,10 @@ describe('go sidecar proxy', () => {
       req.resume()
     }))
     servers.push(upstream.server)
-    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = '50'
+    // 500ms 而不是 50ms：本用例要验的是「abort 时会返回 504 并记录一次 timeout」，
+    // 与具体毫秒无关；50ms 在满负载机器上与「建连 + 触发 abort + 写 attempt」这条
+    // 链同量级，会让断言偶发落空。放宽不损失覆盖，只去掉对调度抖动的敏感。
+    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = '500'
     const proxy = await startProxy(upstream.url)
 
     const response = await fetch(`${proxy.url}/api/image/history`, {
@@ -244,7 +247,8 @@ describe('go sidecar proxy', () => {
       req.resume()
     }))
     servers.push(upstream.server)
-    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = '50'
+    // 同上：验的是超时路径本身，不是 50ms 这个数字。
+    process.env.GO_GATEWAY_PROXY_TIMEOUT_MS = '500'
     const proxy = await startProxy(upstream.url)
 
     const response = await fetch(`${proxy.url}/api/image/generate`, {

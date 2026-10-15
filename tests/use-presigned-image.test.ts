@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getToken = vi.fn()
