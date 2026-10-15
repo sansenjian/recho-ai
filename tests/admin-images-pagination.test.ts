@@ -65,10 +65,32 @@ function mountPanel() {
   return wrapper
 }
 
-async function flush() {
-  await vi.waitFor(() => expect(adminApiJsonMock).toHaveBeenCalled())
+/**
+ * 等待 DOM 更新的预算。
+ *
+ * vi.waitFor 默认只给 1000ms，而实测在满载时（16 核跑满 worker）单次面板渲染
+ * 可以到 1.4s——已经超出默认上限，此前能过只是轮询先命中。显式给足预算，避免
+ * 在更慢的 CI 机器上变成偶发红灯；真正卡住时仍然会失败，不会变成无限等待。
+ */
+const DOM_WAIT = { timeout: 5000, interval: 20 }
+
+/**
+ * 等到面板把数据渲染出来。
+ *
+ * 只等「接口被调用」是不够的：调用之后还有 promise 兑现 → 组件写状态 → 重渲染
+ * 三层，断言若在这串跑完前求值就会读到大半空的 DOM（范围元素还没渲染）。满载时
+ * 这三层走得更慢，于是同一个用例时过时不过。这里一直等到范围文本出现，让
+ * 「数据已上屏」有确定含义。
+ */
+async function flush(wrapper: { find: (selector: string) => { exists: () => boolean, text: () => string } }) {
+  await vi.waitFor(() => expect(adminApiJsonMock).toHaveBeenCalled(), DOM_WAIT)
   await nextTick()
+  await vi.waitFor(
+    () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).not.toBe(''),
+    DOM_WAIT,
+  )
 }
+
 
 describe('admin image list paginates instead of hiding rows past the first page', () => {
   beforeEach(() => {
@@ -91,7 +113,7 @@ describe('admin image list paginates instead of hiding rows past the first page'
 
   it('shows the server total rather than the current page size', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     // 修复前这里渲染 images.length,也就是 24,会被误读成「一共只有 24 张」。
     const heading = wrapper.find('[data-slot="admin-images-total"]')
@@ -106,13 +128,13 @@ describe('admin image list paginates instead of hiding rows past the first page'
 
   it('reaches the second page and reports the remaining rows', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     await wrapper.find('[data-slot="admin-images-next"]').trigger('click')
     await vi.waitFor(() => {
       const offsets = adminApiJsonMock.mock.calls.map(call => requestedOffset(listUrl(call))).filter(n => !Number.isNaN(n))
       expect(offsets).toContain(PAGE_SIZE)
-    })
+    }, DOM_WAIT)
     await nextTick()
 
     // 第二页真的发出了 offset=24 的请求,并显示了第 25-30 张。
@@ -126,28 +148,28 @@ describe('admin image list paginates instead of hiding rows past the first page'
 
   it('disables previous on the first page', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     expect(wrapper.find('[data-slot="admin-images-previous"]').attributes('disabled')).toBeDefined()
   })
 
   it('returns to the first page when a filter changes', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     await wrapper.find('[data-slot="admin-images-next"]').trigger('click')
-    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2'))
+    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2'), DOM_WAIT)
 
     // 在第 2 页改筛选:必须回到第 1 页,否则很容易落到空页看起来像查无结果。
     const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
     panel.vm.$emit('update:visibilityFilter', 'private')
     panel.vm.$emit('refresh')
-    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('1'))
+    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('1'), DOM_WAIT)
   })
 
   it('clears the selection when the page changes', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
     panel.vm.$emit('update:selectedIds', ['img-0', 'img-1'])
@@ -155,7 +177,7 @@ describe('admin image list paginates instead of hiding rows past the first page'
     expect(wrapper.find('[data-slot="admin-images-total"]').exists()).toBe(true)
 
     await wrapper.find('[data-slot="admin-images-next"]').trigger('click')
-    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2'))
+    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2'), DOM_WAIT)
 
     // 跨页残留勾选会造成误删,换页必须清空。
     expect(wrapper.findComponent({ name: 'AdminImagesPanel' }).props('selectedIds')).toEqual([])
@@ -191,13 +213,13 @@ describe('admin image list drops responses superseded by a newer request', () =>
 
   it('ignores an older response that resolves after a newer one', async () => {
     const wrapper = mountPanel()
-    await flush()
+    await flush(wrapper)
 
     const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
     // 第一次筛选请求还挂着,第二次刷新就发出了;修复前这里会被 imagesLoading 守卫挡掉,只发一次请求。
     panel.vm.$emit('update:visibilityFilter', 'private')
     panel.vm.$emit('refresh')
-    await vi.waitFor(() => expect(pendingRequests.length).toBe(2))
+    await vi.waitFor(() => expect(pendingRequests.length).toBe(2), DOM_WAIT)
 
     // 新请求先返回,旧请求后返回:列表必须保持新请求的结果。
     pendingRequests[1].resolve({ images: [image('fresh')], total: 1 })

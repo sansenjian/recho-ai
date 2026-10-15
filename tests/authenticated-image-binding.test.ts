@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -15,9 +16,36 @@ vi.mock('../src/lib/authenticated-image-source', async (importOriginal) => {
   }
 })
 
+/**
+ * 签发地址也要打桩。
+ *
+ * 不打桩的话组件会真的去请求 cos.example——那是真实网络调用，要等 DNS 和超时。
+ * 本文件验的是「什么时候绑 src」，与签发服务无关；漏了这一桩会让用例在并发或
+ * 慢网络下直接撞上 5s 测试超时（实测全量运行时约三次里失败一次）。
+ * 默认返回 null，即"签发不可用"，组件因此落回代理分支——正是这些用例要观察的路径。
+ */
+const presign = vi.fn(async () => null)
+vi.mock('../src/composables/usePresignedImage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/composables/usePresignedImage')>()
+  return {
+    ...actual,
+    requestPresignedImageUrl: (...args: unknown[]) => presign(...(args as [])),
+  }
+})
+
+/**
+ * 挂载组件，并让挂载副作用推进一轮。
+ *
+ * 用 `nextTick` 而不是 `flushPromises`：本文件有「故意挂起代理」的用例（用永不
+ * resolve 的 Promise 观察取回前的状态），而 flushPromises 要等到微任务队列清空
+ * ——在这种用例上会一直卡着，把 1 秒的用例拖到超时。nextTick 只推进 Vue 的渲染
+ * 队列，不等那些永远不会兑现的 promise。
+ */
 async function mountImage(props: Record<string, unknown>) {
   const AuthenticatedImage = (await import('../src/components/AuthenticatedImage.vue')).default
-  return mount(AuthenticatedImage, { props, attachTo: document.body })
+  const wrapper = mount(AuthenticatedImage, { props, attachTo: document.body })
+  await nextTick()
+  return wrapper
 }
 
 describe('AuthenticatedImage source binding', () => {
@@ -25,6 +53,8 @@ describe('AuthenticatedImage source binding', () => {
     // mock 是文件级共享的：不清掉调用记录，后一个用例的 not.toHaveBeenCalled
     // 会被前一个用例的调用污染。
     fetchBlob.mockReset()
+    presign.mockReset()
+    presign.mockResolvedValue(null)
   })
 
   it('does not bind a remote url while a storage path can be proxied', async () => {
