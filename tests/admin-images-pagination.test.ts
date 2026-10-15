@@ -85,18 +85,24 @@ const DOM_WAIT = { timeout: 5000, interval: 20 }
 const CASE_TIMEOUT = 20_000
 
 /**
- * 等到面板把数据渲染出来。
+ * 等到服务端返回的**条数**真正渲染到面板上。
  *
- * 只等「接口被调用」是不够的：调用之后还有 promise 兑现 → 组件写状态 → 重渲染
- * 三层，断言若在这串跑完前求值就会读到大半空的 DOM（范围元素还没渲染）。满载时
- * 这三层走得更慢，于是同一个用例时过时不过。这里一直等到范围文本出现，让
- * 「数据已上屏」有确定含义。
+ * 判据是「范围文本里出现了 TOTAL」，不能只判「非空」：面板首帧就会渲染范围标签，
+ * 此时 total 还是 0、内容是「共 0 张」——非空，但数据并没到。用非空做判据会让
+ * flush 在响应回来之前就返回，后面的断言读到上一轮的状态，测试照样是时序相关的。
  */
-async function flush(wrapper: { find: (selector: string) => { exists: () => boolean, text: () => string } }) {
+async function flush(
+  wrapper: { find: (selector: string) => { exists: () => boolean, text: () => string } },
+  options: { expectRows?: boolean } = {},
+) {
   await vi.waitFor(() => expect(adminApiJsonMock).toHaveBeenCalled(), DOM_WAIT)
   await nextTick()
+  // 有一条用例故意把首次请求挂起（要验「旧响应不覆盖新响应」），那时数据永远不会
+  // 上屏，等条数会死等——这条路径只需确认请求已发出。
+  if (options.expectRows === false) return
   await vi.waitFor(
-    () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).not.toBe(''),
+    // 用 TOTAL 而不是「非空」：空态标签（共 0 张）也是非空的。
+    () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).toContain(String(TOTAL)),
     DOM_WAIT,
   )
 }
@@ -141,16 +147,20 @@ describe('admin image list paginates instead of hiding rows past the first page'
     await flush(wrapper)
 
     await wrapper.find('[data-slot="admin-images-next"]').trigger('click')
-    await vi.waitFor(() => {
-      const offsets = adminApiJsonMock.mock.calls.map(call => requestedOffset(listUrl(call))).filter(n => !Number.isNaN(n))
-      expect(offsets).toContain(PAGE_SIZE)
-    }, DOM_WAIT)
-    await nextTick()
+
+    // 等第二页的范围文本，而不是「发出了 offset=24 的请求」：请求发出但响应未回时
+    // 读到的还是第一页的 1-24，断言会看到过时数据。范围文本里出现 25 才说明这一页
+    // 真的渲染出来了。
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).toContain('25'),
+      DOM_WAIT,
+    )
 
     // 第二页真的发出了 offset=24 的请求,并显示了第 25-30 张。
+    const offsets = adminApiJsonMock.mock.calls.map(call => requestedOffset(listUrl(call))).filter(n => !Number.isNaN(n))
+    expect(offsets).toContain(PAGE_SIZE)
     expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2')
     const range = wrapper.find('[data-slot="admin-images-range"]')
-    expect(range.text()).toContain('25')
     expect(range.text()).toContain('30')
     expect(wrapper.find('[data-slot="admin-images-next"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-slot="admin-images-previous"]').attributes('disabled')).toBeUndefined()
@@ -168,13 +178,21 @@ describe('admin image list paginates instead of hiding rows past the first page'
     await flush(wrapper)
 
     await wrapper.find('[data-slot="admin-images-next"]').trigger('click')
-    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('2'), DOM_WAIT)
+    // 用范围文本确认第二页真的渲染了：页码会随 offset 先变，不能单独作为
+    // 「这一页的数据已到」的判据。
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).toContain('25'),
+      DOM_WAIT,
+    )
 
     // 在第 2 页改筛选:必须回到第 1 页,否则很容易落到空页看起来像查无结果。
     const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
     panel.vm.$emit('update:visibilityFilter', 'private')
     panel.vm.$emit('refresh')
-    await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('1'), DOM_WAIT)
+    await vi.waitFor(
+      () => expect(wrapper.find('[data-slot="admin-images-range"]').text()).toContain('1-24'),
+      DOM_WAIT,
+    )
   }, CASE_TIMEOUT)
 
   it('clears the selection when the page changes', async () => {
@@ -223,7 +241,8 @@ describe('admin image list drops responses superseded by a newer request', () =>
 
   it('ignores an older response that resolves after a newer one', async () => {
     const wrapper = mountPanel()
-    await flush(wrapper)
+    // 首次请求被故意挂起，不会有数据上屏。
+    await flush(wrapper, { expectRows: false })
 
     const panel = wrapper.findComponent({ name: 'AdminImagesPanel' })
     // 第一次筛选请求还挂着,第二次刷新就发出了;修复前这里会被 imagesLoading 守卫挡掉,只发一次请求。

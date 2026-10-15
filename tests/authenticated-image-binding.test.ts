@@ -83,6 +83,13 @@ describe('AuthenticatedImage source binding', () => {
       mode: 'thumbnail',
     })
 
+    // 必须等组件真的走到代理这一步，release 才有意义。
+    //
+    // mount 返回时 watcher 还停在 `await requestPresignedImageUrl` 上，release 此时
+    // 仍是初始的空函数——调用它是空操作，真 promise 永远挂着，而下面的断言会因为
+    // 「什么都没渲染」而**恰好通过**：这条用例此前就是在假通过，从没验到取回之后那一步。
+    await vi.waitFor(() => expect(fetchBlob).toHaveBeenCalled(), { timeout: 5000, interval: 10 })
+
     // 代理尚未返回时，既不该渲染 img，也不该出现远程地址。
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.html()).not.toContain('cos.example')
