@@ -75,6 +75,16 @@ function mountPanel() {
 const DOM_WAIT = { timeout: 5000, interval: 20 }
 
 /**
+ * 本文件的用例预算。
+ *
+ * 每条都要 mount 整个 AdminImagesPanel（32 个传递依赖）并建一次 jsdom 环境，
+ * 实测单独跑最慢一条 0.4s、整个文件 4.5s；而开发机上常驻的 MCP 服务持续占核时，
+ * 同一条会涨到 1.8s 以上，偶发越过默认 5s。给足预算而不是拆用例：超时说明的是
+ * 「机器忙」，不是「分页逻辑坏了」。真卡死时仍会失败。
+ */
+const CASE_TIMEOUT = 20_000
+
+/**
  * 等到面板把数据渲染出来。
  *
  * 只等「接口被调用」是不够的：调用之后还有 promise 兑现 → 组件写状态 → 重渲染
@@ -124,7 +134,7 @@ describe('admin image list paginates instead of hiding rows past the first page'
     expect(range.text()).toContain('24')
     expect(range.text()).toContain('30')
     expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('1')
-  })
+  }, CASE_TIMEOUT)
 
   it('reaches the second page and reports the remaining rows', async () => {
     const wrapper = mountPanel()
@@ -144,14 +154,14 @@ describe('admin image list paginates instead of hiding rows past the first page'
     expect(range.text()).toContain('30')
     expect(wrapper.find('[data-slot="admin-images-next"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-slot="admin-images-previous"]').attributes('disabled')).toBeUndefined()
-  })
+  }, CASE_TIMEOUT)
 
   it('disables previous on the first page', async () => {
     const wrapper = mountPanel()
     await flush(wrapper)
 
     expect(wrapper.find('[data-slot="admin-images-previous"]').attributes('disabled')).toBeDefined()
-  })
+  }, CASE_TIMEOUT)
 
   it('returns to the first page when a filter changes', async () => {
     const wrapper = mountPanel()
@@ -165,7 +175,7 @@ describe('admin image list paginates instead of hiding rows past the first page'
     panel.vm.$emit('update:visibilityFilter', 'private')
     panel.vm.$emit('refresh')
     await vi.waitFor(() => expect(wrapper.find('[data-slot="admin-images-page-number"]').text()).toContain('1'), DOM_WAIT)
-  })
+  }, CASE_TIMEOUT)
 
   it('clears the selection when the page changes', async () => {
     const wrapper = mountPanel()
@@ -181,7 +191,7 @@ describe('admin image list paginates instead of hiding rows past the first page'
 
     // 跨页残留勾选会造成误删,换页必须清空。
     expect(wrapper.findComponent({ name: 'AdminImagesPanel' }).props('selectedIds')).toEqual([])
-  })
+  }, CASE_TIMEOUT)
 })
 
 
@@ -231,5 +241,5 @@ describe('admin image list drops responses superseded by a newer request', () =>
 
     expect(wrapper.find('[data-slot="admin-images-total"]').text()).toBe('1')
     expect(panel.props('images')).toEqual([image('fresh')])
-  })
+  }, CASE_TIMEOUT)
 })

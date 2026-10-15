@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment node
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 // 静态导入而不是每条用例 await import：被测模块只在调用时读 globalThis.fetch，
 // 不在导入时捕获，所以先导入不会影响 stub 生效；而动态导入每条都要重新走一遍

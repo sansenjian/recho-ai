@@ -48,6 +48,18 @@ async function mountImage(props: Record<string, unknown>) {
   return wrapper
 }
 
+/**
+ * 本文件的用例预算。
+ *
+ * 每条都要 mount 一个组件并建一次 jsdom 环境，实测单独跑 0.7–1.6s（空 jsdom 文件
+ * 本身就要 1.2s），而默认上限是 5s。开发机上常驻的 MCP 服务会持续占核，实测同一
+ * 条用例在争用时能到 5.1s——刚好越过上限，表现为「时过时不过」。
+ *
+ * 这里给足预算而不是拆小用例：超时失败说明的只是「机器忙」，不是「取图逻辑坏了」，
+ * 把它变成红灯只会训练人忽略这个信号。真正卡死时仍会失败，不会无限等待。
+ */
+const CASE_TIMEOUT = 20_000
+
 describe('AuthenticatedImage source binding', () => {
   beforeEach(() => {
     // mock 是文件级共享的：不清掉调用记录，后一个用例的 not.toHaveBeenCalled
@@ -56,6 +68,7 @@ describe('AuthenticatedImage source binding', () => {
     presign.mockReset()
     presign.mockResolvedValue(null)
   })
+
 
   it('does not bind a remote url while a storage path can be proxied', async () => {
     // 带 storagePath 时先绑远程 URL 会发出一次必然失败的请求（对象存储有防盗链），
@@ -77,7 +90,7 @@ describe('AuthenticatedImage source binding', () => {
     release('blob:test')
     await flushPromises()
     expect(wrapper.find('img').attributes('src')).toBe('blob:test')
-  })
+  }, CASE_TIMEOUT)
 
   it('falls back to the remote url when there is no storage path', async () => {
     // 没有可代理的路径时，远程 URL 是唯一来源。
@@ -87,7 +100,7 @@ describe('AuthenticatedImage source binding', () => {
     })
     expect(wrapper.find('img').attributes('src')).toBe('https://cos.example/local.webp')
     expect(fetchBlob).not.toHaveBeenCalled()
-  })
+  }, CASE_TIMEOUT)
 
   it('falls back to the remote url when the proxy fails', async () => {
     fetchBlob.mockRejectedValue(new Error('proxy down'))
@@ -97,7 +110,7 @@ describe('AuthenticatedImage source binding', () => {
     })
     await flushPromises()
     expect(wrapper.find('img').attributes('src')).toBe('https://cos.example/x.webp')
-  })
+  }, CASE_TIMEOUT)
 
   it('falls back to the proxy when the presigned url fails to load', async () => {
     // 签发成功不等于能加载：对象可能已删除、存储可能 403、签名也可能在长时间
@@ -125,7 +138,7 @@ describe('AuthenticatedImage source binding', () => {
 
     vi.doUnmock('../src/composables/usePresignedImage')
     vi.resetModules()
-  })
+  }, CASE_TIMEOUT)
 
   it('does not loop when the proxy url itself fails', async () => {
     // 只有当前显示的是签名地址时才补救，否则代理地址失败会反复触发。
@@ -152,11 +165,11 @@ describe('AuthenticatedImage source binding', () => {
 
     vi.doUnmock('../src/composables/usePresignedImage')
     vi.resetModules()
-  })
+  }, CASE_TIMEOUT)
 
   it('renders no img at all when nothing resolves', async () => {
     // <img src=""> 会让浏览器按当前页面地址再发一次请求。
     const wrapper = await mountImage({ source: {}, mode: 'thumbnail' })
     expect(wrapper.find('img').exists()).toBe(false)
-  })
+  }, CASE_TIMEOUT)
 })
